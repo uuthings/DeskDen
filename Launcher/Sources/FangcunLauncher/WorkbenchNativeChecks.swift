@@ -127,9 +127,11 @@ enum WorkbenchNativeChecks {
                   "general settings and launcher settings share the existing workbench")
 
             workbench.present(route:.settings,settingsTab:.material)
-            await settle()
+            let materialSlider: NSSlider?
+            if let window = workbench.window {materialSlider = await findMountedOpacitySlider(in: window)}
+            else {materialSlider = nil}
             if let window=workbench.window,let root=window.contentView,
-               let control=descendants(root).compactMap({$0 as? NSSlider}).first(where:{$0.accessibilityLabel() == "界面不透明度"}) {
+               let control=materialSlider {
                 let point=control.convert(NSPoint(x:control.bounds.midX,y:control.bounds.midY),to:root.superview)
                 let hit=root.hitTest(point)
                 check(hit === control || hit?.isDescendant(of:control) == true,"material slider receives pointer hit testing through the shared surfaces")
@@ -201,49 +203,64 @@ enum WorkbenchNativeChecks {
             check(model.confirmingQuit && workbench.window?.isVisible == true,"quit is a separate visible confirmation rather than immediate process termination")
             model.confirmingQuit=false
 
-            // Observe actual renderer output rather than copying its opacity formula into a test.
-            Palette.isLight = false
-            owner.show()
-            if let trigger = descendants(owner.content).compactMap({ $0 as? ActionButton }).first(where: { $0.accessibilityLabel() == "全局透明度" }) {
-                trigger.performClick(nil)
+            do {
+                // This renderer/keyboard fixture owns its temporary launcher and
+                // popup. Native activation handoffs must not trigger the separate
+                // auto-hide feature while these controls are being exercised.
+                let previousFocusTransition = owner.focusTransitionUntil
+                owner.focusTransitionUntil = .distantFuture
+                defer { owner.focusTransitionUntil = previousFocusTransition }
+                // Observe actual renderer output rather than copying its opacity formula into a test.
+                Palette.isLight = false
+                owner.show()
+                if let trigger = descendants(owner.content).compactMap({ $0 as? ActionButton }).first(where: { $0.accessibilityLabel() == "全局透明度" }) {
+                    trigger.performClick(nil)
+                }
+                let opacityControlReady: Bool
+                if let popup = owner.editorPanel {opacityControlReady = await findMountedOpacitySlider(in: popup) != nil}
+                else {opacityControlReady = false}
+                let opacityCard = (owner.editorPanel?.contentView as? BindingPopoverSurface)?.card as? GlobalOpacityMenuView
+                check(opacityControlReady && opacityCard != nil && opacityCard?.window === owner.editorPanel && owner.editorPanel?.isVisible == true && owner.menu == nil,
+                      "the launcher opacity control opens its native glass popover rather than a system menu")
+                if let slider = opacityCard?.slider {
+                    slider.doubleValue = 0.55
+                    let actionSent = slider.action.map { NSApp.sendAction($0, to: slider.target, from: slider) } ?? false
+                    let saved = try owner.store.load()
+                    check(actionSent && saved?.settings.glassOpacity == 0.55 && owner.configuration.settings.glassOpacity == 0.55,
+                          "the opacity popover slider saves through its actual native control action")
+                } else { check(false, "the native opacity popover exposes its working slider") }
+                let tints = owner.editorPanel?.contentView.map { descendants($0).compactMap { $0 as? GlassTint } } ?? []
+                check(!tints.isEmpty, "global appearance fixture contains the production glass tint renderer")
+                tints.forEach { $0.needsDisplay = false }
+                let lowSaved = owner.setGlobalGlassOpacity(0.50)
+                // Layer-backed AppKit views may transfer their display request to CALayer
+                // before this read; either pending invalidation is a real redraw request.
+                let invalidated = tints.contains { $0.needsDisplay || $0.layer?.needsDisplay() == true }
+                let lowPixel = tints.first.flatMap(renderCenterAlpha)
+                if !lowSaved || !invalidated {
+                    let registered = owner.editorPanel.map { panel in NSApp.windows.contains { $0 === panel } } ?? false
+                    print("DETAIL opacity redraw: saved=\(lowSaved), tints=\(tints.count), popupRegistered=\(registered), invalidated=\(invalidated)")
+                }
+                check(lowSaved && invalidated, "global opacity entry invalidates existing native glass surfaces")
+                let highSaved = owner.setGlobalGlassOpacity(0.90)
+                let highPixel = tints.first.flatMap(renderCenterAlpha)
+                let persisted = try XCTValue(owner.store.load())
+                check(highSaved && abs(persisted.settings.glassOpacity - 0.90) < 0.000_001 && abs(Palette.glassOpacity - 0.90) < 0.000_001,
+                      "global opacity persists through an independent load and updates the live palette")
+                check(lowPixel != nil && highPixel != nil && highPixel! > lowPixel! + 0.20,
+                      "higher global opacity changes the actual tint bitmap instead of only a stored number")
+                await settle()
+                check(abs(model.opacity - 0.90) < 0.000_001, "workbench appearance observes launcher configuration updates")
+                if let popup = owner.editorPanel {
+                    let before = "launcherVisible=\(owner.panel.isVisible), popupVisible=\(popup.isVisible), popupKey=\(popup.isKeyWindow), active=\(NSApp.isActive), picker=\(owner.pickerActive), menu=\(owner.menu != nil), responder=\(String(describing: popup.firstResponder)), marked=\((popup.firstResponder as? NSTextView)?.hasMarkedText() == true)"
+                    let dismissed = owner.route(key(window: popup, keyCode: 53, characters: "\u{1b}", flags: []))
+                    if !dismissed || owner.editorPanel != nil || !owner.panel.isVisible {
+                        print("DETAIL opacity Escape before=[\(before)] after=[handled=\(dismissed), editorPanelPresent=\(owner.editorPanel != nil), launcherVisible=\(owner.panel.isVisible), launcherKey=\(owner.panel.isKeyWindow), quitting=\(model.quitting)]")
+                    }
+                    check(dismissed && owner.editorPanel == nil && owner.panel.isVisible,
+                          "Escape closes the opacity popover while leaving the launcher open")
+                } else { check(false, "opacity popover remains available for keyboard dismissal") }
             }
-            let opacityCard = (owner.editorPanel?.contentView as? BindingPopoverSurface)?.card as? GlobalOpacityMenuView
-            check(opacityCard != nil && opacityCard?.window === owner.editorPanel && owner.editorPanel?.isVisible == true && owner.menu == nil,
-                  "the launcher opacity control opens its native glass popover rather than a system menu")
-            if let slider = opacityCard?.slider {
-                slider.doubleValue = 0.55
-                let actionSent = slider.action.map { NSApp.sendAction($0, to: slider.target, from: slider) } ?? false
-                let saved = try owner.store.load()
-                check(actionSent && saved?.settings.glassOpacity == 0.55 && owner.configuration.settings.glassOpacity == 0.55,
-                      "the opacity popover slider saves through its actual native control action")
-            } else { check(false, "the native opacity popover exposes its working slider") }
-            let tints = owner.editorPanel?.contentView.map { descendants($0).compactMap { $0 as? GlassTint } } ?? []
-            check(!tints.isEmpty, "global appearance fixture contains the production glass tint renderer")
-            tints.forEach { $0.needsDisplay = false }
-            let lowSaved = owner.setGlobalGlassOpacity(0.50)
-            // Layer-backed AppKit views may transfer their display request to CALayer
-            // before this read; either pending invalidation is a real redraw request.
-            let invalidated = tints.contains { $0.needsDisplay || $0.layer?.needsDisplay() == true }
-            let lowPixel = tints.first.flatMap(renderCenterAlpha)
-            if !lowSaved || !invalidated {
-                let registered = owner.editorPanel.map { panel in NSApp.windows.contains { $0 === panel } } ?? false
-                print("DETAIL opacity redraw: saved=\(lowSaved), tints=\(tints.count), popupRegistered=\(registered), invalidated=\(invalidated)")
-            }
-            check(lowSaved && invalidated, "global opacity entry invalidates existing native glass surfaces")
-            let highSaved = owner.setGlobalGlassOpacity(0.90)
-            let highPixel = tints.first.flatMap(renderCenterAlpha)
-            let persisted = try XCTValue(owner.store.load())
-            check(highSaved && abs(persisted.settings.glassOpacity - 0.90) < 0.000_001 && abs(Palette.glassOpacity - 0.90) < 0.000_001,
-                  "global opacity persists through an independent load and updates the live palette")
-            check(lowPixel != nil && highPixel != nil && highPixel! > lowPixel! + 0.20,
-                  "higher global opacity changes the actual tint bitmap instead of only a stored number")
-            await settle()
-            check(abs(model.opacity - 0.90) < 0.000_001, "workbench appearance observes launcher configuration updates")
-            if let popup = owner.editorPanel {
-                let dismissed = owner.route(key(window: popup, keyCode: 53, characters: "\u{1b}", flags: []))
-                check(dismissed && owner.editorPanel == nil && owner.panel.isVisible,
-                      "Escape closes the opacity popover while leaving the launcher open")
-            } else { check(false, "opacity popover remains available for keyboard dismissal") }
 
             let validBytes = try Data(contentsOf: owner.store.url)
             for invalid in [Double.nan, Double.infinity, -Double.infinity, 0.499, 0.901] {
@@ -274,6 +291,29 @@ enum WorkbenchNativeChecks {
     }
 
     private static func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+    /// SwiftUI mounts its AppKit control asynchronously after a route change.
+    /// Wait for the production control to be attached and laid out, rather than
+    /// assuming that one 25 ms UI turn is sufficient in every signed build.
+    private static func findMountedOpacitySlider(in window: NSWindow) async -> NSSlider? {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        repeat {
+            window.contentView?.layoutSubtreeIfNeeded()
+            if let root = window.contentView,
+               let slider = descendants(root).compactMap({ $0 as? NSSlider }).first(where: {
+                   $0.accessibilityLabel() == "界面不透明度" && $0.window === window
+                       && !$0.isHiddenOrHasHiddenAncestor && $0.isEnabled
+                       && $0.bounds.width > 0 && $0.bounds.height > 0
+               }) {
+                await settle()
+                root.layoutSubtreeIfNeeded()
+                if slider.window === window && !slider.isHiddenOrHasHiddenAncestor && slider.isEnabled
+                    && slider.bounds.width > 0 && slider.bounds.height > 0 {return slider}
+            }
+            await settle()
+        } while ContinuousClock.now < deadline
+        print("DETAIL opacity slider readiness timed out: visible=\(window.isVisible), key=\(window.isKeyWindow), root=\(String(describing: window.contentView)), policy=\(NSApp.activationPolicy().rawValue)")
+        return nil
+    }
     private static func checkLauncherSettingsResizing(window:NSWindow,recorder:NSButton) async -> [(Bool,String)] {
         guard let root=window.contentView else {return [(false,"launcher recorder has a real window hierarchy for resizing")]}
         let originalFrame=window.frame
