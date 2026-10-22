@@ -25,6 +25,9 @@
 !/Launcher/Tests/
 !/Launcher/scripts/
 !/Launcher/Resources/
+!/Launcher/Signing/
+/Launcher/Signing/*
+!/Launcher/Signing/Fangcun.entitlements
 !/Launcher/Artwork/
 /Launcher/Artwork/*
 !/Launcher/Artwork/AppIcons/

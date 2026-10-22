@@ -70,6 +70,16 @@ class PublicGateTests(unittest.TestCase):
         self.git("add", extra)
         self.assertNotEqual(self.check("--staged").returncode, 0)
 
+    def test_only_reviewed_entitlement_template_is_public(self):
+        path = "Launcher/Signing/Fangcun.entitlements"
+        self.write(path, (ROOT / path).read_text())
+        self.git("add", path)
+        self.assertEqual(self.check("--staged").returncode, 0)
+        unexpected = "Launcher/Signing/Personal.entitlements"
+        self.write(unexpected, "<plist><dict/></plist>\n")
+        self.git("add", unexpected)
+        self.assertNotEqual(self.check("--staged").returncode, 0)
+
     def test_secret_is_rejected_without_echo(self):
         token = "gh" + "p_" + "Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op8Qr9St0Uv1Wx2"
         self.write("README.md", "token = " + token + "\n")
