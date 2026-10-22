@@ -149,6 +149,20 @@ import LauncherCore
             check(refined.biometricAvailable && refined.biometricUnavailableReason == nil,"approved injected capability exposes the real opt-in path")
             check(await refined.enableBiometrics(),"explicit opt-in enrolls only through the injected biometric boundary")
             check(syntheticBiometrics.enrollments == 1 && syntheticBiometrics.secret?.count == 32,"biometric enrollment stores only a vault AES key, not the password")
+            let passiveVaultBefore=try Data(contentsOf:refined.vaultDataURL)
+            let passivePreferenceURL=directory.appendingPathComponent("refinement/protection.json")
+            let passivePreferencesBefore=try Data(contentsOf:passivePreferenceURL)
+            syntheticBiometrics.silentProbeResult=false
+            let passiveRefreshBefore=syntheticBiometrics.refreshes,passiveContainsBefore=syntheticBiometrics.containsCalls,passiveReadsBefore=syntheticBiometrics.reads,passiveRemovalsBefore=syntheticBiometrics.removals,passiveCancelsBefore=syntheticBiometrics.cancels
+            await refined.refreshBiometrics()
+            check(refined.biometricEnabled && refined.biometricAvailable && refined.errorMessage == nil,"enabled Touch ID stays error-free when a silent protected-key probe would not succeed")
+            check(syntheticBiometrics.refreshes == passiveRefreshBefore+1 && syntheticBiometrics.containsCalls == passiveContainsBefore,"passive protection-page refresh runs only the independent capability metadata preflight")
+            check(syntheticBiometrics.reads == passiveReadsBefore && syntheticBiometrics.enrollments == 1 && syntheticBiometrics.removals == passiveRemovalsBefore && syntheticBiometrics.cancels == passiveCancelsBefore,"passive refresh never reads, enrolls, removes, or cancels a protected key")
+            check(try Data(contentsOf:refined.vaultDataURL) == passiveVaultBefore && Data(contentsOf:passivePreferenceURL) == passivePreferencesBefore,"passive refresh leaves encrypted content and saved biometric opt-in byte-identical")
+            refined.errorMessage="Synthetic unrelated save error"
+            await refined.refreshBiometrics()
+            check(refined.errorMessage == "Synthetic unrelated save error","successful biometric refresh never clears an unrelated save error")
+            refined.errorMessage=nil
             let preferences=try Data(contentsOf:directory.appendingPathComponent("refinement/protection.json"))
             check(!String(decoding:preferences,as:UTF8.self).contains(password) && preferences.count<256,"nonsecret preferences contain neither password nor encryption key")
             refined.lock(reason:"biometric test")
@@ -157,6 +171,13 @@ import LauncherCore
             check(await refined.unlock(password:password),"password remains available after biometric cancellation")
             refined.lock(reason:"biometric success");syntheticBiometrics.failAuthentication=false
             check(await refined.unlockWithBiometrics(),"successful injected biometric authentication releases the key and decrypts the vault")
+            refined.lock(reason:"synthetic missing biometric key")
+            syntheticBiometrics.secret=nil
+            await refined.refreshBiometrics()
+            check(refined.biometricEnabled && refined.errorMessage == nil,"passive metadata availability makes no claim that a protected key still exists")
+            let missingKeyReadsBefore=syntheticBiometrics.reads
+            check(!(await refined.unlockWithBiometrics()) && !refined.isUnlocked && refined.documents.isEmpty && refined.errorMessage != nil && syntheticBiometrics.reads == missingKeyReadsBefore+1,"a genuinely missing key is rejected only by the explicit unlock attempt without exposing plaintext")
+            check(await refined.unlock(password:password),"password unlock remains available after an explicit missing-key failure")
             check(await refined.changePassword(current:password,new:"changed-synthetic-password",confirmation:"changed-synthetic-password"),"password change succeeds while revoking biometric access")
             check(!refined.biometricEnabled && syntheticBiometrics.secret == nil && !refined.isUnlocked,"password change removes biometric key before using a new vault salt")
             check(await refined.unlock(password:"changed-synthetic-password"),"new password remains the independent fallback")
@@ -204,10 +225,13 @@ import LauncherCore
     var salt:Data?
     var enrollments=0
     var failAuthentication=false
-    func containsKey() async -> Bool {secret != nil}
+    var silentProbeResult:Bool?
+    var refreshes=0,containsCalls=0,reads=0,removals=0,cancels=0
+    func refreshAvailability() async -> String? {refreshes += 1;return unavailableReason}
+    func containsKey() async -> Bool {containsCalls += 1;return silentProbeResult ?? (secret != nil)}
     func enroll(key:Data,salt:Data) async throws {secret=key;self.salt=salt;enrollments += 1}
-    func readKey(salt:Data) async throws -> Data {guard !failAuthentication,self.salt == salt,let secret else {throw VaultFailure.incorrectPassword};return secret}
-    func remove() async throws {secret=nil;salt=nil}
-    func removeSynchronously() throws {secret=nil;salt=nil}
-    func cancel() {}
+    func readKey(salt:Data) async throws -> Data {reads += 1;guard !failAuthentication,self.salt == salt,let secret else {throw VaultFailure.incorrectPassword};return secret}
+    func remove() async throws {removals += 1;secret=nil;salt=nil}
+    func removeSynchronously() throws {removals += 1;secret=nil;salt=nil}
+    func cancel() {cancels += 1}
 }
