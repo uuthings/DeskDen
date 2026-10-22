@@ -85,6 +85,7 @@ enum HealthCenterEvidenceDisplay {
     @Published private(set) var waitingForFreshSample = false
     @Published private(set) var assessmentOutcome: HealthCenterAssessmentOutcome = .none
     @Published private(set) var resultKind: HealthCenterResultKind = .files
+    @Published private(set) var isSpaceCleaning = false
     /// The shell owns the actual return route/detail; this label survives module navigation.
     var returnContext = "首页"
     weak var hostWindow: NSWindow?
@@ -119,6 +120,7 @@ enum HealthCenterEvidenceDisplay {
         }
         storage.onScanFinished = { [weak self] in
             guard let self, self.phase == .checking else { return }
+            if self.isSpaceCleaning { self.phase = .report; return }
             if self.storage.report?.stage == .cancelled { self.abandonAssessment(.cancelled) }
             else if self.storage.report?.stage == .report { self.finishAssessment() }
             else { self.abandonAssessment(.failed) }
@@ -154,9 +156,22 @@ enum HealthCenterEvidenceDisplay {
     func showOverview() {
         guard !storage.isProcessing, !applications.isProcessing else { return }
         if phase == .checking { cancelCheck(); return }
-        phase = .overview; category = .overview
+        phase = .overview; category = .overview; isSpaceCleaning = false
     }
-    func showReport() { phase = .report; category = .overview }
+    func showReport() { phase = .report; category = .overview; isSpaceCleaning = false }
+    /// Opens the existing file review without requiring or fabricating a health report.
+    /// Choosing this entry reads no directory and never starts processing.
+    func showSpaceCleaning() {
+        guard !storage.isScanning, !storage.isProcessing, !applications.isProcessing else { return }
+        isSpaceCleaning = true; phase = .report; category = .cache
+    }
+    func startStorageScan() {
+        guard !storage.isScanning, !storage.isProcessing, !applications.isProcessing else { return }
+        let kinds = Set(storage.scopes.map(\.kind))
+        guard !kinds.isEmpty else { storage.message = "请先选择要检查的缓存或诊断记录目录。"; return }
+        isSpaceCleaning = true; phase = .checking; resultKind = .files
+        storage.scan(kinds: kinds)
+    }
     var canShowResults: Bool { !storage.isScanning && !storage.isProcessing && !applications.isProcessing }
     func showResults(kind: HealthCenterResultKind? = nil) {
         guard canShowResults else { return }
@@ -167,6 +182,7 @@ enum HealthCenterEvidenceDisplay {
     func showCategory(_ next: HealthCenterCategory) { phase = .report; category = next }
     func startAssessment() {
         guard !storage.isScanning, !storage.isProcessing, !applications.isProcessing else { return }
+        isSpaceCleaning = false
         applications.clearSelection()
         beginAssessment()
         var kinds = Set<StorageReviewScopeKind>()
@@ -193,6 +209,7 @@ enum HealthCenterEvidenceDisplay {
     }
     func cancelCheck() {
         guard !storage.isProcessing else { return }
+        if isSpaceCleaning { storage.cancel(); phase = .report; return }
         storage.cancel(); abandonAssessment(.cancelled)
     }
     func beginProcessing() { resultKind = .files; storage.executeConfirmedPlan(); if storage.isProcessing { phase = .processing } }

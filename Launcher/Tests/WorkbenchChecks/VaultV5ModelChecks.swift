@@ -76,7 +76,7 @@ import LauncherCore
 
             let futureDirectory=directory.appendingPathComponent("future-preferences")
             try FileManager.default.createDirectory(at:futureDirectory,withIntermediateDirectories:true)
-            let futurePreferences=Data("{\"schema\":2,\"idleMinutes\":1}".utf8)
+            let futurePreferences=Data("{\"schema\":3,\"idleMinutes\":1}".utf8)
             let futureURL=futureDirectory.appendingPathComponent("protection.json");try futurePreferences.write(to:futureURL)
             let future=VaultModel(dataDirectory:futureDirectory,protectedDataAvailable:{true})
             future.changeIdleMinutes(10)
@@ -115,6 +115,70 @@ import LauncherCore
             check(!(await unknown.verifyRestore(password:password)) && !unknown.confirmRestore(),"unsupported backup contents never reach replacement confirmation")
             check(try unknownStore.read() == unknownBefore,"unsupported backup validation preserves the existing encrypted file")
             unknown.cancelRestore();model.lock(reason:"test complete")
+
+            let syntheticBiometrics=VaultSyntheticBiometrics()
+            let refined=VaultModel(dataDirectory:directory.appendingPathComponent("refinement"),protectedDataAvailable:{true},biometrics:syntheticBiometrics)
+            check(await refined.create(password:password,confirmation:password),"refinement vault starts with a password")
+            refined.newDocument();refined.updateTitle("Synthetic rich title")
+            let richBody="Synthetic 加粗正文 🔐\nSecond line"
+            let richRuns=[VaultTextStyleRun(location:0,length:10,family:.serif,size:18,bold:true,italic:true,underline:true),VaultTextStyleRun(location:10,length:(richBody as NSString).length-10)]
+            refined.updateRichBody(richBody,formatting:richRuns)
+            check(refined.selectedDocument?.formatting == richRuns,"body and semantic formatting are accepted together")
+            check(refined.addCategory("资料"),"user can add an encrypted category")
+            let group=refined.categories.last!
+            refined.moveSelected(to:group.id)
+            check(refined.selectedDocument?.effectiveCategoryID == group.id,"text moves into a custom category")
+            check(refined.renameCategory(group.id,to:"归档资料"),"category can be renamed without changing its identity")
+            check(refined.categoryTitle(refined.selectedDocument!) == "归档资料","text immediately reflects category rename")
+            check(!refined.addCategory("归档资料") && !refined.renameCategory(group.id,to:"未分类"),"duplicate and reserved category names are rejected")
+            check(refined.flush(),"rich text and categories share an encrypted revision")
+            let refinedBytes=try Data(contentsOf:refined.vaultDataURL)
+            check(!String(decoding:refinedBytes,as:UTF8.self).contains("归档资料") && !String(decoding:refinedBytes,as:UTF8.self).contains("Synthetic"),"category and rich body never appear in on-disk plaintext")
+            refined.lock(reason:"refinement round trip");check(await refined.unlock(password:password),"rich revision unlocks with the existing password")
+            check(refined.selectedDocument?.formatting == richRuns && refined.selectedDocument?.body == richBody && refined.categories.contains{$0.id == group.id && $0.name == "归档资料"},"formatting, Unicode body, and category round trip")
+            check(refined.deleteCategory(group.id,movingTo:"work"),"deleting a category moves its texts to the selected existing category")
+            check(refined.selectedDocument?.effectiveCategoryID == "work" && refined.selectedDocument?.body == richBody && refined.selectedDocument?.formatting == richRuns,"category deletion preserves text and formatting")
+            check(refined.deleteCategory("work"),"built-in category can also be deleted coherently")
+            check(refined.selectedDocument?.effectiveCategoryID == "unclassified","default category deletion preserves text in unclassified")
+            refined.updateBody("Plain synthetic replacement")
+            check(refined.selectedDocument?.formatting == nil,"plain-body replacement cannot retain stale formatting ranges")
+            syntheticBiometrics.available=false;await refined.refreshBiometrics()
+            check(!refined.biometricAvailable && refined.biometricUnavailableReason != nil,"missing injected capability is explained before enrollment")
+            check(!(await refined.enableBiometrics()) && syntheticBiometrics.enrollments == 0 && refined.isUnlocked,"unavailable capability never authenticates or weakens the unlocked password session")
+            syntheticBiometrics.available=true;await refined.refreshBiometrics()
+            check(refined.biometricAvailable && refined.biometricUnavailableReason == nil,"approved injected capability exposes the real opt-in path")
+            check(await refined.enableBiometrics(),"explicit opt-in enrolls only through the injected biometric boundary")
+            check(syntheticBiometrics.enrollments == 1 && syntheticBiometrics.secret?.count == 32,"biometric enrollment stores only a vault AES key, not the password")
+            let preferences=try Data(contentsOf:directory.appendingPathComponent("refinement/protection.json"))
+            check(!String(decoding:preferences,as:UTF8.self).contains(password) && preferences.count<256,"nonsecret preferences contain neither password nor encryption key")
+            refined.lock(reason:"biometric test")
+            syntheticBiometrics.failAuthentication=true
+            check(!(await refined.unlockWithBiometrics()) && !refined.isUnlocked && refined.documents.isEmpty,"cancelled biometric authentication exposes no plaintext")
+            check(await refined.unlock(password:password),"password remains available after biometric cancellation")
+            refined.lock(reason:"biometric success");syntheticBiometrics.failAuthentication=false
+            check(await refined.unlockWithBiometrics(),"successful injected biometric authentication releases the key and decrypts the vault")
+            check(await refined.changePassword(current:password,new:"changed-synthetic-password",confirmation:"changed-synthetic-password"),"password change succeeds while revoking biometric access")
+            check(!refined.biometricEnabled && syntheticBiometrics.secret == nil && !refined.isUnlocked,"password change removes biometric key before using a new vault salt")
+            check(await refined.unlock(password:"changed-synthetic-password"),"new password remains the independent fallback")
+            check(await refined.enableBiometrics(),"biometrics can be explicitly re-enrolled after password change")
+            check(await refined.disableBiometrics() && syntheticBiometrics.secret == nil && !refined.biometricEnabled,"opt-out deletes protected key and saved opt-in flag")
+            refined.lock(reason:"finished isolated refinement")
+            var invalid=PrivateDocument(body:"emoji 🔐")
+            invalid.formatting=[VaultTextStyleRun(location:0,length:100)]
+            check((try? VaultContents(documents:[invalid]).validate()) == nil,"out-of-range rich formatting is rejected")
+            invalid.formatting=[VaultTextStyleRun(location:0,length:1,size:100)]
+            check((try? VaultContents(documents:[invalid]).validate()) == nil,"unsupported font sizes are rejected")
+            invalid.formatting=nil;invalid.categoryID="missing-category"
+            check((try? VaultContents(documents:[invalid]).validate()) == nil,"orphaned custom category references are rejected")
+            let syntheticID="A1B2C3D4E5.example.synthetic-vault"
+            func capability(app:String?=syntheticID,group:[String]?=[syntheticID],profile:Bool=true,signature:Bool=true)->VaultBiometricSigningCapability {VaultBiometricSigningCapability.evaluate(bundleIdentifier:"example.synthetic-vault",applicationIdentifier:app,teamIdentifier:"A1B2C3D4E5",groups:group,embeddedProfileExists:profile,signatureValid:signature)}
+            check(capability().accessGroup == syntheticID,"matching signed claims select only the app's own exact group before the separate system probe")
+            check(capability(profile:false).accessGroup == nil,"self-asserted entitlements without an embedded profile cannot enable Touch ID")
+            check(capability(signature:false).accessGroup == nil,"untrusted or ad-hoc signature cannot enable Touch ID")
+            check(capability(app:"A1B2C3D4E5.example.other").accessGroup == nil,"another app identifier cannot enable Touch ID")
+            check(capability(app:"A1B2C3D4E5.*").accessGroup == nil,"wildcard entitlement claims cannot enable Touch ID")
+            check(capability(group:["A1B2C3D4E5.example.other"]).accessGroup == nil,"unrelated shared group cannot stand in for the app's own group")
+            check(capability(app:nil).unavailableReason != nil,"missing process application entitlement reports the unavailable-build reason")
         } catch {check(false,"unexpected isolated V5 check failure: \(error.localizedDescription)")}
         print("Vault V5 checks: \(checks-failures)/\(checks) passed")
         exit(failures == 0 ? 0:1)
@@ -132,4 +196,18 @@ import LauncherCore
 @MainActor private final class VaultCheckTextView:NSTextView {
     let history=UndoManager()
     override var undoManager:UndoManager? {history}
+}
+
+@MainActor private final class VaultSyntheticBiometrics:VaultBiometricStore {
+    var available=true
+    var secret:Data?
+    var salt:Data?
+    var enrollments=0
+    var failAuthentication=false
+    func containsKey() async -> Bool {secret != nil}
+    func enroll(key:Data,salt:Data) async throws {secret=key;self.salt=salt;enrollments += 1}
+    func readKey(salt:Data) async throws -> Data {guard !failAuthentication,self.salt == salt,let secret else {throw VaultFailure.incorrectPassword};return secret}
+    func remove() async throws {secret=nil;salt=nil}
+    func removeSynchronously() throws {secret=nil;salt=nil}
+    func cancel() {}
 }

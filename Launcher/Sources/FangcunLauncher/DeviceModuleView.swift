@@ -26,7 +26,7 @@ struct DeviceModuleView: View {
     @State private var processSort: DeviceProcessSort = .cpu
     @State private var ascending = false
     @State private var sheet: DeviceSheet?
-    @State private var gridHeight: CGFloat = 696
+    @State private var gridHeight: CGFloat = 620
     @State private var contentWidth: CGFloat = 864
     private var s: DeviceSnapshot { model.snapshot }
     init(model: DeviceStatusModel, onOpenNetwork: @escaping () -> Void = {}, onOpenHealth: @escaping () -> Void = {}, initialDetail: DeviceCardID? = nil, requestedDetail: Binding<DeviceCardID?> = .constant(nil), requestedDetailReturnTitle: String = "返回设备状态", onCloseRequestedDetail: @escaping () -> Void = {}) {
@@ -36,6 +36,7 @@ struct DeviceModuleView: View {
     }
 
     var body: some View {
+        ScrollViewReader { scrollProxy in
         ScrollView(detail == .processes ? [] : .vertical) {
             VStack(alignment: .leading, spacing: 0) {
                 if let detail { detailPage(detail) }
@@ -51,7 +52,7 @@ struct DeviceModuleView: View {
                         Text(error).font(.system(size: 11)).foregroundStyle(palette.warning).padding(.bottom, 12)
                     }
                     DeviceDashboardRepresentable(model: model, editing: editing, scale: 1, expanded: expanded, minimumHeight: 0, open: { card in
-                        if card == .traffic { onOpenNetwork() }
+                        if card == .traffic || card == .network { onOpenNetwork() }
                         else { detail = card; thermalSettings = false }
                     }, heightChanged: { height in if abs(height - gridHeight) > 0.5 { gridHeight = height } })
                         .frame(height: gridHeight)
@@ -68,13 +69,18 @@ struct DeviceModuleView: View {
                 }
             }.frame(maxWidth: .infinity, alignment: .topLeading).foregroundStyle(palette.text)
                 .background(GeometryReader { proxy in Color.clear.preference(key: DeviceContentWidth.self, value: proxy.size.width) })
+                .workbenchPageCanvas()
+                .id("device-page-top")
                 .background(WorkbenchOverlayScrollbars())
                 .accessibilityElement(children:.contain).accessibilityIdentifier(detail.map { "fc.page.device.\($0.rawValue)" } ?? "fc.page.device")
         }.onPreferenceChange(DeviceContentWidth.self) { contentWidth = $0 }.scrollContentBackground(.hidden).scrollBounceBehavior(.basedOnSize)
             .task { monitoringDrafts.load(model); await model.refreshNotificationPermission() }
             .onAppear { detailWasRequested = requestedDetail != nil; detail = requestedDetail ?? initialDetail }
             .onChange(of: requestedDetail) { _, value in if detail != value { detailWasRequested = value != nil; detail = value } }
-            .onChange(of: detail) { _, value in requestedDetail = value }
+            .onChange(of: detail) { _, value in
+                requestedDetail = value
+                DispatchQueue.main.async {scrollProxy.scrollTo("device-page-top", anchor: .top)}
+            }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in Task { await model.refreshNotificationPermission() } }
             .workbenchModal(item: $sheet) { item in DeviceSheetView(item: item, model: model) { sheet = nil } }
             .workbenchModal(isPresented: $library) { cardLibrary }
@@ -87,6 +93,7 @@ struct DeviceModuleView: View {
                 }
             }
             .workbenchModal(isPresented: $temperatureOpen, onRequestDismiss: { monitoringDrafts.temperatureCloseRequest += 1 }) { DeviceTemperatureDialog(model: model, drafts: monitoringDrafts) { temperatureOpen = false } }
+        }
     }
     private func closeDetail() {
         let returnToSource = detailWasRequested
@@ -99,7 +106,10 @@ struct DeviceModuleView: View {
                 ForEach(DeviceDashboardLayout.defaultCards.map(\.id), id: \.self) { id in
                     HStack(spacing: 8) {
                         Image(systemName: id.symbol).frame(width: 16)
-                        Text(id.title).font(.system(size: 12))
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(id.title).font(.system(size: 12))
+                            if id == .network || id == .traffic { Text("也可在网络监控集中查看").font(.system(size: 11)).foregroundStyle(palette.muted) }
+                        }
                         Spacer(minLength: 8)
                         let added = model.dashboardLayout.cards.first { $0.id == id }?.visible == true
                         if added { Text("已显示").font(.system(size: 11)).foregroundStyle(palette.muted) }
@@ -124,7 +134,12 @@ struct DeviceModuleView: View {
             case .memory: memoryDetail
             case .thermal: thermalDetail
             case .network: networkDetail
-            case .traffic: NetworkMonitorView(model: model)
+            case .traffic:
+                WBCard(title:"完整流量记录",symbol:"network") {
+                    Text("今日与周期流量、流量预算及历史记录已集中在网络监控中。")
+                        .font(.system(size:12)).foregroundStyle(palette.secondary)
+                    Button("打开网络监控",action:onOpenNetwork).buttonStyle(WBButtonStyle(primary:true))
+                }
             case .storage: storageDetail
             case .processes: processesDetail
             }
@@ -150,6 +165,7 @@ struct DeviceModuleView: View {
                     DeviceFact(label: "型号标识符", value: s.modelIdentifier)
                     DeviceFact(label: "芯片", value: s.chipName)
                     DeviceFact(label: "CPU", value: "\(s.physicalCPUCount) 核 · \(s.logicalCPUCount) 个逻辑处理器")
+                    DeviceFact(label: "核心构成", value: s.performanceCores.flatMap { p in s.efficiencyCores.map { "\(p) 个性能核 + \($0) 个能效核" } } ?? "系统未提供").accessibilityIdentifier("device-profile-core-composition")
                     DeviceFact(label: "统一内存", value: DeviceFormat.bytes(s.memory?.total))
                     DeviceFact(label: "显示器", value: NSScreen.screens.map(\.localizedName).joined(separator: "、"))
                 }
@@ -162,7 +178,7 @@ struct DeviceModuleView: View {
                     DeviceFact(label: "运行时间", value: DeviceFormat.duration(s.uptime))
                 }
             }
-            DeviceRuleHelp(text: "设备信息来自本机系统。硬件配置与可读传感器会因机型而异。", notice: true).accessibilityIdentifier("device-detail-profile-notice")
+            DeviceRuleHelp(text: "型号标识符（如 Mac14,6）是 Apple 用来区分硬件机型的代码，不是系统版本。性能核适合编译、渲染等繁重任务；能效核用较低功耗处理日常与后台任务，由 macOS 自动分配。设备信息来自本机系统，可读配置因机型而异。", notice: true).accessibilityIdentifier("device-detail-profile-notice")
         }
     }
     private func performanceDetail(memory: Bool) -> some View {

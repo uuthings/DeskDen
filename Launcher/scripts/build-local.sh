@@ -19,7 +19,8 @@ import datetime, hashlib, json, plistlib, sys
 root = Path.cwd()
 evidence = Path(sys.argv[1])
 required = ['Info.plist', 'PanelLogo.png', 'AppIcon.icns', 'AppIcons/qingbi-chenwu.icns', 'AppIcons/yuebai-yunhai.icns', 'AppIcons/nuanxia-xuanshan.icns', 'Workbench/ar-world.jpg',
-            'Workbench/thunder-cabin.jpg', 'Workbench/claude.png', 'Workbench/chatgpt.png']
+            'Workbench/thunder-cabin.jpg', 'Workbench/qingbi-chenwu.jpg', 'Workbench/yuebai-yunhai.jpg',
+            'Workbench/nuanxia-xuanshan.jpg', 'Workbench/claude.png', 'Workbench/chatgpt.png']
 for name in required:
     path = root / 'Resources' / name
     if not path.is_file() or path.is_symlink():
@@ -58,7 +59,7 @@ mkdir -p "$app_path/Contents/Resources/AppIcons"
 for icon_name in qingbi-chenwu yuebai-yunhai nuanxia-xuanshan; do
     cp "$PWD/Resources/AppIcons/$icon_name.icns" "$app_path/Contents/Resources/AppIcons/$icon_name.icns"
 done
-for resource_name in ar-world.jpg thunder-cabin.jpg claude.png chatgpt.png; do
+for resource_name in ar-world.jpg thunder-cabin.jpg qingbi-chenwu.jpg yuebai-yunhai.jpg nuanxia-xuanshan.jpg claude.png chatgpt.png; do
     cp "$PWD/Resources/Workbench/$resource_name" "$app_path/Contents/Resources/Workbench/$resource_name"
 done
 python3 - "$app_path" "$binary_dir/FangcunLauncher" "$evidence_path" <<'PY'
@@ -92,7 +93,7 @@ after = dict(before, files=files)
 (evidence / 'source-inputs-after.json').write_text(json.dumps(after, ensure_ascii=False, indent=2) + '\n')
 if before != after:
     raise SystemExit('Source inputs changed during the build; this candidate is not verified')
-resources = ['PanelLogo.png', 'AppIcon.icns', 'AppIcons/qingbi-chenwu.icns', 'AppIcons/yuebai-yunhai.icns', 'AppIcons/nuanxia-xuanshan.icns', 'Workbench/ar-world.jpg', 'Workbench/thunder-cabin.jpg', 'Workbench/claude.png', 'Workbench/chatgpt.png']
+resources = ['PanelLogo.png', 'AppIcon.icns', 'AppIcons/qingbi-chenwu.icns', 'AppIcons/yuebai-yunhai.icns', 'AppIcons/nuanxia-xuanshan.icns', 'Workbench/ar-world.jpg', 'Workbench/thunder-cabin.jpg', 'Workbench/qingbi-chenwu.jpg', 'Workbench/yuebai-yunhai.jpg', 'Workbench/nuanxia-xuanshan.jpg', 'Workbench/claude.png', 'Workbench/chatgpt.png']
 expected = {'Contents/Info.plist': root / 'Resources/Info.plist'}
 expected.update({'Contents/Resources/' + name: root / 'Resources' / name for name in resources})
 for name, source in expected.items():

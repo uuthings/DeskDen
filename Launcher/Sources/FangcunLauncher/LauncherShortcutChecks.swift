@@ -48,7 +48,7 @@ import LauncherCore
                   "failed custom shortcut persistence rolls back all registrations and preserves damaged bytes")
             recorder.cancel();try saved.write(to:owner.store.url)
             recorder.begin(owner:owner,target:.launcher);recorder.clearCandidate()
-            check(recorder.draft == HotKeyChoice.controlOptionSpace.bindingHotKey && owner.hotKey.shortcut == next,
+            check(recorder.draft == LauncherSettings.defaultLauncherHotKey && owner.hotKey.shortcut == next,
                   "restore-default remains an unsaved launcher candidate until explicit Save")
             recorder.cancel()
         } catch {check(false,"launcher shortcut native fixture: "+error.localizedDescription)}

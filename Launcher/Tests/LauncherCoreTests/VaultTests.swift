@@ -29,7 +29,7 @@ final class VaultTests:XCTestCase {
             XCTAssertEqual(try JSONDecoder().decode(VaultProtectionPreferences.self,from:JSONEncoder().encode(value)).validated(),value)
         }
         for minutes in [-1,0,2,60] {XCTAssertThrowsError(try VaultProtectionPreferences(idleMinutes:minutes).validated())}
-        var future=VaultProtectionPreferences();future.schema=2
+        var future=VaultProtectionPreferences();future.schema=3
         XCTAssertThrowsError(try future.validated())
     }
     func testCreateUnlockPreservesUnicodeAndDoesNotStorePlaintext() throws {

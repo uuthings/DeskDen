@@ -45,7 +45,7 @@ enum WorkbenchShortcutChecks {
                   "explicit save persists and installs the captured workbench combination")
 
             let saved = try Data(contentsOf: owner.store.url)
-            recorder.begin(owner: owner); recorder.acceptCandidate(owner.configuration.settings.hotKey.bindingHotKey)
+            recorder.begin(owner: owner); recorder.acceptCandidate(owner.configuration.settings.effectiveLauncherHotKey)
             check(!recorder.save() && recorder.error != nil && owner.configuration.settings.workbenchHotKey == next
                   && owner.bindingHotKeys.shortcuts[GlobalBindingHotKeys.workbenchKey] == next
                   && (try? Data(contentsOf: owner.store.url)) == saved,

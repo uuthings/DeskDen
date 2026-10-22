@@ -1,0 +1,134 @@
+import AppKit
+import CryptoKit
+import Foundation
+import LauncherCore
+import VaultV1Compatibility
+
+/// Reads both formats, but never claims that the retained 0.1 App can write v2.
+/// The v1 codec is an exact frozen copy of the released source, compiled as a
+/// separate module. All data, passwords and biometric storage here are synthetic.
+@main struct VaultFormatCompatibilityChecks {
+    @MainActor static func main() async {
+        _=NSApplication.shared;NSApp.setActivationPolicy(.prohibited)
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent("fangcun-vault-format-checks-\(UUID().uuidString)")
+        defer{try? FileManager.default.removeItem(at:directory)}
+        var checks=0,failures=0
+        func check(_ condition:Bool,_ message:String){checks += 1;if !condition {failures += 1};print("\(condition ? "PASS":"FAIL") \(message)")}
+        func rejects(_ action:()throws->Void)->Bool {do{try action();return false}catch{return true}}
+        do {
+            let password="synthetic-format-compatibility-password"
+            let oldContents=VaultV1Compatibility.VaultContents(documents:[VaultV1Compatibility.PrivateDocument(title:"Legacy synthetic title",body:"Legacy synthetic body 🔐",category:.work)])
+            let old=try VaultV1Compatibility.VaultCryptography.create(contents:oldContents,password:password)
+            let oldBytes=try VaultV1Compatibility.VaultCryptography.encoded(old.envelope)
+            let oldStore=VaultV1Compatibility.VaultFileStore(url:directory.appendingPathComponent("current/private.fangcunvault"))
+            try oldStore.write(old.envelope)
+            let preferencesURL=directory.appendingPathComponent("current/protection.json")
+            let oldPreferences=try JSONEncoder().encode(VaultV1Compatibility.VaultProtectionPreferences(idleMinutes:1))
+            try oldPreferences.write(to:preferencesURL)
+            let biometric=FormatSyntheticBiometrics()
+            let model=VaultModel(dataDirectory:directory.appendingPathComponent("current"),protectedDataAvailable:{true},biometrics:biometric)
+            check(model.idleMinutes == 1 && !model.biometricEnabled,"new reader accepts actual released schema1 preferences")
+            check(try Data(contentsOf:preferencesURL) == oldPreferences,"loading schema1 preferences does not migrate or rewrite the file")
+            check(await model.unlock(password:password),"new reader unlocks actual released version1 ciphertext")
+            check(model.selectedDocument?.body == "Legacy synthetic body 🔐" && model.selectedDocument?.category == .work,"legacy body and category survive read-only adoption")
+            model.lock(reason:"read-only compatibility check")
+            check(try Data(contentsOf:oldStore.url) == oldBytes,"unlocking and locking version1 without edits preserves every encrypted byte")
+            check(try VaultV1Compatibility.VaultCryptography.unlock(data:Data(contentsOf:oldStore.url),password:password).contents == oldContents,"retained old decoder still opens the untouched version1 file")
+            let legacyDecoded=try LauncherCore.VaultCryptography.unlock(data:oldBytes,password:password)
+            check(legacyDecoded.contents.version == 1,"new decoder records the source version until a real write")
+            let upgraded=try LauncherCore.VaultCryptography.seal(contents:legacyDecoded.contents,key:legacyDecoded.key,salt:legacyDecoded.envelope.salt)
+            let upgradedBytes=try LauncherCore.VaultCryptography.encoded(upgraded)
+            check(try LauncherCore.VaultCryptography.unlock(data:upgradedBytes,password:password).contents.version == 2,"even an ordinary successful seal of old content writes payload version2")
+            check(rejects{_ = try VaultV1Compatibility.VaultCryptography.unlock(data:upgradedBytes,password:password)},"actual released decoder rejects migrated version2 before any ordinary edit can strip new fields")
+            check(await model.unlock(password:password),"legacy file can be reopened for an explicit edit")
+            let blockedPrevious=oldStore.url.appendingPathExtension("previous")
+            try FileManager.default.createDirectory(at:blockedPrevious,withIntermediateDirectories:true)
+            model.updateBody("Synthetic pending migration")
+            check(!model.flush() && model.hasPendingSave,"failed migration keeps only the encrypted pending revision for retry")
+            check(try Data(contentsOf:oldStore.url) == oldBytes,"failed migration never changes the existing version1 ciphertext")
+            check(try VaultV1Compatibility.VaultCryptography.unlock(data:Data(contentsOf:oldStore.url),password:password).contents == oldContents,"actual old decoder still opens the preserved file after failed migration")
+            try FileManager.default.removeItem(at:blockedPrevious)
+            let body="Formatted synthetic body 🔐"
+            model.updateRichBody(body,formatting:[LauncherCore.VaultTextStyleRun(location:0,length:(body as NSString).length,family:.serif,size:18,bold:true)])
+            check(model.addCategory("Synthetic archive"),"new category is accepted before migration")
+            let category=model.categories.last!;model.moveSelected(to:category.id)
+            check(model.flush(),"successful rich edit commits the migrated ciphertext")
+            let newBytes=try Data(contentsOf:oldStore.url)
+            let current=try LauncherCore.VaultCryptography.unlock(data:newBytes,password:password)
+            check(current.contents.version == 2 && current.contents.documents.first?.formatting?.first?.bold == true && current.contents.documents.first?.effectiveCategoryID == category.id,"version2 preserves rich formatting and custom category references")
+            check(rejects{_ = try VaultV1Compatibility.VaultCryptography.unlock(data:newBytes,password:password)},"actual old password unlock rejects the new rich payload")
+            check(try Data(contentsOf:oldStore.url) == newBytes,"old decoder rejection leaves new encrypted data unchanged")
+            check(try LauncherCore.VaultCryptography.unlock(data:Data(contentsOf:oldStore.url.appendingPathExtension("previous")),password:password).contents.version == 1,"first successful migration retains the prior encrypted version1 revision")
+            model.changeIdleMinutes(10)
+            let schema2=try Data(contentsOf:preferencesURL)
+            let parsed=try JSONDecoder().decode(LauncherCore.VaultProtectionPreferences.self,from:schema2).validated()
+            check(parsed.schema == 2 && parsed.idleMinutes == 10,"explicit idle change writes schema2 preferences")
+            check(rejects{_ = try JSONDecoder().decode(VaultV1Compatibility.VaultProtectionPreferences.self,from:schema2).validated()},"actual old preference guard rejects schema2 instead of overwriting the new biometric flag")
+            await model.refreshBiometrics()
+            check(await model.enableBiometrics(),"synthetic opt-in persists the schema2 biometric flag")
+            model.changeIdleMinutes(5)
+            let optedIn=try Data(contentsOf:preferencesURL)
+            let optedInPreferences=try JSONDecoder().decode(LauncherCore.VaultProtectionPreferences.self,from:optedIn).validated()
+            check(optedInPreferences.schema == 2 && optedInPreferences.biometricEnabled,"idle changes preserve enabled biometrics in schema2")
+            let reloaded=VaultModel(dataDirectory:directory.appendingPathComponent("current"),protectedDataAvailable:{true},biometrics:biometric)
+            check(reloaded.biometricEnabled && reloaded.idleMinutes == 5,"new model retains schema2 protection settings across recreation")
+            check(try Data(contentsOf:preferencesURL) == optedIn,"loading schema2 protection settings is also read-only")
+            check(rejects{_ = try JSONDecoder().decode(VaultV1Compatibility.VaultProtectionPreferences.self,from:optedIn).validated()},"retained old parser cannot accept enabled schema2 preferences")
+            let oldParsed=try JSONDecoder().decode(LauncherCore.VaultProtectionPreferences.self,from:oldPreferences).validated()
+            let rewritten=try JSONEncoder().encode(oldParsed)
+            check(try JSONDecoder().decode(LauncherCore.VaultProtectionPreferences.self,from:rewritten).schema == 2,"encoding legacy preferences always emits the new schema")
+            let optInDirectory=directory.appendingPathComponent("legacy-opt-in")
+            let optInStore=VaultV1Compatibility.VaultFileStore(url:optInDirectory.appendingPathComponent("private.fangcunvault"))
+            try optInStore.write(old.envelope)
+            try oldPreferences.write(to:optInDirectory.appendingPathComponent("protection.json"))
+            let optInBiometrics=FormatSyntheticBiometrics()
+            let optInModel=VaultModel(dataDirectory:optInDirectory,protectedDataAvailable:{true},biometrics:optInBiometrics)
+            _=await optInModel.unlock(password:password);await optInModel.refreshBiometrics()
+            let optInBlocked=optInStore.url.appendingPathExtension("previous")
+            try FileManager.default.createDirectory(at:optInBlocked,withIntermediateDirectories:true)
+            check(!(await optInModel.enableBiometrics()) && optInBiometrics.enrollments == 0,"failed opt-in format migration never reaches biometric authentication or key enrollment")
+            check(try Data(contentsOf:optInStore.url) == oldBytes && Data(contentsOf:optInDirectory.appendingPathComponent("protection.json")) == oldPreferences,"failed opt-in migration preserves both legacy ciphertext and legacy preferences")
+            try FileManager.default.removeItem(at:optInBlocked)
+            check(await optInModel.enableBiometrics(),"explicit opt-in can migrate a read-only legacy vault once storage succeeds")
+            let optedInPayload=try Data(contentsOf:optInStore.url)
+            check(try LauncherCore.VaultCryptography.unlock(data:optedInPayload,password:password).contents.version == 2 && rejects{_ = try VaultV1Compatibility.VaultCryptography.unlock(data:optedInPayload,password:password)},"biometric opt-in also fences the old payload writer before storing the protected key")
+            optInModel.lock(reason:"finished opt-in migration checks")
+            var futureContents=current.contents;futureContents.version=3
+            check(rejects{_ = try JSONEncoder().encode(futureContents)} && rejects{_ = try LauncherCore.VaultCryptography.seal(contents:futureContents,key:current.key,salt:current.envelope.salt)},"unknown future payload cannot be encoded or silently downgraded by the current writer")
+            var futureObject=try JSONSerialization.jsonObject(with:JSONEncoder().encode(current.contents)) as! [String:Any]
+            futureObject["version"]=3
+            let futurePlaintext=try JSONSerialization.data(withJSONObject:futureObject)
+            let futureBox=try AES.GCM.seal(futurePlaintext,using:current.key,authenticating:Data("fangcun-encrypted-vault:1:pbkdf2-sha256-310000".utf8))
+            let futureEnvelope=LauncherCore.VaultEnvelope(rounds:LauncherCore.VaultCryptography.rounds,salt:current.envelope.salt,sealed:futureBox.combined!)
+            let futureStore=LauncherCore.VaultFileStore(url:directory.appendingPathComponent("future/private.fangcunvault"))
+            try futureStore.write(futureEnvelope);let futureBytes=try futureStore.read()
+            let futureModel=VaultModel(dataDirectory:directory.appendingPathComponent("future"),protectedDataAvailable:{true},biometrics:FormatSyntheticBiometrics())
+            check(!(await futureModel.unlock(password:password)) && futureModel.documents.isEmpty,"unsupported future payload never exposes or adopts a partially decoded document")
+            futureModel.newDocument();futureModel.updateBody("Synthetic attempted edit");_ = futureModel.flush()
+            check(try futureStore.read() == futureBytes,"unsupported future payload remains byte-identical after attempted edits")
+            let futurePreferences=Data("{\"schema\":3,\"idleMinutes\":1,\"biometricEnabled\":true}".utf8)
+            try futurePreferences.write(to:directory.appendingPathComponent("future/protection.json"))
+            let futureProtection=VaultModel(dataDirectory:directory.appendingPathComponent("future"),protectedDataAvailable:{true},biometrics:FormatSyntheticBiometrics())
+            futureProtection.changeIdleMinutes(10)
+            let futurePreferencesAfter=try Data(contentsOf:directory.appendingPathComponent("future/protection.json"))
+            check(!futureProtection.canChangeProtectionPreferences && futurePreferencesAfter == futurePreferences,"unknown future preferences are protected against overwrite")
+            var invalidPreferences=LauncherCore.VaultProtectionPreferences();invalidPreferences.schema=3
+            check(rejects{_ = try JSONEncoder().encode(invalidPreferences)},"current preference encoder rejects unsupported future schema")
+            model.lock(reason:"finished compatibility checks");reloaded.lock(reason:"finished compatibility checks")
+        }catch{check(false,"unexpected synthetic compatibility failure: \(error.localizedDescription)")}
+        print("Vault format compatibility checks: \(checks-failures)/\(checks) passed")
+        exit(failures == 0 ? 0:1)
+    }
+}
+@MainActor private final class FormatSyntheticBiometrics:VaultBiometricStore {
+    var available=true
+    var secret:Data?
+    var salt:Data?
+    var enrollments=0
+    func containsKey() async -> Bool {secret != nil}
+    func enroll(key:Data,salt:Data) async throws {secret=key;self.salt=salt;enrollments += 1}
+    func readKey(salt:Data) async throws -> Data {guard self.salt == salt,let secret else {throw LauncherCore.VaultFailure.incorrectPassword};return secret}
+    func remove() async throws {secret=nil;salt=nil}
+    func removeSynchronously() throws {secret=nil;salt=nil}
+    func cancel() {}
+}

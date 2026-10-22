@@ -9,17 +9,25 @@ struct ThemePalette: Sendable {
     let opacity: Double
     let light: Bool
 
-    init(theme: LauncherTheme = .arWorld, opacity: Double = 0.70, light: Bool = false) {
+    init(theme: LauncherTheme = .qingbiMist, opacity: Double = 0.70, light: Bool = false) {
         self.theme = theme
         self.opacity = opacity.isFinite ? min(0.90, max(0.50, opacity)) : 0.70
         self.light = light
     }
 
-    private var ar: Bool { theme == .arWorld }
+    private var ar: Bool { theme == .arWorld || theme == .qingbiMist || theme == .moonCloudSea }
+    private func themed(_ original: UInt32, _ jade: UInt32, _ moon: UInt32, _ warm: UInt32) -> UInt32 {
+        switch theme {
+        case .qingbiMist: jade
+        case .moonCloudSea: moon
+        case .warmSunset: warm
+        default: original
+        }
+    }
     var nsText: NSColor { color(light ? (ar ? 0x0E3347 : 0x2C302F) : (ar ? 0xF3FCFF : 0xF3F0E9)) }
     var nsSecondary: NSColor { color(light ? (ar ? 0x274F62 : 0x55534B) : (ar ? 0xE1F2FF : 0xE5DFD3)) }
     var nsMuted: NSColor { color(light ? (ar ? 0x48697B : 0x6C685E) : (ar ? 0xC8E4F3 : 0xC7C2B7)) }
-    var nsAccent: NSColor { color(light ? (ar ? 0x137A94 : 0x8B652C) : (ar ? 0x88EDFF : 0xE1BB7B)) }
+    var nsAccent: NSColor { color(themed(light ? (ar ? 0x137A94 : 0x8B652C) : (ar ? 0x88EDFF : 0xE1BB7B), light ? 0x197460:0x8BEAD1, light ? 0x59629B:0xC5D1FF, light ? 0x985E35:0xFFD29A)) }
     var text: Color { Color(nsColor: nsText) }
     var secondary: Color { Color(nsColor: nsSecondary) }
     var muted: Color { Color(nsColor: nsMuted) }
@@ -28,22 +36,22 @@ struct ThemePalette: Sendable {
     var success: Color { token(light ? (ar ? 0x117A60 : 0x347254) : (ar ? 0x91F4D3 : 0x9AD4B2)) }
     var warning: Color { token(light ? (ar ? 0x9E6113 : 0xA56B11) : (ar ? 0xFFDA93 : 0xEFB75D)) }
     var critical: Color { token(light ? (ar ? 0xB03851 : 0xAF443D) : (ar ? 0xFFBBC8 : 0xF4A59B)) }
-    var surface: Color { token(light ? (ar ? 0xD8EFF8 : 0xECE8DF) : (ar ? 0x0F304A : 0x1E242A), opacity) }
-    var raised: Color { token(light ? (ar ? 0xF5FDFF : 0xFFFBF2) : (ar ? 0x245470 : 0x3E4448), opacity) }
+    var surface: Color { token(themed(light ? (ar ? 0xD8EFF8 : 0xECE8DF) : (ar ? 0x0F304A : 0x1E242A), light ? 0xDFEEE6:0x132F2D, light ? 0xE5E9F8:0x242A43, light ? 0xF3E7DC:0x3A2D32), opacity) }
+    var raised: Color { token(themed(light ? (ar ? 0xF5FDFF : 0xFFFBF2) : (ar ? 0x245470 : 0x3E4448), light ? 0xF4FFF8:0x2B514C, light ? 0xF8F9FF:0x3B4568, light ? 0xFFF7ED:0x5E4750), opacity) }
     var border: Color { light ? token(0xFFFFFF, 0.85) : token(ar ? 0xB3EAFF : 0xE4D8BA, ar ? 112 / 255.0 : 89 / 255.0) }
     var line: Color { light ? token(ar ? 0x1F5D7C : 0x706445, 0.18) : token(ar ? 0xC2EDFF : 0xDED5BF, ar ? 61 / 255.0 : 54 / 255.0) }
-    var primary: Color { token(light ? (ar ? 0x175F7B : 0x8A642C) : (ar ? 0x97EDFF : 0xDFBB80)) }
-    var primaryText: Color { light ? .white : token(ar ? 0x06415A : 0x2B2923) }
-    var overlay: Color { token(light ? (ar ? 0xF2FAFD : 0xF9F5EA) : (ar ? 0x11364F : 0x232A2F), min(0.97, opacity + 0.16)) }
-    var sidebar: Color { token(light ? (ar ? 0xDAEEF7 : 0xEBE6DB) : (ar ? 0x0C2D45 : 0x181F26), opacity * 0.82) }
-    var chrome: Color { token(light ? (ar ? 0xE6F6FC : 0xF2EDDF) : (ar ? 0x11344D : 0x1A2026), opacity * 0.92) }
-    var shell: Color { token(light ? (ar ? 0xD8EEF7 : 0xEEE6D5) : (ar ? 0x082C46 : 0x12181F), opacity * 0.34) }
-    var navSelected: Color { token(light ? (ar ? 0x3BA5C2 : 0xB28A4B) : (ar ? 0x8ADFF5 : 0xC19D5E), opacity * (ar ? 0.42 : 0.48)) }
-    var navBorder: Color { light ? accent.opacity(0.34) : token(ar ? 0xC7F4FF : 0xEAD3A7, ar ? 112 / 255.0 : 103 / 255.0) }
-    var soft: Color { token(ar ? 0x7BE5FF : 0xE2C28E, ar ? 20 / 255.0 : 22 / 255.0) }
-    var control: Color { light ? raised : ar ? token(0x89D8F1, 25 / 255.0) : raised }
-    var controlBorder: Color { light ? accent.opacity(0.30) : ar ? token(0xD1F5FF, 80 / 255.0) : line }
-    var progressTrack: Color { light ? accent.opacity(0.14) : token(ar ? 0xCFEDFF : 0xD2BE8F, ar ? 46 / 255.0 : 27 / 255.0) }
+    var primary: Color { theme.isMountain ? accent : token(light ? (ar ? 0x175F7B : 0x8A642C) : (ar ? 0x97EDFF : 0xDFBB80)) }
+    var primaryText: Color { light ? .white : token(themed(ar ? 0x06415A : 0x2B2923, 0x103B32, 0x252C51, 0x483127)) }
+    var overlay: Color { token(themed(light ? (ar ? 0xF2FAFD : 0xF9F5EA) : (ar ? 0x11364F : 0x232A2F), light ? 0xF2FAF5:0x193E36, light ? 0xF4F6FD:0x2A3550, light ? 0xFCF5ED:0x45373A), min(0.97, opacity + 0.16)) }
+    var sidebar: Color { token(themed(light ? (ar ? 0xDAEEF7 : 0xEBE6DB) : (ar ? 0x0C2D45 : 0x181F26), light ? 0xD9EBE0:0x102C28, light ? 0xDEE5F5:0x20273E, light ? 0xEFE1D5:0x30262C), opacity * 0.82) }
+    var chrome: Color { token(themed(light ? (ar ? 0xE6F6FC : 0xF2EDDF) : (ar ? 0x11344D : 0x1A2026), light ? 0xE6F4EB:0x17362F, light ? 0xEAF0FC:0x29334D, light ? 0xF9EEE0:0x3B2C31), opacity * 0.66) }
+    var shell: Color { token(themed(light ? (ar ? 0xD8EEF7 : 0xEEE6D5) : (ar ? 0x082C46 : 0x12181F), light ? 0xD5EADD:0x0B2821, light ? 0xDDE4F5:0x171F35, light ? 0xF3E1D0:0x2C2226), opacity * 0.34) }
+    var navSelected: Color { theme.isMountain ? accent.opacity(opacity * 0.42) : token(light ? (ar ? 0x3BA5C2 : 0xB28A4B) : (ar ? 0x8ADFF5 : 0xC19D5E), opacity * (ar ? 0.42 : 0.48)) }
+    var navBorder: Color { theme.isMountain ? accent.opacity(light ? 0.34:0.44) : light ? accent.opacity(0.34) : token(ar ? 0xC7F4FF : 0xEAD3A7, ar ? 112 / 255.0 : 103 / 255.0) }
+    var soft: Color { theme.isMountain ? accent.opacity(0.09) : token(ar ? 0x7BE5FF : 0xE2C28E, ar ? 20 / 255.0 : 22 / 255.0) }
+    var control: Color { theme.isMountain ? raised : light ? raised : ar ? token(0x89D8F1, 25 / 255.0) : raised }
+    var controlBorder: Color { theme.isMountain ? accent.opacity(0.30) : light ? accent.opacity(0.30) : ar ? token(0xD1F5FF, 80 / 255.0) : line }
+    var progressTrack: Color { theme.isMountain ? accent.opacity(light ? 0.14:0.20) : light ? accent.opacity(0.14) : token(ar ? 0xCFEDFF : 0xD2BE8F, ar ? 46 / 255.0 : 27 / 255.0) }
     var shadow: Color { token(ar ? 0x002139 : 0x090D10, ar ? 33 / 255.0 : 56 / 255.0) }
     var highlight: Color { token(ar ? 0xE1FBFF : 0xFFF4CE, ar ? 0.20 : 0.075) }
 
@@ -51,7 +59,7 @@ struct ThemePalette: Sendable {
         LinearGradient(colors: [raised, surface], startPoint: .topLeading, endPoint: .bottomTrailing)
     }
     var navSelectedGradient: LinearGradient {
-        LinearGradient(colors: [navSelected, token(ar ? 0x228EB2 : 0x625541, opacity * (ar ? 0.24 : 0.28))], startPoint: .leading, endPoint: .trailing)
+        LinearGradient(colors: [navSelected, theme.isMountain ? accent.opacity(opacity * 0.16) : token(ar ? 0x228EB2 : 0x625541, opacity * (ar ? 0.24 : 0.28))], startPoint: .leading, endPoint: .trailing)
     }
 
     private func token(_ hex: UInt32, _ alpha: Double = 1) -> Color { Color(nsColor: color(hex, alpha)) }
@@ -60,7 +68,7 @@ struct ThemePalette: Sendable {
     }
 }
 
-private struct WorkbenchThemeKey: EnvironmentKey { static let defaultValue: LauncherTheme = .arWorld }
+private struct WorkbenchThemeKey: EnvironmentKey { static let defaultValue: LauncherTheme = .qingbiMist }
 private struct WorkbenchOpacityKey: EnvironmentKey { static let defaultValue = 0.70 }
 private struct WorkbenchBackgroundMotionKey: EnvironmentKey { static let defaultValue = true }
 
@@ -167,7 +175,7 @@ private final class WorkbenchPassthroughVisualEffectView:NSVisualEffectView {
 /// Only the separate decorative layer animates, so controls and text do not
 /// drift. Removing TimelineView while paused stops decoration work entirely.
 struct WorkbenchSceneBackground: View {
-    var theme: LauncherTheme = .arWorld
+    var theme: LauncherTheme = .qingbiMist
     var motionEnabled = true
     var active = true
     @Environment(\.workbenchOpacity) private var opacity
@@ -239,12 +247,20 @@ private struct WorkbenchAmbientDecoration: View {
                 var arc = Path()
                 arc.addArc(center: CGPoint(x: orbit.midX, y: orbit.midY), radius: 37, startAngle: .degrees(time.truncatingRemainder(dividingBy: 36) * 10), endAngle: .degrees(time.truncatingRemainder(dividingBy: 36) * 10 + 80), clockwise: false)
                 context.stroke(arc, with: .color(light.opacity(0.20)), lineWidth: 2)
-            } else {
+            } else if theme == .thunderCabin {
                 instrument(context: &context, center: CGPoint(x: size.width * 0.075, y: size.height * 0.15), radius: 2.5, phase: time + 3, duration: 8, light: light)
                 instrument(context: &context, center: CGPoint(x: size.width * 0.92, y: size.height * 0.86), radius: 2, phase: time + 6, duration: 11, light: Color(red: 1, green: 206 / 255.0, blue: 146 / 255.0))
                 let pulse = wave(time, duration: 15)
                 let rect = CGRect(x: size.width * 0.95, y: size.height * 0.10 + pulse * 18, width: 1, height: size.height * 0.22)
                 context.fill(Path(rect), with: .linearGradient(Gradient(colors: [.clear, light.opacity(0.15 + 0.25 * pulse), .clear]), startPoint: CGPoint(x: rect.midX, y: rect.minY), endPoint: CGPoint(x: rect.midX, y: rect.maxY)))
+            } else {
+                for index in 0..<3 {
+                    let phase = time / Double(38 + index * 9) + Double(index) * 0.8
+                    let x = size.width * (0.12 + Double(index) * 0.35) + sin(phase) * 22
+                    let y = size.height * (0.36 + Double(index) * 0.18)
+                    let rect = CGRect(x:x-size.width*0.28, y:y, width:size.width*0.56, height:size.height*0.12)
+                    context.fill(Path(ellipseIn:rect),with:.radialGradient(Gradient(colors:[.white.opacity(0.035),.clear]),center:CGPoint(x:rect.midX,y:rect.midY),startRadius:0,endRadius:rect.width*0.5))
+                }
             }
         }
         .allowsHitTesting(false)

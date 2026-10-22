@@ -20,15 +20,30 @@ import LauncherCore
         check(restored.dashboardLayout == model.dashboardLayout, "layout, visibility and style survive model recreation")
         model.undoLayoutChange()
         check(model.dashboardLayout == DeviceDashboardLayout(), "undo restores the complete prior layout")
-        let grid = DeviceDashboardNSView(frame: NSRect(x: 0, y: 0, width: 864, height: 696))
+        do {
+            let legacyDirectory = dir.appendingPathComponent("legacy-custom")
+            try FileManager.default.createDirectory(at: legacyDirectory, withIntermediateDirectories: true)
+            var legacy: [DeviceCardPreference] = [.init(.profile, columns: 4, rows: 8), .init(.memory, columns: 6, rows: 5, meter: .ring), .init(.storage, columns: 4, visible: false), .init(.thermal, columns: 4), .init(.traffic, columns: 4), .init(.cpu, columns: 4), .init(.network, columns: 4), .init(.processes, columns: 4)]
+            legacy.swapAt(0, 6)
+            let legacyData = try JSONSerialization.data(withJSONObject: ["schemaVersion": 3, "cards": try JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy))])
+            let legacyURL = legacyDirectory.appendingPathComponent("dashboard-layout.json")
+            try legacyData.write(to: legacyURL)
+            let migrated = DeviceStatusModel(dataDirectory: legacyDirectory)
+            check(migrated.dashboardLayout.schemaVersion == 4 && migrated.dashboardLayout.cards == legacy && migrated.layoutError == nil,
+                  "native loading preserves every legacy custom order, network visibility, size and meter choice")
+            check((try? Data(contentsOf: legacyURL)) == legacyData && !migrated.isSampling,
+                  "native custom-layout migration leaves its source file untouched and never starts sampling")
+        } catch { check(false, "legacy native custom-layout fixture: \(error.localizedDescription)") }
+        let grid = DeviceDashboardNSView(frame: NSRect(x: 0, y: 0, width: 864, height: 620))
         var opened: DeviceCardID?
         grid.configure(model: model, editing: false, light: false, open: { opened = $0 }, heightChanged: { _ in })
         grid.layoutSubtreeIfNeeded()
         func mouse(_ point: CGPoint) -> NSEvent { Self.mouse(grid.convert(point, to: nil)) }
-        check(grid.cards.count == 8, "native grid mounts all eight independent cards")
-        check(grid.cards[.profile]?.frame == CGRect(x: 0, y: 0, width: 280, height: 444), "normal tall profile matches the accepted V5 dimensions")
-        check(grid.cards[.cpu]?.frame.maxY == 696, "normal dashboard matches the V5 696-point composition")
-        check([DeviceCardID.memory, .storage, .thermal, .traffic].allSatisfy { grid.cards[$0]?.frame.height == 216 }, "all four summary cards share a compact content height")
+        check(grid.cards.count == 6, "native hardware dashboard mounts six independent default cards")
+        check(grid.cards[.profile]?.frame == CGRect(x: 0, y: 0, width: 864, height: 156), "normal device profile uses a full-width readable hardware strip")
+        check(grid.cards[.cpu]?.frame == CGRect(x: 0, y: 380, width: 426, height: 240) && grid.cards[.processes]?.frame == CGRect(x: 438, y: 380, width: 426, height: 240), "CPU and processes share the balanced half-width bottom band")
+        check([DeviceCardID.memory, .storage, .thermal].allSatisfy { grid.cards[$0]?.frame.height == 200 && grid.cards[$0]?.frame.minY == 168 }, "all three hardware summaries share the same compact 200-point band")
+        check(grid.cards[.network] == nil && grid.cards[.traffic] == nil && Set(model.dashboardLayout.cards.filter { !$0.visible }.map(\.id)) == [.network, .traffic], "network detail cards remain available as hidden preferences instead of duplicating the network monitor by default")
         let original = model.dashboardLayout
         grid.begin(id: .profile, event: mouse(grid.cards[.profile]!.frame.center), edge: nil)
         grid.move(event: mouse(CGPoint(x: 30, y: 420))); grid.end(event: mouse(CGPoint(x: 30, y: 420)))
@@ -43,14 +58,18 @@ import LauncherCore
         check(detailButton?.isHidden == false, "hover reveals the detail action without changing layout")
         cpuTile.mouseExited(with: mouse(cpuTile.frame.center))
         check(detailButton?.isHidden == true, "detail action hides after hover ends")
-        grid.activate(.network); check(opened == .network, "network speed opens its own detail route")
-        grid.activate(.traffic); check(opened == .traffic, "traffic statistics opens an independent detail route")
+        model.changeCard(.network) { $0.visible = true }
+        grid.configure(model: model, editing: false, light: false, open: { opened = $0 }, heightChanged: { _ in })
+        check(grid.cards[.network] != nil, "an explicitly added optional network card mounts without deleting the hardware cards")
+        grid.activate(.network); check(opened == .network, "the optional network card sends its identity to the shared module router")
+        model.undoLayoutChange()
+        grid.activate(.traffic); check(opened == .traffic, "traffic card identity remains supported by the shared module router")
         grid.configure(model: model, editing: true, light: false, open: { _ in }, heightChanged: { _ in })
         let memoryStart = grid.cards[.memory]!.frame.center
         grid.begin(id: .memory, event: mouse(memoryStart), edge: .s)
         grid.move(event: mouse(CGPoint(x: memoryStart.x, y: memoryStart.y + 5)))
         let memoryGhost = grid.subviews.compactMap { $0 as? DeviceDashboardTile }.first { $0.isGhost }
-        check(memoryGhost?.frame.height == 221, "summary edge resize starts smoothly at its projected height")
+        check(memoryGhost?.frame.height == 205, "summary edge resize starts smoothly at its 200-point projected height")
         grid.cancelInteraction()
         for edge in DeviceResizeEdge.allCases {
             grid.configure(model: model, editing: true, light: false, open: { _ in }, heightChanged: { _ in })
@@ -82,8 +101,8 @@ import LauncherCore
         grid.frame.size.width = 1360
         grid.configure(model: model, editing: true, light: false, minimumHeight: 740, expanded: true, open: { _ in }, heightChanged: { _ in })
         grid.layoutSubtreeIfNeeded()
-        check(grid.cards[.profile]?.frame.height == 444 && grid.cards[.memory]?.frame.height == 216, "wide view keeps profile and summary cards at content height")
-        check(grid.cards[.cpu]?.frame.height == 272 && grid.cards[.network]?.frame.height == 272 && grid.cards[.processes]?.frame.height == 272, "wide view matches the V5 272-point trend and process rows")
+        check(grid.cards[.profile]?.frame.height == 156 && [DeviceCardID.memory, .storage, .thermal].allSatisfy { grid.cards[$0]?.frame.height == 200 }, "wide view keeps profile and hardware summaries at content height")
+        check(grid.cards[.cpu]?.frame.height == 272 && grid.cards[.processes]?.frame.height == 272 && grid.cards[.network] == nil && grid.cards[.traffic] == nil, "wide view grows only useful CPU and process content without reviving hidden network cards")
         let hideButton = grid.cards[.cpu]!.subviews.compactMap { $0 as? NSButton }.first { $0.accessibilityLabel() == "隐藏CPU 使用率" }
         check(hideButton?.frame.width == 26, "wide view preserves readable control size rather than scaling the entire card")
         grid.frame.size.width = 728

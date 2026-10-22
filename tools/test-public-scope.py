@@ -56,6 +56,20 @@ class PublicGateTests(unittest.TestCase):
         self.git("add", "README.md")
         self.assertEqual(self.check("--staged").returncode, 0)
 
+    def test_mountain_assets_have_a_named_public_scope(self):
+        for folder, name in [("Artwork/Workbench", "qingbi-chenwu.png"),
+                             ("Resources/Workbench", "qingbi-chenwu.jpg")]:
+            path = "Launcher/" + folder + "/" + name
+            target = self.repo / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / path, target)
+            self.git("add", path)
+        self.assertEqual(self.check("--staged").returncode, 0)
+        extra = "Launcher/Artwork/Workbench/private-preview.png"
+        shutil.copyfile(ROOT / "Launcher/Artwork/Workbench/qingbi-chenwu.png", self.repo / extra)
+        self.git("add", extra)
+        self.assertNotEqual(self.check("--staged").returncode, 0)
+
     def test_secret_is_rejected_without_echo(self):
         token = "gh" + "p_" + "Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op8Qr9St0Uv1Wx2"
         self.write("README.md", "token = " + token + "\n")

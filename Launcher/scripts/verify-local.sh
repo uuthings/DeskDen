@@ -44,6 +44,8 @@ zsh ./scripts/check-device-monitoring.sh > "$verification_dir/device-monitoring-
 zsh ./scripts/check-calendar-model.sh > "$verification_dir/calendar-model-checks.log" 2>&1
 zsh ./scripts/check-vault-model.sh > "$verification_dir/vault-model-checks.log" 2>&1
 zsh ./scripts/check-vault-v5.sh > "$verification_dir/vault-v5-checks.log" 2>&1
+zsh ./scripts/check-vault-editor.sh > "$verification_dir/vault-editor-checks.log" 2>&1
+zsh ./scripts/check-vault-compatibility.sh > "$verification_dir/vault-compatibility-checks.log" 2>&1
 zsh ./scripts/check-ai-model.sh > "$verification_dir/ai-model-checks.log" 2>&1
 python3 - "$verification_dir" "$verify_preserved_designs" <<'PY'
 from pathlib import Path
@@ -130,6 +132,8 @@ checks = [
     ('models', 'calendar-model-checks.log', 'Calendar model checks', 'ratio'),
     ('models', 'vault-model-checks.log', 'Vault model checks', 'ratio'),
     ('models', 'vault-v5-checks.log', 'Vault V5 checks', 'ratio'),
+    ('models', 'vault-editor-checks.log', 'Vault editor checks', 'ratio'),
+    ('models', 'vault-compatibility-checks.log', 'Vault format compatibility checks', 'ratio'),
     ('models', 'ai-model-checks.log', 'AI model checks', 'ratio'),
 ]
 for group, name, title, style in checks:

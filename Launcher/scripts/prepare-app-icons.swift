@@ -3,7 +3,7 @@ import AppKit
 import Foundation
 
 // Resample the approved, unmodified artwork with aspect-fit onto transparent
-// square canvases. The portrait source keeps its proportions and clear edges.
+// square canvases. Rounded water-mirror sources keep their clear alpha edges.
 let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
 let names = ["qingbi-chenwu", "yuebai-yunhai", "nuanxia-xuanshan"]
 let variants = [(16, "16x16"), (32, "16x16@2x"), (32, "32x32"), (64, "32x32@2x"),

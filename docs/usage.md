@@ -1,15 +1,19 @@
 # Using Fangcun
 
-New configurations use Control-Option-Space to show/hide the launcher and Control-Option-W to open the workbench. Existing configurations retain saved shortcuts. Configure these in Launcher and General settings respectively.
+New configurations use Option-D to show/hide the launcher and Option-F to open the workbench. Existing configurations retain saved shortcuts and disabled choices. Configure these in Launcher and General settings respectively.
 
 The upper-right controls minimize, toggle full screen/window mode and close the current interface. Closing keeps background services running. Confirm **Quit Fangcun** in the Fangcun menu to fully exit; in-flight work completes first.
 
 - Home shows health, device summaries, calendar/reminders, weather, date, time and time zone. Complete reminders directly and undo them.
-- Device Status shows current readings. Network Monitor manages live and period traffic separately, with missing coverage shown explicitly.
-- Health Center checks first and shows a report. File operations and application exits require explicit selection and confirmation. Conflicting restore paths or insufficient evidence retain files for manual Finder review.
+- Device Status defaults to six hardware cards; network cards remain optional in the card library. Storage highlights available space with an explicitly used-capacity bar; memory highlights used memory and independently measured pressure. Network Monitor groups live, daily and period traffic, with missing coverage shown explicitly.
+- Health Center checks first and shows a report. Its separate Space Cleaning entry scans selected folders without replacing the health report. File operations and application exits require explicit selection and confirmation. Conflicting restore paths or insufficient evidence retain files for manual Finder review.
 - Calendar and Reminders supports local data and optional system sources. Local reminders do not require calendar permissions. System events are read-only; reminder writes depend on granted access and list permissions.
-- AI Usage distinguishes provider quotas, local Token activity, imported/manual readings and estimates.
-- Private Space requires a separate password of at least eight characters, with no default or password recovery. Navigation, close, idle and system protection events lock it. Backup restore validates first, confirms replacement and preserves the original encrypted copy.
-- Appearance controls themes, surface opacity and ambient motion. Motion stops in the background and respects Reduce Motion.
+- AI Usage distinguishes provider quotas, local Token activity, imported/manual readings and estimates. Only source-provided quota periods and membership metadata are shown; absent windows or unknown plan multipliers are not inferred.
+- Private Space requires a separate password of at least eight characters, with no default or password recovery. It includes encrypted text formatting and category management. Touch ID is optional on supported Macs and builds with the required Apple-authorized signing profile; the password remains available. Navigation, close, idle and system protection events lock it. Backup restore validates first, confirms replacement and preserves the original encrypted copy.
+- Appearance offers three mountain scenes, AR World and Thunder Cabin, plus surface opacity and ambient motion. New configurations default to Qingbi Morning Mist. The three matching rounded-square water-mirror icons update the running Dock and in-app branding, with Finder retaining the default installation icon. Motion stops in the background and respects Reduce Motion.
+
+The Mini summary is temporary. Expanding the full workbench from the top edge, menu, Dock or shortcut restores the same ordinary window and saved position. Clicking the workbench dismisses the transient launcher while preserving active editing and picker sessions. Launcher search matches Chinese, pinyin, English names, word initials and bounded fuzzy subsequences together.
+
+Private Space can read the original encrypted format without rewriting it on unlock. Saving changes or enabling Touch ID upgrades the encrypted contents to format 2. The original 0.1 app intentionally refuses that newer format; use the newer app for further access. Keep an encrypted backup before switching between app versions.
 
 File, web, Shortcut and script bindings perform their configured action; review targets before saving. Denied system permissions do not prevent local-only features from working.

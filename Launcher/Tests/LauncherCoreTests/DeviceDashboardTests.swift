@@ -2,43 +2,43 @@ import XCTest
 @testable import LauncherCore
 
 final class DeviceDashboardTests: XCTestCase {
-    func testAcceptedV5DefaultPackingMatchesFrozenOrdinaryWindow() {
-        let values = DeviceDashboardGrid.placements(.init(), width: 864)
+    func testHardwareFocusedDefaultUsesSixBalancedCards() {
+        let layout = DeviceDashboardLayout()
+        let values = DeviceDashboardGrid.placements(layout, width: 864)
         let frames = Dictionary(uniqueKeysWithValues: values.map { ($0.id, $0.frame) })
-        XCTAssertEqual(values.count, 8)
-        XCTAssertEqual(frames[.profile], CGRect(x: 0, y: 0, width: 280, height: 444))
-        XCTAssertEqual(frames[.memory], CGRect(x: 292, y: 0, width: 280, height: 216))
-        XCTAssertEqual(frames[.storage], CGRect(x: 584, y: 0, width: 280, height: 216))
-        XCTAssertEqual(frames[.thermal], CGRect(x: 292, y: 228, width: 280, height: 216))
-        XCTAssertEqual(frames[.traffic], CGRect(x: 584, y: 228, width: 280, height: 216))
-        for (index, id) in [DeviceCardID.cpu, .network, .processes].enumerated() {
-            XCTAssertEqual(frames[id], CGRect(x: CGFloat(index) * 292, y: 456, width: 280, height: 240))
+        XCTAssertEqual(values.count, 6)
+        XCTAssertEqual(frames[.profile], CGRect(x: 0, y: 0, width: 864, height: 156))
+        for (index, id) in [DeviceCardID.memory, .storage, .thermal].enumerated() {
+            XCTAssertEqual(frames[id], CGRect(x: CGFloat(index) * 292, y: 168, width: 280, height: 200))
         }
-        XCTAssertEqual(DeviceDashboardGrid.height(.init(), width: 864), 696)
+        XCTAssertEqual(frames[.cpu], CGRect(x: 0, y: 380, width: 426, height: 240))
+        XCTAssertEqual(frames[.processes], CGRect(x: 438, y: 380, width: 426, height: 240))
+        XCTAssertEqual(DeviceDashboardGrid.height(layout, width: 864), 620)
+        XCTAssertNil(frames[.network]); XCTAssertNil(frames[.traffic])
+        XCTAssertEqual(Set(layout.cards.map(\.id)), Set(DeviceCardID.allCases))
     }
-    func testAcceptedV5WideLayoutKeepsSummaryAndProfileSizes() {
+    func testHardwareWideLayoutGrowsUsefulTrendAndProcessContentOnly() {
         let layout = DeviceDashboardLayout()
         let values = DeviceDashboardGrid.placements(layout, width: 1360, minimumHeight: 800, expanded: true)
         let frames = Dictionary(uniqueKeysWithValues: values.map { ($0.id, $0.frame) })
-        XCTAssertEqual(frames[.profile]?.height, 444)
-        XCTAssertEqual(frames[.profile]!.width, (1360 - 24) / 3, accuracy: 0.001)
-        for id in [DeviceCardID.memory, .storage, .thermal, .traffic] { XCTAssertEqual(frames[id]?.height, 216) }
-        for id in [DeviceCardID.cpu, .network, .processes] { XCTAssertEqual(frames[id]?.height, 272); XCTAssertEqual(frames[id]?.minY, 456) }
-        XCTAssertEqual(values.map(\.frame.maxY).max(), 728)
+        XCTAssertEqual(frames[.profile], CGRect(x: 0, y: 0, width: 1360, height: 156))
+        for id in [DeviceCardID.memory, .storage, .thermal] { XCTAssertEqual(frames[id]?.height, 200); XCTAssertEqual(frames[id]?.minY, 168) }
+        for id in [DeviceCardID.cpu, .processes] { XCTAssertEqual(frames[id]?.height, 272); XCTAssertEqual(frames[id]?.minY, 380) }
+        XCTAssertEqual(values.map(\.frame.maxY).max(), 652)
         let metrics = DeviceDashboardGrid.metrics(layout, width: 1360, minimumHeight: 800, expanded: true)
         XCTAssertEqual(metrics.scale, 1); XCTAssertEqual(metrics.gap, 12)
         XCTAssertEqual(layout, .init())
     }
-    func testAcceptedV5CompactProjectionUsesTwoColumnsAndFullWidthProfile() {
+    func testHardwareCompactProjectionPreservesPreferencesAndReadableRows() {
         let layout = DeviceDashboardLayout(), values = DeviceDashboardGrid.placements(.init(), width: 736)
         let frames = Dictionary(uniqueKeysWithValues: values.map { ($0.id, $0.frame) })
-        XCTAssertEqual(frames[.profile], CGRect(x: 0, y: 0, width: 736, height: 224.5))
-        XCTAssertEqual(frames[.memory], CGRect(x: 0, y: 236.5, width: 362, height: 216))
-        XCTAssertEqual(frames[.storage], CGRect(x: 374, y: 236.5, width: 362, height: 216))
-        XCTAssertEqual(frames[.thermal], CGRect(x: 0, y: 464.5, width: 362, height: 216))
-        XCTAssertEqual(frames[.traffic], CGRect(x: 374, y: 464.5, width: 362, height: 216))
-        XCTAssertEqual(frames[.processes], CGRect(x: 0, y: 944.5, width: 736, height: 240))
-        XCTAssertEqual(DeviceDashboardGrid.height(layout, width: 736), 1184.5)
+        XCTAssertEqual(frames[.profile], CGRect(x: 0, y: 0, width: 736, height: 156))
+        XCTAssertEqual(frames[.memory], CGRect(x: 0, y: 168, width: 362, height: 200))
+        XCTAssertEqual(frames[.storage], CGRect(x: 374, y: 168, width: 362, height: 200))
+        XCTAssertEqual(frames[.thermal], CGRect(x: 0, y: 380, width: 362, height: 212))
+        XCTAssertEqual(frames[.cpu], CGRect(x: 374, y: 380, width: 362, height: 212))
+        XCTAssertEqual(frames[.processes], CGRect(x: 0, y: 604, width: 736, height: 240))
+        XCTAssertEqual(DeviceDashboardGrid.height(layout, width: 736), 844)
         XCTAssertEqual(layout.cards, DeviceDashboardLayout.defaultCards)
     }
     func testSummaryBandsHaveTwelvePointGapsWithoutRewritingPreferences() {
@@ -46,12 +46,12 @@ final class DeviceDashboardTests: XCTestCase {
         for width in [CGFloat(864), CGFloat(1360)] {
             let values = DeviceDashboardGrid.placements(layout, width: width)
             let frames = Dictionary(uniqueKeysWithValues: values.map { ($0.id, $0.frame) })
-            for id in [DeviceCardID.memory, .storage, .thermal, .traffic] { XCTAssertEqual(frames[id]?.height, DeviceDashboardGrid.summaryHeight) }
+            for id in [DeviceCardID.memory, .storage, .thermal] { XCTAssertEqual(frames[id]?.height, DeviceDashboardGrid.summaryHeight) }
             XCTAssertEqual(frames[.memory]?.minY, frames[.storage]?.minY)
-            XCTAssertEqual(frames[.thermal]?.minY, frames[.traffic]?.minY)
+            XCTAssertEqual(frames[.storage]?.minY, frames[.thermal]?.minY)
             XCTAssertEqual(frames[.storage]!.minX - frames[.memory]!.maxX, 12, accuracy: 0.001)
-            XCTAssertEqual(frames[.thermal]!.minY - frames[.memory]!.maxY, 12)
-            XCTAssertEqual(frames[.cpu]!.minY - frames[.profile]!.maxY, 12)
+            XCTAssertEqual(frames[.memory]!.minY - frames[.profile]!.maxY, 12)
+            XCTAssertEqual(frames[.cpu]!.minY - frames[.memory]!.maxY, 12)
         }
         XCTAssertEqual(layout.cards, DeviceDashboardLayout.defaultCards)
     }
@@ -74,7 +74,7 @@ final class DeviceDashboardTests: XCTestCase {
         for id in DeviceCardID.allCases {
             for size in id.sizes {
                 var layout = DeviceDashboardLayout()
-                layout.update(id) { $0.columns = size.columns; $0.rows = size.rows }
+                layout.update(id) { $0.columns = size.columns; $0.rows = size.rows; $0.visible = true }
                 for width in stride(from: 320, through: 1600, by: 53) {
                     let values = DeviceDashboardGrid.placements(layout, width: CGFloat(width), minimumHeight: 740)
                     for a in values {
@@ -111,7 +111,7 @@ final class DeviceDashboardTests: XCTestCase {
     }
     func testDiscreteResizePresetsRespectDirectionAndContentMinimums() {
         let normalCPU = DeviceCardPreference(.cpu, columns: 4, rows: 4)
-        XCTAssertEqual(DeviceCardID.cpu.resized(from: normalCPU, horizontal: true, growing: true), .init(8, 5, "完整趋势"))
+        XCTAssertEqual(DeviceCardID.cpu.resized(from: normalCPU, horizontal: true, growing: true), .init(6, 4, "宽幅趋势"))
         XCTAssertEqual(DeviceCardID.cpu.resized(from: normalCPU, horizontal: false, growing: true), .init(8, 5, "完整趋势"))
         XCTAssertNil(DeviceCardID.cpu.resized(from: normalCPU, horizontal: true, growing: false))
         XCTAssertEqual(DeviceCardID.thermal.resized(from: .init(.thermal, columns: 3, rows: 4), horizontal: false, growing: false), .init(6, 3, "横向摘要"))
@@ -123,7 +123,7 @@ final class DeviceDashboardTests: XCTestCase {
         var layout = DeviceDashboardLayout()
         layout.move(.cpu, before: .profile)
         XCTAssertEqual(Array(layout.cards.prefix(3).map(\.id)), [.cpu, .profile, .memory])
-        layout.move(.cpu, before: .network)
+        layout.move(.cpu, before: .processes)
         XCTAssertEqual(layout, DeviceDashboardLayout())
     }
     func testHiddenCardsRetainSizesStyleAndOrder() {
@@ -166,9 +166,26 @@ final class DeviceDashboardTests: XCTestCase {
         custom.swapAt(0, 5); custom[1].meter = .ring; custom[2].visible = false
         custom[3].columns = 6; custom[3].rows = 3
         let migrated = try decode(custom)
-        XCTAssertEqual(migrated.schemaVersion, 3)
+        XCTAssertEqual(migrated.schemaVersion, 4)
         XCTAssertEqual(migrated.cards, custom)
         XCTAssertEqual(try JSONDecoder().decode(DeviceDashboardLayout.self, from: JSONEncoder().encode(migrated)), migrated)
+    }
+    func testVersionThreeDefaultMigratesButEveryCustomChoiceIsRetained() throws {
+        let old: [DeviceCardPreference] = [.init(.profile, columns: 4, rows: 8), .init(.memory, columns: 4), .init(.storage, columns: 4), .init(.thermal, columns: 4), .init(.traffic, columns: 4), .init(.cpu, columns: 4), .init(.network, columns: 4), .init(.processes, columns: 4)]
+        func decode(_ cards: [DeviceCardPreference]) throws -> DeviceDashboardLayout {
+            let data = try JSONSerialization.data(withJSONObject: ["schemaVersion": 3, "cards": try JSONSerialization.jsonObject(with: JSONEncoder().encode(cards))])
+            return try JSONDecoder().decode(DeviceDashboardLayout.self, from: data)
+        }
+        XCTAssertEqual(try decode(old), DeviceDashboardLayout())
+        var custom = old
+        custom[1].meter = .ring; custom[2].visible = false; custom[0].columns = 12
+        custom.swapAt(3, 6)
+        let migrated = try decode(custom)
+        XCTAssertEqual(migrated.schemaVersion, 4)
+        XCTAssertEqual(migrated.cards, custom)
+        XCTAssertEqual(try JSONDecoder().decode(DeviceDashboardLayout.self, from: JSONEncoder().encode(migrated)), migrated)
+        let current = DeviceDashboardLayout()
+        XCTAssertEqual(try JSONDecoder().decode(DeviceDashboardLayout.self, from: JSONEncoder().encode(current)), current)
     }
     func testResizeAnchorsAllFourEdgesAndCorners() {
         let original = CGRect(x: 100, y: 200, width: 300, height: 250)

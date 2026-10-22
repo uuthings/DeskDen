@@ -91,18 +91,38 @@ public enum HorizontalNavigation: Equatable, Sendable {
         return .page(direction < 0 ? -1 : 1)
     }
 }
-/// The two approved environments share their layout and status semantics.
+/// The five environments share their layout and status semantics.
 /// Legacy prototype names decode here so an obsolete theme cannot create an
 /// additional appearance that the native app no longer supports.
 public enum LauncherTheme: String, Codable, CaseIterable, Sendable {
-    case arWorld, thunderCabin
+    case qingbiMist, moonCloudSea, warmSunset, arWorld, thunderCabin
 
-    public var title: String { self == .arWorld ? "AR 世界" : "雷霆机舱" }
-    public var backgroundResource: String { self == .arWorld ? "ar-world" : "thunder-cabin" }
+    public var title: String {
+        switch self {
+        case .qingbiMist: "青碧晨雾"
+        case .moonCloudSea: "月白云海"
+        case .warmSunset: "暖霞悬山"
+        case .arWorld: "AR 世界"
+        case .thunderCabin: "雷霆机舱"
+        }
+    }
+    public var backgroundResource: String {
+        switch self {
+        case .qingbiMist: "qingbi-chenwu"
+        case .moonCloudSea: "yuebai-yunhai"
+        case .warmSunset: "nuanxia-xuanshan"
+        case .arWorld: "ar-world"
+        case .thunderCabin: "thunder-cabin"
+        }
+    }
+    public var isMountain: Bool { self == .qingbiMist || self == .moonCloudSea || self == .warmSunset }
 
     public init(from decoder: Decoder) throws {
         let value = try decoder.singleValueContainer().decode(String.self)
         switch value {
+        case "qingbiMist": self = .qingbiMist
+        case "moonCloudSea": self = .moonCloudSea
+        case "warmSunset": self = .warmSunset
         case "thunderCabin", "dusk", "mecha": self = .thunderCabin
         default: self = .arWorld
         }
@@ -117,22 +137,24 @@ public enum LauncherAppearance: String, Codable, CaseIterable, Sendable {
 }
 
 public struct LauncherSettings: Codable, Equatable, Sendable {
+    public static let defaultLauncherHotKey = BindingHotKey(keyCode: 2, option: true)
+    public static let defaultWorkbenchHotKey = BindingHotKey(keyCode: 3, option: true)
     public var display: DisplayMode = .name
     public var hotKey: HotKeyChoice = .controlOptionSpace
     /// Nil preserves the legacy three-choice preference; recorded combinations override it.
-    public var launcherHotKey: BindingHotKey?
+    public var launcherHotKey: BindingHotKey? = Self.defaultLauncherHotKey
     public var effectiveLauncherHotKey:BindingHotKey {launcherHotKey ?? hotKey.bindingHotKey}
     public var directLaunchPrefix: KeyShortcutPrefix?
     public var applicationViewHotKey: BindingHotKey?
     /// New installations receive a dedicated workbench shortcut. Missing legacy
     /// fields stay disabled so migration cannot claim an already-used combination.
-    public var workbenchHotKey: BindingHotKey? = BindingHotKey(keyCode: 13, control: true, option: true)
+    public var workbenchHotKey: BindingHotKey? = Self.defaultWorkbenchHotKey
     public var hideOnLaunch = true
     public var resultLayout: ResultLayout = .grid
     public var reduceMotion = false
     public var lightAppearance = false
     public var glassOpacity: Double = 0.70
-    public var workbenchTheme: LauncherTheme = .arWorld
+    public var workbenchTheme: LauncherTheme = .qingbiMist
     public var workbenchAppearance: LauncherAppearance = .dark
     public var backgroundMotionEnabled = true
     // A saved version distinguishes a legal old value that needs clamping from

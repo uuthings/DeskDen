@@ -23,6 +23,28 @@ struct WorkbenchShellMetrics {
     }
 }
 
+private struct WorkbenchPageInsetsKey: EnvironmentKey {
+    static let defaultValue = EdgeInsets()
+}
+extension EnvironmentValues {
+    var workbenchPageInsets: EdgeInsets {
+        get {self[WorkbenchPageInsetsKey.self]}
+        set {self[WorkbenchPageInsetsKey.self] = newValue}
+    }
+}
+extension View {
+    /// The document gets reading margins; its enclosing scroll view occupies
+    /// the entire content viewport so the scrollbar stays at the window edge.
+    func workbenchPageCanvas() -> some View {modifier(WorkbenchPageCanvas())}
+}
+private struct WorkbenchPageCanvas: ViewModifier {
+    @Environment(\.workbenchPageInsets) private var insets
+    func body(content: Content) -> some View {
+        content.frame(maxWidth:1360,alignment:.topLeading).padding(insets)
+            .frame(maxWidth:.infinity,alignment:.top)
+    }
+}
+
 /// One content frame is shared by every module and detail. Typography never scales
 /// the entire page when the window grows; useful content receives the extra space.
 struct WorkbenchRootView: View {
@@ -35,6 +57,7 @@ struct WorkbenchRootView: View {
             let compact = metrics.compact
             let chromeHeight = metrics.chromeHeight
             let gutter = metrics.contentGutter
+            let pageInsets = EdgeInsets(top:expanded ? 26:compact ? 20:22,leading:gutter,bottom:expanded || compact ? 20:16,trailing:gutter)
             ZStack(alignment: .topLeading) {
                 WorkbenchSceneBackground(theme: model.theme, motionEnabled: model.backgroundMotion && !model.reduceMotion, active: model.windowVisible)
                 VStack(spacing: 0) {
@@ -49,6 +72,7 @@ struct WorkbenchRootView: View {
                             .accessibilityIdentifier("workbench-sidebar")
                         content(gutter: gutter, expanded: expanded, compact:compact)
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                            .environment(\.workbenchPageInsets,pageInsets)
                     }
                 }.padding(1)
                     .disabled(model.modals.isPresented || model.confirmingQuit || model.quitting)
@@ -101,16 +125,14 @@ struct WorkbenchRootView: View {
     @ViewBuilder private func content(gutter: CGFloat, expanded: Bool, compact:Bool) -> some View {
         if model.route == .device {
             DeviceModuleView(model: model.device, onOpenNetwork:{model.navigate(.network)},onOpenHealth:model.openHealth, requestedDetail:$model.deviceDetail,requestedDetailReturnTitle:model.requestedReadingReturnTitle,onCloseRequestedDetail:model.closeRequestedDeviceDetail)
-                .frame(maxWidth: 1360, maxHeight: .infinity, alignment: .top)
-                .padding(EdgeInsets(top: expanded ? 26:compact ? 20:22, leading: gutter, bottom: expanded || compact ? 20:16, trailing: gutter))
-                .frame(maxWidth: .infinity, alignment: .top)
+                .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.top)
         } else if model.route == .network {
             NetworkMonitorView(model:model.device)
-                .frame(maxWidth:1360,maxHeight:.infinity,alignment:.top)
-                .padding(EdgeInsets(top:expanded ? 26:compact ? 20:22,leading:gutter,bottom:expanded || compact ? 20:16,trailing:gutter))
-                .frame(maxWidth:.infinity,alignment:.top)
+                .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.top)
         } else {
-            ScrollView {
+            ScrollViewReader {scroll in
+              let resetToTop = { DispatchQueue.main.async {scroll.scrollTo("workbench-page-top",anchor:.top)} }
+              ScrollView {
                 Group {
                     switch model.route {
                     case .overview: WorkbenchOverview(device: model.device, calendar: model.calendar, health:model.health,context:model.context,navigate:model.navigate,openHealth:model.openHealth,openDevice:model.openDeviceReading)
@@ -124,11 +146,19 @@ struct WorkbenchRootView: View {
                     case .settings: WorkbenchSettingsView(model: model)
                     }
                 }
-                .frame(maxWidth: 1360, alignment: .topLeading)
-                .padding(EdgeInsets(top: expanded ? 26:compact ? 20:22, leading: gutter, bottom: expanded || compact ? 20:16, trailing: gutter))
-                .frame(maxWidth: .infinity, alignment: .top)
+                .workbenchPageCanvas()
+                .id("workbench-page-top")
                 .background(WorkbenchOverlayScrollbars())
-            }.scrollContentBackground(.hidden).scrollBounceBehavior(.basedOnSize)
+              }.scrollContentBackground(.hidden).scrollBounceBehavior(.basedOnSize)
+                .onChange(of:model.route) {_,_ in resetToTop()}
+                .onChange(of:model.settingsTab) {_,_ in if model.route == .settings {resetToTop()}}
+                .onReceive(model.ai.$destination.removeDuplicates()) {_ in if model.route == .ai {resetToTop()}}
+                .onReceive(model.calendar.$showSources.removeDuplicates()) {_ in if model.route == .calendar {resetToTop()}}
+                .onReceive(model.vault.$showingProtection.removeDuplicates()) {_ in if model.route == .vault {resetToTop()}}
+                .onReceive(model.health.$phase.removeDuplicates()) {_ in if model.route == .health {resetToTop()}}
+                .onReceive(model.health.$category.removeDuplicates()) {_ in if model.route == .health {resetToTop()}}
+                .onReceive(model.health.$resultKind.removeDuplicates()) {_ in if model.route == .health {resetToTop()}}
+            }
         }
     }
     private func sidebar(expanded: Bool) -> some View {

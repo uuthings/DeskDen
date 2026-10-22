@@ -45,6 +45,7 @@ struct NetworkMonitorView: View {
                 }
             }.frame(maxWidth: .infinity, alignment: .leading)
                 .background(GeometryReader { proxy in Color.clear.preference(key: NetworkContentWidth.self, value: proxy.size.width) })
+                .workbenchPageCanvas()
                 .background(WorkbenchOverlayScrollbars())
         }.onPreferenceChange(NetworkContentWidth.self) { contentWidth = $0 }.scrollContentBackground(.hidden).accessibilityElement(children:.contain).accessibilityIdentifier("fc.page.network")
             .task {drafts.load(model);openNotificationBudget();await model.refreshNotificationPermission()}
@@ -347,7 +348,13 @@ struct DeviceBudgetDialog: View {
         DeviceDialog(title: "流量预算", dismiss: close) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Toggle("启用流量预算", isOn: $drafts.budget.enabled).toggleStyle(.switch).disabled(drafts.savingBudget)
+                    HStack(spacing: 12) {
+                        Text("启用流量预算").font(.system(size: 12)).foregroundStyle(palette.text)
+                        Spacer(minLength: 12)
+                        Toggle("启用流量预算", isOn: $drafts.budget.enabled)
+                            .labelsHidden().toggleStyle(.switch).controlSize(.small).tint(palette.accent)
+                            .disabled(drafts.savingBudget).accessibilityIdentifier("fc.network.budget.enabled")
+                    }.frame(maxWidth: .infinity, minHeight: 28)
                     Group {
                     HStack(spacing: 12) {
                         DeviceRuleField("统计周期") { WBSelect("统计周期", selection: $drafts.budget.period, options: DeviceBudgetPeriod.allCases.map { ($0, $0.title) }) }

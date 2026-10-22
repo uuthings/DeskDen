@@ -49,6 +49,47 @@ final class AIUsageCoreTests: XCTestCase {
         XCTAssertEqual(snapshot?.shortWindow?.durationMinutes, 15)
         XCTAssertEqual(snapshot?.shortWindow?.resetsAt?.timeIntervalSince1970, 1_800_000_001)
     }
+    func testOnlyActualWeeklyWindowIsExposedWithoutInventingFiveHours() throws {
+        let snapshot = try XCTUnwrap(AIUsageLogParser.codexQuota([
+            "plan_type": "pro", "primary": NSNull(),
+            "secondary": ["used_percent": 42, "window_minutes": 10_080]
+        ], date: now, source: .localSession))
+        XCTAssertNil(snapshot.shortWindow)
+        XCTAssertEqual(snapshot.availableWindows.map(\.durationMinutes), [10_080])
+        XCTAssertEqual(snapshot.availableWindows.map(\.title), ["每周额度"])
+        XCTAssertEqual(snapshot.accountPlan, .pro)
+        XCTAssertEqual(AIProviderSummary(provider: .codex, state: .ready, snapshot: snapshot, detail: "").accountPlanDescription, "Pro")
+        XCTAssertFalse(try String(decoding: JSONEncoder().encode(snapshot), as: UTF8.self).contains("20x"))
+    }
+    func testPrimaryWeeklyOrNonstandardSecondaryKeepsActualDurations() throws {
+        let snapshot = try XCTUnwrap(AIUsageLogParser.codexQuota([
+            "primary": ["usedPercent": 15, "windowDurationMins": 10_080],
+            "secondary": ["usedPercent": 25, "windowDurationMins": 1440], "planType": "plus"
+        ], date: now, source: .localSession))
+        XCTAssertEqual(snapshot.availableWindows.map(\.durationMinutes), [1440, 10_080])
+        XCTAssertEqual(snapshot.availableWindows.map(\.usedPercent), [25, 15])
+        XCTAssertEqual(snapshot.accountPlan, .plus)
+    }
+    func testUnknownMembershipIsNotInferredFromQuotaOrRetainedAsArbitraryText() throws {
+        for plan in ["unknown", "PRIVATE_ACCOUNT_SENTINEL", "max20", "pro_20x"] {
+            let snapshot = try XCTUnwrap(AIUsageLogParser.codexQuota([
+                "plan_type": plan, "primary": ["used_percent": 20, "window_minutes": 300]
+            ], date: now, source: .localSession))
+            XCTAssertNil(snapshot.accountPlan)
+            XCTAssertFalse(try String(decoding: JSONEncoder().encode(snapshot), as: UTF8.self).contains(plan))
+        }
+        let claude = try XCTUnwrap(AIUsageLogParser.claudeQuota(["seven_day": ["used_percentage": 15], "plan_type": "pro"], date: now))
+        XCTAssertNil(claude.accountPlan)
+        XCTAssertEqual(claude.availableWindows.map(\.durationMinutes), [10_080])
+    }
+    func testExistingQuotaJSONWithoutPlanRemainsCompatible() throws {
+        let data = Data("{\"provider\":\"codex\",\"source\":\"localSession\",\"observedAt\":0,\"shortWindow\":{\"usedPercent\":12,\"durationMinutes\":300}}".utf8)
+        let decoded = try JSONDecoder().decode(AIQuotaSnapshot.self, from: data)
+        XCTAssertNil(decoded.accountPlan)
+        XCTAssertEqual(decoded.shortWindow?.usedPercent, 12)
+        var withPlan = decoded; withPlan.accountPlan = .pro
+        XCTAssertEqual(try JSONDecoder().decode(AIQuotaSnapshot.self, from: JSONEncoder().encode(withPlan)), withPlan)
+    }
     func testClaudeCachesAreDistinctFromFreshInput() throws {
         var parser = AIUsageLogParser()
         parser.consume(try line(["type":"assistant", "timestamp":"2026-10-18T10:00:00.000Z", "message":["id":"m1", "model":"claude-test", "usage":["input_tokens":10, "output_tokens":20, "cache_read_input_tokens":30, "cache_creation_input_tokens":40], "content":[["type":"text", "text":"PRIVATE_SENTINEL"]]]]), provider: .claude, sourceID: "s")

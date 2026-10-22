@@ -105,12 +105,12 @@ struct DeviceCardContent: View {
         }.frame(maxWidth: .infinity, alignment: trailing ? .trailing : .leading)
     }
     private func thermal(_ size: CGSize) -> some View {
-        VStack(alignment: .leading, spacing: 11) {
-            DeviceTemperatureReadings(snapshot: snapshot, size: expanded ? 28 : 26).frame(height: 49)
-            DeviceFanRows(snapshot: snapshot, paired: true)
-            VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 8) {
+            DeviceTemperatureReadings(snapshot: snapshot, size: 26, alignedColumns: true).frame(height: 49)
+            DeviceFanRows(snapshot: snapshot, paired: true, alignedColumns: true).frame(height: 32, alignment: .top)
+            VStack(alignment: .leading, spacing: 6) {
                 DevicePowerLine(snapshot: snapshot, compact: true)
-                Text("热状态\(DeviceFormat.thermal(snapshot.thermalState)) · 系统自动调节")
+                Text("热状态：\(DeviceFormat.thermal(snapshot.thermalState)) · 系统调节")
                     .font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
             }
         }
@@ -131,6 +131,8 @@ struct DeviceCardContent: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(snapshot.deviceName).font(.system(size: 23, weight: .medium)).lineLimit(1)
             Text(snapshot.chipName).font(.system(size: 12)).foregroundStyle(palette.secondary).lineLimit(1)
+            Text("型号标识：\(snapshot.modelIdentifier)").font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
+                .help("这是 Apple 用于区分硬件机型的标识，不是 macOS 版本。")
         }
     }
     private func profileMetric(_ value: String, _ label: String) -> some View {
@@ -144,7 +146,8 @@ struct DeviceCardContent: View {
             if size.width > 520 && size.height < 120 {
                 HStack(alignment: .center, spacing: 16) {
                     identity.frame(width: min(230, max(160, size.width * 0.25)), alignment: .leading)
-                    profileMetric("\(snapshot.physicalCPUCount) 核", "CPU 核心")
+                    profileMetric("\(snapshot.physicalCPUCount) 核 CPU", coreComposition)
+                        .help(coreExplanation)
                     profileMetric(DeviceFormat.capacity(snapshot.memory?.total), "统一内存")
                     profileMetric(DeviceFormat.capacity(snapshot.disk?.total), "内置存储")
                     profileMetric(systemVersion, "操作系统")
@@ -153,7 +156,6 @@ struct DeviceCardContent: View {
                 VStack(alignment: .leading, spacing: size.height > 260 ? 23 : 14) {
                     VStack(alignment: .leading, spacing: 5) {
                         identity
-                        Text(snapshot.modelIdentifier).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
                     }.padding(.top, size.height > 260 ? 8 : 0)
                     if size.width > 450 {
                         HStack(alignment: .top, spacing: 24) {
@@ -176,7 +178,7 @@ struct DeviceCardContent: View {
         VStack(spacing: includeSystem == nil ? 15 : 9) {
             if includeSystem != true {
                 DeviceCompactFact(label: "CPU 核心", value: "\(snapshot.physicalCPUCount) 核")
-                DeviceCompactFact(label: "核心构成", value: snapshot.performanceCores.flatMap { p in snapshot.efficiencyCores.map { "\(p) 性能 + \($0) 能效" } } ?? "暂无读数")
+                DeviceCompactFact(label: "核心构成", value: coreComposition).help(coreExplanation)
                 DeviceCompactFact(label: "统一内存", value: DeviceFormat.capacity(snapshot.memory?.total))
             }
             if includeSystem != false {
@@ -186,54 +188,63 @@ struct DeviceCardContent: View {
             }
         }.frame(maxWidth: .infinity)
     }
-    private func memoryReading(size: CGFloat = 28) -> some View {
+    private var coreComposition: String {
+        snapshot.performanceCores.flatMap { p in snapshot.efficiencyCores.map { "\(p) 性能核 + \($0) 能效核" } } ?? "核心构成未提供"
+    }
+    private var coreExplanation: String { "性能核适合编译、渲染等繁重任务；能效核以较低功耗处理日常与后台任务。macOS 会自动分配，不需要手动切换。" }
+    private func capacityReading(label: String, value: UInt64?, total: UInt64?, percent: Double?, size: CGFloat = 28) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("已用内存").font(.system(size: 11)).foregroundStyle(palette.secondary).frame(height: 16)
+            HStack(spacing: 8) {
+                Text(label).foregroundStyle(palette.secondary)
+                Spacer(minLength: 0)
+                Text(percent.map { "已用 \(String(format: "%.1f", $0))%" } ?? "等待采样").foregroundStyle(palette.muted).monospacedDigit()
+            }.font(.system(size: 11)).lineLimit(1).frame(height: 16)
+                .accessibilityElement(children: .contain).accessibilityIdentifier("fc.device.capacity.\(card.id.rawValue).label")
             HStack(alignment: .firstTextBaseline, spacing: 3) {
-                DeviceReading(value: DeviceFormat.capacity(snapshot.memory?.used), size: size)
-                Text("/ \(DeviceFormat.capacity(snapshot.memory?.total))").font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(1)
+                DeviceReading(value: DeviceFormat.capacity(value), size: size)
+                Text("/ \(DeviceFormat.capacity(total))").font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(1)
             }.frame(height: 32, alignment: .leading)
+                .accessibilityElement(children: .contain).accessibilityIdentifier("fc.device.capacity.\(card.id.rawValue).value")
         }.frame(height: 52, alignment: .topLeading)
+            .accessibilityElement(children: .contain).accessibilityIdentifier("fc.device.capacity.\(card.id.rawValue).primary")
     }
     private func memory(_ size: CGSize) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             if card.meter == .ring {
-                HStack(spacing: 10) { DeviceUsageRing(value: snapshot.memory?.percent, tone: DeviceAppearance.pressure(snapshot.memory?.pressure, palette: palette)).frame(width: 36, height: 36); memoryReading(size: size.width < 240 ? 22 : 28) }.frame(height: 52)
+                HStack(spacing: 10) { DeviceUsageRing(value: snapshot.memory?.percent, tone: DeviceAppearance.pressure(snapshot.memory?.pressure, palette: palette)).frame(width: 36, height: 36); capacityReading(label: "已用内存", value: snapshot.memory?.used, total: snapshot.memory?.total, percent: snapshot.memory?.percent, size: size.width < 240 ? 22 : 28) }.frame(height: 52)
                 Color.clear.frame(height: 5)
             } else {
-                memoryReading()
+                capacityReading(label: "已用内存", value: snapshot.memory?.used, total: snapshot.memory?.total, percent: snapshot.memory?.percent)
                 DeviceUsageBar(value: snapshot.memory?.percent, tone: DeviceAppearance.pressure(snapshot.memory?.pressure, palette: palette))
+                    .accessibilityIdentifier("fc.device.capacity.memory.bar")
             }
             VStack(spacing: 6) {
-                DeviceCompactFact(label: "可用内存", value: DeviceFormat.capacity(snapshot.memory?.available))
-                DeviceCompactFact(label: "内存压力", value: DeviceFormat.pressure(snapshot.memory?.pressure ?? .unknown))
-                DeviceCompactFact(label: "压缩内存", value: DeviceFormat.capacity(snapshot.memory?.compressed))
-                DeviceCompactFact(label: "交换已用", value: DeviceFormat.capacity(snapshot.memory?.swapUsed))
+                DeviceCompactFact(label: "可用内存", value: DeviceFormat.capacity(snapshot.memory?.available)).accessibilityIdentifier("fc.device.capacity.memory.fact.0")
+                DeviceCompactFact(label: "内存压力", value: DeviceFormat.pressure(snapshot.memory?.pressure ?? .unknown)).accessibilityIdentifier("fc.device.capacity.memory.fact.1")
+                DeviceCompactFact(label: "压缩 / 交换", value: "\(DeviceFormat.capacity(snapshot.memory?.compressed)) / \(DeviceFormat.capacity(snapshot.memory?.swapUsed))").accessibilityIdentifier("fc.device.capacity.memory.fact.2")
                 if size.height > 200 { DeviceCompactFact(label: "App 内存", value: DeviceFormat.capacity(snapshot.memory?.application)) }
                 if size.height > 230 { DeviceCompactFact(label: "缓存文件", value: DeviceFormat.capacity(snapshot.memory?.cached)) }
             }
         }
     }
     private func storage(_ size: CGSize) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 6) {
             if card.meter == .ring {
                 HStack(spacing: 10) {
                     DeviceUsageRing(value: snapshot.disk?.percent, tone: DeviceAppearance.storage(snapshot.disk?.percent, palette: palette)).frame(width: 36, height: 36)
-                    measure("已用空间", value: DeviceFormat.capacity(snapshot.disk?.used))
+                    capacityReading(label: "可用空间", value: snapshot.disk?.available, total: snapshot.disk?.total, percent: snapshot.disk?.percent, size: size.width < 240 ? 22 : 28)
                 }.frame(height: 52)
+                Color.clear.frame(height: 5)
             } else {
-                measure("\(snapshot.disk?.name ?? "磁盘") · 已用空间", value: DeviceFormat.capacity(snapshot.disk?.used))
+                capacityReading(label: "可用空间", value: snapshot.disk?.available, total: snapshot.disk?.total, percent: snapshot.disk?.percent)
                 DeviceUsageBar(value: snapshot.disk?.percent, tone: DeviceAppearance.storage(snapshot.disk?.percent, palette: palette))
+                    .accessibilityIdentifier("fc.device.capacity.storage.bar")
             }
             VStack(spacing: 6) {
-                DeviceCompactFact(label: "可用空间", value: DeviceFormat.capacity(snapshot.disk?.available))
-                DeviceCompactFact(label: "总容量", value: DeviceFormat.capacity(snapshot.disk?.total))
+                DeviceCompactFact(label: "已用空间", value: DeviceFormat.capacity(snapshot.disk?.used)).accessibilityIdentifier("fc.device.capacity.storage.fact.0")
+                DeviceCompactFact(label: "宗卷名称", value: snapshot.disk?.name ?? "暂无读数").accessibilityIdentifier("fc.device.capacity.storage.fact.1")
+                DeviceCompactFact(label: "文件系统", value: snapshot.disk?.fileSystem ?? "暂无读数").accessibilityIdentifier("fc.device.capacity.storage.fact.2")
             }
-            HStack {
-                Text(snapshot.disk?.fileSystem ?? "暂无读数")
-                Spacer(minLength: 8)
-                Text((snapshot.disk?.percent).map { "已用 \(String(format: "%.1f", $0))%" } ?? "等待有效采样")
-            }.font(.system(size: 11)).foregroundStyle(palette.muted).monospacedDigit()
             if size.height > 200 { DeviceCompactFact(label: "读取", value: DeviceFormat.rate(snapshot.disk?.readBytesPerSecond)) }
             if size.height > 230 { DeviceCompactFact(label: "写入", value: DeviceFormat.rate(snapshot.disk?.writeBytesPerSecond)) }
         }
@@ -285,7 +296,7 @@ struct DeviceCompactFact: View {
             Text(label).foregroundStyle(palette.muted).lineLimit(1)
             Spacer(minLength: 0)
             Text(value).foregroundStyle(palette.secondary).lineLimit(1).truncationMode(.middle)
-        }.font(.system(size: 11)).monospacedDigit().frame(height: 16)
+        }.font(.system(size: 11)).monospacedDigit().frame(height: 16).accessibilityElement(children: .contain)
     }
 }
 struct DeviceUsageBar: View {
@@ -316,10 +327,11 @@ struct DeviceTemperatureReadings: View {
     @Environment(\.workbenchPalette) private var palette
     let snapshot: DeviceSnapshot
     var size: CGFloat = 30
+    var alignedColumns = false
     var body: some View {
         HStack(spacing: 16) {
             reading("CPU 温度", snapshot.cpuTemperature, trailing: false)
-            reading("GPU 温度", snapshot.gpuTemperature, trailing: true)
+            reading("GPU 温度", snapshot.gpuTemperature, trailing: !alignedColumns)
         }
     }
     private func reading(_ name: String, _ value: Double?, trailing: Bool) -> some View {
@@ -333,16 +345,17 @@ struct DeviceFanRows: View {
     @Environment(\.workbenchPalette) private var palette
     let snapshot: DeviceSnapshot
     var paired = false
+    var alignedColumns = false
     var body: some View {
         Group {
         if paired, snapshot.fanRPM?.isEmpty != true {
             let fans = snapshot.fanRPM ?? [nil, nil]
             HStack(spacing: 12) {
                 ForEach(Array(fans.prefix(2).enumerated()), id: \.offset) { index, rpm in
-                    VStack(alignment: index == 1 ? .trailing : .leading, spacing: 3) {
+                    VStack(alignment: index == 1 && !alignedColumns ? .trailing : .leading, spacing: 3) {
                         Text(fans.count == 2 ? (index == 0 ? "左风扇" : "右风扇") : "风扇 \(index + 1)").font(.system(size: 11)).foregroundStyle(palette.secondary)
                         DeviceReading(value: rpm.map { "\(Int($0.rounded()).formatted()) RPM" } ?? "— RPM", size: 13)
-                    }.frame(maxWidth: .infinity, alignment: index == 1 ? .trailing : .leading)
+                    }.frame(maxWidth: .infinity, alignment: index == 1 && !alignedColumns ? .trailing : .leading)
                 }
             }
         } else {

@@ -15,17 +15,17 @@ public enum DeviceCardID: String, Codable, CaseIterable, Sendable {
         switch self { case .cpu: "cpu"; case .thermal: "fan"; case .network: "arrow.up.arrow.down"; case .traffic: "chart.bar"; case .profile: "laptopcomputer"; case .memory: "memorychip"; case .storage: "internaldrive"; case .processes: "macwindow" }
     }
     public var summary: String {
-        switch self { case .cpu: "整机使用率与负载趋势"; case .thermal: "温度、风扇与温度提醒"; case .network: "上下行速率与实时趋势"; case .traffic: "实时网速与今日已记录流量"; case .profile: "型号、芯片与硬件信息"; case .memory: "占用、可用与内存压力"; case .storage: "已用容量、可用空间与卷信息"; case .processes: "高占用进程与资源快照" }
+        switch self { case .cpu: "整机使用率与负载趋势"; case .thermal: "温度、风扇、供电与温度提醒"; case .network: "上下行速率与实时趋势"; case .traffic: "实时网速与今日已记录流量"; case .profile: "型号、芯片与硬件信息"; case .memory: "占用、可用与内存压力"; case .storage: "可用空间、已用容量与卷信息"; case .processes: "高占用进程与资源快照" }
     }
     public var sizes: [DeviceCardSize] {
         switch self {
-        case .profile: [.init(4, 4, "紧凑档案"), .init(4, 8, "完整档案"), .init(12, 4, "横向档案"), .init(12, 2, "信息条")]
+        case .profile: [.init(4, 4, "紧凑档案"), .init(4, 8, "完整档案"), .init(12, 4, "横向档案"), .init(12, 3, "设备横条"), .init(12, 2, "信息条")]
         case .memory, .storage: [.init(4, 4, "摘要"), .init(6, 5, "展开信息")]
         case .thermal: [.init(4, 4, "摘要"), .init(6, 3, "横向摘要")]
         case .traffic: [.init(4, 4, "今日摘要"), .init(6, 4, "宽幅摘要")]
-        case .cpu: [.init(4, 4, "趋势"), .init(8, 5, "完整趋势")]
+        case .cpu: [.init(4, 4, "趋势"), .init(6, 4, "宽幅趋势"), .init(8, 5, "完整趋势")]
         case .network: [.init(4, 4, "趋势"), .init(6, 5, "完整趋势")]
-        case .processes: [.init(4, 4, "摘要"), .init(6, 5, "扩展列表")]
+        case .processes: [.init(4, 4, "摘要"), .init(6, 4, "宽幅列表"), .init(6, 5, "扩展列表")]
         }
     }
     public var minimumColumns: Int { sizes.map(\.columns).min()! }
@@ -51,9 +51,12 @@ public struct DeviceCardPreference: Codable, Equatable, Identifiable, Sendable {
     }
 }
 public struct DeviceDashboardLayout: Codable, Equatable, Sendable {
-    public var schemaVersion = 3
+    public var schemaVersion = 4
     public var cards: [DeviceCardPreference]
     public static var defaultCards: [DeviceCardPreference] {
+        [.init(.profile, columns: 12, rows: 3), .init(.memory, columns: 4), .init(.storage, columns: 4), .init(.thermal, columns: 4), .init(.cpu, columns: 6), .init(.processes, columns: 6), .init(.traffic, columns: 4, visible: false), .init(.network, columns: 4, visible: false)]
+    }
+    private static var versionThreeDefault: [DeviceCardPreference] {
         [.init(.profile, columns: 4, rows: 8), .init(.memory, columns: 4), .init(.storage, columns: 4), .init(.thermal, columns: 4), .init(.traffic, columns: 4), .init(.cpu, columns: 4), .init(.network, columns: 4), .init(.processes, columns: 4)]
     }
     private static var versionTwoDefault: [DeviceCardPreference] {
@@ -68,7 +71,7 @@ public struct DeviceDashboardLayout: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let version = try container.decode(Int.self, forKey: .schemaVersion)
         let decoded = try container.decode([DeviceCardPreference].self, forKey: .cards)
-        guard (1...3).contains(version) else { throw LauncherError.storage("设备卡片布局版本暂不支持，原文件已保留。") }
+        guard (1...4).contains(version) else { throw LauncherError.storage("设备卡片布局版本暂不支持，原文件已保留。") }
         if version == 1 {
             let oldIDs = Set(DeviceCardID.allCases.filter { $0 != .traffic })
             guard decoded.count == oldIDs.count, Set(decoded.map(\.id)) == oldIDs,
@@ -78,12 +81,14 @@ public struct DeviceDashboardLayout: Codable, Equatable, Sendable {
             cards = decoded == Self.previousDefault ? Self.defaultCards : decoded + [.init(.traffic, columns: 3, visible: false)]
         } else if version == 2, decoded == Self.versionTwoDefault {
             cards = Self.defaultCards
+        } else if version == 3, decoded == Self.versionThreeDefault {
+            cards = Self.defaultCards
         } else { cards = decoded }
-        schemaVersion = 3
+        schemaVersion = 4
         try validate()
     }
     public func validate() throws {
-        guard schemaVersion == 3, cards.count == DeviceCardID.allCases.count,
+        guard schemaVersion == 4, cards.count == DeviceCardID.allCases.count,
               Set(cards.map(\.id)) == Set(DeviceCardID.allCases),
               cards.allSatisfy({ (3...12).contains($0.columns) && (2...9).contains($0.rows) }) else {
             throw LauncherError.storage("设备卡片布局格式无效，原文件已保留。")
@@ -117,7 +122,7 @@ public struct DeviceCardPlacement: Equatable, Sendable {
 public enum DeviceDashboardGrid {
     public static let gap: CGFloat = 12
     public static let rowHeight: CGFloat = 44
-    public static let summaryHeight: CGFloat = 216
+    public static let summaryHeight: CGFloat = 200
     public static let compactProfileHeight: CGFloat = 224.5
     public struct Metrics: Equatable, Sendable {
         public let scale: CGFloat
@@ -140,14 +145,15 @@ public enum DeviceDashboardGrid {
         let rows = cards.map { $0.row + $0.rows }.max() ?? 0
         var heights = Array(repeating: row, count: rows)
         let summaries: Set<DeviceCardID> = [.memory, .storage, .thermal, .traffic]
-        // V5 uses two compact summary bands beside the tall profile. Row spans
-        // remain logical saved preferences; this shared projection matches 216 / 444
-        // pt cards without rewriting custom order, visibility or chosen meter style.
+        // Logical row spans preserve saved layouts. Summary bands use one shared
+        // height; expansion is reserved for trend and process content.
         let useful: Set<DeviceCardID> = [.cpu, .network, .processes]
         for y in 0..<rows {
             let occupants = cards.filter { $0.row <= y && y < $0.row + $0.rows }
             guard !occupants.isEmpty else { continue }
-            if occupants.allSatisfy({ ($0.id == .profile && $0.columns == 4 && $0.rows == 8) || (summaries.contains($0.id) && $0.rows == 4) }) {
+            if occupants.count == 1, let card = occupants.first, card.id == .profile, card.columns == 12, card.rows == 3 {
+                heights[y] = 44
+            } else if occupants.allSatisfy({ ($0.id == .profile && $0.columns == 4 && $0.rows == 8) || (summaries.contains($0.id) && $0.rows == 4) }) {
                 heights[y] = (summaryHeight - 3 * gap) / 4
             } else if width < 840, occupants.count == 1, let card = occupants.first,
                       card.id == .profile, card.rows == 4,
@@ -166,7 +172,7 @@ public enum DeviceDashboardGrid {
             let compactProfile = width < 840 && card.id == .profile && card.columns == 4 && card.rows == 8
             let columns = width < 840 && (card.id == .processes || compactProfile) ? 12 : renderedColumns(card.columns, width: width)
             // Legacy short cards retain their saved size, but receive a readable projection.
-            let rows = compactProfile ? 4 : card.id == .profile && columns >= 8 && width > 560 ? max(2, card.rows) : card.id == .thermal && columns >= 6 ? max(3, card.rows) : max(4, card.rows)
+            let rows = compactProfile ? 4 : card.id == .profile && columns >= 8 && width > 560 ? max(2, card.rows) : card.id == .profile && card.rows == 3 ? 6 : card.id == .thermal && columns >= 6 ? max(3, card.rows) : max(4, card.rows)
             var row = 0, column = 0
             search: for y in 0..<120 {
                 for x in 0...(12 - columns) {

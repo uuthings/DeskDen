@@ -3,6 +3,67 @@ import Charts
 import SwiftUI
 import LauncherCore
 
+/// Opt-in inspection of the production layout. A whole-card Button deliberately
+/// exposes one accessibility action, so its internal metric frames are measured
+/// through mounted, noninteractive native backgrounds instead of AX glyph boxes.
+/// The default environment is nil and normal app views create no probes.
+@MainActor final class AIQuotaLayoutInspection {
+    private final class WeakView {
+        weak var value: NSView?
+        init(_ value: NSView) { self.value = value }
+    }
+    private var views: [String: WeakView] = [:]
+    fileprivate func register(_ view: NSView, identifier: String) { views[identifier] = WeakView(view) }
+    func frame(_ identifier: String) -> NSRect? {
+        guard let view = views[identifier]?.value, let window = view.window else { return nil }
+        let rect = window.convertToScreen(view.convert(view.bounds, to: nil))
+        guard rect.width > 0, rect.height > 0, rect.width.isFinite, rect.height.isFinite else { return nil }
+        return rect
+    }
+}
+private struct AIQuotaLayoutInspectionKey: EnvironmentKey {
+    static let defaultValue: AIQuotaLayoutInspection? = nil
+}
+extension EnvironmentValues {
+    var aiQuotaLayoutInspection: AIQuotaLayoutInspection? {
+        get { self[AIQuotaLayoutInspectionKey.self] }
+        set { self[AIQuotaLayoutInspectionKey.self] = newValue }
+    }
+}
+private struct AIQuotaLayoutProbe: NSViewRepresentable {
+    let identifier: String
+    let inspection: AIQuotaLayoutInspection
+    func makeNSView(context: Context) -> NSView {
+        let view = AIQuotaPassthroughProbe()
+        inspection.register(view, identifier: identifier)
+        return view
+    }
+    func updateNSView(_ view: NSView, context: Context) { inspection.register(view, identifier: identifier) }
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSView, context: Context) -> CGSize? {
+        .init(width: proposal.width ?? 0, height: proposal.height ?? 0)
+    }
+}
+private final class AIQuotaPassthroughProbe: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func isAccessibilityElement() -> Bool { false }
+}
+private struct AIQuotaMeasuredRegion: ViewModifier {
+    let identifier: String
+    @Environment(\.aiQuotaLayoutInspection) private var inspection
+    func body(content: Content) -> some View {
+        content.background {
+            if let inspection {
+                AIQuotaLayoutProbe(identifier: identifier, inspection: inspection)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false).accessibilityHidden(true)
+            }
+        }
+    }
+}
+private extension View {
+    func aiQuotaMeasuredRegion(_ identifier: String) -> some View { modifier(AIQuotaMeasuredRegion(identifier: identifier)) }
+}
+
 #if DEBUG
 /// Layout inspection only. This holds the mounted manual form's actual UI
 /// bindings; it cannot save a quota, connect a source or dispatch an OS action.
@@ -271,6 +332,7 @@ struct AIUsageModuleView: View {
                         Button("管理来源") { model.openSources() }.buttonStyle(WBButtonStyle(compact: true)).accessibilityIdentifier("fc.ai.detail.manageSources")
                     }.frame(height: 22).padding(.bottom, 10)
                     AIFactRow(title: "来源类型", value: value.sourceDescription)
+                    AIFactRow(title: "会员方案", value: value.accountPlanDescription)
                     AIFactRow(title: "最后有效采样", value: value.updatedAt?.formatted(date: .abbreviated, time: .shortened) ?? "尚无读数")
                     AIFactRow(title: "当前状态", value: value.state.title + (model.configuration(for: provider).enabled ? "" : " · 自动读取关闭"), color: value.state == .ready ? palette.accent : palette.warning)
                     AIFactRow(title: "过期判定", value: "15 分钟未更新或窗口已重置")
@@ -519,9 +581,12 @@ private struct AIProviderQuotaCard: View {
     @Environment(\.workbenchPalette) private var palette
     @State private var hovering = false
     @FocusState private var actionFocused: Bool
-    private var windows: [AIQuotaWindow] { [summary.shortWindow, summary.weeklyWindow].compactMap { $0 } }
-    private var short: AIQuotaWindow? { windows.first { $0.durationMinutes != 10_080 } }
-    private var weekly: AIQuotaWindow? { windows.first { $0.durationMinutes == 10_080 } }
+    private var windows: [AIQuotaWindow] { summary.snapshot?.availableWindows ?? [] }
+    private var rowGap: CGFloat { expanded ? 18 : 14 }
+    private var sourceText: String {
+        if !automaticReadingEnabled { return summary.snapshot == nil ? "自动读取关闭" : summary.sourceDescription + " · 自动读取关闭" }
+        return summary.state == .disconnected ? "来源已断开" : summary.sourceDescription
+    }
     var body: some View {
         Group {
             if showsAction {
@@ -539,8 +604,17 @@ private struct AIProviderQuotaCard: View {
             HStack(spacing: 10) {
                 AIProviderLogo(provider: summary.provider)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(summary.title).aiText(14, weight: .medium, color: palette.text)
-                    Text(!automaticReadingEnabled ? (summary.snapshot == nil ? "自动读取关闭" : summary.sourceDescription + " · 自动读取关闭") : summary.state == .disconnected ? "来源已断开" : summary.sourceDescription).aiText(11, color: palette.muted)
+                    HStack(spacing: 8) {
+                        Text(summary.title).aiText(14, weight: .medium, color: palette.text)
+                        if let plan = summary.snapshot?.accountPlan {
+                            Text(plan.title).aiText(10, weight: .medium, color: palette.secondary)
+                                .padding(.horizontal, 6).frame(height: 18)
+                                .background(palette.soft, in: RoundedRectangle(cornerRadius: 5))
+                                .help("来源报告的会员方案；未提供的倍率不作推算")
+                                .accessibilityIdentifier("fc.ai.plan." + summary.provider.rawValue)
+                        }
+                    }.frame(height: 20, alignment: .leading)
+                    Text(sourceText).aiText(11, color: palette.muted).lineLimit(1).truncationMode(.middle).help(sourceText).frame(height: 16)
                 }
                 Spacer()
                 if showsAction {
@@ -548,47 +622,78 @@ private struct AIProviderQuotaCard: View {
                         .foregroundStyle(palette.secondary).opacity(hovering || actionFocused ? 1 : 0)
                         .frame(width: 26, height: 26).accessibilityHidden(true)
                 }
-            }.padding(.bottom, 14)
-            VStack(alignment: .leading, spacing: expanded ? 18 : 14) {
-                AIQuotaRow(window: short, fallback: "5 小时窗口")
-                AIQuotaRow(window: weekly, fallback: "每周额度")
-            }
+            }.frame(height: 40)
+                .aiQuotaMeasuredRegion("fc.ai.quota.header." + summary.provider.rawValue)
+                .padding(.bottom, 14)
+                .accessibilityElement(children: .contain).accessibilityIdentifier("fc.ai.quota.header." + summary.provider.rawValue)
+            quotaContent.frame(height: 128 + rowGap, alignment: .top)
             Spacer(minLength: 12)
             HStack(spacing: 5) {
                 Circle().fill(summary.state == .ready ? palette.accent : summary.state == .error ? palette.warning : palette.muted).frame(width: 5, height: 5)
                 Text(summary.state.title)
-                if let updated = summary.updatedAt { Text("· " + updated.formatted(date: .abbreviated, time: .shortened)) }
+                if let updated = summary.updatedAt { Text("· " + updated.formatted(.dateTime.month(.twoDigits).day(.twoDigits).hour().minute())).monospacedDigit() }
                 Spacer(minLength: 0)
                 Text(summary.snapshot?.source == .manual ? "手动记录" : summary.snapshot?.source == .imported ? "导入读数" : "本机来源")
-            }.font(.system(size: 11)).foregroundStyle(palette.muted).frame(minHeight: 16)
-            if summary.state != .ready { Text(summary.detail).aiText(11, color: summary.state == .error ? palette.warning : palette.muted).padding(.top, 6) }
+            }.font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1).frame(height: 16)
+                .aiQuotaMeasuredRegion("fc.ai.quota.footer." + summary.provider.rawValue)
+                .accessibilityElement(children: .contain).accessibilityIdentifier("fc.ai.quota.footer." + summary.provider.rawValue)
+            Text(summary.state == .ready ? (summary.snapshot?.accountPlan == nil ? "会员档位未提供 · 不从额度推算" : "会员倍率未提供 · 不从额度推算") : summary.detail)
+                .aiText(11, color: summary.state == .error ? palette.warning : palette.muted)
+                .lineLimit(1).truncationMode(.tail).help(summary.state == .ready ? summary.accountPlanDescription : summary.detail)
+                .frame(height: 16).padding(.top, 6)
         }.frame(minHeight: minimumHeight, alignment: .top)
             .contentShape(RoundedRectangle(cornerRadius: 15))
     }
+    @ViewBuilder private var quotaContent: some View {
+        if windows.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Image(systemName: "chart.bar.xaxis").font(.system(size: 20)).foregroundStyle(palette.muted)
+                Text("暂无可用额度窗口").aiText(12, weight: .medium, color: palette.secondary)
+                Text("连接来源后显示实际提供的周期；不会把缺失窗口记作 0%。")
+                    .aiText(11, color: palette.muted).fixedSize(horizontal: false, vertical: true)
+            }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                .accessibilityIdentifier("fc.ai.quota.empty." + summary.provider.rawValue)
+        } else {
+            VStack(alignment: .leading, spacing: rowGap) {
+                ForEach(Array(windows.enumerated()), id: \.offset) { index, window in
+                    AIQuotaRow(window: window, identifier: "fc.ai.quota." + summary.provider.rawValue + "." + String(index))
+                }
+                if windows.count == 1 {
+                    HStack(alignment: .top, spacing: 7) {
+                        Image(systemName: "info.circle").font(.system(size: 11)).padding(.top, 1)
+                        Text("当前来源仅提供上述周期。其他窗口未提供，暂不显示。")
+                            .font(.system(size: 11)).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
+                    }.foregroundStyle(palette.muted).frame(maxWidth: .infinity, minHeight: 64, alignment: .topLeading)
+                        .aiQuotaMeasuredRegion("fc.ai.quota.availableOnly." + summary.provider.rawValue)
+                        .accessibilityIdentifier("fc.ai.quota.availableOnly." + summary.provider.rawValue)
+                }
+            }
+        }
+    }
 }
 private struct AIQuotaRow: View {
-    var window: AIQuotaWindow?
-    var fallback: String
+    var window: AIQuotaWindow
+    var identifier: String
     @Environment(\.workbenchPalette) private var palette
-    private var color: Color { window?.severity == 2 ? palette.critical : window?.severity == 1 ? palette.warning : palette.accent }
+    private var color: Color { window.severity == 2 ? palette.critical : window.severity == 1 ? palette.warning : palette.accent }
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(window?.title ?? fallback).aiText(12, color: palette.secondary)
+                Text(window.title).aiText(12, color: palette.secondary).lineLimit(1)
                 Spacer()
-                if let window {
-                    Text(window.usedPercent.formatted(.number.precision(.fractionLength(0...1))) + "%").font(.system(size: 21)).monospacedDigit()
-                    Text("已用").aiText(11, color: palette.muted)
-                } else { Text("—").font(.system(size: 21)).foregroundStyle(palette.muted) }
-            }.frame(minHeight: 21)
-            if let window { WBProgress(value: window.usedPercent / 100, color: color, height: 6) }
-            else { Capsule().fill(palette.line).frame(height: 6) }
+                Text(window.usedPercent.formatted(.number.precision(.fractionLength(0...1))) + "%").font(.system(size: 21)).monospacedDigit()
+                Text("已用").aiText(11, color: palette.muted)
+            }.frame(height: 26)
+            WBProgress(value: window.usedPercent / 100, color: color, height: 6)
+                .aiQuotaMeasuredRegion(identifier + ".progress")
+                .accessibilityElement(children: .ignore).accessibilityLabel(window.title + "已用 " + window.usedPercent.formatted() + "%")
+                .accessibilityIdentifier(identifier + ".progress")
             HStack(spacing: 6) {
-                Text(window?.resetsAt.map { $0.formatted(.dateTime.month(.twoDigits).day(.twoDigits).hour().minute()) + " 重置" } ?? (window == nil ? "暂无读数" : "未提供重置时间"))
+                Text(window.resetsAt.map { $0.formatted(.dateTime.month(.twoDigits).day(.twoDigits).hour().minute()) + " 重置" } ?? "未提供重置时间").lineLimit(1)
                 Spacer(minLength: 0)
-                if let window { Text(countdown(window) + "剩余 " + window.remainingPercent.formatted(.number.precision(.fractionLength(0...1))) + "%").foregroundStyle(color) }
-            }.font(.system(size: 11)).foregroundStyle(palette.muted).frame(minHeight: 15.95)
-        }
+                Text(countdown(window) + "剩余 " + window.remainingPercent.formatted(.number.precision(.fractionLength(0...1))) + "%").foregroundStyle(color).lineLimit(1).minimumScaleFactor(0.9)
+            }.font(.system(size: 11)).foregroundStyle(palette.muted).frame(height: 16)
+        }.frame(height: 64).accessibilityElement(children: .contain).accessibilityIdentifier(identifier)
     }
     private func countdown(_ window: AIQuotaWindow) -> String {
         guard let reset = window.resetsAt else { return "" }

@@ -7,8 +7,9 @@ final class WorkbenchShortcutTests: XCTestCase {
 
     func testNewConfigurationHasIndependentWorkbenchShortcut() throws {
         let configuration = LauncherConfiguration()
-        XCTAssertEqual(configuration.settings.workbenchHotKey, BindingHotKey(keyCode: 13, control: true, option: true))
-        XCTAssertNotEqual(configuration.settings.workbenchHotKey, configuration.settings.hotKey.bindingHotKey)
+        XCTAssertEqual(configuration.settings.workbenchHotKey, BindingHotKey(keyCode: 3, option: true))
+        XCTAssertEqual(configuration.settings.effectiveLauncherHotKey, BindingHotKey(keyCode: 2, option: true))
+        XCTAssertNotEqual(configuration.settings.workbenchHotKey, configuration.settings.effectiveLauncherHotKey)
         XCTAssertNoThrow(try configuration.validate())
     }
 
@@ -41,7 +42,7 @@ final class WorkbenchShortcutTests: XCTestCase {
 
     func testWorkbenchCannotDuplicateLauncherOrApplicationsShortcut() throws {
         var configuration = LauncherConfiguration()
-        configuration.settings.workbenchHotKey = configuration.settings.hotKey.bindingHotKey
+        configuration.settings.workbenchHotKey = configuration.settings.effectiveLauncherHotKey
         XCTAssertThrowsError(try configuration.validate())
         configuration.settings.workbenchHotKey = custom
         configuration.settings.applicationViewHotKey = custom

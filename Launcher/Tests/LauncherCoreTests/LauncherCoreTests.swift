@@ -53,6 +53,49 @@ final class LauncherCoreTests: XCTestCase {
         XCTAssertEqual(SearchEngine.search(entries,query:"wdrj").first?.target,notes)
         XCTAssertEqual(SearchEngine.search(entries,query:"notes").first?.target,notes)
     }
+    func testSearchPreservesChineseAliasOriginalNameAndEnglishMetadataInParallel() {
+        let application = LaunchTarget(kind:.app,name:"活动监视器",location:"/System/Applications/Activity Monitor.app",keywords:"Activity Monitor\nActivityMonitor")
+        var olderBindingTarget = application; olderBindingTarget.keywords = ""
+        let entries = SearchEngine.entries(applications:[application],bindings:["A":KeyBinding(target:olderBindingTarget,alias:"电脑状态")],includeBindings:true)
+        XCTAssertEqual(entries.count,1)
+        XCTAssertEqual(entries.first?.title,"电脑状态")
+        for query in ["电脑", "diannaozhuangtai", "dnzt", "活动", "huodongjianshiqi", "hdjsq", "activity monitor", "ActivityMonitor", "am", "actvtymntr"] {
+            XCTAssertEqual(SearchEngine.search(entries,query:query).map(\.id),[application.id],query)
+        }
+    }
+    func testEnglishWordsCamelCaseAndAbbreviationsAreSearchable() {
+        let code = LaunchTarget(kind:.app,name:"Visual Studio Code",location:"/Applications/Visual Studio Code.app",keywords:"Code\nVSCode")
+        let entry = SearchEntry(target:code)
+        for query in ["Visual Studio Code", "visualstudiocode", "VSCode", "vsc", "vc", "visual code", "vstd", "vscode"] {
+            XCTAssertNotNil(entry.score(query),query)
+        }
+        let monitor = SearchEntry(target:LaunchTarget(kind:.app,name:"ActivityMonitor",location:"/Applications/Monitor.app"))
+        XCTAssertNotNil(monitor.score("am"))
+        XCTAssertNotNil(monitor.score("monitor"))
+        XCTAssertNotNil(monitor.score("actvtymntr"))
+    }
+    func testEnglishSubsequenceAllowsSkippedLettersButNotArbitraryDistantOrSingleLetters() {
+        let entry = SearchEntry(target:safari)
+        for query in ["safri", "sfri", "sfr", "sri"] { XCTAssertNotNil(entry.score(query),query) }
+        XCTAssertNil(entry.score("f"),"A single interior letter must not become a fuzzy match")
+        XCTAssertNil(entry.score("z"))
+        let longName = SearchEntry(target:LaunchTarget(kind:.app,name:"A Very Long Unrelated Application Ending Z",location:"/Applications/Example.app"))
+        XCTAssertNil(longName.score("az"),"Two letters at opposite ends of a long name must not match")
+    }
+    func testExactAndPrefixEnglishResultsRankAboveFuzzyMatches() {
+        let exact = LaunchTarget(kind:.app,name:"SFR",location:"/Applications/Exact.app")
+        let prefix = LaunchTarget(kind:.app,name:"SFR Tools",location:"/Applications/Prefix.app")
+        let fuzzy = safari
+        let entries = [SearchEntry(target:fuzzy),SearchEntry(target:prefix),SearchEntry(target:exact)]
+        XCTAssertEqual(SearchEngine.search(entries,query:"sfr").map(\.id),[exact.id,prefix.id,fuzzy.id])
+    }
+    func testSearchDoesNotUsePrivateDirectoryOrWebAddressesAsNames() {
+        let app = SearchEntry(target:LaunchTarget(kind:.app,name:"Editor",location:"/Users/test/SecretProject/Applications/Editor.app",keywords:"https://secret.example/private\n/private/hidden"))
+        for query in ["secretproject", "secret", "hidden", "srtpjt", "https", "private"] { XCTAssertNil(app.score(query),query) }
+        let web = SearchEntry(target:LaunchTarget(kind:.web,name:"文档",location:"https://private.example/SecretDashboard?token=hidden"))
+        for query in ["secretdashboard", "private", "hidden", "scrtdshbrd"] { XCTAssertNil(web.score(query),query) }
+        XCTAssertNotNil(web.score("wendang"))
+    }
     func testAllAppsExcludesBoundFilesUntilQuery() {
         let file = LaunchTarget(kind:.file,name:"笔记",location:"/tmp/笔记.txt")
         let bindings = ["N":KeyBinding(target:file)]
@@ -320,7 +363,7 @@ final class LauncherCoreTests: XCTestCase {
     }
     func testApplicationViewShortcutMustBeDistinctFromLauncherAndTargets() {
         var config = LauncherConfiguration()
-        config.settings.applicationViewHotKey = config.settings.hotKey.bindingHotKey
+        config.settings.applicationViewHotKey = config.settings.effectiveLauncherHotKey
         XCTAssertThrowsError(try config.validate())
         config.bindings["S"] = KeyBinding(target:safari)
         let prefix = KeyShortcutPrefix(control:true)

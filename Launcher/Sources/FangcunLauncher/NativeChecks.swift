@@ -410,6 +410,7 @@ enum NativeChecks {
             restoredController.configurePanel()
             let recoveryChord = BindingHotKey(keyCode:113,control:true,option:true,shift:true,command:true)
             var backup = LauncherConfiguration()
+            backup.settings.launcherHotKey=nil
             backup.settings.workbenchHotKey=nil // Legacy fixture; the new independent shortcut has its own isolated checks.
             backup.bindings["D"] = KeyBinding(target:TargetResolver.target(kind:.shell,url:quoted))
             backup.bindingHotKeys["D"] = recoveryChord
@@ -438,6 +439,7 @@ enum NativeChecks {
                 }
                 let blockedMain = HotKeyChoice.allCases.first { mainBlocker.register($0) == 0 }
                 var fixture = LauncherConfiguration()
+                fixture.settings.launcherHotKey=nil
                 fixture.settings.workbenchHotKey=nil
                 if let blockedMain { fixture.settings.hotKey = blockedMain }
                 let fixtureTarget = TargetResolver.target(kind:.shell,url:quoted)

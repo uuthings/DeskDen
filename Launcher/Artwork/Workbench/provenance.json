@@ -1,0 +1,89 @@
+{
+  "schema": "fangcun.workbench-background-artwork/1",
+  "default": "qingbi-chenwu",
+  "productionEncoding": {
+    "format": "JPEG",
+    "quality": 95,
+    "resize": false,
+    "crop": false,
+    "upscale": false,
+    "tool": "macOS sips"
+  },
+  "artwork": [
+    {
+      "id": "qingbi-chenwu",
+      "title": "青碧晨雾",
+      "source": "qingbi-chenwu.png",
+      "sourceSHA256": "d57d660c5c6099dec5e1b71bd2ef9ed6d8d820971bb8057447ab1fbcc26fc986",
+      "sourceDimensions": [
+        1672,
+        941
+      ],
+      "productionResource": "Resources/Workbench/qingbi-chenwu.jpg",
+      "productionSHA256": "cafd77278c880a6933af5629d8119e3beb54aeda18b10d0592e2e44292d826a7",
+      "productionDimensions": [
+        1672,
+        941
+      ],
+      "generator": "OpenAI image_gen",
+      "generationDate": "2026-10-22",
+      "prompt": "Use case: stylized-concept. Asset type: final production desktop app theme wallpaper, panoramic widescreen 16:9 landscape, ideally 3840x2160. The reference image defines the mountain world and color identity. Create the immersive FULL WORLD that exists inside this glass icon, extending that same Chinese immortal mountain landscape across the entire widescreen frame. jade-green pines, turquoise stone, pale cyan morning mist, warm first rays of dawn. Layered soaring karst peaks, ancient windswept pine trees, one very small graceful Chinese pavilion, delicate waterfalls descending into billowing clouds and long ribbons of translucent mist. A tranquil magnificent Fangcun Mountain fairyland, exquisite high-end realistic 3D environmental illustration, luminous air and convincing scale, crisp refined mountain details balanced by broad flowing cloud regions. Rich atmospheric depth across the whole frame; peaks distributed naturally, not a single giant object dead center. Useful as the full-bleed background behind translucent app panels. Preserve the reference's material quality and recognizable palette. The reference rounded glass frame is NOT part of the wallpaper: no droplet, no rounded square, no bezel, no border, no icon container, no isolated object, no transparency. The mountain scene fills every pixel. No letters, no logos, no text, no interface, no people, no sci-fi screens.",
+      "sourcePixelsUnchanged": true,
+      "referenceArtwork": {
+        "path": "Launcher/Artwork/AppIcons/qingbi-chenwu.png",
+        "sha256": "1375f9bcc8f56cf9634eeaf893d3cbee9850a3398fd5453cc3553c6a6eef909e"
+      },
+      "rebuild": "sips -s format jpeg -s formatOptions 95 Launcher/Artwork/Workbench/qingbi-chenwu.png --out Launcher/Resources/Workbench/qingbi-chenwu.jpg"
+    },
+    {
+      "id": "yuebai-yunhai",
+      "title": "月白云海",
+      "source": "yuebai-yunhai.png",
+      "sourceSHA256": "146a14fd3b4b98d6293d9eb31918164b49333b47136fc3baaf8a81430c2204dd",
+      "sourceDimensions": [
+        1672,
+        941
+      ],
+      "productionResource": "Resources/Workbench/yuebai-yunhai.jpg",
+      "productionSHA256": "7cc10900473acadd524b3dad57012bb543ef7e9f9dc64818556efa991a89b20f",
+      "productionDimensions": [
+        1672,
+        941
+      ],
+      "generator": "OpenAI image_gen",
+      "generationDate": "2026-10-22",
+      "prompt": "Use case: stylized-concept. Asset type: final production desktop app theme wallpaper, panoramic widescreen 16:9 landscape, ideally 3840x2160. The reference image defines the mountain world and color identity. Create the immersive FULL WORLD that exists inside this glass icon, extending that same Chinese immortal mountain landscape across the entire widescreen frame. silver-blue moonlight, pearl white cloud sea, blue-violet shadows, luminous cool mist. Layered soaring karst peaks, ancient windswept pine trees, one very small graceful Chinese pavilion, delicate waterfalls descending into billowing clouds and long ribbons of translucent mist. A tranquil magnificent Fangcun Mountain fairyland, exquisite high-end realistic 3D environmental illustration, luminous air and convincing scale, crisp refined mountain details balanced by broad flowing cloud regions. Rich atmospheric depth across the whole frame; peaks distributed naturally, not a single giant object dead center. Useful as the full-bleed background behind translucent app panels. Preserve the reference's material quality and recognizable palette. The reference rounded glass frame is NOT part of the wallpaper: no droplet, no rounded square, no bezel, no border, no icon container, no isolated object, no transparency. The mountain scene fills every pixel. No letters, no logos, no text, no interface, no people, no sci-fi screens.",
+      "sourcePixelsUnchanged": true,
+      "referenceArtwork": {
+        "path": "Launcher/Artwork/AppIcons/yuebai-yunhai.png",
+        "sha256": "1ea985b4c4ef8416cffce1e5c87b3d0c7d16e5484151b093f58f175350fbfbf8"
+      },
+      "rebuild": "sips -s format jpeg -s formatOptions 95 Launcher/Artwork/Workbench/yuebai-yunhai.png --out Launcher/Resources/Workbench/yuebai-yunhai.jpg"
+    },
+    {
+      "id": "nuanxia-xuanshan",
+      "title": "暖霞悬山",
+      "source": "nuanxia-xuanshan.png",
+      "sourceSHA256": "f45a2ed9881364537cbefe1205bf0e3179558c9e9751be8cc230a15405a0cb54",
+      "sourceDimensions": [
+        1672,
+        941
+      ],
+      "productionResource": "Resources/Workbench/nuanxia-xuanshan.jpg",
+      "productionSHA256": "754eb2750c376e99b3c7baed1b5628b64aab7304bb6bf4e17a39bb64eac13b81",
+      "productionDimensions": [
+        1672,
+        941
+      ],
+      "generator": "OpenAI image_gen",
+      "generationDate": "2026-10-22",
+      "prompt": "Use case: stylized-concept. Asset type: final production desktop app theme wallpaper, panoramic widescreen 16:9 landscape, ideally 3840x2160. The reference image defines the mountain world and color identity. Create the immersive FULL WORLD that exists inside this glass icon, extending that same Chinese immortal mountain landscape across the entire widescreen frame. golden sunset and peach pink sky, verdant pines, warm cream clouds, amber shafts of light. Layered soaring karst peaks, ancient windswept pine trees, one very small graceful Chinese pavilion, delicate waterfalls descending into billowing clouds and long ribbons of translucent mist. A tranquil magnificent Fangcun Mountain fairyland, exquisite high-end realistic 3D environmental illustration, luminous air and convincing scale, crisp refined mountain details balanced by broad flowing cloud regions. Rich atmospheric depth across the whole frame; peaks distributed naturally, not a single giant object dead center. Useful as the full-bleed background behind translucent app panels. Preserve the reference's material quality and recognizable palette. The reference rounded glass frame is NOT part of the wallpaper: no droplet, no rounded square, no bezel, no border, no icon container, no isolated object, no transparency. The mountain scene fills every pixel. No letters, no logos, no text, no interface, no people, no sci-fi screens.",
+      "sourcePixelsUnchanged": true,
+      "referenceArtwork": {
+        "path": "Launcher/Artwork/AppIcons/nuanxia-xuanshan.png",
+        "sha256": "bd13628a8e81e89cde104b89ce59289a4e293d61856fff5e0c8b0a7a8be46df4"
+      },
+      "rebuild": "sips -s format jpeg -s formatOptions 95 Launcher/Artwork/Workbench/nuanxia-xuanshan.png --out Launcher/Resources/Workbench/nuanxia-xuanshan.jpg"
+    }
+  ]
+}

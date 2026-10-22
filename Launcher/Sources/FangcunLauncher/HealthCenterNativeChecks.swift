@@ -236,6 +236,8 @@ import SwiftUI
                   "snapshot injection does not start network accounting or read the real sampler")
             print("Health in-flight transaction and quit barrier are covered separately by StorageReviewServiceChecks using an isolated injected mover.")
         } catch { check(false, "native health fixture setup: \(error.localizedDescription)") }
+        let cleaning = await checkDirectSpaceCleaning()
+        count += cleaning.count; failures += cleaning.failures
         let navigation = await checkHistoryNavigation()
         count += navigation.count; failures += navigation.failures
         if let path = ProcessInfo.processInfo.environment["FANGCUN_HEALTH_VISUAL_EVIDENCE_DIR"], !path.isEmpty {
@@ -249,6 +251,71 @@ import SwiftUI
         #endif
     }
     #if DEBUG
+    /// Production directory registration and scanning, confined to synthetic files.
+    /// The injected mover rejects every action; this path never requests cleanup.
+    private static func checkDirectSpaceCleaning() async -> (count: Int, failures: Int) {
+        var count = 0, failures = 0
+        func check(_ value: Bool, _ name: String) {
+            count += 1; if !value { failures += 1 }
+            print("\(value ? "PASS" : "FAIL") direct space cleaning: \(name)")
+        }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("fangcun-health-direct-cleaning-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let mover = HealthHistoryNoMove(), notifications = HealthCheckNotifications()
+        let device = DeviceStatusModel(dataDirectory: root.appendingPathComponent("Device"), notifications: notifications)
+        let directory = root.appendingPathComponent("Health")
+        let storage = StorageReviewService(dataDirectory: directory, mover: mover)
+        let model = HealthCenterModel(device: device, dataDirectory: directory, storageService: storage)
+        do {
+            await settle()
+            model.showSpaceCleaning()
+            check(model.isSpaceCleaning && model.phase == .report && model.category == .cache && model.latestReport == nil && model.completedFactors.isEmpty,
+                  "entry opens file review without creating or requiring a health assessment")
+            check(!storage.isScanning && storage.scopes.isEmpty && storage.report == nil && storage.selectedIDs.isEmpty && mover.calls == 0,
+                  "opening the entry selects no files and starts neither scan nor action")
+            model.startStorageScan()
+            check(model.phase == .report && !storage.isScanning && storage.report == nil && storage.message?.contains("先选择") == true,
+                  "an explicit start without selected directories stays in review and explains the missing range")
+            model.showOverview()
+            await inject(sample(at: Date()), into: device)
+            model.includeCache = false; model.includeDiagnostics = false; model.includeMemory = false
+            model.startAssessment()
+            let report = try requiredReport(model), outcome = model.assessmentOutcome, factors = model.completedFactors
+            let historyURL = directory.appendingPathComponent("health-history.json"), historyData = try Data(contentsOf: historyURL)
+            let source = root.appendingPathComponent("explicit-cache")
+            try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+            let content = Data("synthetic direct-cleaning fixture".utf8)
+            let files = [source.appendingPathComponent("first.cache"), source.appendingPathComponent("second.cache")]
+            for file in files { try content.write(to: file) }
+            model.showSpaceCleaning()
+            let registered = try storage.registerScope(.init(directory: source, kind: .rebuildableCache))
+            check(registered && storage.scopes.count == 1 && !storage.isScanning && storage.report == nil && model.latestReport == report,
+                  "explicit scope selection registers only that directory and does not automatically scan or replace health evidence")
+            model.startStorageScan()
+            check(model.phase == .checking && model.isSpaceCleaning && storage.isScanning && model.latestReport == report && model.assessmentOutcome == outcome,
+                  "the separate user start runs only the storage scan while preserving assessment state")
+            let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+            while storage.isScanning && ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(10)) }
+            check(!storage.isScanning && storage.report?.stage == .report && storage.report?.candidates.count == 2 && model.phase == .report && model.category == .cache,
+                  "the real isolated scan returns two actual file candidates directly to file review")
+            check(model.latestReport == report && model.assessmentOutcome == outcome && model.completedFactors == factors && (try? Data(contentsOf: historyURL)) == historyData,
+                  "storage-only completion does not evaluate, replace or persist a new health report")
+            check(storage.selectedIDs.isEmpty && storage.confirmingPlan == nil && storage.receipts.isEmpty && mover.calls == 0 && files.allSatisfy { (try? Data(contentsOf: $0)) == content },
+                  "scan completion leaves all files unselected and unchanged with no confirmation, mover call or invented receipt")
+            model.startStorageScan(); model.cancelCheck()
+            let cancellationDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+            while storage.isScanning && ContinuousClock.now < cancellationDeadline { try? await Task.sleep(for: .milliseconds(10)) }
+            check(!storage.isScanning && model.phase == .report && model.isSpaceCleaning && model.latestReport == report && model.assessmentOutcome == outcome,
+                  "cancelling a direct storage scan returns to file review without cancelling the prior health assessment")
+            model.showOverview()
+            check(!model.isSpaceCleaning && model.phase == .overview && model.latestReport == report,
+                  "returning to the health overview clears only the direct-cleaning route")
+            await model.prepareForQuit()
+            check(!device.isSampling && mover.calls == 0 && storage.receipts.isEmpty && notifications.requestCount == 0 && notifications.deliveredCount == 0 && files.allSatisfy { (try? Data(contentsOf: $0)) == content },
+                  "the complete fixture never starts sensors, notifications, process termination or file mutation")
+        } catch { await model.prepareForQuit(); check(false, "fixture setup: \(error.localizedDescription)") }
+        return (count, failures)
+    }
     /// Calls the exact action captured from each mounted production Button.
     /// This is an owned-view action check, not a claim of native mouse input.
     private static func checkHistoryNavigation() async -> (count: Int, failures: Int) {

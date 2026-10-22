@@ -95,8 +95,8 @@ struct CalendarModuleView:View {
             }
             HStack(spacing:5) {
                 if WorkbenchChinaHolidays.includedYears.contains(model.displayCalendar.component(.year,from:model.displayedMonth)) {
-                    Text("休").foregroundStyle(palette.critical).padding(.horizontal,3).background(palette.critical.opacity(0.08),in:RoundedRectangle(cornerRadius:3))
-                    Text("放假");Text("班").padding(.horizontal,3).background(palette.soft,in:RoundedRectangle(cornerRadius:3));Text("调休上班")
+                    Text("休").foregroundStyle(palette.success).padding(.horizontal,3).background(palette.success.opacity(0.08),in:RoundedRectangle(cornerRadius:3))
+                    Text("放假");Text("班").foregroundStyle(palette.critical).padding(.horizontal,3).background(palette.critical.opacity(0.08),in:RoundedRectangle(cornerRadius:3));Text("调休上班")
                 } else {Text("此年未载入调休数据")}
                 Spacer(minLength:4)
                 Button {model.showSources=true} label:{HStack(spacing:3){Text("中国大陆节假日");Image(systemName:"chevron.right").font(.system(size:9))}}.buttonStyle(.plain)
@@ -122,8 +122,9 @@ struct CalendarModuleView:View {
     }
     private var selectedCard:some View {
         CalendarSideCard(title:calendarFormat(model.selectedDay,"M 月 d 日",calendar:model.displayCalendar),symbol:"calendar") {
-            if let text=CalendarCivilDay(date:model.selectedDay,calendar:model.displayCalendar).namedLabel {
-                Text(text).font(.system(size:11)).foregroundStyle(palette.muted).padding(.horizontal,7).padding(.vertical,5).frame(maxWidth:.infinity,alignment:.leading).background(palette.soft,in:RoundedRectangle(cornerRadius:6)).padding(.bottom,4)
+            let civilDay=CalendarCivilDay(date:model.selectedDay,calendar:model.displayCalendar)
+            if let text=civilDay.namedLabel {
+                Text(text).font(.system(size:11)).foregroundStyle(civilDay.color(palette)).padding(.horizontal,7).padding(.vertical,5).frame(maxWidth:.infinity,alignment:.leading).background(civilDay.holidayKind == nil ? palette.soft:civilDay.color(palette).opacity(0.08),in:RoundedRectangle(cornerRadius:6)).padding(.bottom,4)
             }
             if model.selectedEntries.isEmpty {
                 calendarEmpty("这一天还没有安排")
@@ -182,12 +183,12 @@ private struct CalendarDayCell:View {
         Button {model.selectDay(date)} label:{
             VStack(spacing:4) {
                 Text("\(calendar.component(.day,from:date))").font(.system(size:16,weight:today ? .semibold:.regular)).foregroundStyle(today ? palette.accent:palette.text).frame(height:24)
-                Text(info.label).font(.system(size:11)).foregroundStyle(info.isHoliday ? palette.critical:palette.muted).lineLimit(1).frame(height:15)
+                Text(info.label).font(.system(size:11)).foregroundStyle(info.color(palette)).lineLimit(1).frame(height:15)
                 HStack(spacing:3){ForEach(Array(entries.prefix(3).enumerated()),id:\.offset){_,entry in Circle().fill(entry.isSystemEvent ? palette.cool:palette.accent).frame(width:3,height:3)}}.frame(height:4)
             }.frame(maxWidth:.infinity,maxHeight:.infinity).padding(.vertical,5).padding(.horizontal,2)
                 .background(selected ? palette.navSelected.opacity(0.65):hovering ? palette.soft:today ? palette.accent.opacity(0.04):.clear,in:RoundedRectangle(cornerRadius:10))
                 .overlay(RoundedRectangle(cornerRadius:10).strokeBorder(palette.accent.opacity(today ? 0.45:selected ? 0.30:0),lineWidth:1))
-                .overlay(alignment:.topTrailing){if let badge=info.badge {Text(badge).font(.system(size:10)).foregroundStyle(info.isHoliday ? palette.critical:palette.secondary).padding(.horizontal,3).frame(height:15).background(info.isHoliday ? palette.critical.opacity(0.08):palette.soft,in:RoundedRectangle(cornerRadius:3)).padding(4)}}
+                .overlay(alignment:.topTrailing){if let badge=info.badge {Text(badge).font(.system(size:10)).foregroundStyle(info.color(palette)).padding(.horizontal,3).frame(height:15).background(info.color(palette).opacity(0.08),in:RoundedRectangle(cornerRadius:3)).padding(4)}}
                 .opacity(outside ? 0.35:1).contentShape(RoundedRectangle(cornerRadius:10)).clipped()
         }.buttonStyle(.plain).disabled(outside).onHover{hovering=$0}
             .accessibilityLabel("\(calendarFormat(date,"M月d日",calendar:calendar))，\(info.namedLabel ?? info.label)，\(entries.count) 项安排")
@@ -531,7 +532,10 @@ private struct CalendarCivilDay {
     var label:String
     var namedLabel:String?
     var badge:String?
-    var isHoliday=false
+    var holidayKind:WorkbenchHolidayKind?
+    func color(_ palette:ThemePalette)->Color {
+        switch holidayKind {case .holiday:palette.success;case .workingDay:palette.critical;case nil:palette.muted}
+    }
     init(date:Date,calendar:Calendar) {
         let c=calendar.dateComponents([.year,.month,.day],from:date)
         var china=Calendar(identifier:.gregorian);china.timeZone=TimeZone(identifier:"Asia/Shanghai")!
@@ -545,7 +549,7 @@ private struct CalendarCivilDay {
         if let value,case .recorded(let holiday)=value.holiday {
             label=holiday.kind == .workingDay ? "调休上班":holiday.name
             namedLabel=holiday.name+(holiday.kind == .workingDay ? "":" · 放假")
-            badge=holiday.kind == .holiday ? "休":"班";isHoliday=holiday.kind == .holiday
+            badge=holiday.kind == .holiday ? "休":"班";holidayKind=holiday.kind
         } else if let festival {label=festival;namedLabel=festival}
         else if let lunar {
             let text=lunar.displayText
