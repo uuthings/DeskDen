@@ -1,0 +1,68 @@
+{
+  "schema": "fangcun.application-icon-artwork/1",
+  "default": "qingbi-chenwu",
+  "conversion": "Aspect-fit source without cropping or distortion into transparent square icon representations. No creative pixel edits.",
+  "representationPixels": [
+    16,
+    32,
+    32,
+    64,
+    128,
+    256,
+    256,
+    512,
+    512,
+    1024
+  ],
+  "rebuild": "swift Launcher/scripts/prepare-app-icons.swift",
+  "artwork": [
+    {
+      "id": "qingbi-chenwu",
+      "title": "青碧晨雾",
+      "source": "qingbi-chenwu.png",
+      "sourceSHA256": "160cf1a013d4ea742dd94c2aee20090d4f20ef7732009096f8a43e73a804d6b0",
+      "sourceDimensions": [
+        1254,
+        1254
+      ],
+      "productionResource": "Resources/AppIcons/qingbi-chenwu.icns",
+      "productionSHA256": "77188935a66225aae70a5cacd452bdcadfe61c2374e348e2bee40dbeca93a4bf",
+      "generator": "OpenAI image_gen",
+      "generationDate": "2026-10-22",
+      "prompt": "Use case: stylized-concept. Asset type: premium macOS app icon exploration, one standalone original raster object.\nCreate ONE exquisite crystal-clear water droplet containing an immortal Chinese mountain world, a tiny realm inside a single drop, evoking Fangcun Mountain. The silhouette is the top priority: a broad almost circular water pearl with just a TINY SHORT SOFTLY POINTED crest at the top. Overall outer width-to-height ratio 1:1.08. The small point occupies only 6–8% of total height; almost all the silhouette is a round orb. Absolutely NO elongated teardrop neck or tall triangular pointed upper section.\nComposition: square transparent canvas; sole droplet optically centered in both dimensions, occupying about 80% of canvas height, balanced even margins. Front view, polished luxury 3D icon render, fine elegant details and an immediately readable broad form at 64 pixels.\nWithin the transparent round droplet: ONE majestic jade-green Chinese sacred mountain rising from a soft white morning cloud sea. Cloud ribbons wrap and veil the emerald slopes; mist gives real depth. A very small ancient Chinese pavilion roof can sit on a distant ridge as a subtle sense of scale, not the focal point. A pale golden dawn glint touches the peaks. Palette: luminous jade emerald, clear cyan, pearly white and restrained pale gold. Serene, fresh, magical, luminous rather than dark.\nMaterials: truly aqueous rounded smooth liquid surface, believable curved optical refraction, delicate pearly rim and controlled small specular highlights, enough visibly transparent water around the miniature mountain to read as a world enclosed in a drop. Avoid a thick plastic or faceted crystal appearance.\nThe entire mountain and all mist are enclosed by the water silhouette. The exterior is genuinely transparent alpha with no scenery, shadow floor or backdrop. No square app backing, no lettering, no Chinese characters, no words, no logos, no watermark, no decorative border, no stand, no base, no splash, no extra droplets, no faceted gemstone. Deliver one single centered near-round short-tip droplet, not a sheet of options.",
+      "sourcePixelsUnchanged": true
+    },
+    {
+      "id": "yuebai-yunhai",
+      "title": "月白云海",
+      "source": "yuebai-yunhai.png",
+      "sourceSHA256": "98c8b40ab61bf492896cadfd002ec19df4b889a255eb8104e251560fba637e18",
+      "sourceDimensions": [
+        1254,
+        1254
+      ],
+      "productionResource": "Resources/AppIcons/yuebai-yunhai.icns",
+      "productionSHA256": "5fb79b5795f4047f2d54a6b699614b35ed4ded602112ee0c750ee26ff1443856",
+      "generator": "OpenAI image_gen",
+      "generationDate": "2026-10-22",
+      "prompt": "Use case: stylized-concept.\nAsset type: a single original premium macOS app icon concept, 方寸山 / 月白云海, no text.\nPrimary request: A nearly spherical crystal-clear WATER DROPLET enclosing a sublime Chinese immortal mountain among a moonlit sea of clouds.\nMOST IMPORTANT SILHOUETTE: an almost perfect broad CIRCLE with only a TINY short softly pointed crest at its top. Overall droplet width-to-height ratio 1:1.08. The tiny tip contributes only 6–8 percent of total height, and curves immediately into the broad round shoulders. It must look like a round water pearl with a small liquid peak, NOT a long teardrop, NOT an elongated neck, NOT a tall pointed upper section.\nComposition: centered frontal icon on square genuinely transparent canvas. Single subject occupies about 80 percent of canvas height, with generous balanced clear margins, optically centered. The entire magical world is enclosed inside this rounded liquid silhouette.\nInterior: one majestic silver-blue Chinese sacred mountain, steep elegant rock faces with tiny muted jade vegetation, its lower slopes partly veiled by richly layered luminous moonlit cloud sea. Mountain is primary motif and occupies the central interior. Pearly moon glow illuminating the cloud edges, cool jade and ice-blue tones with subtle lavender. No large moon orb. Serene, ethereal, bright, refined, and heavenly, never gloomy. Broad readable scene at small icon sizes, exquisite fine detail only subordinate to strong form.\nMaterial: transparent clear liquid, smooth rounded water surface, physically convincing curved refraction, beautiful pearly edge highlights and soft specular glints; substantial visible clear water around the mountain and clouds. Cinematic premium 3D render combined with poetic natural Chinese landscape feeling.\nNo text, lettering, Chinese characters, watermark, brand logo, frame, square backing, pedestal, stand, glass bottle, vessel, flat illustration, faceted gemstone, splashes, secondary droplets, exterior scenery, exterior terrain, external cast shadow. Preserve true alpha transparency outside the single droplet.",
+      "sourcePixelsUnchanged": true
+    },
+    {
+      "id": "nuanxia-xuanshan",
+      "title": "暖霞悬山",
+      "source": "nuanxia-xuanshan.png",
+      "sourceSHA256": "c49bada2d6e129ae83f7c8bb5b022a1da417c09bdc2d6b947055734cd718c9f4",
+      "sourceDimensions": [
+        1212,
+        1298
+      ],
+      "productionResource": "Resources/AppIcons/nuanxia-xuanshan.icns",
+      "productionSHA256": "c33ce14e3ac9d66da075e58dd1f1c7275eb1eb804744732f3e23bb4a723ae963",
+      "generator": "OpenAI image_gen",
+      "generationDate": "2026-10-22",
+      "prompt": "Use case: stylized-concept\nAsset type: premium original macOS app icon concept, a world inside one tiny drop, \"Fangcun Mountain\" idea without any typography.\nPrimary request: ONE near-spherical crystal-clear WATER DROPLET enclosing a heavenly Chinese immortal mountain island in warm dawn mist.\nGEOMETRY IS THE MOST IMPORTANT REQUIREMENT: silhouette is almost a circle, width:height about 1:1.08. The top has only a TINY SHORT SOFTLY POINTED CREST, occupying 6–8% of total height. Full round shoulders curve immediately beneath this tiny crest. Broad plump round body. NOT a conventional tall teardrop: NO elongated neck, NO tall sharp pointed upper section. Shape should feel like a round pearl of water with a tiny water-drop tip.\nComposition: square transparent canvas; one whole droplet optically centered, about 80% canvas height, balanced margins all around. No scene, terrain, or cloud outside the enclosing liquid silhouette.\nInside: ONE compact majestic floating Chinese sacred mountain island, teal-green stone and delicate moss, partly concealed by white swirling cloud sea with apricot and pale pink dawn glow. A tiny ancient Chinese pavilion roof as a restrained scale hint; fine tiny waterfall dissolves into lower mist. One clear mountain mass is the primary motif, not a crowded landscape. Heavenly, serene, uncluttered, miniature world held within clear water.\nMaterial: rounded smooth crystal-clear liquid surface, realistic curved refraction, luminous pearly highlights with subtle soft gold glints, sufficient transparent water volume around the interior mountain. Rich beautiful sculptural detail but broad readable forms at 64 px. Soft premium 3D rendering, refined artistic realism.\nAvoid: any text, characters, letters, wordmarks, logos, watermark; square app tile/backing, ornamental frames, gem facets, glass bottle, vessel, stand, pedestal, splash, separate droplets, background scenery. No long point. Transparent exterior.",
+      "sourcePixelsUnchanged": true
+    }
+  ]
+}

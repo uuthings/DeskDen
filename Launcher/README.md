@@ -1,0 +1,51 @@
+# 方寸 · 开发指南
+
+方寸使用 AppKit、SwiftUI 和本地 `LauncherCore` Swift Package，最低部署版本为 macOS 14，Swift 工具版本为 6.0。Xcode 工程负责生成 macOS App，Swift Package 支持核心测试与本地开发构建。
+
+## 构建
+
+在项目根目录打开 `Fangcun.xcodeproj`，选择 `Fangcun` scheme。也可以执行：
+
+```sh
+xcodebuild -project Fangcun.xcodeproj -scheme Fangcun \
+  -configuration Debug -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath build/XcodeDerived build CODE_SIGN_IDENTITY=-
+```
+
+在 `Launcher/` 内运行 `./scripts/build-local.sh`，生成位于 `build/` 的本地开发 App。脚本拒绝覆盖已有输出或证据目录；可传入新的绝对输出路径与 `debug`／`release` 配置。它使用 ad-hoc 签名，检查源码和资源指纹并保存证据，不上传、不公证。正式分发见 [发布流程](../docs/releasing.md)。
+
+不要同时运行同 Bundle ID 的多个构建：后启动的实例会唤起已有实例。
+
+## 验证
+
+先正常退出正在运行的方寸，再在 `Launcher/` 运行：
+
+```sh
+./scripts/verify-local.sh
+```
+
+验证包含核心测试、分别记录的 Debug／Release 原生检查、设备与表单专项，以及设备监测、日历、私密空间和 AI 模型检查。每轮在 `build/verification/` 创建独立证据目录，要求正数检查计数、零失败、零跳过，并核对整轮源码输入保持一致。
+
+历史设计稿保留在维护者本机。需要一并核对原始指纹时，显式运行 `./scripts/verify-local.sh --verify-preserved-designs`，该选项要求本机历史存档完整。公开源码构建与功能验证不依赖私人设计记录。
+
+自动检查使用临时数据与夹具，不代表已经验证个人账号、系统授权或所有硬件场景；视觉与系统窗口行为还需要启动真实 App 检查。0.1.0 的签名、公证和完整归档仍按实际发布进度记录。
+
+## 图标与窗口
+
+「设置 → 外观与材质」提供青碧晨雾、月白云海、暖霞悬山三款图标；默认青碧晨雾。已采用的源 PNG 位于 `Artwork/AppIcons/`，通过 `scripts/prepare-app-icons.swift` 生成生产 ICNS，转换来源和校验值保存在同目录元数据中。
+
+工作台显示时提供程序坞与应用切换入口，最小化保留恢复方式，关闭后收起界面并继续后台运行。全屏侧栏随宽度适量增长并设置上限；窗口模式、关闭／重开和系统 Space 行为需要结合真实 App 验证。
+
+## 提交前检查
+
+在根目录执行：
+
+```sh
+./tools/install-hooks.sh
+python3 tools/check-public-scope.py --staged
+python3 tools/test-public-scope.py
+```
+
+检查读取 Git 索引中的实际 blob，验证公开范围、资源类型、机器私有路径与固定版本 Gitleaks。提交标题使用英文 Conventional Commits，保留既有 Git 身份并将提交元数据纳入历史隐私检查，不自动修改身份。推送前 hook 检查拟推送引用及全部祖先，CI 额外检查所有可达历史。
+
+公开范围与发布证据要求见 [公开范围说明](../docs/public-source.md)。
