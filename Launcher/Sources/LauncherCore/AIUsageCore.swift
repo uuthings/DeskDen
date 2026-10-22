@@ -17,6 +17,23 @@ public enum AIQuotaSource: String, Codable, Sendable {
         switch self { case .localSession: "Codex 本地会话额度"; case .claudeStatusLine: "Claude 官方状态栏读数"; case .imported: "用户导入的额度读数"; case .manual: "用户手动记录" }
     }
 }
+/// Only names directly exposed by the metering source are retained. A generic
+/// Pro name does not establish a usage multiplier or a billing price.
+public enum AIAccountPlan: String, Codable, Sendable {
+    case free, go, plus, pro, team, business, enterprise, edu
+    public var title: String {
+        switch self {
+        case .free: "Free"
+        case .go: "Go"
+        case .plus: "Plus"
+        case .pro: "Pro"
+        case .team: "Team"
+        case .business: "Business"
+        case .enterprise: "Enterprise"
+        case .edu: "Edu"
+        }
+    }
+}
 public struct AIQuotaWindow: Codable, Equatable, Sendable {
     public var usedPercent: Double
     public var durationMinutes: Int
@@ -35,9 +52,15 @@ public struct AIQuotaSnapshot: Codable, Equatable, Identifiable, Sendable {
     public var source: AIQuotaSource
     public var shortWindow: AIQuotaWindow?
     public var weeklyWindow: AIQuotaWindow?
-    public var id: String { "\(provider.rawValue):\(observedAt.timeIntervalSince1970):\(source.rawValue):\(shortWindow?.usedPercent ?? -1):\(weeklyWindow?.usedPercent ?? -1)" }
-    public init(provider: AIProvider, observedAt: Date, source: AIQuotaSource, shortWindow: AIQuotaWindow?, weeklyWindow: AIQuotaWindow?) {
-        self.provider = provider; self.observedAt = observedAt; self.source = source; self.shortWindow = shortWindow; self.weeklyWindow = weeklyWindow
+    public var accountPlan: AIAccountPlan?
+    public var id: String { "\(provider.rawValue):\(observedAt.timeIntervalSince1970):\(source.rawValue):\(shortWindow?.usedPercent ?? -1):\(weeklyWindow?.usedPercent ?? -1):\(accountPlan?.rawValue ?? "")" }
+    public init(provider: AIProvider, observedAt: Date, source: AIQuotaSource, shortWindow: AIQuotaWindow?, weeklyWindow: AIQuotaWindow?, accountPlan: AIAccountPlan? = nil) {
+        self.provider = provider; self.observedAt = observedAt; self.source = source; self.shortWindow = shortWindow; self.weeklyWindow = weeklyWindow; self.accountPlan = accountPlan
+    }
+    /// Slot names are storage compatibility only: their actual durations, not
+    /// the presence of a primary/secondary slot, determine the displayed label.
+    public var availableWindows: [AIQuotaWindow] {
+        [shortWindow, weeklyWindow].compactMap { $0 }.sorted { $0.durationMinutes < $1.durationMinutes }
     }
     public func isStale(at now: Date = Date()) -> Bool {
         now.timeIntervalSince(observedAt) > 900 || [shortWindow, weeklyWindow].compactMap { $0?.resetsAt }.contains { $0 <= now }
@@ -85,6 +108,7 @@ public struct AIProviderSummary: Identifiable, Sendable {
     public var weeklyWindow: AIQuotaWindow? { snapshot?.weeklyWindow }
     public var updatedAt: Date? { snapshot?.observedAt }
     public var sourceDescription: String { snapshot?.source.title ?? "尚无有效额度读数" }
+    public var accountPlanDescription: String { snapshot?.accountPlan?.title ?? "来源未提供会员信息" }
     public init(provider: AIProvider, state: AIUsageState, snapshot: AIQuotaSnapshot?, detail: String) { self.provider = provider; self.state = state; self.snapshot = snapshot; self.detail = detail }
 }
 public enum AIUsageError: Error, LocalizedError {
@@ -194,7 +218,8 @@ public struct AIUsageLogParser: Sendable {
         let p = window(primary, percentKey: primary?["used_percent"] == nil ? "usedPercent" : "used_percent", minutes: (primary?["window_minutes"] ?? primary?["windowDurationMins"]) as? Int)
         let s = window(secondary, percentKey: secondary?["used_percent"] == nil ? "usedPercent" : "used_percent", minutes: (secondary?["window_minutes"] ?? secondary?["windowDurationMins"]) as? Int)
         guard p != nil || s != nil else { return nil }
-        return .init(provider: .codex, observedAt: date, source: source, shortWindow: p, weeklyWindow: s)
+        let plan = (json["plan_type"] ?? json["planType"]) as? String
+        return .init(provider: .codex, observedAt: date, source: source, shortWindow: p, weeklyWindow: s, accountPlan: plan.flatMap(AIAccountPlan.init(rawValue:)))
     }
     public static func claudeQuota(_ json: [String: Any], date: Date) -> AIQuotaSnapshot? {
         let primary = window(json["five_hour"] as? [String: Any], percentKey: "used_percentage", minutes: 300)

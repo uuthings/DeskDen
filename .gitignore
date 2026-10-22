@@ -28,6 +28,7 @@
 !/Launcher/Artwork/
 /Launcher/Artwork/*
 !/Launcher/Artwork/AppIcons/
+!/Launcher/Artwork/Workbench/
 .DS_Store
 .build/
 build/

@@ -47,6 +47,26 @@ import LauncherCore
         let price = try AITokenPrice(provider: .codex, model: "fixture-model", inputPerMillion: 1, outputPerMillion: 2, cacheReadPerMillion: 0.1, cacheWritePerMillion: 0)
         let now = Date(), reset = now.addingTimeInterval(86_400)
 
+        let membershipBase = try fixture("weekly-only-membership")
+        let membershipSessions = membershipBase.appendingPathComponent("metering-fixture")
+        try fm.createDirectory(at: membershipSessions, withIntermediateDirectories: true)
+        let membershipMetadata: [String: Any] = ["type": "event_msg", "timestamp": ISO8601DateFormatter().string(from: now),
+            "payload": ["type": "token_count", "rate_limits": ["plan_type": "pro", "primary": NSNull(),
+                "secondary": ["used_percent": 32, "window_minutes": 10_080, "resets_at": reset.timeIntervalSince1970]]]]
+        var membershipData = try JSONSerialization.data(withJSONObject: membershipMetadata); membershipData.append(10)
+        try membershipData.write(to: membershipSessions.appendingPathComponent("metering.jsonl"))
+        var membershipSources = AIProvider.allCases.map { AIUsageSourceConfiguration(provider: $0, enabled: false, sessionsPath: membershipBase.appendingPathComponent("unused-" + $0.rawValue).path) }
+        membershipSources[0].enabled = true; membershipSources[0].sessionsPath = membershipSessions.path
+        try JSONEncoder().encode(membershipSources).write(to: file(membershipBase, "sources.json"))
+        let membershipModel = AIUsageModel(dataDirectory: membershipBase, startServices: false, notifications: FixtureAIQuotaNotifications())
+        await refresh(membershipModel)
+        let membershipSummary = membershipModel.providerSummaries.first { $0.provider == .codex }
+        check(membershipSummary?.snapshot?.accountPlan == .pro && membershipSummary?.shortWindow == nil && membershipSummary?.snapshot?.availableWindows.map(\.durationMinutes) == [10_080],
+              "source-provided Pro membership and a weekly-only quota survive the real local metering reader")
+        let membershipReload = AIUsageModel(dataDirectory: membershipBase, startServices: false, notifications: FixtureAIQuotaNotifications())
+        check(membershipReload.quotaHistory.last?.accountPlan == .pro && membershipReload.quotaHistory.last?.shortWindow == nil,
+              "quota history persists actual membership metadata without manufacturing a five-hour window")
+
         let manualBase = try fixture("manual-with-automatic-reading-disabled")
         let trapSessions = manualBase.appendingPathComponent("disabled-session-trap")
         try fm.createDirectory(at: trapSessions, withIntermediateDirectories: true)

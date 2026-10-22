@@ -67,7 +67,7 @@ final class WorkbenchPreferenceTests: XCTestCase {
 
     func testNewAppearanceDefaultsAndAllThemeChoicesSurviveReload() throws {
         let initial = LauncherConfiguration()
-        XCTAssertEqual(initial.settings.workbenchTheme, .arWorld)
+        XCTAssertEqual(initial.settings.workbenchTheme, .qingbiMist)
         XCTAssertEqual(initial.settings.workbenchAppearance, .dark)
         XCTAssertEqual(initial.settings.glassOpacity, 0.70)
         XCTAssertTrue(initial.settings.backgroundMotionEnabled)

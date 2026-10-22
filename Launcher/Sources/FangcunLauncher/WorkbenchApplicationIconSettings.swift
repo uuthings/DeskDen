@@ -6,8 +6,8 @@ struct WorkbenchApplicationIconSettings: View {
     @Environment(\.workbenchPalette) private var palette
 
     var body: some View {
-        WBCard(title: "应用图标", symbol: "drop", spacing: 12) {
-            Text("一滴水中，自有方寸天地。选择后立即应用，下次启动时保留。")
+        WBCard(title: "应用图标", symbol: "square.on.square", spacing: 12) {
+            Text("一面水幕，映见方寸天地。选择后立即应用，下次启动时保留。")
                 .font(.system(size: 11)).foregroundStyle(palette.muted)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(alignment: .top, spacing: 12) {
@@ -17,7 +17,7 @@ struct WorkbenchApplicationIconSettings: View {
                             Group {
                                 if let image = controller.image(for: choice) {
                                     Image(nsImage: image).resizable().interpolation(.high).scaledToFit()
-                                } else { Image(systemName: "drop").resizable().scaledToFit().foregroundStyle(palette.muted) }
+                                } else { Image(systemName: "square.on.square").resizable().scaledToFit().foregroundStyle(palette.muted) }
                             }.frame(width: 76, height: 76).accessibilityHidden(true)
                             Text(choice.title).font(.system(size: 12, weight: .medium)).foregroundStyle(palette.text)
                             Text(choice.subtitle).font(.system(size: 11)).foregroundStyle(palette.muted)

@@ -16,9 +16,21 @@ import SwiftUI
         defer { try? FileManager.default.removeItem(at: directory) }
         do {
             try FileManager.default.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
-            let configs = AIProvider.allCases.map { AIUsageSourceConfiguration(provider: $0, enabled: false, sessionsPath: directory.appendingPathComponent("disabled-" + $0.rawValue).path) }
+            let observed = Date(), reset = observed.addingTimeInterval(86_400)
+            let weeklyOnly = AIQuotaSnapshot(provider: .codex, observedAt: observed, source: .manual, shortWindow: nil,
+                weeklyWindow: try AIQuotaWindow(usedPercent: 35, durationMinutes: 10_080, resetsAt: reset), accountPlan: .pro)
+            let bothWindows = AIQuotaSnapshot(provider: .claude, observedAt: observed, source: .manual,
+                shortWindow: try AIQuotaWindow(usedPercent: 99.5, durationMinutes: 300, resetsAt: reset),
+                weeklyWindow: try AIQuotaWindow(usedPercent: 6, durationMinutes: 10_080, resetsAt: reset))
+            let configs = AIProvider.allCases.map { AIUsageSourceConfiguration(provider: $0, enabled: false,
+                sessionsPath: directory.appendingPathComponent("disabled-" + $0.rawValue).path,
+                manualSnapshot: $0 == .codex ? weeklyOnly : bothWindows) }
             try JSONEncoder().encode(configs).write(to: sourceDirectory.appendingPathComponent("sources.json"))
             let model = AIUsageModel(dataDirectory: directory, startServices: false, notifications: AIUsageCheckNotifications())
+            model.refresh()
+            for _ in 0..<300 where model.isRefreshing { try? await Task.sleep(for: .milliseconds(10)) }
+            check(!model.isRefreshing && model.providerSummaries.first(where: { $0.provider == .codex })?.snapshot?.shortWindow == nil && model.providerSummaries.first(where: { $0.provider == .codex })?.snapshot?.accountPlan == .pro,
+                  "AI native fixture loads an actual weekly-only Pro snapshot without inventing a short window")
             let coordinator = WorkbenchModalCoordinator()
             let inspection = AIUsageNativeDialogInspection()
             let surface = AIUsageCheckSurface(model: model, coordinator: coordinator, inspection: inspection)
@@ -51,6 +63,8 @@ import SwiftUI
                         check(pageScroller.map { $0.scrollerStyle == .overlay && abs($0.contentSize.width - size.width) < 1 } == true,
                               "AI fixture uses the production overlay scroller without subtracting a legacy scrollbar from the shared page width at \(Int(size.width)) pt")
                         print("DETAIL AI page viewport=\(host.bounds) scroll=\(String(describing: pageScroller?.bounds)) clip=\(String(describing: pageScroller?.contentView.bounds)) style=\(String(describing: pageScroller?.scrollerStyle.rawValue))")
+                        let quotaChecks = checkOverviewQuotaGeometry(host: host, pageWidth: size.width, inspection: inspection.quota)
+                        count += quotaChecks.count; failures += quotaChecks.failures
                     }
                     if case .provider(let provider) = route {
                         let providerChecks = checkProviderGeometry(provider: provider, host: host, pageWidth: size.width)
@@ -79,6 +93,27 @@ import SwiftUI
                   "AI native view checks never read live accounts or conversation metadata")
         } catch { check(false, "AI native fixture failed: " + error.localizedDescription) }
         print("AI native checks: \(count - failures)/\(count) passed")
+        return (count, failures)
+    }
+    private static func checkOverviewQuotaGeometry(host: NSView, pageWidth: CGFloat, inspection: AIQuotaLayoutInspection) -> (count: Int, failures: Int) {
+        var count = 0, failures = 0
+        func check(_ value: Bool, _ message: String) {
+            count += 1; if !value { failures += 1 }
+            print("\(value ? "PASS" : "FAIL") \(message) at \(Int(pageWidth)) pt")
+        }
+        func frame(_ identifier: String) -> NSRect? { inspection.frame(identifier) }
+        func aligned(_ a: String, _ b: String) -> Bool {
+            frame(a).flatMap { left in frame(b).map { right in abs(left.midY - right.midY) < 1 && abs(left.height - right.height) < 1 } } ?? false
+        }
+        check(aligned("fc.ai.quota.header.codex", "fc.ai.quota.header.claude"), "AI provider headers share a stable row despite differing source and membership metadata")
+        check(aligned("fc.ai.quota.codex.0.progress", "fc.ai.quota.claude.0.progress"), "weekly-only and two-window AI cards align their first real progress bars")
+        check(aligned("fc.ai.quota.footer.codex", "fc.ai.quota.footer.claude"), "AI source status footers align below the shared metric area")
+        check(frame("fc.ai.quota.availableOnly.codex") != nil && frame("fc.ai.quota.codex.1.progress") == nil && frame("fc.ai.quota.claude.1.progress") != nil,
+              "a missing AI window uses an availability note without a fabricated label or empty progress bar")
+        let regions = ["header.codex", "header.claude", "codex.0.progress", "claude.0.progress", "footer.codex", "footer.claude", "availableOnly.codex", "claude.1.progress"]
+        let measured = regions.map { $0 + "=" + String(describing: frame("fc.ai.quota." + $0)) }.joined(separator: " ")
+        let axMetricIDs = accessibilityObjects(in: host).compactMap { string("accessibilityIdentifier", from: $0) }.filter { $0.hasPrefix("fc.ai.quota.") }.sorted()
+        print("DETAIL AI quota native regions at \(Int(pageWidth)) pt: \(measured); AX metric IDs=\(axMetricIDs)")
         return (count, failures)
     }
     private static func checkProviderGeometry(provider: AIProvider, host: NSView, pageWidth: CGFloat) -> (count: Int, failures: Int) {
@@ -274,9 +309,9 @@ private struct AIUsageCheckSurface: View {
     let inspection: AIUsageNativeDialogInspection
     var body: some View {
         #if DEBUG
-        surface.environment(\.aiManualDialogInspection, inspection.manual)
+        surface.environment(\.aiManualDialogInspection, inspection.manual).environment(\.aiQuotaLayoutInspection, inspection.quota)
         #else
-        surface
+        surface.environment(\.aiQuotaLayoutInspection, inspection.quota)
         #endif
     }
     private var surface: some View {
@@ -300,6 +335,7 @@ private struct AIUsageCheckSurface: View {
 /// One instance spans the page and cached modal host. Release never constructs
 /// a debug binding bridge; its remaining behavior and geometry checks still run.
 @MainActor private final class AIUsageNativeDialogInspection {
+    let quota = AIQuotaLayoutInspection()
     #if DEBUG
     let manual = AIManualDialogInspection()
     #endif

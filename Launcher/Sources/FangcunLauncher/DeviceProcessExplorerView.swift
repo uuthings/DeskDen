@@ -27,6 +27,7 @@ struct DeviceProcessExplorerView: View {
     @State private var actionRequest: DeviceProcessActionRequest?
     @State private var actionMessage: String?
     @State private var actionFailed = false
+    @State private var protectedProcessName: String?
 
     private var candidates: [DeviceProcessGroup] {
         DeviceProcessExplorer.groups(processes, grouped: grouped, filter: filter, query: query, sort: appliedSort, ascending: appliedAscending)
@@ -62,6 +63,17 @@ struct DeviceProcessExplorerView: View {
                                       dismiss: { actionRequest = nil },
                                       force: { actionRequest = .init(name: request.name, processes: request.processes, mode: .force, wholeApplication: request.wholeApplication) },
                                       perform: perform)
+        }
+        .workbenchModal(isPresented: Binding(get: { protectedProcessName != nil }, set: { if !$0 { protectedProcessName = nil } }), width: 440) {
+            WorkbenchDialogFrame(title: "此进程仅供查看", dismiss: { protectedProcessName = nil }) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Label(protectedProcessName ?? "进程", systemImage: "lock.shield").font(.system(size: 14, weight: .medium))
+                    Text("为保持系统和方寸正常运行，系统服务与方寸自身只提供读数。无法确认所属应用的进程也会保留，避免结束错误目标。")
+                        .font(.system(size: 12)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
+                    Text("你仍可查看进程详情；可操作的应用会显示退出选项，执行前还需确认。")
+                        .font(.system(size: 11)).foregroundStyle(palette.muted).fixedSize(horizontal: false, vertical: true)
+                }
+            } actions: { Spacer(); Button("知道了") { protectedProcessName = nil }.buttonStyle(WBButtonStyle(primary: true)) }
         }
     }
     private func reorder() { order = candidates.map(\.id) }
@@ -146,7 +158,7 @@ struct DeviceProcessExplorerView: View {
                     .onChange(of: viewportKey) { _, _ in reader.scrollTo("process-list-top", anchor: .top) }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
             if memoryFocused {
-                Text("读数刷新保持顺序，点「重新排序」才应用新顺序。系统与身份未知的进程只允许查看。")
+                Text("读数刷新保持顺序，点「重新排序」才应用新顺序。可操作的应用可在确认后退出。")
                     .font(.system(size: 11)).foregroundStyle(palette.muted).padding(.top, 10)
             } else {
                 HStack(spacing: 6) {
@@ -222,15 +234,20 @@ struct DeviceProcessExplorerView: View {
             HStack(spacing: 4) {
                 Button { if let process = members.first(where: \.isApplicationMain) ?? members.first { open(process) } } label: { Image(systemName: "info.circle") }.buttonStyle(WBIconButtonStyle()).accessibilityLabel("查看\(name)占用")
                 if canQuit {
-                    Button("退出…") { actionRequest = .init(name: name, processes: members, mode: .quit, wholeApplication: wholeApplication) }.buttonStyle(WBButtonStyle(compact: true))
+                    Button("退出") { actionRequest = .init(name: name, processes: members, mode: .quit, wholeApplication: wholeApplication) }.buttonStyle(WBButtonStyle(compact: true))
                         .accessibilityIdentifier("device-process-open-quit-" + String(members.first?.pid ?? 0))
-                } else { Text("仅查看").font(.system(size: 11)).foregroundStyle(palette.muted) }
+                } else { Button("仅查看") { protectedProcessName = name }.buttonStyle(WBQuietButtonStyle()).help("了解此进程的保护原因") }
             }.frame(width: actionWidth, alignment: .trailing)
         } else {
             Menu {
-                Button(wholeApplication ? "退出整个应用…" : "退出进程…") { actionRequest = .init(name: name, processes: members, mode: .quit, wholeApplication: wholeApplication) }.disabled(!canQuit)
-                Button(wholeApplication ? "强制结束此组…" : "强制结束进程…", role: .destructive) { actionRequest = .init(name: name, processes: members, mode: .force, wholeApplication: wholeApplication) }.disabled(!canForce)
-                if !canQuit && !canForce { Text("系统、自身或身份不可核验的进程不可结束") }
+                Button("查看详情") { if let process = members.first(where: \.isApplicationMain) ?? members.first { open(process) } }
+                if canQuit || canForce {
+                    Divider()
+                    Button(wholeApplication ? "退出整个应用" : "退出进程") { actionRequest = .init(name: name, processes: members, mode: .quit, wholeApplication: wholeApplication) }.disabled(!canQuit)
+                    Button(wholeApplication ? "强制结束此组" : "强制结束进程", role: .destructive) { actionRequest = .init(name: name, processes: members, mode: .force, wholeApplication: wholeApplication) }.disabled(!canForce)
+                } else {
+                    Button("了解只读保护") { protectedProcessName = name }
+                }
             } label: { Image(systemName: "ellipsis").font(.system(size: 12)).frame(width: actionWidth, height: 26) }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: actionWidth).accessibilityLabel("\(name) 的进程操作")
         }

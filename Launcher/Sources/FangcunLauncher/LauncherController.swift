@@ -23,6 +23,9 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
     var statusItem: NSStatusItem!
     var previousApp: NSRunningApplication?
     var eventMonitor: Any?
+    /// An optional observer of the installed AppKit monitor, used by isolated
+    /// native checks to verify real delivery and duplicate-monitor replacement.
+    var localEventMonitorDidReceive:((NSEvent)->Void)?
     var observers: [NSObjectProtocol] = []
     var applications: [LaunchTarget] = []
     var searchIndex: [SearchEntry] = []
@@ -189,9 +192,7 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
         }
         bindingHotKeys.pressed = { [weak self] key in self?.activateGlobalShortcut(key) }
         if Bundle.main.object(forInfoDictionaryKey:"FangcunUIReview") as? Bool != true {registerStartupHotKeys()}
-        eventMonitor = NSEvent.addLocalMonitorForEvents(matching:.keyDown) { [weak self] event in
-            let handled = MainActor.assumeIsolated { guard let self, event.window === self.panel || event.window === self.editorPanel else { return false }; return self.route(event) }; return handled ? nil : event
-        }
+        installLocalEventMonitor()
         observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName:NSWorkspace.didActivateApplicationNotification,object:nil,queue:.main) { [weak self] note in
             let identifier = (note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.processIdentifier
             MainActor.assumeIsolated {
@@ -221,6 +222,35 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
             if self.hasMarkedInput { return }
             self.hide(restore:false)
         }
+    }
+    /// One production monitor installation is shared with isolated native event checks.
+    /// Reinstallation never stacks handlers on the same controller.
+    func installLocalEventMonitor() {
+        if let eventMonitor { NSEvent.removeMonitor(eventMonitor) }
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching:[.keyDown,.leftMouseDown,.rightMouseDown,.otherMouseDown]) { [weak self] event in
+            let handled = MainActor.assumeIsolated {
+                guard let self else {return false}
+                self.localEventMonitorDidReceive?(event)
+                if event.type != .keyDown {
+                    self.dismissLauncherForWorkbenchInteraction(event)
+                    return false // The original click must still reach the workbench.
+                }
+                guard event.window === self.panel || event.window === self.editorPanel else { return false }
+                return self.route(event)
+            }
+            return handled ? nil : event
+        }
+    }
+    /// Local clicks do not emit another-app activation notifications. Treat a
+    /// workbench click just like clicking outside the transient launcher while
+    /// preserving editors, composition, menus and native picker sessions.
+    func dismissLauncherForWorkbenchInteraction(_ event:NSEvent) {
+        guard panel?.isVisible == true, !pickerActive, menu == nil, !launchPending,
+              editorPanel == nil, !isEditing, !hasMarkedInput,
+              let clicked=event.window, let workbench=workbenchController,
+              clicked === workbench.presentationWindow else {return}
+        closeOverlay(render:false)
+        hide(restore:false)
     }
     var hasUnsavedLauncherChanges: Bool {
         let card = (editorPanel?.contentView as? BindingPopoverSurface)?.card
@@ -444,7 +474,18 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
         let ordered = ApplicationSorter.sorted(discovered,mode:configuration.settings.appSort,order:configuration.applicationOrder,metadata:configuration.applicationMetadata,starred:configuration.starredApplications)
         appIndex = ordered.map { SearchEntry(target:$0) }
         let ranks = Dictionary(uniqueKeysWithValues:ordered.enumerated().map { ($0.element.id,$0.offset) })
-        searchIndex = SearchEngine.entries(applications:ordered,bindings:bindings,includeBindings:true).filter { $0.target.kind != .app || !hidden.contains($0.id) }.sorted {
+        // A bound app can live outside every catalog directory. Enrich only its
+        // in-memory search copy; never replace the user's alias or saved keywords.
+        let catalogIDs = Set(ordered.map(\.id))
+        let indexedBindings = bindings.mapValues { binding in
+            var indexed = binding
+            if binding.target.kind == .app, !catalogIDs.contains(binding.target.id) {
+                let metadata = ApplicationNames.searchKeywords(for:URL(fileURLWithPath:binding.target.location))
+                indexed.target.keywords = [binding.target.keywords,metadata].filter { !$0.isEmpty }.joined(separator:"\n")
+            }
+            return indexed
+        }
+        searchIndex = SearchEngine.entries(applications:ordered,bindings:indexedBindings,includeBindings:true).filter { $0.target.kind != .app || !hidden.contains($0.id) }.sorted {
             let first = ranks[$0.id] ?? Int.max, second = ranks[$1.id] ?? Int.max
             if first != second { return first < second }
             let order = $0.title.localizedStandardCompare($1.title)

@@ -27,7 +27,10 @@ import LauncherCore
             return (count, failures)
         }
         let originalFrame = window.frame, originalRoute = model.route, originalDetail = model.deviceDetail
+        let originalLayout = model.device.dashboardLayout
+        if originalLayout != DeviceDashboardLayout() { model.device.saveLayout(.init()) }
         defer {
+            if model.device.dashboardLayout != originalLayout { model.device.saveLayout(originalLayout) }
             model.deviceDetail = originalDetail; model.navigate(originalRoute)
             window.setFrame(originalFrame, display: false)
         }
@@ -39,6 +42,36 @@ import LauncherCore
         for sample in samples {
             window.setContentSize(sample.size)
             let label = "\(Int(sample.size.width))×\(Int(sample.size.height))"
+            model.deviceDetail = nil; model.navigate(.device)
+            _ = await wait(window) { frame("fc.device.capacity.memory.bar", in: host) != nil && frame("fc.device.capacity.storage.bar", in: host) != nil }
+            // AX exposes the visible glyph union for text groups, not the
+            // SwiftUI 16/32 pt allocation. Chinese fallback glyphs at 11 pt
+            // measure 14 pt here; the 28 pt primary glyph measures 33 pt.
+            // Obtain both from AppKit's real font shaping instead of loosening
+            // tolerances or forcing the UI to match a container assumption.
+            let captionGlyphHeight = nativeGlyphHeight("已用内存", size: 11)
+            let primaryGlyphHeight = nativeGlyphHeight("—", size: 28)
+            for (element, expectedHeight) in [("primary", CGFloat(52)), ("label", captionGlyphHeight), ("value", primaryGlyphHeight), ("bar", CGFloat(5))] {
+                let memory = frame("fc.device.capacity.memory." + element, in: host)
+                let storage = frame("fc.device.capacity.storage." + element, in: host)
+                check(memory.flatMap { lhs in storage.map { rhs in abs(lhs.maxY - rhs.maxY) < 1 && abs(lhs.minY - rhs.minY) < 1 && abs(lhs.height - expectedHeight) < 1 && abs(rhs.height - expectedHeight) < 1 } } == true,
+                      "mounted memory/storage \(element) glyphs or surfaces share their native \(expectedHeight) pt height and vertical baseline in \(label)")
+                print("DETAIL device-capacity \(element) \(label) memory=\(String(describing: memory)) storage=\(String(describing: storage))")
+            }
+            for index in 0..<3 {
+                let memory = frame("fc.device.capacity.memory.fact.\(index)", in: host)
+                let storage = frame("fc.device.capacity.storage.fact.\(index)", in: host)
+                check(memory.flatMap { lhs in storage.map { rhs in abs(lhs.midY - rhs.midY) < 1 && abs(lhs.height - captionGlyphHeight) < 1 && abs(rhs.height - captionGlyphHeight) < 1 } } == true,
+                      "mounted memory/storage auxiliary row \(index + 1) shares the same native caption glyph height and baseline in \(label)")
+                print("DETAIL device-capacity fact.\(index) \(label) nativeGlyphHeight=\(captionGlyphHeight) memory=\(String(describing: memory)) storage=\(String(describing: storage))")
+            }
+            for card in ["memory", "storage"] {
+                let facts = (0..<3).compactMap { frame("fc.device.capacity.\(card).fact.\($0)", in: host) }
+                check(facts.count == 3 && zip(facts, facts.dropFirst()).allSatisfy { abs($0.0.midY - $0.1.midY - 22) < 1 },
+                      "mounted \(card) auxiliary glyphs retain the 22 pt cadence of the shared 16 pt rows plus 6 pt gaps in \(label)")
+            }
+            check(frame("fc.device.card.network", in: host) == nil && frame("fc.device.card.traffic", in: host) == nil,
+                  "mounted hardware dashboard does not duplicate the default network monitor cards in \(label)")
             for route in [DeviceCardID.cpu, .thermal, .storage] {
                 model.deviceDetail = route; model.navigate(.device)
                 let identifiers: [String]
@@ -97,6 +130,14 @@ import LauncherCore
                 check(notice.map { abs($0.width - sample.pageWidth) < 1.5 && $0.height >= 35 && $0.height < 100 } == true,
                       "mounted \(route.rawValue) notice occupies the full page in a padded surface in \(label)")
                 print("DETAIL device-detail \(route.rawValue) \(label) notice=\(String(describing: notice))")
+                if route == .profile {
+                    let core = frame("device-profile-core-composition", in: host)
+                    let hardware = frame("fc.device.detail.card.硬件信息", in: host)
+                    check(core.flatMap { text in hardware.map { card in
+                        abs(text.height - nativeGlyphHeight("核心构成", size: 11)) < 1 && text.width > 0 && card.insetBy(dx: -1, dy: -1).contains(text)
+                    } } == true, "mounted hardware profile keeps its native caption-sized CPU core-composition glyphs inside the hardware card in \(label)")
+                    print("DETAIL device-profile-core \(label) nativeGlyphHeight=\(nativeGlyphHeight("核心构成", size: 11)) core=\(String(describing: core)) hardware=\(String(describing: hardware))")
+                }
             }
             model.deviceDetail = .memory; model.navigate(.device)
             _ = await wait(window) { frame("device-detail-open-health", in: host) != nil && frame("fc.page.device.memory", in: host) != nil }
@@ -126,6 +167,9 @@ import LauncherCore
             try? await Task.sleep(for: .milliseconds(10))
         } while ContinuousClock.now < deadline
         return condition()
+    }
+    private static func nativeGlyphHeight(_ text: String, size: CGFloat) -> CGFloat {
+        ceil((text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: size)]).height)
     }
     private static func frame(_ identifier: String, in root: NSView) -> NSRect? {
         var pending: [NSObject] = [root], seen = Set<ObjectIdentifier>(), result: [NSRect] = []

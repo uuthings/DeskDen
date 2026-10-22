@@ -102,7 +102,7 @@ struct HealthCenterView: View {
             VStack(alignment: .leading, spacing: 0) {
                 switch model.phase {
                 case .overview: overview
-                case .checking: checking
+                case .checking: if model.isSpaceCleaning { storageChecking } else { checking }
                 case .report: if model.category == .overview { reportOverview } else { explorer }
                 case .processing: if model.resultKind == .applications { applicationProcessing } else { processing }
                 case .result: if model.resultKind == .applications { applicationResult } else { result }
@@ -127,7 +127,9 @@ struct HealthCenterView: View {
             Button { onBack() } label: { Label("返回" + model.returnContext, systemImage: "arrow.left") }
                 .buttonStyle(WBQuietButtonStyle()).frame(height: 28).padding(.bottom, 12)
             WBPageHeader(title: "体检中心", subtitle: "了解设备状态，让每次处理都有依据") {
-                if availableWidth > 826 { Label(device.snapshot.deviceName + " · " + device.snapshot.chipName, systemImage: "laptopcomputer").font(.system(size: 11)).foregroundStyle(palette.muted) }
+                Button { model.showSpaceCleaning() } label: { Label("清理空间", systemImage: "internaldrive.badge.checkmark") }
+                    .buttonStyle(WBButtonStyle()).disabled(storage.isScanning || storage.isProcessing || applications.isProcessing)
+                    .accessibilityIdentifier("health-open-space-cleaning")
             }
             if let message = model.assessmentNotice { notice(message, symbol: "clock.arrow.circlepath").padding(.bottom, 12) }
         }.background(GeometryReader { proxy in Color.clear.preference(key: HealthPageHeaderHeightKey.self, value: proxy.size.height).allowsHitTesting(false) })
@@ -221,6 +223,11 @@ struct HealthCenterView: View {
                 scopeToggle("历史诊断记录", subtitle: "旧日志与崩溃记录", symbol: "doc.badge.clock", enabled: $model.includeDiagnostics)
                 scopeToggle("应用内存", subtitle: "占用与身份逐项复核", symbol: "memorychip", enabled: $model.includeMemory)
             }
+            storageScopeChoices
+        }.padding(.top, 2)
+    }
+    private var storageScopeChoices: some View {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Button("选择缓存目录") { storage.chooseScope(.rebuildableCache, host: model.hostWindow) }.buttonStyle(WBButtonStyle(compact: true))
                 Button("选择诊断目录") { storage.chooseScope(.diagnosticRecords, host: model.hostWindow) }.buttonStyle(WBButtonStyle(compact: true))
@@ -234,7 +241,7 @@ struct HealthCenterView: View {
                     Button { storage.removeScope(scope.id) } label: { Image(systemName: "xmark") }.buttonStyle(WBIconButtonStyle(size: 22)).help("移除此检查范围")
                 }
             }
-        }.padding(.top, 2)
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("health-storage-scope-choices")
     }
     private func scopeToggle(_ title: String, subtitle: String, symbol: String, enabled: Binding<Bool>) -> some View {
         HStack(spacing: overviewCompact ? 7 : 9) {
@@ -275,6 +282,25 @@ struct HealthCenterView: View {
             }.background(innerSurface)
             notice("检查不会自动删除内容或退出应用。文件扫描的进度来自实际已检查条目，不估算虚假百分比。", symbol: "checkmark.shield")
         }
+    }
+    private var storageChecking: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                iconTile("internaldrive", size: 42)
+                VStack(alignment: .leading, spacing: 5) {
+                    eyebrow("清理空间", symbol: "folder.badge.gearshape")
+                    Text("正在检查所选目录").font(.system(size: 18, weight: .medium))
+                }
+                Spacer(minLength: 0)
+                Button("取消检查") { model.cancelCheck() }.buttonStyle(WBButtonStyle(compact: true))
+            }
+            ProgressView().progressViewStyle(.linear).tint(palette.accent)
+            if let progress = storage.progress {
+                Text("已检查 \(progress.checkedEntries) 项 · \(DeviceFormat.bytes(progress.logicalBytes))")
+                    .font(.system(size: 12)).monospacedDigit()
+            }
+            notice("检查完成后逐项复核并确认，文件不会自动处理。健康评分保持原有结果。", symbol: "checkmark.shield")
+        }.accessibilityIdentifier("health-space-cleaning-checking")
     }
     @ViewBuilder private var reportOverview: some View {
         if storage.selectedIDs.isEmpty {
@@ -461,18 +487,20 @@ struct HealthCenterView: View {
     private var explorerContents: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
-                Button { model.showReport() } label: { Label("体检报告", systemImage: "arrow.left") }.buttonStyle(WBButtonStyle(compact: true))
+                Button { if model.isSpaceCleaning { model.showOverview() } else { model.showReport() } } label: { Label(model.isSpaceCleaning ? "体检中心" : "体检报告", systemImage: "arrow.left") }.buttonStyle(WBButtonStyle(compact: true))
                 palette.line.frame(width: 1, height: 16)
-                Text(model.category.title).font(.system(size: 12)).foregroundStyle(palette.secondary)
+                Text(model.isSpaceCleaning ? "清理空间" : model.category.title).font(.system(size: 12)).foregroundStyle(palette.secondary)
                 Spacer(minLength: 0)
                 historyActions
-                Button("重新体检") { model.startAssessment() }.buttonStyle(WBButtonStyle(compact: true))
+                Button(model.isSpaceCleaning ? "检查所选目录" : "重新体检") { if model.isSpaceCleaning { model.startStorageScan() } else { model.startAssessment() } }.buttonStyle(WBButtonStyle(compact: true))
+                    .disabled(model.isSpaceCleaning && storage.scopes.isEmpty)
             }.frame(height: 28).padding(.bottom, 12).overlay(alignment: .bottom) { palette.line.frame(height: 1) }
             VStack(alignment: .leading, spacing: 6) {
                 Text("逐项复核，再决定是否处理").font(.system(size: 17, weight: .medium))
                 Text(model.category == .memory ? "占用大小不代表异常。只对你明确选择的应用请求正常退出。" : "查看内容归属与影响，个人文件和正在使用的内容默认保留。")
                     .font(.system(size: 11)).foregroundStyle(palette.muted).lineSpacing(4).fixedSize(horizontal: false, vertical: true)
             }.padding(.vertical, 14)
+            if model.isSpaceCleaning { storageScopeChoices.padding(.bottom, 14) }
             HStack(alignment: .top, spacing: compactReport ? 12 : 14) {
                 explorerCategories
                 if model.category == .memory {
@@ -485,7 +513,7 @@ struct HealthCenterView: View {
     private var explorerSidebarWidth: CGFloat { availableWidth <= 576 ? 132 : fullReport ? 208 : compactReport ? 156 : 180 }
     private var explorerCategories: some View {
         VStack(alignment: .leading, spacing: 5) {
-            ForEach([HealthCenterCategory.cache, .diagnostics, .memory], id: \.self) { category in
+            ForEach(model.isSpaceCleaning ? [.cache, .diagnostics] : [HealthCenterCategory.cache, .diagnostics, .memory], id: \.self) { category in
                 Button { model.showCategory(category) } label: {
                     HStack(spacing: compactReport ? 6 : 8) {
                         if !compactReport {
@@ -507,7 +535,7 @@ struct HealthCenterView: View {
             Spacer(minLength: 12)
             HStack(alignment: .top, spacing: 7) {
                 Image(systemName: "checkmark.shield").font(.system(size: 14)).foregroundStyle(palette.success).padding(.top, 3)
-                Text("保留个人文件\n退出前先保存工作").font(.system(size: 11)).foregroundStyle(palette.muted).lineSpacing(7)
+                Text(model.isSpaceCleaning ? "保留个人文件\n处理前逐项确认" : "保留个人文件\n退出前先保存工作").font(.system(size: 11)).foregroundStyle(palette.muted).lineSpacing(7)
             }.padding(.top, 18).padding(.horizontal, 8).padding(.bottom, 4)
         }.frame(width: explorerSidebarWidth - (compactReport ? 9 : 12), height: max(280, explorerListHeight + 36), alignment: .topLeading)
             .padding(.trailing, compactReport ? 9 : 12).overlay(alignment: .trailing) { palette.line.frame(width: 1) }
@@ -553,7 +581,7 @@ struct HealthCenterView: View {
             .accessibilityElement(children: .contain).accessibilityIdentifier("health-application-selection-bar")
     }
     private var emptyFiles: some View {
-        VStack(spacing: 12) { Image(systemName: "folder").font(.system(size: 26)).foregroundStyle(palette.muted); Text(storage.report == nil ? "尚未选择并检查文件范围" : "当前筛选下没有文件").font(.system(size: 12)); if storage.report == nil { Button("选择检查目录") { storage.chooseScope(model.category == .cache ? .rebuildableCache : .diagnosticRecords, host: model.hostWindow) }.buttonStyle(WBButtonStyle(compact: true)); Button("开始检查") { model.startAssessment() }.buttonStyle(WBButtonStyle(primary: true, compact: true)) } }.padding(24).frame(maxWidth: .infinity, minHeight: 220)
+        VStack(spacing: 12) { Image(systemName: "folder").font(.system(size: 26)).foregroundStyle(palette.muted); Text(storage.report == nil ? "尚未选择并检查文件范围" : "当前筛选下没有文件").font(.system(size: 12)); if storage.report == nil { Button("选择检查目录") { storage.chooseScope(model.category == .cache ? .rebuildableCache : .diagnosticRecords, host: model.hostWindow) }.buttonStyle(WBButtonStyle(compact: true)); Button("开始检查") { if model.isSpaceCleaning { model.startStorageScan() } else { model.startAssessment() } }.buttonStyle(WBButtonStyle(primary: true, compact: true)).disabled(model.isSpaceCleaning && storage.scopes.isEmpty) } }.padding(24).frame(maxWidth: .infinity, minHeight: 220)
     }
     private func fileRow(_ file: StorageReviewCandidate) -> some View {
         let status = storage.candidateStatus(for: file)
@@ -660,7 +688,7 @@ struct HealthCenterView: View {
             }.padding(14).background(innerSurface)
             notice("移到废纸篓仍可能占用磁盘，文件大小不等于实际释放空间。继续按实际设备状态评估。", symbol: "info.circle")
             receiptList
-            HStack(spacing: 8) { Spacer(); Button("重新体检") { model.showOverview() }.buttonStyle(WBButtonStyle()); Button("查看本次报告") { model.showReport() }.buttonStyle(WBButtonStyle()); Button("返回" + model.returnContext + " ↗", action: onBack).buttonStyle(WBButtonStyle(primary: true)) }
+            HStack(spacing: 8) { Spacer(); Button("重新体检") { model.showOverview() }.buttonStyle(WBButtonStyle()); Button(model.isSpaceCleaning ? "返回清理空间" : "查看本次报告") { if model.isSpaceCleaning { model.showSpaceCleaning() } else { model.showReport() } }.buttonStyle(WBButtonStyle()); Button("返回" + model.returnContext + " ↗", action: onBack).buttonStyle(WBButtonStyle(primary: true)) }
         }.accessibilityElement(children: .contain).accessibilityIdentifier("health-file-results")
     }
     private var receiptList: some View {

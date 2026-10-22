@@ -52,9 +52,14 @@ private struct VaultProtectionPage:View {
                 WBCard(title:"访问保护",symbol:"checkmark.shield") {
                     VStack(spacing:0) {
                         row("独立密码",model.isUnlocked ? "至少 8 个字符；不会保存明文密码":"先验证解锁，再继续修改密码",first:true){Button("修改密码",action:model.requestPasswordChange).buttonStyle(WBButtonStyle(compact:true)).disabled(!model.isConfigured || model.busy)}
+                        row("Touch ID",model.biometricUnavailableReason ?? (model.biometricEnabled ? "仅此设备；变更指纹或密码后需重新开启":"先用独立密码解锁，再为此资料库开启")){
+                            if model.biometricEnabled && model.biometricCanRemove {Button("停用"){Task{_ = await model.disableBiometrics()}}.buttonStyle(WBButtonStyle(compact:true)).disabled(model.busy)}
+                            else if !model.biometricAvailable {Text("暂不可用").foregroundStyle(palette.muted)}
+                            else {Button("开启 Touch ID"){Task{_ = await model.enableBiometrics()}}.buttonStyle(WBButtonStyle(compact:true)).disabled(!model.isUnlocked || model.busy || !model.canChangeProtectionPreferences)}
+                        }
                         row("离开私密页时锁定","切换模块、收起工作台后生效"){Text("始终开启").foregroundStyle(palette.secondary)}
                         row("闲置自动锁定","没有操作时自动收起内容"){WBSelect("闲置自动锁定",selection:Binding(get:{model.idleMinutes},set:model.changeIdleMinutes),options:[1,5,10].map{($0,"\($0) 分钟")}).frame(width:174).disabled(!model.canChangeProtectionPreferences)}
-                        row("睡眠或会话切换","需要重新输入密码",last:true){Text("始终开启").foregroundStyle(palette.secondary)}
+                        row("睡眠或会话切换","需要重新验证身份",last:true){Text("始终开启").foregroundStyle(palette.secondary)}
                     }
                 }
                 WBCard(title:"本机备份",symbol:"archivebox") {
@@ -67,7 +72,7 @@ private struct VaultProtectionPage:View {
                 if let message=model.completionMessage {Label(message,systemImage:"checkmark.circle").font(.system(size:11)).foregroundStyle(palette.success)}
                 if let error=model.errorMessage {Text(error).font(.system(size:11)).foregroundStyle(palette.critical)}
             }
-        }
+        }.task {await model.refreshBiometrics()}
     }
     private func row<Control:View>(_ title:String,_ subtitle:String,first:Bool=false,last:Bool=false,@ViewBuilder control:()->Control)->some View {
         HStack(spacing:16){VStack(alignment:.leading,spacing:4){Text(title).font(.system(size:12));Text(subtitle).font(.system(size:11)).foregroundStyle(palette.muted)};Spacer();control()}.padding(.top,13).padding(.bottom,last ? 0:13).overlay(alignment:.top){if !first {Rectangle().fill(palette.line).frame(height:1)}}
@@ -112,6 +117,10 @@ private struct VaultLockedView:View {
             if model.isConfigured {
                 SecureField("输入私密空间密码",text:$password).modifier(VaultInputStyle()).focused($focused).onSubmit(unlock).disabled(model.busy).padding(.top,21).padding(.bottom,10)
                 Button(action:unlock){HStack{Spacer();if model.busy {ProgressView().controlSize(.small)}else{Label("解锁",systemImage:"lock.open")};Spacer()}}.buttonStyle(WBButtonStyle(primary:true)).disabled(model.busy || password.isEmpty)
+                if model.biometricEnabled {
+                    if model.biometricAvailable {Button{password="";Task{_ = await model.unlockWithBiometrics()}}label:{Label("使用 Touch ID 解锁",systemImage:"touchid").frame(maxWidth:.infinity)}.buttonStyle(WBButtonStyle()).disabled(model.busy).padding(.top,8)}
+                    else if let reason=model.biometricUnavailableReason {Text(reason).font(.system(size:11)).foregroundStyle(palette.muted).multilineTextAlignment(.center).padding(.top,8)}
+                }
             } else {
                 Button{model.errorMessage=nil;model.sheet = .setup}label:{Label("设置独立密码",systemImage:"key").frame(maxWidth:.infinity)}.buttonStyle(WBButtonStyle(primary:true)).padding(.top,21)
             }
@@ -119,9 +128,9 @@ private struct VaultLockedView:View {
             if let message=model.completionMessage {Text(message).font(.system(size:11)).foregroundStyle(palette.success).multilineTextAlignment(.center).padding(.top,10)}
             HStack(spacing:16){Button("从备份恢复"){model.errorMessage=nil;model.sheet = .restore}.buttonStyle(WBQuietButtonStyle());if model.isConfigured {Button("忘记密码"){showForgot=true}.buttonStyle(WBQuietButtonStyle())}}.padding(.top,18)
         }.frame(maxWidth:360).padding(.vertical,24)
-        .onAppear{focused=model.isConfigured}
+        .onAppear{focused=model.isConfigured}.task{await model.refreshBiometrics()}
         .modifier(VaultSensitiveState(model:model,clear:{password="";showForgot=false}))
-        .workbenchModal(isPresented:$showForgot){WorkbenchDialogFrame(title:"忘记密码",dismiss:{showForgot=false}){Text("方寸不会保存或找回私密空间密码。没有密码，已有内容无法解密。你可以使用备份及其密码恢复；确认替换前会保留当前加密副本。").font(.system(size:12)).foregroundStyle(palette.secondary).lineSpacing(5)}actions:{Spacer();Button("知道了"){showForgot=false}.buttonStyle(WBButtonStyle(primary:true))}}
+        .workbenchModal(isPresented:$showForgot){WorkbenchDialogFrame(title:"忘记密码",dismiss:{showForgot=false}){Text("方寸不会保存或找回私密空间密码。若此前已开启 Touch ID，可在本机验证解锁；Touch ID 不能用于找回或修改遗忘的密码。你可以使用备份及其密码恢复；确认替换前会保留当前加密副本。").font(.system(size:12)).foregroundStyle(palette.secondary).lineSpacing(5)}actions:{Spacer();Button("知道了"){showForgot=false}.buttonStyle(WBButtonStyle(primary:true))}}
     }
     private func unlock(){guard !password.isEmpty,!model.busy else{return};let value=password;password="";Task{_ = await model.unlock(password:value)}}
 }
@@ -130,12 +139,18 @@ private struct VaultDeletionTarget:Identifiable {let id:UUID;let title:String}
 
 private struct VaultUnlockedView:View {
     @ObservedObject var model:VaultModel
+    @StateObject private var formatting=VaultEditorFormatting()
     @State private var deletion:VaultDeletionTarget?
     @State private var query=""
-    @State private var showCategory=false
-    @State private var category:PrivateDocumentCategory = .unclassified
+    @State private var categoryFilter="all"
+    @State private var showCategories=false
+    @State private var categoryName=""
+    @State private var editingCategoryID:String?
+    @State private var categoryDeletion:VaultCategory?
+    @State private var moveDestination="unclassified"
     @Environment(\.workbenchPalette) private var palette
     var panelHeight:CGFloat=575
+    private var filtered:[PrivateDocument] {model.documents.filter{(categoryFilter == "all" || $0.effectiveCategoryID == categoryFilter) && (query.isEmpty || $0.title.range(of:query,options:[.caseInsensitive,.diacriticInsensitive,.widthInsensitive]) != nil)}}
     var body:some View {
         VStack(spacing:12) {
             HStack(alignment:.top,spacing:12) {
@@ -147,80 +162,193 @@ private struct VaultUnlockedView:View {
         .workbenchModal(item:$deletion){document in WorkbenchDialogFrame(title:"删除这条私密文本？",dismiss:{deletion=nil}){
             Text("「\(document.title.isEmpty ? "未命名文本":document.title)」删除后无法撤销，可从此前的加密备份恢复。").font(.system(size:12)).foregroundStyle(palette.secondary)
         }actions:{Spacer();Button("取消"){deletion=nil}.buttonStyle(WBButtonStyle());Button("删除"){_ = model.deleteDocument(document.id);deletion=nil}.buttonStyle(WBButtonStyle(destructive:true))}}
-        .workbenchModal(isPresented:$showCategory){WorkbenchDialogFrame(title:"更改分类",dismiss:{showCategory=false}){
-            VStack(alignment:.leading,spacing:6){Text("分类").font(.system(size:12)).foregroundStyle(palette.secondary);WBSelect("分类",selection:$category,options:[PrivateDocumentCategory.work,.personal,.unclassified].map{($0,$0.title)})}
-        }actions:{Spacer();Button("取消"){showCategory=false}.buttonStyle(WBButtonStyle());Button("保存"){model.updateCategory(category);showCategory=false}.buttonStyle(WBButtonStyle(primary:true))}}
-        .onChange(of:model.selectedID){_,_ in showCategory=false;deletion=nil}
-        .modifier(VaultSensitiveState(model:model,clear:{query="";deletion=nil;showCategory=false;category = .unclassified}))
+        .workbenchModal(isPresented:$showCategories){categoryManager}
+        .workbenchModal(item:$categoryDeletion){category in WorkbenchDialogFrame(title:"删除分类「\(category.name)」？",dismiss:{categoryDeletion=nil}){
+            VStack(alignment:.leading,spacing:12){Text("分类中的 \(model.documents.filter{$0.effectiveCategoryID == category.id}.count) 条文本会移到下方分类，文本内容不会删除。").font(.system(size:12)).foregroundStyle(palette.secondary);WBSelect("移到分类",selection:$moveDestination,options:model.categoryOptions.filter{$0.0 != category.id})}
+        }actions:{Spacer();Button("取消"){categoryDeletion=nil}.buttonStyle(WBButtonStyle());Button("删除分类并移动文本"){if model.deleteCategory(category.id,movingTo:moveDestination){if categoryFilter == category.id {categoryFilter="all"};categoryDeletion=nil}}.buttonStyle(WBButtonStyle(destructive:true))}}
+        .onChange(of:model.selectedID){_,_ in deletion=nil;if let document=model.selectedDocument,categoryFilter != "all",document.effectiveCategoryID != categoryFilter {categoryFilter="all"}}
+        .modifier(VaultSensitiveState(model:model,clear:{query="";deletion=nil;showCategories=false;categoryName="";editingCategoryID=nil;categoryDeletion=nil;categoryFilter="all";formatting.detach()}))
     }
     private var sidebar:some View {
         VStack(spacing:12) {
             HStack(spacing:7){Image(systemName:"magnifyingglass").foregroundStyle(palette.muted);TextField("搜索标题",text:$query).textFieldStyle(.plain)}.padding(.horizontal,10).frame(height:32).background(palette.soft,in:RoundedRectangle(cornerRadius:8)).overlay(RoundedRectangle(cornerRadius:8).strokeBorder(palette.line,lineWidth:1))
+            HStack(spacing:6){WBSelect("筛选分类",selection:$categoryFilter,options:[("all","全部分类")]+model.categoryOptions);Button{categoryName="";editingCategoryID=nil;showCategories=true;model.recordActivity()}label:{Image(systemName:"folder.badge.gearshape")}.buttonStyle(WBIconButtonStyle(size:32)).help("管理分类").accessibilityLabel("管理分类")}
             ScrollView {
                 LazyVStack(spacing:2) {
-                    ForEach(model.documents.filter{query.isEmpty || $0.title.range(of:query,options:[.caseInsensitive,.diacriticInsensitive,.widthInsensitive]) != nil}){document in
-                        Button{model.selectDocument(document.id)}label:{VStack(alignment:.leading,spacing:5){Text(document.title.isEmpty ? "未命名文本":document.title).font(.system(size:12,weight:.medium)).lineLimit(1);Text(document.category.title+" · "+document.updatedAt.formatted(date:.abbreviated,time:.omitted)).font(.system(size:11)).foregroundStyle(palette.muted).lineLimit(1)}.padding(.vertical,12).padding(.horizontal,9).frame(maxWidth:.infinity,alignment:.leading).foregroundStyle(model.selectedID == document.id ? palette.text:palette.secondary).background(model.selectedID == document.id ? palette.navSelected:.clear,in:RoundedRectangle(cornerRadius:8))}.buttonStyle(.plain)
+                    ForEach(filtered){document in
+                        Button{model.selectDocument(document.id)}label:{VStack(alignment:.leading,spacing:5){Text(document.title.isEmpty ? "未命名文本":document.title).font(.system(size:12,weight:.medium)).lineLimit(1);Text(model.categoryTitle(document)+" · "+document.updatedAt.formatted(date:.abbreviated,time:.omitted)).font(.system(size:11)).foregroundStyle(palette.muted).lineLimit(1)}.padding(.vertical,12).padding(.horizontal,9).frame(maxWidth:.infinity,alignment:.leading).foregroundStyle(model.selectedID == document.id ? palette.text:palette.secondary).background(model.selectedID == document.id ? palette.navSelected:.clear,in:RoundedRectangle(cornerRadius:8))}.buttonStyle(.plain)
                     }
-                    if !query.isEmpty && !model.documents.contains(where:{$0.title.range(of:query,options:[.caseInsensitive,.diacriticInsensitive,.widthInsensitive]) != nil}) {Text("没有匹配的标题").font(.system(size:11)).foregroundStyle(palette.muted).padding(.vertical,20)}
+                    if filtered.isEmpty {Text(query.isEmpty ? "此分类暂无文本":"没有匹配的标题").font(.system(size:11)).foregroundStyle(palette.muted).padding(.vertical,20)}
                 }.background(WorkbenchOverlayScrollbars())
             }
         }
+    }
+    private var categoryManager:some View {
+        WorkbenchDialogFrame(title:"管理分类",dismiss:{showCategories=false;categoryName="";editingCategoryID=nil}){
+            VStack(alignment:.leading,spacing:14){
+                Text("分类与文本一起加密保存。「未分类」始终保留；删除其他分类时可先选择文本去向。").font(.system(size:12)).foregroundStyle(palette.secondary)
+                ScrollView {VStack(spacing:4){ForEach(model.categories){category in
+                    HStack(spacing:10){VStack(alignment:.leading,spacing:4){Text(category.name).font(.system(size:12));Text("\(model.documents.filter{$0.effectiveCategoryID == category.id}.count) 条文本").font(.system(size:11)).foregroundStyle(palette.muted)};Spacer();Button{editingCategoryID=category.id;categoryName=category.name}label:{Image(systemName:"pencil")}.buttonStyle(WBIconButtonStyle(size:28)).accessibilityLabel("重命名 \(category.name)");Button{moveDestination="unclassified";categoryDeletion=category}label:{Image(systemName:"trash")}.buttonStyle(WBIconButtonStyle(size:28)).foregroundStyle(palette.critical).accessibilityLabel("删除分类 \(category.name)")}.padding(.vertical,8)
+                }}}.frame(maxHeight:240)
+                VStack(alignment:.leading,spacing:6){Text(editingCategoryID == nil ? "新增分类":"重命名分类").font(.system(size:12));HStack(spacing:10){TextField("1–30 个字",text:$categoryName).modifier(VaultInputStyle());Button(editingCategoryID == nil ? "新增":"保存"){let saved=editingCategoryID.map{model.renameCategory($0,to:categoryName)} ?? model.addCategory(categoryName);if saved {categoryName="";editingCategoryID=nil}}.buttonStyle(WBButtonStyle(primary:true)).disabled(categoryName.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty);if editingCategoryID != nil {Button("取消"){categoryName="";editingCategoryID=nil}.buttonStyle(WBButtonStyle())}}}
+                VaultSheetError(model:model)
+            }.disabled(model.busy)
+        }actions:{Spacer();Button("完成"){showCategories=false;categoryName="";editingCategoryID=nil}.buttonStyle(WBButtonStyle(primary:true))}
     }
     @ViewBuilder private var editor:some View {
         if let document=model.selectedDocument {
             VStack(alignment:.leading,spacing:0) {
                 HStack(spacing:8){TextField("未命名文本",text:Binding(get:{model.selectedDocument?.title ?? ""},set:model.updateTitle)).textFieldStyle(.plain).font(.system(size:18)).frame(height:32);Button{deletion=VaultDeletionTarget(id:document.id,title:document.title);model.recordActivity()}label:{Image(systemName:"trash")}.buttonStyle(WBIconButtonStyle(size:28)).foregroundStyle(palette.critical).accessibilityLabel("删除文本")}
-                HStack(spacing:10){Text(document.category.title).font(.system(size:11)).padding(.horizontal,7).padding(.vertical,3).background(palette.soft,in:RoundedRectangle(cornerRadius:6));Spacer();Button("更改分类"){category=document.category;showCategory=true}.buttonStyle(WBQuietButtonStyle())}.padding(.top,12)
-                VaultPrivateTextEditor(model:model,documentID:document.id,text:document.body).disabled(model.busy).id(document.id)
-                HStack{Text(model.saveStatus).foregroundStyle(model.hasPendingSave ? palette.warning:palette.muted);Spacer();Text("\(document.body.count) 字")}.font(.system(size:11)).foregroundStyle(palette.muted)
+                HStack(spacing:10){Text("分类").font(.system(size:11)).foregroundStyle(palette.muted);WBSelect("文本分类",selection:Binding(get:{model.selectedDocument?.effectiveCategoryID ?? "unclassified"},set:model.moveSelected),options:model.categoryOptions).frame(width:164);Spacer()}.padding(.top,10).padding(.bottom,10)
+                VaultFormattingToolbar(controller:formatting).disabled(model.busy).padding(.bottom,8)
+                VaultPrivateTextEditor(model:model,document:document,formatting:formatting).disabled(model.busy).id(document.id)
+                HStack{Text(model.saveStatus).foregroundStyle(model.hasPendingSave ? palette.warning:palette.muted);Spacer();Text("\(document.body.count) 字")}.font(.system(size:11)).foregroundStyle(palette.muted).padding(.top,8)
             }
         } else {VStack(spacing:14){Text("新建你的第一条文本").font(.system(size:12)).foregroundStyle(palette.muted);Button{model.newDocument()}label:{Label("新建文本",systemImage:"plus")}.buttonStyle(WBButtonStyle(primary:true))}.frame(maxWidth:.infinity,maxHeight:.infinity)}
     }
 }
 
-/// Own the native editor's undo manager so locking explicitly clears both its text and its undo history.
+private struct VaultFormattingToolbar:View {
+    @ObservedObject var controller:VaultEditorFormatting
+    @Environment(\.workbenchPalette) private var palette
+    var body:some View {
+        HStack(spacing:4){
+            WBSelect("字体",selection:Binding(get:{controller.family},set:controller.setFamily),options:[(.system,"系统"),(.serif,"宋体"),(.monospaced,"等宽")]).frame(width:85)
+            WBSelect("字号",selection:Binding(get:{controller.size},set:controller.setSize),options:[10.0,12,14,16,18,20,24,28].map{($0,"\(Int($0))")}).frame(width:66)
+            formatButton("加粗",symbol:"bold",selected:controller.bold){controller.toggle(.boldFontMask)}
+            formatButton("斜体",symbol:"italic",selected:controller.italic){controller.toggle(.italicFontMask)}
+            formatButton("下划线",symbol:"underline",selected:controller.underline){controller.toggleUnderline()}
+            Rectangle().fill(palette.line).frame(width:1,height:17).padding(.horizontal,3)
+            formatButton("清除格式",symbol:"textformat",selected:false){controller.clearFormatting()}
+            Spacer(minLength:0)
+        }.padding(6).background(palette.soft,in:RoundedRectangle(cornerRadius:8)).overlay(RoundedRectangle(cornerRadius:8).strokeBorder(palette.line,lineWidth:1)).accessibilityIdentifier("fc.vault.editor.toolbar")
+    }
+    private func formatButton(_ title:String,symbol:String,selected:Bool,action:@escaping ()->Void)->some View {Button(action:action){Image(systemName:symbol).frame(width:16,height:16)}.buttonStyle(WBIconButtonStyle(size:28)).background(selected ? palette.navSelected:.clear,in:RoundedRectangle(cornerRadius:6)).help(title).accessibilityLabel(title).accessibilityValue(selected ? "已开启":"未开启")}
+}
+
+@MainActor final class VaultEditorFormatting:ObservableObject {
+    @Published private(set) var family:VaultFontFamily = .system
+    @Published private(set) var size:Double=14
+    @Published private(set) var bold=false
+    @Published private(set) var italic=false
+    @Published private(set) var underline=false
+    weak var editor:NSTextView?
+    static let familyKey=NSAttributedString.Key("FangcunVaultFontFamily")
+    static let boldKey=NSAttributedString.Key("FangcunVaultBold")
+    static let italicKey=NSAttributedString.Key("FangcunVaultItalic")
+    private static func traits(_ attributes:[NSAttributedString.Key:Any])->(Bool,Bool) {let font=attributes[.font] as? NSFont ?? Self.font(family:.system,size:14);let traits=NSFontManager.shared.traits(of:font);return (attributes[boldKey] as? Bool ?? traits.contains(.boldFontMask),attributes[italicKey] as? Bool ?? traits.contains(.italicFontMask))}
+    static func applyFont(to attributes:inout [NSAttributedString.Key:Any],family:VaultFontFamily,size:Double,bold:Bool,italic:Bool) {
+        let font=font(family:family,size:size,bold:bold,italic:italic),traits=NSFontManager.shared.traits(of:font)
+        attributes[.font]=font;attributes[familyKey]=family.rawValue;attributes[boldKey]=bold;attributes[italicKey]=italic
+        // CJK faces do not always have italic/bold variants. Preserve the user's
+        // semantic choice and synthesize only the unavailable visual trait.
+        attributes[.obliqueness]=italic && !traits.contains(.italicFontMask) ? 0.16:0
+        attributes[.strokeWidth]=bold && !traits.contains(.boldFontMask) ? -2.0:0
+    }
+    static func font(family:VaultFontFamily,size:Double,bold:Bool=false,italic:Bool=false)->NSFont {
+        let base:NSFont=switch family {case .system:NSFont.systemFont(ofSize:size);case .serif:NSFont(name:"Songti SC",size:size) ?? NSFont.systemFont(ofSize:size);case .monospaced:NSFont.monospacedSystemFont(ofSize:size,weight:.regular)}
+        var traits:NSFontTraitMask=[];if bold {traits.insert(.boldFontMask)};if italic {traits.insert(.italicFontMask)}
+        return NSFontManager.shared.convert(base,toHaveTrait:traits)
+    }
+    static func paragraph()->NSParagraphStyle {let style=NSMutableParagraphStyle();style.lineSpacing=3;style.paragraphSpacing=5;return style}
+    func attach(_ editor:NSTextView) {self.editor=editor;refresh()}
+    func detach() {editor=nil;family = .system;size=14;bold=false;italic=false;underline=false}
+    func refresh() {
+        guard let editor else {return}
+        let range=editor.selectedRange(),attributes: [NSAttributedString.Key:Any]
+        if range.length>0,editor.textStorage?.length ?? 0 > 0,range.location<(editor.textStorage?.length ?? 0) {attributes=editor.textStorage!.attributes(at:range.location,effectiveRange:nil)}else{attributes=editor.typingAttributes}
+        let font=attributes[.font] as? NSFont ?? Self.font(family:.system,size:14)
+        family=(attributes[Self.familyKey] as? String).flatMap(VaultFontFamily.init(rawValue:)) ?? .system;size=Double(font.pointSize)
+        let traits=Self.traits(attributes);bold=traits.0;italic=traits.1;underline=(attributes[.underlineStyle] as? Int ?? 0) != 0
+    }
+    func setFamily(_ family:VaultFontFamily) {mutate{attributes in let font=attributes[.font] as? NSFont ?? Self.font(family:.system,size:14),traits=Self.traits(attributes);Self.applyFont(to:&attributes,family:family,size:font.pointSize,bold:traits.0,italic:traits.1)}}
+    func setSize(_ size:Double) {guard (10...28).contains(size) else{return};mutate{attributes in let family=(attributes[Self.familyKey] as? String).flatMap(VaultFontFamily.init(rawValue:)) ?? .system,traits=Self.traits(attributes);Self.applyFont(to:&attributes,family:family,size:size,bold:traits.0,italic:traits.1)}}
+    func toggle(_ trait:NSFontTraitMask) {let turnOn=trait == .boldFontMask ? !bold:!italic;mutate{attributes in let font=attributes[.font] as? NSFont ?? Self.font(family:.system,size:14),family=(attributes[Self.familyKey] as? String).flatMap(VaultFontFamily.init(rawValue:)) ?? .system,traits=Self.traits(attributes);Self.applyFont(to:&attributes,family:family,size:font.pointSize,bold:trait == .boldFontMask ? turnOn:traits.0,italic:trait == .italicFontMask ? turnOn:traits.1)}}
+    func toggleUnderline() {let next=underline ? 0:NSUnderlineStyle.single.rawValue;mutate{$0[.underlineStyle]=next}}
+    func clearFormatting() {mutate{attributes in Self.applyFont(to:&attributes,family:.system,size:14,bold:false,italic:false);attributes[.underlineStyle]=0;attributes[.paragraphStyle]=Self.paragraph()}}
+    private func mutate(_ change:(inout [NSAttributedString.Key:Any])->Void) {
+        guard let editor,editor.isEditable,let storage=editor.textStorage else{return}
+        let range=editor.selectedRange()
+        var nextTyping:[NSAttributedString.Key:Any]?
+        if range.length == 0 {var attributes=editor.typingAttributes;change(&attributes);nextTyping=attributes}
+        else if editor.shouldChangeText(in:range,replacementString:nil) {
+            let previous=storage.attributedSubstring(from:range)
+            editor.undoManager?.registerUndo(withTarget:editor){target in Self.restore(previous,in:range,editor:target)}
+            var replacements:[(NSRange,[NSAttributedString.Key:Any])]=[]
+            storage.enumerateAttributes(in:range){attributes,range,_ in var next=attributes;change(&next);replacements.append((range,next))}
+            storage.beginEditing();for (range,attributes) in replacements {storage.setAttributes(attributes,range:range)};storage.endEditing();editor.didChangeText()
+        }
+        editor.window?.makeFirstResponder(editor);editor.setSelectedRange(range);if let nextTyping {editor.typingAttributes=nextTyping};refresh()
+    }
+    private static func restore(_ text:NSAttributedString,in range:NSRange,editor:NSTextView) {
+        guard let storage=editor.textStorage,range.location<=storage.length,range.length<=storage.length-range.location else{return}
+        let previous=storage.attributedSubstring(from:range)
+        editor.undoManager?.registerUndo(withTarget:editor){restore(previous,in:range,editor:$0)}
+        storage.replaceCharacters(in:range,with:text);editor.didChangeText()
+    }
+    static func runs(_ text:NSAttributedString)->[VaultTextStyleRun] {
+        var runs:[VaultTextStyleRun]=[]
+        text.enumerateAttributes(in:NSRange(location:0,length:text.length)){attributes,range,_ in
+            let font=attributes[.font] as? NSFont ?? Self.font(family:.system,size:14),traits=Self.traits(attributes)
+            let family=(attributes[familyKey] as? String).flatMap(VaultFontFamily.init(rawValue:)) ?? .system
+            let next=VaultTextStyleRun(location:range.location,length:range.length,family:family,size:Double(font.pointSize),bold:traits.0,italic:traits.1,underline:(attributes[.underlineStyle] as? Int ?? 0) != 0)
+            if var last=runs.last,last.location+last.length == next.location,last.family == next.family,last.size == next.size,last.bold == next.bold,last.italic == next.italic,last.underline == next.underline {last.length += next.length;runs[runs.count-1]=last}else{runs.append(next)}
+        }
+        return runs
+    }
+}
+
+/// Font metrics determine the insertion point. Fixed minimum/maximum paragraph
+/// heights are deliberately absent, so a 14pt body never receives a 23pt caret.
 private struct VaultPrivateTextEditor:NSViewRepresentable {
     @ObservedObject var model:VaultModel
-    let documentID:UUID
-    let text:String
+    let document:PrivateDocument
+    let formatting:VaultEditorFormatting
     @Environment(\.workbenchPalette) private var palette
-    func makeCoordinator() -> Coordinator { Coordinator(model:model,id:documentID) }
-    func makeNSView(context:Context) -> NSScrollView {
-        let scroll=NSScrollView(); scroll.scrollerStyle = .overlay; scroll.autohidesScrollers=true; scroll.hasVerticalScroller=true; scroll.drawsBackground=false; scroll.borderType = .noBorder
-        let editor=NSTextView(); editor.isRichText=false; editor.importsGraphics=false; editor.allowsUndo=true
-        editor.isAutomaticTextReplacementEnabled=false; editor.isAutomaticDataDetectionEnabled=false
-        editor.isAutomaticSpellingCorrectionEnabled=false; editor.isContinuousSpellCheckingEnabled=false
-        editor.drawsBackground=false; editor.font=NSFont.systemFont(ofSize:12); editor.textColor=palette.nsSecondary; editor.insertionPointColor=palette.nsText
-        let paragraph=NSMutableParagraphStyle(); paragraph.minimumLineHeight=22.8; paragraph.maximumLineHeight=22.8
-        editor.defaultParagraphStyle=paragraph
-        editor.typingAttributes=[.font:NSFont.systemFont(ofSize:12),.foregroundColor:palette.nsSecondary,.paragraphStyle:paragraph]
-        editor.textContainerInset=NSSize(width:0,height:16); editor.isVerticallyResizable=true; editor.isHorizontallyResizable=false
-        editor.autoresizingMask=[.width]; editor.textContainer?.widthTracksTextView=true; editor.textContainer?.containerSize=NSSize(width:0,height:CGFloat.greatestFiniteMagnitude)
-        editor.string=text
-        editor.textStorage?.addAttribute(.paragraphStyle,value:paragraph,range:NSRange(location:0,length:(text as NSString).length))
-        editor.delegate=context.coordinator; scroll.documentView=editor
-        model.registerPlaintextClearer(id:documentID) { [weak editor] in if let editor {VaultPlaintextPrivacy.clear(editor)} }
+    func makeCoordinator()->Coordinator {Coordinator(model:model,id:document.id,formatting:formatting)}
+    func makeNSView(context:Context)->NSScrollView {
+        let scroll=NSScrollView();scroll.scrollerStyle = .overlay;scroll.autohidesScrollers=true;scroll.hasVerticalScroller=true;scroll.drawsBackground=false;scroll.borderType = .noBorder
+        let editor=VaultBodyTextView(frame:NSRect(x:0,y:0,width:400,height:400));editor.isRichText=true;editor.importsGraphics=false;editor.allowsUndo=true;editor.usesFontPanel=false
+        editor.isAutomaticTextReplacementEnabled=false;editor.isAutomaticDataDetectionEnabled=false;editor.isAutomaticSpellingCorrectionEnabled=false;editor.isContinuousSpellCheckingEnabled=false
+        editor.drawsBackground=false;editor.insertionPointColor=palette.nsText;editor.defaultParagraphStyle=VaultEditorFormatting.paragraph()
+        editor.textContainerInset=NSSize(width:0,height:8);editor.minSize=NSSize(width:0,height:0);editor.maxSize=NSSize(width:CGFloat.greatestFiniteMagnitude,height:CGFloat.greatestFiniteMagnitude)
+        editor.isVerticallyResizable=true;editor.isHorizontallyResizable=false;editor.autoresizingMask=[.width];editor.textContainer?.widthTracksTextView=true;editor.textContainer?.lineFragmentPadding=0
+        editor.textContainer?.containerSize=NSSize(width:400,height:CGFloat.greatestFiniteMagnitude)
+        apply(document,to:editor);editor.delegate=context.coordinator;scroll.documentView=editor;formatting.attach(editor)
+        model.registerPlaintextClearer(id:context.coordinator.clearerID){[weak editor,weak formatting] in if let editor {VaultPlaintextPrivacy.clear(editor)};formatting?.detach()}
         return scroll
     }
     func updateNSView(_ scroll:NSScrollView,context:Context) {
-        guard let editor=scroll.documentView as? NSTextView else { return }
-        if editor.string != text {
-            editor.string=text
-            if let paragraph=editor.defaultParagraphStyle { editor.textStorage?.addAttribute(.paragraphStyle,value:paragraph,range:NSRange(location:0,length:(text as NSString).length)) }
+        guard let editor=scroll.documentView as? NSTextView else{return}
+        if editor.string != document.body || VaultEditorFormatting.runs(editor.attributedString()) != (document.formatting ?? defaultRuns(document.body)) {
+            let selection=editor.selectedRange();apply(document,to:editor);let location=min(selection.location,(document.body as NSString).length);editor.setSelectedRange(NSRange(location:location,length:0))
         }
-        editor.textColor=palette.nsSecondary; editor.insertionPointColor=palette.nsText
-        editor.isEditable = !model.busy && model.isUnlocked
+        if let storage=editor.textStorage {storage.addAttribute(.foregroundColor,value:palette.nsText,range:NSRange(location:0,length:storage.length))}
+        editor.typingAttributes[.foregroundColor]=palette.nsText;editor.insertionPointColor=palette.nsText;editor.isEditable = !model.busy && model.isUnlocked;formatting.attach(editor)
     }
-    static func dismantleNSView(_ scroll:NSScrollView,coordinator:Coordinator) {
-        if let editor=scroll.documentView as? NSTextView { VaultPlaintextPrivacy.clear(editor); editor.delegate=nil }
-        coordinator.model?.removePlaintextClearer(id:coordinator.id)
+    private func defaultRuns(_ body:String)->[VaultTextStyleRun] {body.isEmpty ? []:[VaultTextStyleRun(location:0,length:(body as NSString).length)]}
+    private func apply(_ document:PrivateDocument,to editor:NSTextView) {
+        let attributes:[NSAttributedString.Key:Any]=[.font:VaultEditorFormatting.font(family:.system,size:14),.foregroundColor:palette.nsText,.paragraphStyle:VaultEditorFormatting.paragraph(),VaultEditorFormatting.familyKey:VaultFontFamily.system.rawValue]
+        let text=NSMutableAttributedString(string:document.body,attributes:attributes)
+        for run in document.formatting ?? [] {var style:[NSAttributedString.Key:Any]=[.underlineStyle:run.underline ? NSUnderlineStyle.single.rawValue:0];VaultEditorFormatting.applyFont(to:&style,family:run.family,size:run.size,bold:run.bold,italic:run.italic);text.addAttributes(style,range:NSRange(location:run.location,length:run.length))}
+        editor.textStorage?.setAttributedString(text);editor.typingAttributes=attributes
     }
+    static func dismantleNSView(_ scroll:NSScrollView,coordinator:Coordinator) {if let editor=scroll.documentView as? NSTextView {VaultPlaintextPrivacy.clear(editor);editor.delegate=nil;if coordinator.formatting?.editor === editor {coordinator.formatting?.detach()}};coordinator.model?.removePlaintextClearer(id:coordinator.clearerID)}
     final class Coordinator:NSObject,NSTextViewDelegate {
         weak var model:VaultModel?
+        weak var formatting:VaultEditorFormatting?
         let id:UUID
-        init(model:VaultModel,id:UUID) { self.model=model; self.id=id }
-        func textDidChange(_ notification:Notification) { guard let editor=notification.object as? NSTextView,model?.selectedID == id else { return }; model?.updateBody(editor.string) }
+        let clearerID=UUID()
+        init(model:VaultModel,id:UUID,formatting:VaultEditorFormatting){self.model=model;self.id=id;self.formatting=formatting}
+        func textDidChange(_ notification:Notification) {guard let editor=notification.object as? NSTextView,model?.selectedID == id else{return};model?.updateRichBody(editor.string,formatting:VaultEditorFormatting.runs(editor.attributedString()));formatting?.refresh()}
+        func textViewDidChangeSelection(_ notification:Notification){formatting?.refresh()}
     }
+}
+
+private final class VaultBodyTextView:NSTextView {
+    private let history=UndoManager()
+    override var undoManager:UndoManager? {history}
+    override func paste(_ sender:Any?) {pasteAsPlainText(sender)}
 }
 
 private struct VaultSetupSheet:View {

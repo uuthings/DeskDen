@@ -922,7 +922,7 @@ struct WorkbenchBrandMark:View {
             if let image = icons.image(for: icons.selection) {
                 Image(nsImage: image).resizable().interpolation(.high).scaledToFit()
             } else {
-                Image(systemName: "drop.fill").resizable().scaledToFit().foregroundStyle(.cyan)
+                Image(systemName: "square.on.square").resizable().scaledToFit().foregroundStyle(.cyan)
             }
         }.shadow(color:.black.opacity(0.2),radius:3,y:2).accessibilityHidden(true)
     }

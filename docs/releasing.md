@@ -1,12 +1,14 @@
 # macOS release process
 
-Version 0.1.0 is being prepared. This document describes required steps; it does not establish successful signing, notarization, export or publication.
+Version 0.1.0 (Build 2) was signed, notarized through Organizer and retained as a local delivery. It has not been publicly published. Later development changes are local test candidates until a new release is explicitly authorized. This document describes the required process; each candidate's own evidence establishes its actual result.
 
 ## Candidate and version
 
 Finish changes and verification, set the source version and Build, and record the actual Git commit, Xcode/SDK versions and build arguments. Use a distinct directory for each candidate; retain old apps and designs. An ordinary commit does not authorize version changes, tags, pushes or Releases.
 
 Reuse the existing Bundle ID, team and valid Developer ID. Signing keys stay in the local Keychain. Each new build needs signing and notarization; never re-sign an already notarized exported app.
+
+Private Space's optional Touch ID requires an Apple-authorized provisioning profile for the existing app identifier and its own Keychain access group. Configure the matching app identifier, team identifier and Keychain group entitlements in the signed build, and embed the matching profile. Do not substitute an ad-hoc signature or an unprotected Keychain item. Local development builds without this authorization keep password unlock and explicitly report Touch ID as unavailable. Profiles, credentials and private keys are not source files.
 
 ## Archive and Organizer
 

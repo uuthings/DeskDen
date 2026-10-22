@@ -14,6 +14,7 @@ import SwiftUI
     private let materialContainer = FlippedView()
     private let glass = GlassBackgroundView()
     private let materialMask = CAShapeLayer()
+    private let sceneLayer = CALayer()
     private var host: NSView?
     private(set) var phase: Phase = .closed
     let closedSize: CGSize
@@ -37,9 +38,14 @@ import SwiftUI
         materialContainer.frame = bounds
         materialContainer.wantsLayer = true
         materialContainer.layer?.mask = materialMask
+        sceneLayer.frame = bounds
+        sceneLayer.contentsGravity = .resizeAspectFill
+        sceneLayer.masksToBounds = true
+        materialContainer.layer?.addSublayer(sceneLayer)
         glass.frame = bounds
         glass.autoresizingMask = [.width, .height]
         glass.surfaceStyle = .workbench
+        glass.blendingMode = .withinWindow
         glass.radius = 0
         glass.drawsBorder = false
         materialContainer.addSubview(glass)
@@ -52,7 +58,11 @@ import SwiftUI
     func refreshAppearance() {
         appearance = NSAppearance(named: Palette.isLight ? .aqua : .darkAqua)
         glass.refreshAppearance()
-        outline.strokeColor = NSColor(Palette.workbenchPalette.border).cgColor
+        outline.strokeColor = NSColor(Palette.workbenchPalette.line).cgColor
+        if let image=WorkbenchSceneAssets.image(for:Palette.workbenchTheme) {
+            sceneLayer.contents=image.cgImage(forProposedRect:nil,context:nil,hints:nil)
+        } else {sceneLayer.contents=nil}
+        sceneLayer.frame=bounds
     }
     var materialOpacity: Double { Palette.glassOpacity }
     var usesLightAppearance: Bool { appearance?.name == .aqua }

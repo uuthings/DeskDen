@@ -14,10 +14,10 @@ extension LauncherController {
     func showWorkbenchFromTopEntry(originFrame: NSRect? = nil) {
         guard !isPreparingToQuit else { return }
         guard !pickerActive, editorPanel == nil, overlay == nil, !isEditing else { return }
-        hide(restore: false)
-        topEntryController?.dismissSummary(animated: true)
-        if workbenchController == nil { workbenchController = WorkbenchWindowController(owner: self) }
-        workbenchController?.presentFromTopEntry(originFrame: originFrame)
+        // A complete workbench is always the same frame-autosaving window,
+        // regardless of whether it came from Mini, the menu, Dock or a hotkey.
+        // Only the small hover summary remains a temporary accessory surface.
+        showWorkbench()
     }
     @objc func workbenchFromMenu() {showWorkbench()}
     @objc func allSettingsFromMenu() {showWorkbench(route:.settings,settingsTab:.general)}

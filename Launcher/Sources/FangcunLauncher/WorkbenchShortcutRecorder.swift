@@ -91,7 +91,7 @@ final class WorkbenchShortcutRecorder: ObservableObject {
         catch { self.error = error.localizedDescription }
     }
 
-    func clearCandidate() {guard isPresented else {return};draft=target == .launcher ? HotKeyChoice.controlOptionSpace.bindingHotKey:nil;error=nil}
+    func clearCandidate() {guard isPresented else {return};draft=target == .launcher ? LauncherSettings.defaultLauncherHotKey:nil;error=nil}
 
     @discardableResult
     func save() -> Bool {

@@ -12,6 +12,22 @@ enum ApplicationNames {
         if let identifier = Bundle(url:url)?.bundleIdentifier, let name = chinese[identifier] { return name }
         return FileManager.default.displayName(atPath:url.path).replacingOccurrences(of:".app",with:"",options:[.anchored,.backwards])
     }
+    /// Search aliases come from the installed bundle rather than a guessed
+    /// translation table. Keep separate lines so initials never cross names.
+    static func searchKeywords(for url:URL) -> String {
+        let bundle = Bundle(url:url)
+        let fields = ["CFBundleName", "CFBundleDisplayName", "CFBundleExecutable"]
+        var names = fields.compactMap { bundle?.infoDictionary?[$0] as? String }
+        names += fields.compactMap { bundle?.localizedInfoDictionary?[$0] as? String }
+        if let executable = bundle?.executableURL?.lastPathComponent { names.append(executable) }
+        names.append(url.deletingPathExtension().lastPathComponent)
+        var seen = Set<String>()
+        return names.compactMap { value -> String? in
+            let name = value.trimmingCharacters(in:.whitespacesAndNewlines)
+            guard !name.isEmpty, name.count <= 256, !name.contains("/"), !name.contains("\\"), !name.contains("\0"), !name.contains("\n"), !name.contains("\r"), seen.insert(SearchEntry.normalize(name)).inserted else {return nil}
+            return name
+        }.joined(separator:"\n")
+    }
 }
 
 actor ApplicationCatalog {
@@ -31,8 +47,8 @@ actor ApplicationCatalog {
         return locations.sorted().compactMap { path in
             guard manager.fileExists(atPath: path), let bundle = Bundle(path: path) else { return nil }
             let name = ApplicationNames.name(for:URL(fileURLWithPath:path))
-            let englishName = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
-            return LaunchTarget(kind: .app, name: name, location: path, bundleIdentifier: bundle.bundleIdentifier, keywords: englishName)
+            let keywords = ApplicationNames.searchKeywords(for:URL(fileURLWithPath:path))
+            return LaunchTarget(kind: .app, name: name, location: path, bundleIdentifier: bundle.bundleIdentifier, keywords: keywords)
         }
     }
     func metadata(for applications: [LaunchTarget], existing: [String:ApplicationMetadata], now: Date = Date()) -> [String:ApplicationMetadata] {
@@ -219,7 +235,8 @@ enum TargetResolver {
     static func target(kind: TargetKind, url: URL) -> LaunchTarget {
         let canonical = url.resolvingSymlinksInPath().standardizedFileURL
         let name = kind == .app ? ApplicationNames.name(for:canonical) : FileManager.default.displayName(atPath:canonical.path)
-        return LaunchTarget(kind: kind, name: name, location: canonical.path, bundleIdentifier: kind == .app ? Bundle(url: canonical)?.bundleIdentifier : nil, bookmark: try? canonical.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil), keywords:canonical.deletingPathExtension().lastPathComponent)
+        let keywords = kind == .app ? ApplicationNames.searchKeywords(for:canonical) : canonical.deletingPathExtension().lastPathComponent
+        return LaunchTarget(kind: kind, name: name, location: canonical.path, bundleIdentifier: kind == .app ? Bundle(url: canonical)?.bundleIdentifier : nil, bookmark: try? canonical.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil), keywords:keywords)
     }
 }
 

@@ -115,7 +115,7 @@ struct WorkbenchSettingsView: View {
 
     private var motionStatus: String {
         if systemReduceMotion || model.reduceMotion { return "减少动态效果已开启，背景保持静止" }
-        return model.backgroundMotion ? "缓慢光轨与悬浮屏幕微动，不影响内容阅读" : "背景保持静止"
+        return model.backgroundMotion ? "随主题变化的轻微环境动效，不影响内容阅读" : "背景保持静止"
     }
 
     private var materialPreview: some View {
