@@ -270,7 +270,9 @@ struct VaultRestorePreview:Identifiable {
         biometricUnavailableReason=await biometrics.refreshAvailability()
         biometricAvailable=biometrics.available && biometricUnavailableReason == nil
         biometricCanRemove=biometrics.canRemove
-        if biometricEnabled,biometricAvailable,!(await biometrics.containsKey()) {errorMessage="Touch ID 授权不可用，请使用密码解锁；可在保护与备份中重新开启。"}
+        // A protected item's metadata may itself require biometric interaction.
+        // Passive refresh must not turn a no-interaction lookup failure into a
+        // missing-key warning. Only the user's explicit readKey can validate it.
     }
     func enableBiometrics() async -> Bool {
         guard isUnlocked,!busy,!biometricOperationInFlight,let key,let salt,requireProtectedData(),flush() else {return false}
