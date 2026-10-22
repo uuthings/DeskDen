@@ -12,7 +12,7 @@ import SwiftUI
         let first=NSWindow(contentRect:NSRect(x:0,y:0,width:700,height:600),styleMask:[.borderless],backing:.buffered,defer:false)
         let second=NSWindow(contentRect:first.frame,styleMask:[.borderless],backing:.buffered,defer:false)
         for window in [first,second] {window.alphaValue=0;window.ignoresMouseEvents=true;window.isReleasedWhenClosed=false}
-        let host=NSHostingView(rootView:ModalLifecycleRoot(fixture:fixture,modals:modals))
+        let host=NSHostingView(rootView:ModalLifecycleRoot(fixture:fixture,modals:modals).nativeCheckAccessibility())
         first.contentView=host;modals.hostWindow=first;first.orderFront(nil)
         defer {modals.clear();first.orderOut(nil);second.orderOut(nil);first.contentView=nil;second.contentView=nil;fixture.readDraft=nil;fixture.writeDraft=nil}
         fixture.parent=true;await settle()

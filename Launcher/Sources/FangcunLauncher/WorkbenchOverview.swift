@@ -140,8 +140,15 @@ struct WorkbenchOverview:View {
         HStack(spacing:6) {ForEach(0..<7,id:\.self){offset in
             let date=displayCalendar.date(byAdding:.day,value:offset,to:displayCalendar.startOfDay(for:Date())) ?? Date()
             let selected=displayCalendar.isDate(date,inSameDayAs:day)
+            let civilDay=CalendarCivilDay(date:date,calendar:displayCalendar)
             let count=calendar.overviewEvents.filter{$0.occurs(on:date,calendar:displayCalendar)}.count+calendar.reminders.filter{!$0.isCompleted && ReminderQueries.occurs(reminder:$0,on:date,calendar:displayCalendar)}.count
-            Button{selectedDay=date}label:{VStack(spacing:4){Text(offset == 0 ? "今天":"周"+["日","一","二","三","四","五","六"][displayCalendar.component(.weekday,from:date)-1]).font(.system(size:11)).frame(height:13);Text(String(displayCalendar.component(.day,from:date))).font(.system(size:18,weight:.medium)).foregroundStyle(palette.text).frame(height:22);HStack(spacing:3){ForEach(0..<min(3,count),id:\.self){_ in Circle().fill(palette.accent).frame(width:3,height:3)}}.frame(height:5)}.frame(maxWidth:.infinity).frame(height:expanded ? 76:66).background(selected ? palette.navSelected:.clear,in:RoundedRectangle(cornerRadius:9)).overlay(RoundedRectangle(cornerRadius:9).strokeBorder(selected ? palette.accent.opacity(0.25):offset == 0 ? palette.accent.opacity(0.35):.clear,lineWidth:1)).foregroundStyle(selected ? palette.accent:palette.secondary).contentShape(Rectangle())}.buttonStyle(.plain).accessibilityLabel("查看\(displayCalendar.component(.month,from:date))月\(displayCalendar.component(.day,from:date))日安排").accessibilityAddTraits(selected ? .isSelected:[])
+            Button{selectedDay=date}label:{
+                VStack(spacing:4){
+                    Text(offset == 0 ? "今天":"周"+["日","一","二","三","四","五","六"][displayCalendar.component(.weekday,from:date)-1]).font(.system(size:11)).frame(height:13)
+                    HStack(spacing:3){Text(String(displayCalendar.component(.day,from:date))).font(.system(size:18,weight:.medium)).foregroundStyle(palette.text);CalendarHolidayBadge(day:civilDay)}.frame(height:22)
+                    HStack(spacing:3){ForEach(0..<min(3,count),id:\.self){_ in Circle().fill(palette.accent).frame(width:3,height:3)}}.frame(height:5)
+                }.frame(maxWidth:.infinity).frame(height:expanded ? 76:66).background(selected ? palette.navSelected:.clear,in:RoundedRectangle(cornerRadius:9)).overlay(RoundedRectangle(cornerRadius:9).strokeBorder(selected ? palette.accent.opacity(0.25):offset == 0 ? palette.accent.opacity(0.35):.clear,lineWidth:1)).foregroundStyle(selected ? palette.accent:palette.secondary).contentShape(Rectangle())
+            }.buttonStyle(.plain).accessibilityLabel("查看\(displayCalendar.component(.month,from:date))月\(displayCalendar.component(.day,from:date))日安排"+(civilDay.namedLabel.map{"，"+$0} ?? "")).accessibilityAddTraits(selected ? .isSelected:[])
         }}
     }
     private func planColumn(title:String,subtitle:String,items:[CalendarAgendaEntry],empty:String)->some View {

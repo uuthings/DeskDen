@@ -13,6 +13,7 @@ if [[ "$app_path" != /* ]] || [[ -e "$app_path" ]] || [[ -e "$evidence_path" ]];
     exit 2
 fi
 python3 ./scripts/check-signing-config.py
+python3 ./scripts/check-update-config.py
 python3 - "$evidence_path" "$build_configuration" <<'PY'
 from pathlib import Path
 import datetime, hashlib, json, plistlib, sys
@@ -36,7 +37,7 @@ if info.get('CFBundleExecutable') != 'FangcunLauncher':
 paths = [root / 'Package.swift', root / 'Signing/Fangcun.entitlements']
 for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('Resources', '*')]:
     paths.extend(path for path in (root / directory).rglob(pattern) if path.is_file())
-paths.extend(path for path in [root / 'Package.resolved', root.parent / 'Fangcun.xcodeproj/project.pbxproj'] if path.is_file())
+paths.extend(path for path in [root / 'Package.resolved', root.parent / 'Fangcun.xcodeproj/project.pbxproj', root.parent / 'Fangcun.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', root.parent / 'updates/appcast.xml', root.parent / 'tools/prepare-update-feed.py', root.parent / 'tools/test-prepare-update-feed.py'] if path.is_file())
 paths.extend((root.parent / 'Fangcun.xcodeproj/xcshareddata/xcschemes').glob('*.xcscheme'))
 files = {}
 for path in sorted(set(paths)):
@@ -72,17 +73,18 @@ if hashlib.sha256(copied.read_bytes()).hexdigest() != source_hash:
     raise SystemExit('The bundled executable differs from the current SwiftPM output before signing')
 (Path(sys.argv[3]) / 'executable-before-signing.json').write_text(json.dumps({'sha256': source_hash, 'matchesCurrentSwiftPMOutput': True}, indent=2) + '\n')
 PY
+python3 ./scripts/embed-sparkle.py "$app_path"
 codesign --force --sign - "$app_path"
 codesign --verify --deep --strict "$app_path"
 python3 - "$app_path" "$evidence_path" <<'PY'
 from pathlib import Path
-import hashlib, json, plistlib, sys
+import hashlib, json, os, plistlib, sys
 root, app, evidence = Path.cwd(), Path(sys.argv[1]), Path(sys.argv[2])
 before = json.loads((evidence / 'source-inputs-before.json').read_text())
 paths = [root / 'Package.swift', root / 'Signing/Fangcun.entitlements']
 for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('Resources', '*')]:
     paths.extend(path for path in (root / directory).rglob(pattern) if path.is_file())
-paths.extend(path for path in [root / 'Package.resolved', root.parent / 'Fangcun.xcodeproj/project.pbxproj'] if path.is_file())
+paths.extend(path for path in [root / 'Package.resolved', root.parent / 'Fangcun.xcodeproj/project.pbxproj', root.parent / 'Fangcun.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', root.parent / 'updates/appcast.xml', root.parent / 'tools/prepare-update-feed.py', root.parent / 'tools/test-prepare-update-feed.py'] if path.is_file())
 paths.extend((root.parent / 'Fangcun.xcodeproj/xcshareddata/xcschemes').glob('*.xcscheme'))
 files = {}
 for path in sorted(set(paths)):
@@ -111,7 +113,10 @@ if actual_resources != set(resources):
 bundle = {}
 for path in sorted(app.rglob('*')):
     if path.is_symlink():
-        raise SystemExit('Unexpected symbolic link in the local bundle')
+        if not path.is_relative_to(app / 'Contents/Frameworks/Sparkle.framework') or not path.resolve(strict=True).is_relative_to(app.resolve()):
+            raise SystemExit('Unexpected symbolic link in the local bundle')
+        bundle[path.relative_to(app).as_posix()] = {'symlink': os.readlink(path)}
+        continue
     if path.is_file():
         data = path.read_bytes()
         bundle[path.relative_to(app).as_posix()] = {'sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data)}

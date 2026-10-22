@@ -142,7 +142,6 @@ private struct VaultUnlockedView:View {
     @StateObject private var formatting=VaultEditorFormatting()
     @State private var deletion:VaultDeletionTarget?
     @State private var query=""
-    @State private var categoryFilter="all"
     @State private var showCategories=false
     @State private var categoryName=""
     @State private var editingCategoryID:String?
@@ -150,7 +149,7 @@ private struct VaultUnlockedView:View {
     @State private var moveDestination="unclassified"
     @Environment(\.workbenchPalette) private var palette
     var panelHeight:CGFloat=575
-    private var filtered:[PrivateDocument] {model.documents.filter{(categoryFilter == "all" || $0.effectiveCategoryID == categoryFilter) && (query.isEmpty || $0.title.range(of:query,options:[.caseInsensitive,.diacriticInsensitive,.widthInsensitive]) != nil)}}
+    private var filtered:[PrivateDocument] {model.visibleDocuments(matching:query)}
     var body:some View {
         VStack(spacing:12) {
             HStack(alignment:.top,spacing:12) {
@@ -165,18 +164,36 @@ private struct VaultUnlockedView:View {
         .workbenchModal(isPresented:$showCategories){categoryManager}
         .workbenchModal(item:$categoryDeletion){category in WorkbenchDialogFrame(title:"删除分类「\(category.name)」？",dismiss:{categoryDeletion=nil}){
             VStack(alignment:.leading,spacing:12){Text("分类中的 \(model.documents.filter{$0.effectiveCategoryID == category.id}.count) 条文本会移到下方分类，文本内容不会删除。").font(.system(size:12)).foregroundStyle(palette.secondary);WBSelect("移到分类",selection:$moveDestination,options:model.categoryOptions.filter{$0.0 != category.id})}
-        }actions:{Spacer();Button("取消"){categoryDeletion=nil}.buttonStyle(WBButtonStyle());Button("删除分类并移动文本"){if model.deleteCategory(category.id,movingTo:moveDestination){if categoryFilter == category.id {categoryFilter="all"};categoryDeletion=nil}}.buttonStyle(WBButtonStyle(destructive:true))}}
-        .onChange(of:model.selectedID){_,_ in deletion=nil;if let document=model.selectedDocument,categoryFilter != "all",document.effectiveCategoryID != categoryFilter {categoryFilter="all"}}
-        .modifier(VaultSensitiveState(model:model,clear:{query="";deletion=nil;showCategories=false;categoryName="";editingCategoryID=nil;categoryDeletion=nil;categoryFilter="all";formatting.detach()}))
+        }actions:{Spacer();Button("取消"){categoryDeletion=nil}.buttonStyle(WBButtonStyle());Button("删除分类并移动文本"){if model.deleteCategory(category.id,movingTo:moveDestination){categoryDeletion=nil}}.buttonStyle(WBButtonStyle(destructive:true))}}
+        .onChange(of:model.selectedID){_,_ in
+            deletion=nil
+            if let document=model.selectedDocument,!query.isEmpty,document.title.range(of:query,options:[.caseInsensitive,.diacriticInsensitive,.widthInsensitive]) == nil {query=""}
+        }
+        .onChange(of:model.categories.map(\.id)){_,ids in
+            if let id=editingCategoryID,!ids.contains(id) {editingCategoryID=nil;categoryName=""}
+            if let category=categoryDeletion,!ids.contains(category.id) {categoryDeletion=nil}
+        }
+        .modifier(VaultSensitiveState(model:model,clear:{query="";deletion=nil;showCategories=false;categoryName="";editingCategoryID=nil;categoryDeletion=nil;formatting.detach()}))
     }
     private var sidebar:some View {
         VStack(spacing:12) {
             HStack(spacing:7){Image(systemName:"magnifyingglass").foregroundStyle(palette.muted);TextField("搜索标题",text:$query).textFieldStyle(.plain)}.padding(.horizontal,10).frame(height:32).background(palette.soft,in:RoundedRectangle(cornerRadius:8)).overlay(RoundedRectangle(cornerRadius:8).strokeBorder(palette.line,lineWidth:1))
-            HStack(spacing:6){WBSelect("筛选分类",selection:$categoryFilter,options:[("all","全部分类")]+model.categoryOptions);Button{categoryName="";editingCategoryID=nil;showCategories=true;model.recordActivity()}label:{Image(systemName:"folder.badge.gearshape")}.buttonStyle(WBIconButtonStyle(size:32)).help("管理分类").accessibilityLabel("管理分类")}
+            HStack(spacing:6){
+                WBSelect("筛选分类",selection:Binding(get:{model.categoryFilter},set:{_ = model.selectCategory($0,matching:query)}),options:[("all","全部分类")]+model.categoryOptions)
+                Button{categoryName="";editingCategoryID=nil;showCategories=true;model.recordActivity()}label:{Label("管理分类",systemImage:"folder.badge.gearshape")}
+                    .buttonStyle(WBButtonStyle(compact:true)).help("新增、重命名或删除分类").accessibilityIdentifier("fc.vault.categories.manage")
+            }
             ScrollView {
                 LazyVStack(spacing:2) {
                     ForEach(filtered){document in
-                        Button{model.selectDocument(document.id)}label:{VStack(alignment:.leading,spacing:5){Text(document.title.isEmpty ? "未命名文本":document.title).font(.system(size:12,weight:.medium)).lineLimit(1);Text(model.categoryTitle(document)+" · "+document.updatedAt.formatted(date:.abbreviated,time:.omitted)).font(.system(size:11)).foregroundStyle(palette.muted).lineLimit(1)}.padding(.vertical,12).padding(.horizontal,9).frame(maxWidth:.infinity,alignment:.leading).foregroundStyle(model.selectedID == document.id ? palette.text:palette.secondary).background(model.selectedID == document.id ? palette.navSelected:.clear,in:RoundedRectangle(cornerRadius:8))}.buttonStyle(.plain)
+                        Button{model.selectDocument(document.id)}label:{VStack(alignment:.leading,spacing:5){
+                            Text(document.title.isEmpty ? "未命名文本":document.title).font(.system(size:12,weight:.medium)).lineLimit(1)
+                            HStack(spacing:6){
+                                Text(model.categoryTitle(document)).font(.system(size:10)).foregroundStyle(palette.secondary).lineLimit(1)
+                                    .padding(.horizontal,6).padding(.vertical,3).background(palette.soft,in:RoundedRectangle(cornerRadius:5))
+                                Text(document.updatedAt.formatted(date:.abbreviated,time:.omitted)).font(.system(size:11)).foregroundStyle(palette.muted).lineLimit(1)
+                            }
+                        }.padding(.vertical,12).padding(.horizontal,9).frame(maxWidth:.infinity,alignment:.leading).foregroundStyle(model.selectedID == document.id ? palette.text:palette.secondary).background(model.selectedID == document.id ? palette.navSelected:.clear,in:RoundedRectangle(cornerRadius:8))}.buttonStyle(.plain)
                     }
                     if filtered.isEmpty {Text(query.isEmpty ? "此分类暂无文本":"没有匹配的标题").font(.system(size:11)).foregroundStyle(palette.muted).padding(.vertical,20)}
                 }.background(WorkbenchOverlayScrollbars())
@@ -204,7 +221,14 @@ private struct VaultUnlockedView:View {
                 VaultPrivateTextEditor(model:model,document:document,formatting:formatting).disabled(model.busy).id(document.id)
                 HStack{Text(model.saveStatus).foregroundStyle(model.hasPendingSave ? palette.warning:palette.muted);Spacer();Text("\(document.body.count) 字")}.font(.system(size:11)).foregroundStyle(palette.muted).padding(.top,8)
             }
-        } else {VStack(spacing:14){Text("新建你的第一条文本").font(.system(size:12)).foregroundStyle(palette.muted);Button{model.newDocument()}label:{Label("新建文本",systemImage:"plus")}.buttonStyle(WBButtonStyle(primary:true))}.frame(maxWidth:.infinity,maxHeight:.infinity)}
+        } else {
+            VStack(spacing:14){
+                Text(!query.isEmpty ? "没有匹配的标题":model.categoryFilter == "all" ? "新建你的第一条文本":"「\(model.categoryTitle(id:model.categoryFilter))」暂无文本")
+                    .font(.system(size:12)).foregroundStyle(palette.muted)
+                Button{model.newDocument()}label:{Label("新建文本",systemImage:"plus")}.buttonStyle(WBButtonStyle(primary:true))
+                Button("管理分类"){categoryName="";editingCategoryID=nil;showCategories=true;model.recordActivity()}.buttonStyle(WBQuietButtonStyle())
+            }.frame(maxWidth:.infinity,maxHeight:.infinity).accessibilityIdentifier("fc.vault.category.empty")
+        }
     }
 }
 

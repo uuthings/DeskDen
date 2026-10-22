@@ -18,7 +18,7 @@ struct DeviceProcessExplorerView: View {
     @State private var contentWidth: CGFloat = 864
     private var pidWidth: CGFloat { memoryFocused ? (contentWidth < 800 ? 48 : 64) : 62 }
     private var memoryWidth: CGFloat { memoryFocused ? (contentWidth < 800 ? 72 : 88) : 65 }
-    private var actionWidth: CGFloat { memoryFocused ? (contentWidth < 800 ? 100 : 112) : 28 }
+    private var actionWidth: CGFloat { memoryFocused ? (contentWidth < 800 ? 100 : 112) : 76 }
     private var sortSelection: Binding<DeviceProcessSort> { Binding(get: { sort }, set: { sort = $0; ascending = $0 == .name || $0 == .pid }) }
     @State private var filter: DeviceProcessFilter = .all
     @State private var grouped = true
@@ -27,7 +27,7 @@ struct DeviceProcessExplorerView: View {
     @State private var actionRequest: DeviceProcessActionRequest?
     @State private var actionMessage: String?
     @State private var actionFailed = false
-    @State private var protectedProcessName: String?
+    @State private var processProtection: DeviceProcessProtectionInfo?
 
     private var candidates: [DeviceProcessGroup] {
         DeviceProcessExplorer.groups(processes, grouped: grouped, filter: filter, query: query, sort: appliedSort, ascending: appliedAscending)
@@ -64,16 +64,16 @@ struct DeviceProcessExplorerView: View {
                                       force: { actionRequest = .init(name: request.name, processes: request.processes, mode: .force, wholeApplication: request.wholeApplication) },
                                       perform: perform)
         }
-        .workbenchModal(isPresented: Binding(get: { protectedProcessName != nil }, set: { if !$0 { protectedProcessName = nil } }), width: 440) {
-            WorkbenchDialogFrame(title: "此进程仅供查看", dismiss: { protectedProcessName = nil }) {
+        .workbenchModal(isPresented: Binding(get: { processProtection != nil }, set: { if !$0 { processProtection = nil } }), width: 440) {
+            WorkbenchDialogFrame(title: "进程保护说明", dismiss: { processProtection = nil }) {
                 VStack(alignment: .leading, spacing: 12) {
-                    Label(protectedProcessName ?? "进程", systemImage: "lock.shield").font(.system(size: 14, weight: .medium))
-                    Text("为保持系统和方寸正常运行，系统服务与方寸自身只提供读数。无法确认所属应用的进程也会保留，避免结束错误目标。")
+                    Label(processProtection?.name ?? "进程", systemImage: "lock.shield").font(.system(size: 14, weight: .medium))
+                    Text(processProtection?.reason ?? "进程身份暂不可核验，请重新选择。")
                         .font(.system(size: 12)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
-                    Text("你仍可查看进程详情；可操作的应用会显示退出选项，执行前还需确认。")
+                    Text(processProtection?.guidance ?? "你仍可查看进程详情。")
                         .font(.system(size: 11)).foregroundStyle(palette.muted).fixedSize(horizontal: false, vertical: true)
                 }
-            } actions: { Spacer(); Button("知道了") { protectedProcessName = nil }.buttonStyle(WBButtonStyle(primary: true)) }
+            } actions: { Spacer(); Button("知道了") { processProtection = nil }.buttonStyle(WBButtonStyle(primary: true)) }
         }
     }
     private func reorder() { order = candidates.map(\.id) }
@@ -83,9 +83,6 @@ struct DeviceProcessExplorerView: View {
         case .success(let message): actionMessage = message; actionFailed = false
         case .failure(let error): actionMessage = error.localizedDescription; actionFailed = true
         }
-    }
-    private func allowed(_ process: DeviceProcess) -> Bool {
-        DeviceProcessActions.isAllowed(process, currentUID: getuid(), currentPID: getpid(), currentApplicationPath: Bundle.main.bundleURL.resolvingSymlinksInPath().path)
     }
 
     private func filterRail(compact: Bool) -> some View {
@@ -211,7 +208,7 @@ struct DeviceProcessExplorerView: View {
                     if memoryFocused {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(process.name).lineLimit(1).truncationMode(.tail)
-                            Text(child ? "所属 \(process.application?.name ?? "应用")" : process.application == nil ? "系统与后台 · 只读" : "应用").font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
+                            Text(child ? "所属 \(process.application?.name ?? "应用")" : process.application == nil ? "独立后台进程" : "应用").font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
                         }
                     } else { Text(process.name).lineLimit(1).truncationMode(.tail) }
                 }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
@@ -228,28 +225,33 @@ struct DeviceProcessExplorerView: View {
         if !memoryFocused { Text(pid).frame(width: pidWidth, alignment: .trailing).foregroundStyle(palette.muted) }
     }
     @ViewBuilder private func actionMenu(name: String, members: [DeviceProcess], wholeApplication: Bool) -> some View {
-        let canQuit = (wholeApplication ? members.first(where: \.isApplicationMain).map(allowed) ?? false : members.allSatisfy(allowed)) && (!memoryFocused || members.allSatisfy { $0.application != nil })
-        let canForce = members.allSatisfy(allowed)
+        let availability = DeviceProcessActionAvailability(name: name, members: members, wholeApplication: wholeApplication, memoryFocused: memoryFocused)
         if memoryFocused {
             HStack(spacing: 4) {
                 Button { if let process = members.first(where: \.isApplicationMain) ?? members.first { open(process) } } label: { Image(systemName: "info.circle") }.buttonStyle(WBIconButtonStyle()).accessibilityLabel("查看\(name)占用")
-                if canQuit {
+                if availability.canQuit {
                     Button("退出") { actionRequest = .init(name: name, processes: members, mode: .quit, wholeApplication: wholeApplication) }.buttonStyle(WBButtonStyle(compact: true))
                         .accessibilityIdentifier("device-process-open-quit-" + String(members.first?.pid ?? 0))
-                } else { Button("仅查看") { protectedProcessName = name }.buttonStyle(WBQuietButtonStyle()).help("了解此进程的保护原因") }
+                } else if let protection = availability.protection {
+                    Button("仅查看") { processProtection = protection }.buttonStyle(WBQuietButtonStyle()).help(protection.reason)
+                        .accessibilityLabel("\(name) 仅供查看，了解原因")
+                }
             }.frame(width: actionWidth, alignment: .trailing)
         } else {
-            Menu {
-                Button("查看详情") { if let process = members.first(where: \.isApplicationMain) ?? members.first { open(process) } }
-                if canQuit || canForce {
-                    Divider()
-                    Button(wholeApplication ? "退出整个应用" : "退出进程") { actionRequest = .init(name: name, processes: members, mode: .quit, wholeApplication: wholeApplication) }.disabled(!canQuit)
-                    Button(wholeApplication ? "强制结束此组" : "强制结束进程", role: .destructive) { actionRequest = .init(name: name, processes: members, mode: .force, wholeApplication: wholeApplication) }.disabled(!canForce)
-                } else {
-                    Button("了解只读保护") { protectedProcessName = name }
+            HStack(spacing: 4) {
+                if let protection = availability.protection {
+                    Button(protection.badge) { processProtection = protection }
+                        .buttonStyle(WBQuietButtonStyle()).font(.system(size: 10))
+                        .help(protection.reason + "\n" + protection.guidance)
+                        .accessibilityLabel("\(name) \(protection.badge)，查看保护说明")
+                        .accessibilityIdentifier("fc.device.process.protection.\(members.first?.pid ?? 0)")
                 }
-            } label: { Image(systemName: "ellipsis").font(.system(size: 12)).frame(width: actionWidth, height: 26) }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: actionWidth).accessibilityLabel("\(name) 的进程操作")
+                DeviceProcessActionsMenu(name: name, wholeApplication: wholeApplication,
+                    canQuit: availability.canQuit, canForce: availability.canForce, textColor: NSColor(palette.text),
+                    viewDetails: { if let process = members.first(where: \.isApplicationMain) ?? members.first { open(process) } },
+                    request: { mode in actionRequest = .init(name: name, processes: members, mode: mode, wholeApplication: wholeApplication) })
+                    .frame(width: 28, height: 28)
+            }.frame(width: actionWidth, alignment: .trailing)
         }
     }
 
@@ -309,7 +311,7 @@ struct DeviceProcessActionDialog: View {
         } actions: {
             Button("取消", action: dismiss).buttonStyle(WBButtonStyle()).keyboardShortcut(.cancelAction)
             if request.mode == .quit && !memoryFocused {
-                Button("强制结束…", action: force).buttonStyle(WBButtonStyle()).foregroundStyle(palette.critical)
+                Button("强制结束", action: force).buttonStyle(WBButtonStyle()).foregroundStyle(palette.critical)
             }
             Button(request.mode == .force ? "强制结束" : "请求正常退出") {
                 guard !memoryFocused || quitConsent else { return }

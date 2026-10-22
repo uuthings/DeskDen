@@ -48,7 +48,7 @@ import LauncherCore
             window.isMovableByWindowBackground = scenario.movable
             window.alphaValue = 0; window.ignoresMouseEvents = true
             for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] { window.standardWindowButton(kind)?.isHidden = true }
-            let host = NSHostingView(rootView: NativeControlHitRoot(state: state, scenario: scenario))
+            let host = NSHostingView(rootView: NativeControlHitRoot(state: state, scenario: scenario).nativeCheckAccessibility())
             host.frame = NSRect(origin: .zero, size: window.contentLayoutRect.size)
             host.autoresizingMask = [.width, .height]
             window.contentView = host

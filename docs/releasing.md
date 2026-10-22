@@ -26,7 +26,7 @@ Before building an authorized local preview:
 FANGCUN_PREVIEW_BUILD="$PWD/build/authorized-preview-$(date -u +%Y%m%dT%H%M%SZ)"
 xcodebuild -project Fangcun.xcodeproj -scheme Fangcun -configuration Release \
   -destination 'generic/platform=macOS' -derivedDataPath "$FANGCUN_PREVIEW_BUILD" \
-  build PROVISIONING_PROFILE_SPECIFIER="$FANGCUN_LOCAL_PROFILE"
+  build PROVISIONING_PROFILE_SPECIFIER="$FANGCUN_LOCAL_PROFILE" CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO
 ```
 
 A properly signed result includes `Contents/embedded.provisionprofile` and expanded matching app identifier, team and Keychain group entitlements. The build must fail if the selected profile does not authorize them; do not bypass this with unrestricted groups or weakened storage. Building a local preview does not authorize Archive, notarization, uploading or publication.
@@ -58,7 +58,7 @@ DMG/PKG signing and notarization have independent container records, which are n
 
 Store each version/candidate outside Git and outside build caches. The default product archive root is `~/Library/Application Support/` followed by the product name and `ReleaseArchives/`. Maintain a version index.
 
-Preserve the complete xcarchive, dSYMs and existing Submissions/Distributions, exported app, final container, source commit/version/Build mapping, public signing identity, notarization submission ID/status/full logs, checksums, release notes and any actual update manifest. If there is no updater, record that fact rather than inventing a manifest.
+Preserve the complete xcarchive, dSYMs and existing Submissions/Distributions, exported app, final container, source commit/version/Build mapping, public signing identity, notarization submission ID/status/full logs, checksums, release notes and any actual update manifest. See [software updates](updating.md) for preparing signed Sparkle archives and feeds from the Organizer-exported App. Archive the exact generated feed and ZIP; never regenerate or re-sign an already distributed App just to add update records.
 
 Compare copied file content, symbolic-link targets and required permissions. Cache cleanup must not remove durable records. Do not store passwords, private keys, exported Keychains or account sessions.
 

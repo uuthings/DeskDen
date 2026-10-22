@@ -172,7 +172,9 @@ struct DeviceBudgetSettingsView: View {
         HStack {
                 Label("流量预算", systemImage: "slider.horizontal.3").font(.system(size: 12, weight: .medium))
                 Spacer()
-                Toggle("启用预算", isOn: $drafts.budget.enabled).toggleStyle(.switch).controlSize(.small).font(.system(size: 11))
+                Toggle("启用流量预算", isOn: $drafts.budget.enabled)
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small).fixedSize()
+                    .accessibilityIdentifier("fc.network.budget.settings.enabled")
             }
     }
     private var budgetInputs: some View {

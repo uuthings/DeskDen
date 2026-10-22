@@ -570,6 +570,8 @@ enum NativeChecks {
         count += contextChecks.count;failures += contextChecks.failures
         let contextDraftChecks=await WorkbenchContextDraftChecks.run()
         count += contextDraftChecks.count;failures += contextDraftChecks.failures
+        let updateChecks=await AppUpdateChecks.run()
+        count += updateChecks.count;failures += updateChecks.failures
         let dateInputChecks=await WorkbenchDateInputChecks.run()
         count += dateInputChecks.count;failures += dateInputChecks.failures
         let aiNativeChecks=await AIUsageNativeChecks.run()

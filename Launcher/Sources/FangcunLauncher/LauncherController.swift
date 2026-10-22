@@ -14,6 +14,8 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
     var settingsWindowController: LauncherSettingsWindowController?
     var workbenchController: WorkbenchWindowController?
     var notificationRouter: WorkbenchNotificationRouter?
+    lazy var updates = AppUpdateController(owner: self)
+    var preparingUpdateRelaunch = false
     weak var workbenchShortcutRecorder: WorkbenchShortcutRecorder?
     var isPreparingToQuit: Bool { workbenchController?.model.quitting == true }
     var topEntryController: WorkbenchTopEntryController?
@@ -206,6 +208,9 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
         topEntryController = WorkbenchTopEntryController(owner: self)
         if Bundle.main.object(forInfoDictionaryKey:"FangcunUIReview") as? Bool != true {topEntryController?.start()}
         performStartupPresentation(FangcunStartupPresentation(arguments:CommandLine.arguments))
+        if Bundle.main.object(forInfoDictionaryKey: "FangcunUIReview") as? Bool != true {
+            updates.startAutomaticCheckingIfEnabled()
+        }
     }
     func applicationShouldHandleReopen(_ sender:NSApplication,hasVisibleWindows flag:Bool) -> Bool { showWorkbench(); return true }
     /// Only the ordinary workbench participates in Dock and Command-Tab. Mini,
@@ -260,6 +265,18 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
     }
     func applicationShouldTerminate(_ sender:NSApplication) -> NSApplication.TerminateReply {
         if confirmedTerminationPermit {confirmedTerminationPermit=false;return .terminateNow}
+        if preparingUpdateRelaunch {
+            // Sparkle may retry termination after a cancelled save decision
+            // without repeating its relaunch notification. Keep this intent
+            // until it aborts or the prepared termination actually succeeds.
+            guard let workbench = workbenchController ?? prepareWorkbenchServices() else { return .terminateCancel }
+            // Install & Relaunch was explicitly chosen in Sparkle. Reuse all
+            // save, process-transaction and notification barriers without a second quit prompt.
+            workbench.model.confirmQuit()
+            guard workbench.model.quitting else { return .terminateCancel }
+            systemTerminationPending = true
+            return .terminateLater
+        }
         // Dock, logout and other native terminate requests must use the same
         // confirmation and async preparation as the in-app quit command.
         guard let workbench=workbenchController ?? prepareWorkbenchServices() else {return .terminateCancel}
@@ -337,6 +354,7 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
         let application = NSMenuItem(); let submenu = NSMenu()
         submenu.addItem(withTitle:"关于方寸",action:#selector(showAbout),keyEquivalent:"").target = self
         submenu.addItem(withTitle:"方寸设置…",action:#selector(allSettingsFromMenu),keyEquivalent:",").target = self
+        submenu.addItem(withTitle:"检查更新",action:#selector(checkForUpdatesFromMenu),keyEquivalent:"").target = self
         submenu.addItem(.separator())
         submenu.addItem(withTitle:"退出方寸",action:#selector(requestQuitFromMenu),keyEquivalent:"q").target=self
         application.submenu = submenu; main.addItem(application)
@@ -364,6 +382,7 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
         statusItem.button?.title = "方寸"; statusItem.button?.toolTip = "方寸 · 启动器"
         let statusMenu = NSMenu()
         for (title,action) in [("打开工作台",#selector(workbenchFromMenu)),("打开启动器",#selector(showFromMenu)),("方寸设置…",#selector(allSettingsFromMenu)),("启动器设置…",#selector(settingsFromMenu)),("刷新应用列表",#selector(refreshFromMenu))] { statusMenu.addItem(withTitle:title,action:action,keyEquivalent:"").target = self }
+        statusMenu.addItem(withTitle:"检查更新",action:#selector(checkForUpdatesFromMenu),keyEquivalent:"").target=self
         statusMenu.addItem(.separator()); statusMenu.addItem(withTitle:"退出方寸",action:#selector(requestQuitFromMenu),keyEquivalent:"q").target=self
         statusItem.menu = statusMenu
     }
@@ -371,6 +390,7 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
         showWorkbench()
         workbenchController?.model.requestQuit()
     }
+    @objc func checkForUpdatesFromMenu() { updates.checkForUpdates() }
     @objc func toggleWorkbenchFullScreenFromMenu() {workbenchController?.requestToggleFullScreen()}
     func finishConfirmedQuit() {
         // Safety and the user's save/discard choice were already resolved exactly

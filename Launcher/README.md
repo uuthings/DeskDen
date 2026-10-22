@@ -12,7 +12,7 @@ xcodebuild -project Fangcun.xcodeproj -scheme Fangcun \
   -derivedDataPath build/XcodeDerived build CODE_SIGN_IDENTITY=-
 ```
 
-在 `Launcher/` 内运行 `./scripts/build-local.sh`，生成位于 `build/` 的本地开发 App。脚本拒绝覆盖已有输出或证据目录；可传入新的绝对输出路径与 `debug`／`release` 配置。它使用 ad-hoc 签名，检查源码和资源指纹并保存证据，不上传、不公证。正式分发见 [发布流程](../docs/releasing.md)。
+在 `Launcher/` 内运行 `./scripts/build-local.sh`，生成位于 `build/` 的本地开发 App。脚本拒绝覆盖已有输出或证据目录；可传入新的绝对输出路径与 `debug`／`release` 配置。它使用 ad-hoc 签名，检查源码和资源指纹并保存证据，不上传、不公证。首次构建会解析固定版本的 Sparkle，脚本将框架及必要辅助程序一并放入 App。正式分发见 [发布流程](../docs/releasing.md)，更新通道说明见 [软件更新](../docs/updating.md)。
 
 不要同时运行同 Bundle ID 的多个构建：后启动的实例会唤起已有实例。
 
@@ -25,6 +25,8 @@ xcodebuild -project Fangcun.xcodeproj -scheme Fangcun \
 ```
 
 验证包含核心测试、分别记录的 Debug／Release 原生检查、设备与表单专项，以及设备监测、日历、私密空间和 AI 模型检查。每轮在 `build/verification/` 创建独立证据目录，要求正数检查计数、零失败、零跳过，并核对整轮源码输入保持一致。
+
+原生界面检查需要活动的 macOS 图形会话及测试宿主已有的辅助功能访问。检查模式使用公开 API 只读查询自身窗口，让 SwiftUI 生成可测量的动态界面信息；系统拒绝时会明确失败，不申请权限或跳过断言。正常使用 App 沿用系统的辅助功能状态。
 
 历史设计稿保留在维护者本机。需要一并核对原始指纹时，显式运行 `./scripts/verify-local.sh --verify-preserved-designs`，该选项要求本机历史存档完整。公开源码构建与功能验证不依赖私人设计记录。
 

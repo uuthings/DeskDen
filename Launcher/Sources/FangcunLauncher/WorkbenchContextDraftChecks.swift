@@ -110,7 +110,7 @@ import LauncherCore
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 760), styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         let view = ContextDraftModalFixture(model: model, close: close, coordinator: coordinator, clock: clock, weather: weather)
-        window.contentView = NSHostingView(rootView: view)
+        window.contentView = NSHostingView(rootView: view.nativeCheckAccessibility())
         window.contentView?.frame = NSRect(x: 0, y: 0, width: 900, height: 760)
         window.contentView?.layoutSubtreeIfNeeded()
         return window
@@ -189,7 +189,7 @@ private actor ContextDraftOfflineProvider: WeatherProviding {
             guard context.saveClock(zone:"UTC",twelveHour:false) else {throw ReminderError.invalid("取消检查无法建立隔离时区偏好。")}
             let saved=try Data(contentsOf:directory.appendingPathComponent("context.json"))
             var draft=WorkbenchClockDraft(settings:context.settings);draft.zone="Asia/Tokyo"
-            let source=NSHostingView(rootView:CancelClockPresenter(context:context,close:close,coordinator:model.modals,draft:draft))
+            let source=NSHostingView(rootView:CancelClockPresenter(context:context,close:close,coordinator:model.modals,draft:draft).nativeCheckAccessibility())
             source.frame=NSRect(x:0,y:0,width:1,height:1);root.addSubview(source);presenter=source
             context.showClock=true
             let mounted=await wait(window){model.modals.presentations.count == 1}

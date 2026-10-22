@@ -15,7 +15,7 @@ import LauncherCore
         owner.configurePanel();owner.scanning=true
         let coordinator=WorkbenchModalCoordinator()
         let window=owner.panel!
-        let host=NSHostingView(rootView:ShortcutResponderCheckRoot(owner:owner,coordinator:coordinator))
+        let host=NSHostingView(rootView:ShortcutResponderCheckRoot(owner:owner,coordinator:coordinator).nativeCheckAccessibility())
         window.contentView=host;window.setContentSize(NSSize(width:640,height:440))
         coordinator.hostWindow=window
         defer {

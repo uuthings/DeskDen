@@ -50,15 +50,22 @@ import VaultV1Compatibility
             try FileManager.default.removeItem(at:blockedPrevious)
             let body="Formatted synthetic body 🔐"
             model.updateRichBody(body,formatting:[LauncherCore.VaultTextStyleRun(location:0,length:(body as NSString).length,family:.serif,size:18,bold:true)])
-            check(model.addCategory("Synthetic archive"),"new category is accepted before migration")
+            check(model.flush(),"the first successful rich edit explicitly commits the format migration")
+            let firstMigrationPrevious=try Data(contentsOf:oldStore.url.appendingPathExtension("previous"))
+            let firstMigrationContents=try LauncherCore.VaultCryptography.unlock(data:firstMigrationPrevious,password:password).contents
+            check(firstMigrationPrevious == oldBytes && firstMigrationContents.version == 1,"first successful migration retains every byte of the prior encrypted version1 revision")
+            check(model.addCategory("Synthetic archive"),"new category is accepted after the explicit format migration")
             let category=model.categories.last!;model.moveSelected(to:category.id)
-            check(model.flush(),"successful rich edit commits the migrated ciphertext")
+            // The previous file is a rotating revision, not an immutable v1
+            // archive. Navigation may flush accepted edits before the move.
+            let precedingRevision=try Data(contentsOf:oldStore.url)
+            check(model.flush(),"the category move commits the latest rich document ciphertext")
             let newBytes=try Data(contentsOf:oldStore.url)
+            check(try Data(contentsOf:oldStore.url.appendingPathExtension("previous")) == precedingRevision,"later writes preserve every byte of their immediately preceding encrypted revision")
             let current=try LauncherCore.VaultCryptography.unlock(data:newBytes,password:password)
             check(current.contents.version == 2 && current.contents.documents.first?.formatting?.first?.bold == true && current.contents.documents.first?.effectiveCategoryID == category.id,"version2 preserves rich formatting and custom category references")
             check(rejects{_ = try VaultV1Compatibility.VaultCryptography.unlock(data:newBytes,password:password)},"actual old password unlock rejects the new rich payload")
             check(try Data(contentsOf:oldStore.url) == newBytes,"old decoder rejection leaves new encrypted data unchanged")
-            check(try LauncherCore.VaultCryptography.unlock(data:Data(contentsOf:oldStore.url.appendingPathExtension("previous")),password:password).contents.version == 1,"first successful migration retains the prior encrypted version1 revision")
             model.changeIdleMinutes(10)
             let schema2=try Data(contentsOf:preferencesURL)
             let parsed=try JSONDecoder().decode(LauncherCore.VaultProtectionPreferences.self,from:schema2).validated()

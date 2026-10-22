@@ -82,6 +82,27 @@ final class LauncherCoreTests: XCTestCase {
         let longName = SearchEntry(target:LaunchTarget(kind:.app,name:"A Very Long Unrelated Application Ending Z",location:"/Applications/Example.app"))
         XCTAssertNil(longName.score("az"),"Two letters at opposite ends of a long name must not match")
     }
+    func testEnglishInitialsAndBoundedConsonantAbbreviationsRemainParallelWithPinyin() {
+        let harness = SearchEntry(target: LaunchTarget(kind: .app, name: "Design Harness", location: "/Applications/Design Harness.app"))
+        for query in ["DH", "dh", "ＤＨ", "DSH", "dsgnhrns"] { XCTAssertNotNil(harness.score(query), query) }
+        XCTAssertNil(harness.score("hz"))
+        XCTAssertNotNil(SearchEntry(target: notes).score("bwl"))
+    }
+    func testEnglishTypoToleranceIsBoundedByWordsAndDoesNotChangeStrongerRanking() {
+        let deep = LaunchTarget(kind: .app, name: "Deep", location: "/Applications/Deep.app")
+        let deepEntry = SearchEntry(target: deep)
+        for query in ["dop", "doop", "dep"] { XCTAssertNotNil(deepEntry.score(query), query) }
+        for query in ["dqp", "zop", "dpz", "op", "deeppx", "d1p"] { XCTAssertNil(deepEntry.score(query), query) }
+        let safariEntry = SearchEntry(target: safari)
+        for query in ["sofari", "safrai", "safarii"] { XCTAssertNotNil(safariEntry.score(query), query) }
+        XCTAssertNil(safariEntry.score("sxfqri"), "Two unrelated substitutions are not a typo match")
+        let exact = LaunchTarget(kind: .app, name: "Dop", location: "/Applications/Dop.app")
+        let prefix = LaunchTarget(kind: .app, name: "Dop Tools", location: "/Applications/Dop Tools.app")
+        let literal = LaunchTarget(kind: .app, name: "Desktop", location: "/Applications/Desktop.app")
+        XCTAssertEqual(SearchEngine.search([deep, literal, prefix, exact].map { SearchEntry(target: $0) }, query: "dop").map(\.id), [exact.id, prefix.id, literal.id, deep.id])
+        let privateAddress = SearchEntry(target: LaunchTarget(kind: .web, name: "Docs", location: "https://private.example/Deep"))
+        XCTAssertNil(privateAddress.score("dop"))
+    }
     func testExactAndPrefixEnglishResultsRankAboveFuzzyMatches() {
         let exact = LaunchTarget(kind:.app,name:"SFR",location:"/Applications/Exact.app")
         let prefix = LaunchTarget(kind:.app,name:"SFR Tools",location:"/Applications/Prefix.app")
