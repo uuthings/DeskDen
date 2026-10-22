@@ -11,6 +11,7 @@ jobs:
           fetch-depth: 0
       - run: python3 tools/check-public-scope.py --all-refs
       - run: python3 tools/test-public-scope.py
+      - run: python3 tools/test-prepare-update-feed.py
   build:
     runs-on: macos-latest
     steps:
@@ -18,5 +19,7 @@ jobs:
       - name: Core tests
         working-directory: Launcher
         run: swift test
+      - name: Update configuration policy
+        run: python3 Launcher/scripts/check-update-config.py
       - name: Build native app without distribution signing
         run: xcodebuild -project Fangcun.xcodeproj -scheme Fangcun -configuration Release -destination 'generic/platform=macOS' -derivedDataPath build/ci build CODE_SIGNING_ALLOWED=NO

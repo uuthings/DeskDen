@@ -8,6 +8,21 @@ import SwiftUI
     static func run() async -> (count:Int,failures:Int) {
         var count=0,failures=0
         func check(_ condition:Bool,_ name:String){count += 1;if !condition {failures += 1};print("\(condition ? "PASS":"FAIL") \(name)")}
+        for theme in LauncherTheme.allCases {
+            for light in [false,true] {
+                let palette=ThemePalette(theme:theme,light:light)
+                for zone in ["Asia/Shanghai","America/New_York","Pacific/Honolulu"] {
+                    var display=Calendar(identifier:.gregorian);display.timeZone=TimeZone(identifier:zone)!
+                    let rest=CalendarCivilDay(date:display.date(from:DateComponents(year:2026,month:10,day:1,hour:12))!,calendar:display)
+                    let work=CalendarCivilDay(date:display.date(from:DateComponents(year:2026,month:10,day:10,hour:12))!,calendar:display)
+                    let unknown=CalendarCivilDay(date:display.date(from:DateComponents(year:2027,month:10,day:1,hour:12))!,calendar:display)
+                    check(rest.holidayKind == .holiday && rest.badge == "休" && rest.color(palette) == palette.success &&
+                          work.holidayKind == .workingDay && work.badge == "班" && work.color(palette) == palette.critical &&
+                          unknown.holidayKind == nil && unknown.badge == nil,
+                          "shared calendar civil badges keep rest green and adjusted work red without guessing unsupported years in \(theme.rawValue), light=\(light), zone=\(zone)")
+                }
+            }
+        }
         let directory=FileManager.default.temporaryDirectory.appendingPathComponent("fangcun-calendar-v5-\(UUID().uuidString)")
         defer {try? FileManager.default.removeItem(at:directory)}
         do {
@@ -83,7 +98,7 @@ import SwiftUI
             let coordinator=WorkbenchModalCoordinator()
             let window=NSWindow(contentRect:NSRect(x:0,y:0,width:900,height:760),styleMask:[.borderless],backing:.buffered,defer:false)
             window.alphaValue=0;window.ignoresMouseEvents=true;window.isReleasedWhenClosed=false
-            let host=NSHostingView(rootView:CalendarMigrationDialogRoot(model:model,coordinator:coordinator))
+            let host=NSHostingView(rootView:CalendarMigrationDialogRoot(model:model,coordinator:coordinator).nativeCheckAccessibility())
             window.contentView=host;coordinator.hostWindow=window;window.orderFront(nil)
             defer {coordinator.clear();window.orderOut(nil);window.contentView=nil;window.close()}
             model.openReminder(original)

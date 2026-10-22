@@ -58,7 +58,7 @@ import LauncherCore
         let fixture=LauncherBindingsModalFixture(),inspection=WorkbenchBindingInspection(),modals=WorkbenchModalCoordinator()
         let window=NSWindow(contentRect:NSRect(x:0,y:0,width:700,height:700),styleMask:[.borderless],backing:.buffered,defer:false)
         window.alphaValue=0;window.ignoresMouseEvents=true;window.isReleasedWhenClosed=false
-        let host=NSHostingView(rootView:LauncherBindingsModalRoot(fixture:fixture,model:model,inspection:inspection,modals:modals))
+        let host=NSHostingView(rootView:LauncherBindingsModalRoot(fixture:fixture,model:model,inspection:inspection,modals:modals).nativeCheckAccessibility())
         window.contentView=host;modals.hostWindow=window;window.orderFront(nil)
         defer{modals.clear();window.orderOut(nil);window.contentView=nil;inspection.openKey=nil;inspection.clearEditor();model.cancelPicker()}
         fixture.presented=true;await settle()

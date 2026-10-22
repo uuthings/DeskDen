@@ -70,6 +70,52 @@ final class AIUsageCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.availableWindows.map(\.usedPercent), [25, 15])
         XCTAssertEqual(snapshot.accountPlan, .plus)
     }
+    func testComparableRowsAlignActualWeeklyWindowsWhenPrimaryOrSecondaryIsMissing() throws {
+        let week = try AIQuotaWindow(usedPercent: 42, durationMinutes: 10_080, resetsAt: nil)
+        let fiveHours = try AIQuotaWindow(usedPercent: 13, durationMinutes: 300, resetsAt: nil)
+        let weeklyOnlySlots: [(AIQuotaWindow?, AIQuotaWindow?)] = [(week, nil), (nil, week)]
+        for provider in AIProvider.allCases {
+            for plan in [AIAccountPlan?.none, .plus, .pro, .promax] {
+                for slots in weeklyOnlySlots {
+                    let snapshot = AIQuotaSnapshot(provider: provider, observedAt: now, source: .manual, shortWindow: slots.0, weeklyWindow: slots.1, accountPlan: plan)
+                    XCTAssertEqual(snapshot.comparisonRows, [nil, week])
+                    XCTAssertEqual(snapshot.availableWindows, [week])
+                }
+            }
+            let both = AIQuotaSnapshot(provider: provider, observedAt: now, source: .manual, shortWindow: fiveHours, weeklyWindow: week)
+            XCTAssertEqual(both.comparisonRows, [fiveHours, week])
+            let reversed = AIQuotaSnapshot(provider: provider, observedAt: now, source: .manual, shortWindow: week, weeklyWindow: fiveHours)
+            XCTAssertEqual(reversed.comparisonRows, both.comparisonRows)
+            let shortOnly = AIQuotaSnapshot(provider: provider, observedAt: now, source: .manual, shortWindow: fiveHours, weeklyWindow: nil)
+            XCTAssertEqual(shortOnly.comparisonRows, [fiveHours, nil])
+        }
+    }
+    func testComparableRowsKeepNonstandardRealPeriodsAndDoNotInventWindowsForEmptySnapshot() throws {
+        let daily = try AIQuotaWindow(usedPercent: 15, durationMinutes: 1440, resetsAt: nil)
+        let monthly = try AIQuotaWindow(usedPercent: 27, durationMinutes: 43_200, resetsAt: nil)
+        let week = try AIQuotaWindow(usedPercent: 9, durationMinutes: 10_080, resetsAt: nil)
+        var snapshot = AIQuotaSnapshot(provider: .codex, observedAt: now, source: .imported, shortWindow: daily, weeklyWindow: nil)
+        XCTAssertEqual(snapshot.comparisonRows, [daily, nil])
+        snapshot.weeklyWindow = monthly
+        XCTAssertEqual(snapshot.comparisonRows, [daily, monthly])
+        snapshot.shortWindow = week
+        XCTAssertEqual(snapshot.comparisonRows, [monthly, week])
+        snapshot.shortWindow = nil; snapshot.weeklyWindow = nil
+        XCTAssertTrue(snapshot.comparisonRows.isEmpty)
+    }
+    func testSourceReportedProVariantsNeverBecomeInferredMultipliers() throws {
+        // Official source names: openai/codex protocol/src/account.rs PlanType.
+        for (raw, plan, title) in [("prolite", AIAccountPlan.prolite, "Pro Lite"), ("promax", .promax, "Pro Max")] {
+            let snapshot = try XCTUnwrap(AIUsageLogParser.codexQuota([
+                "planType": raw, "secondary": ["usedPercent": 25, "windowDurationMins": 10_080]
+            ], date: now, source: .localSession))
+            XCTAssertEqual(snapshot.accountPlan, plan)
+            XCTAssertEqual(snapshot.accountPlan?.title, title)
+            XCTAssertNil(snapshot.comparisonRows[0])
+            XCTAssertEqual(snapshot.comparisonRows[1]?.durationMinutes, 10_080)
+            XCTAssertFalse(try String(decoding: JSONEncoder().encode(snapshot), as: UTF8.self).contains("20x"))
+        }
+    }
     func testUnknownMembershipIsNotInferredFromQuotaOrRetainedAsArbitraryText() throws {
         for plan in ["unknown", "PRIVATE_ACCOUNT_SENTINEL", "max20", "pro_20x"] {
             let snapshot = try XCTUnwrap(AIUsageLogParser.codexQuota([

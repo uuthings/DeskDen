@@ -17,4 +17,13 @@
 <key>NSCalendarsFullAccessUsageDescription</key><string>在方寸中展示你选择接入的系统日程，不修改系统日历。</string>
 <key>NSRemindersFullAccessUsageDescription</key><string>展示、创建、编辑和完成你选择接入的系统提醒事项。</string>
 <key>NSPrincipalClass</key><string>NSApplication</string>
+<key>SUFeedURL</key><string>https://raw.githubusercontent.com/uuthings/DeskDen/main/updates/appcast.xml</string>
+<key>SUPublicEDKey</key><string>Pj4xaGxVb+M0Us+oHdjifBnWVCYn7zlY1Bt1TsMZFpU=</string>
+<key>SUEnableAutomaticChecks</key><false/>
+<key>SUAutomaticallyUpdate</key><false/>
+<key>SUAllowsAutomaticUpdates</key><false/>
+<key>SUSendProfileInfo</key><false/>
+<key>SUScheduledCheckInterval</key><integer>86400</integer>
+<key>SUVerifyUpdateBeforeExtraction</key><true/>
+<key>SURequireSignedFeed</key><true/>
 </dict></plist>

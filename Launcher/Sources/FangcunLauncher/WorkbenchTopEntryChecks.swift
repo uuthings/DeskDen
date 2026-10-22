@@ -93,7 +93,7 @@ import LauncherCore
             check(!controller.isHoverFeedbackVisible && workbench.presentationWindow?.isVisible != true,
                   "leaving before dwell cancels the pending reveal")
             poll(top, at: 3.4); poll(top, at: 3.76)
-            await waitUntil { workbench.window?.isVisible == true && (workbench.window?.alphaValue ?? 0) >= 0.999 }
+            await waitUntil { workbench.window?.isVisible == true && workbench.window?.alphaValue == 1 }
             guard let ordinary = workbench.window else {
                 check(false, "canonical top entry has its ordinary native window")
                 return (count, failures)
@@ -282,6 +282,36 @@ import LauncherCore
             model.changeAppearance(initialAppearance)
             _ = owner.setGlobalGlassOpacity(initialOpacity)
             controller.refreshAppearance(); model.syncAppearance()
+            let initialTheme = owner.configuration.settings.workbenchTheme
+            // Modify this isolated fixture in memory; theme coverage must not
+            // register global shortcuts or save user preferences as a side effect.
+            for theme in LauncherTheme.allCases {
+                owner.configuration.settings.workbenchTheme = theme
+                model.syncAppearance(); controller.refreshAppearance()
+                check(controller.islandTheme == theme && controller.islandMaterialOpacity == initialOpacity
+                      && controller.islandTargetFrame == expandedTarget,
+                      "mini retains its safe-area geometry and shared material for \(theme.rawValue)")
+#if DEBUG
+                // Opt-in own-view renders only: no desktop capture, pointer input,
+                // personal data, or production-profile changes are involved.
+                if let destination = ProcessInfo.processInfo.environment["FANGCUN_MINI_REVIEW_DIRECTORY"], destination.hasPrefix("/tmp/") {
+                    for appearance in [LauncherAppearance.dark, .light] {
+                        owner.configuration.settings.workbenchAppearance = appearance
+                        model.syncAppearance(); controller.refreshAppearance()
+                        await settle()
+                        let url = URL(fileURLWithPath: destination, isDirectory: true)
+                            .appendingPathComponent("mini-\(theme.rawValue)-\(appearance.rawValue).png")
+                        try controller.captureMiniReview(to: url)
+                        check(NSImage(contentsOf: url) != nil,
+                              "mini own-view review render exists for \(theme.rawValue)/\(appearance.rawValue)")
+                        print("DETAIL mini own-view review \(url.path)")
+                    }
+                }
+#endif
+            }
+            owner.configuration.settings.workbenchTheme = initialTheme
+            owner.configuration.settings.workbenchAppearance = initialAppearance
+            model.syncAppearance(); controller.refreshAppearance()
             controller.handleApplicationActivation(processIdentifier: ProcessInfo.processInfo.processIdentifier + 100_000)
             await settle()
             check(!controller.isQuickSummaryVisible && !ordinary.isVisible && NSApp.activationPolicy() == .accessory,

@@ -275,7 +275,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     /// moving the user's desktop into a real full-screen Space.
     var performFullScreenToggle:(NSWindow)->Void = {$0.toggleFullScreen(nil)}
     private var topEntryPanel: WorkbenchTopPanel?
-    private var hostingView: NSHostingView<WorkbenchRootView>!
+    private var hostingView: NSHostingView<AnyView>!
     private var topEntryOriginFrame: NSRect?
     private var topEntrySuspended = false
     private var topEntryDismissing = false
@@ -321,7 +321,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         self.model.health.hostWindow=window
         self.model.modals.hostWindow=window
         window.center();if autosavesFrame {window.setFrameAutosaveName(Bundle.main.object(forInfoDictionaryKey:"FangcunDeviceAcceptance") as? Bool == true ? "FangcunDeviceAcceptance" : "FangcunWorkbench")}
-        hostingView=NSHostingView(rootView:WorkbenchRootView(model:self.model));hostingView.frame=NSRect(origin:.zero,size:window.contentLayoutRect.size);hostingView.autoresizingMask=[.width,.height]
+        hostingView=NSHostingView(rootView:AnyView(WorkbenchRootView(model:self.model).nativeCheckAccessibility()));hostingView.frame=NSRect(origin:.zero,size:window.contentLayoutRect.size);hostingView.autoresizingMask=[.width,.height]
         window.contentView=hostingView
         self.model.revealWindow={ [weak self] in self?.present() }
         self.model.showDesktop={ [weak self] in self?.dismiss() }
@@ -542,7 +542,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     private func parkedOrdinarySurface() -> NSView {
         let placeholder = NSHostingView(rootView: WorkbenchParkedSurface(opacity: model.opacity, light: model.light) { [weak self] in
             self?.present()
-        })
+        }.nativeCheckAccessibility())
         placeholder.frame = hostingView.frame
         placeholder.autoresizingMask = [.width, .height]
         return placeholder

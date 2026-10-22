@@ -188,7 +188,7 @@ private struct CalendarDayCell:View {
             }.frame(maxWidth:.infinity,maxHeight:.infinity).padding(.vertical,5).padding(.horizontal,2)
                 .background(selected ? palette.navSelected.opacity(0.65):hovering ? palette.soft:today ? palette.accent.opacity(0.04):.clear,in:RoundedRectangle(cornerRadius:10))
                 .overlay(RoundedRectangle(cornerRadius:10).strokeBorder(palette.accent.opacity(today ? 0.45:selected ? 0.30:0),lineWidth:1))
-                .overlay(alignment:.topTrailing){if let badge=info.badge {Text(badge).font(.system(size:10)).foregroundStyle(info.color(palette)).padding(.horizontal,3).frame(height:15).background(info.color(palette).opacity(0.08),in:RoundedRectangle(cornerRadius:3)).padding(4)}}
+                .overlay(alignment:.topTrailing){CalendarHolidayBadge(day:info).padding(4)}
                 .opacity(outside ? 0.35:1).contentShape(RoundedRectangle(cornerRadius:10)).clipped()
         }.buttonStyle(.plain).disabled(outside).onHover{hovering=$0}
             .accessibilityLabel("\(calendarFormat(date,"M月d日",calendar:calendar))，\(info.namedLabel ?? info.label)，\(entries.count) 项安排")
@@ -210,8 +210,12 @@ private struct CalendarWeekGrid:View {
     }
     private func weekDay(_ date:Date)->some View {
         let entries=ReminderQueries.entries(reminders:model.reminders,events:model.visibleCalendarEvents,filter:.day,day:date,calendar:model.displayCalendar)
+        let info=CalendarCivilDay(date:date,calendar:model.displayCalendar)
         return VStack(spacing:0) {
-            Button {model.selectDay(date)} label:{Text(calendarFormat(date,"EE d",calendar:model.displayCalendar)).font(.system(size:11,weight:.medium)).frame(maxWidth:.infinity).frame(height:30)}.buttonStyle(.plain)
+            Button {model.selectDay(date)} label:{
+                HStack(spacing:4){Text(calendarFormat(date,"EE d",calendar:model.displayCalendar)).font(.system(size:11,weight:.medium));CalendarHolidayBadge(day:info)}
+                    .frame(maxWidth:.infinity).frame(height:30)
+            }.buttonStyle(.plain).accessibilityLabel(calendarFormat(date,"M月d日",calendar:model.displayCalendar)+(info.namedLabel.map{"，"+$0} ?? ""))
             ZStack(alignment:.top) {
                 VStack(spacing:0){ForEach(0..<6,id:\.self){_ in Rectangle().fill(palette.line).frame(height:1);Spacer(minLength:0)}}
                 ForEach(Array(entries.enumerated()),id:\.element.id){index,entry in
@@ -528,7 +532,8 @@ private struct CalendarNotificationsDialog:View {
     private func close(){guard !model.isWorking else{return};model.showNotifications=false;model.errorMessage=nil}
 }
 
-private struct CalendarCivilDay {
+/// One civil-day interpretation shared by month, week, home and day details.
+struct CalendarCivilDay {
     var label:String
     var namedLabel:String?
     var badge:String?
@@ -555,6 +560,18 @@ private struct CalendarCivilDay {
             let text=lunar.displayText
             label=lunar.day == 1 ? String(text.prefix(through:text.firstIndex(of:"月")!)):String(text.suffix(from:text.index(after:text.firstIndex(of:"月")!)))
         } else {label=""}
+    }
+}
+struct CalendarHolidayBadge:View {
+    let day:CalendarCivilDay
+    @Environment(\.workbenchPalette) private var palette
+    var body:some View {
+        if let badge=day.badge {
+            Text(badge).font(.system(size:10)).foregroundStyle(day.color(palette))
+                .padding(.horizontal,3).frame(height:15)
+                .background(day.color(palette).opacity(0.08),in:RoundedRectangle(cornerRadius:3))
+                .accessibilityLabel(day.namedLabel ?? day.label)
+        }
     }
 }
 private extension CalendarAgendaEntry {var isSystemEvent:Bool {if case .event=self {return true};return false}}

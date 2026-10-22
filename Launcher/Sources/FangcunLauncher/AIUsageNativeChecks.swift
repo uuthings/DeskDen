@@ -34,12 +34,19 @@ import SwiftUI
             let coordinator = WorkbenchModalCoordinator()
             let inspection = AIUsageNativeDialogInspection()
             let surface = AIUsageCheckSurface(model: model, coordinator: coordinator, inspection: inspection)
-            let host = NSHostingView(rootView: surface)
-            let window = NSWindow(contentRect: .init(x: 0, y: 0, width: 864, height: 660), styleMask: [.borderless], backing: .buffered, defer: false)
+            let host = NSHostingView(rootView: surface.nativeCheckAccessibility())
+            let window = NativeUIFixtureWindow(contentRect: .init(x: 0, y: 0, width: 864, height: 660), styleMask: [.borderless], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false; window.contentView = host; coordinator.hostWindow = window
             defer { coordinator.clear(); window.orderOut(nil); window.close() }
-            window.orderFront(nil)
-            await settle(window)
+            let hostReady = await NativeUIFixtureWindow.prepare(window: window) {
+                let nativeFilterMounted = descendants(host).compactMap { $0 as? NSPopUpButton }.contains {
+                    $0.accessibilityLabel() == "AI 来源" && $0.window === window && $0.bounds.width > 0 && $0.bounds.height > 0
+                }
+                return nativeFilterMounted
+                    && inspection.quota.frame("fc.ai.quota.header.codex") != nil
+                    && inspection.quota.frame("fc.ai.quota.header.claude") != nil
+            }
+            check(hostReady, "AI native host becomes active and key with the real provider layouts and source filter mounted")
             if let sourceFilter = descendants(host).compactMap({ $0 as? NSPopUpButton }).first(where: { $0.accessibilityLabel() == "AI 来源" }) {
                 sourceFilter.selectItem(withTitle: "Codex")
                 if let action = sourceFilter.action { NSApp.sendAction(action, to: sourceFilter.target, from: sourceFilter) }
@@ -70,6 +77,18 @@ import SwiftUI
                         let providerChecks = checkProviderGeometry(provider: provider, host: host, pageWidth: size.width)
                         count += providerChecks.count; failures += providerChecks.failures
                     }
+                }
+            }
+            check(model.saveManual(provider: .codex, shortPercent: "41", weekPercent: "35", observedAt: Date(), shortReset: reset, weekReset: reset),
+                  "AI native fixture can replace its isolated weekly-only source with two actual periods")
+            for _ in 0..<300 where model.isRefreshing { try? await Task.sleep(for: .milliseconds(10)) }
+            for size in [CGSize(width: 864, height: 660), CGSize(width: 736, height: 620), CGSize(width: 1360, height: 880)] {
+                window.setContentSize(size); model.showOverview(); await settle(window)
+                for row in 0...1 {
+                    let left = inspection.quota.frame("fc.ai.quota.codex.\(row).progress")
+                    let right = inspection.quota.frame("fc.ai.quota.claude.\(row).progress")
+                    check(left.flatMap { l in right.map { r in abs(l.midY-r.midY) < 1 && abs(l.height-r.height) < 1 } } == true,
+                          "both providers align their actual \(row == 0 ? "five-hour" : "weekly") progress bars at \(Int(size.width)) pt")
                 }
             }
             model.showOverview(); model.present(.alert); await settle(window)
@@ -106,11 +125,11 @@ import SwiftUI
             frame(a).flatMap { left in frame(b).map { right in abs(left.midY - right.midY) < 1 && abs(left.height - right.height) < 1 } } ?? false
         }
         check(aligned("fc.ai.quota.header.codex", "fc.ai.quota.header.claude"), "AI provider headers share a stable row despite differing source and membership metadata")
-        check(aligned("fc.ai.quota.codex.0.progress", "fc.ai.quota.claude.0.progress"), "weekly-only and two-window AI cards align their first real progress bars")
+        check(aligned("fc.ai.quota.codex.1.progress", "fc.ai.quota.claude.1.progress"), "weekly-only and two-window AI cards align the actual weekly progress bars")
         check(aligned("fc.ai.quota.footer.codex", "fc.ai.quota.footer.claude"), "AI source status footers align below the shared metric area")
-        check(frame("fc.ai.quota.availableOnly.codex") != nil && frame("fc.ai.quota.codex.1.progress") == nil && frame("fc.ai.quota.claude.1.progress") != nil,
-              "a missing AI window uses an availability note without a fabricated label or empty progress bar")
-        let regions = ["header.codex", "header.claude", "codex.0.progress", "claude.0.progress", "footer.codex", "footer.claude", "availableOnly.codex", "claude.1.progress"]
+        check(aligned("fc.ai.quota.codex.0.unavailable", "fc.ai.quota.claude.0") && frame("fc.ai.quota.codex.0.progress") == nil && frame("fc.ai.quota.claude.0.progress") != nil,
+              "a missing short AI window retains an aligned availability row without a fabricated label or empty progress bar")
+        let regions = ["header.codex", "header.claude", "codex.0.unavailable", "claude.0", "codex.1.progress", "claude.1.progress", "footer.codex", "footer.claude"]
         let measured = regions.map { $0 + "=" + String(describing: frame("fc.ai.quota." + $0)) }.joined(separator: " ")
         let axMetricIDs = accessibilityObjects(in: host).compactMap { string("accessibilityIdentifier", from: $0) }.filter { $0.hasPrefix("fc.ai.quota.") }.sorted()
         print("DETAIL AI quota native regions at \(Int(pageWidth)) pt: \(measured); AX metric IDs=\(axMetricIDs)")

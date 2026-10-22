@@ -8,6 +8,9 @@
 !/Launcher/
 !/docs/
 !/tools/
+!/updates/
+/updates/*
+!/updates/appcast.xml
 !/.githooks/
 !/.github/
 /Fangcun.xcodeproj/*
@@ -17,6 +20,13 @@
 !/Fangcun.xcodeproj/xcshareddata/xcschemes/
 /Fangcun.xcodeproj/xcshareddata/xcschemes/*
 !/Fangcun.xcodeproj/xcshareddata/xcschemes/Fangcun.xcscheme
+!/Fangcun.xcodeproj/project.xcworkspace/
+/Fangcun.xcodeproj/project.xcworkspace/*
+!/Fangcun.xcodeproj/project.xcworkspace/xcshareddata/
+/Fangcun.xcodeproj/project.xcworkspace/xcshareddata/*
+!/Fangcun.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+/Fangcun.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/*
+!/Fangcun.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
 /Launcher/*
 !/Launcher/Package.swift
 !/Launcher/Package.resolved

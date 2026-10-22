@@ -69,9 +69,14 @@ private struct SearchName: Sendable {
         if words.contains(where: { $0.hasPrefix(query) }) { return primary ? 730 : 720 }
         if query.count >= 2, normalized.contains(query) { return primary ? 650 : 630 }
         if query.count >= 2, latin.contains(query) { return primary ? 610 : 600 }
-        guard allowsFuzzy, query.count >= 2, query.count <= 64, query.utf8.allSatisfy({ (97...122).contains($0) || (48...57).contains($0) }),
-              let cost = Self.subsequenceCost(query, in: latin) else { return nil }
-        return 400 - min(100, cost) - (primary ? 0 : 10)
+        guard allowsFuzzy, query.count >= 2, query.count <= 64, query.utf8.allSatisfy({ (97...122).contains($0) || (48...57).contains($0) }) else { return nil }
+        if let cost = Self.subsequenceCost(query, in: latin) {
+            return 400 - min(100, cost) - (primary ? 0 : 10)
+        }
+        // Typo matches are a last resort below every existing match class.
+        // Compare complete name words, never arbitrary path or URL fragments.
+        if words.contains(where: { Self.isLimitedTypo(query, of: $0) }) { return primary ? 280 : 270 }
+        return nil
     }
     func matchesPart(_ part: String) -> Bool { normalized.contains(part) || latin.contains(part) || initials.contains(where: { $0.hasPrefix(part) }) }
     private static func wordParts(_ value: String) -> [String] {
@@ -114,6 +119,42 @@ private struct SearchName: Sendable {
             best = min(best ?? cost, cost)
         }
         return best
+    }
+    private static func isLimitedTypo(_ query: String, of candidate: String) -> Bool {
+        func asciiLetters(_ value: String) -> Bool { !value.isEmpty && value.utf8.allSatisfy { (97...122).contains($0) } }
+        guard query.count >= 3, candidate.count >= 3, candidate.count <= 64,
+              asciiLetters(query), asciiLetters(candidate), query.first == candidate.first else { return false }
+        let vowels = Set("aeiou")
+        func coalescingVowels(_ value: String) -> [Character] {
+            value.reduce(into: []) { result, character in
+                if result.last != character || !vowels.contains(character) { result.append(character) }
+            }
+        }
+        let q = coalescingVowels(query), c = coalescingVowels(candidate)
+        // A three-letter query stays tightly anchored. Deep → dop is one
+        // vowel substitution after coalescing the repeated vowel; dqp/zop
+        // and loose consonant changes must not match the same short word.
+        if q.count == 3, c.count == 3, q.first == c.first, q.last == c.last,
+           vowels.contains(q[1]), vowels.contains(c[1]) { return true }
+        guard query.count >= 4, abs(query.count - candidate.count) <= 1 else { return false }
+        let a = Array(query), b = Array(candidate)
+        if a.count == b.count {
+            let differences = a.indices.filter { a[$0] != b[$0] }
+            if differences.count == 1 { return true }
+            if differences.count == 2 {
+                let i = differences[0], j = differences[1]
+                return j == i + 1 && a[i] == b[j] && a[j] == b[i]
+            }
+            return false
+        }
+        let short = a.count < b.count ? a : b, long = a.count < b.count ? b : a
+        var i = 0, j = 0, skipped = false
+        while i < short.count, j < long.count {
+            if short[i] == long[j] { i += 1; j += 1 }
+            else if !skipped { skipped = true; j += 1 }
+            else { return false }
+        }
+        return true
     }
 }
 

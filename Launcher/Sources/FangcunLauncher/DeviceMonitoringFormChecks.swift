@@ -4,7 +4,8 @@ import LauncherCore
 
 @MainActor enum DeviceMonitoringFormChecks {
     static func run() async -> Int {
-        var count = 0, failures = 0
+        let menus = await DeviceProcessActionMenuChecks.run()
+        var count = menus.count, failures = menus.failures
         func check(_ condition: Bool, _ label: String) {
             count += 1; if !condition { failures += 1 }
             print("\(condition ? "PASS" : "FAIL") \(label)")
@@ -84,13 +85,13 @@ import LauncherCore
             let current = drafts.budget
             for period: DeviceBudgetPeriod in [.week, .month, .custom] {
                 drafts.budget.period = period
-                let view = NSHostingView(rootView: DeviceBudgetSettingsView(model: model, drafts: drafts).preferredColorScheme(.dark))
+                let view = NSHostingView(rootView: DeviceBudgetSettingsView(model: model, drafts: drafts).preferredColorScheme(.dark).nativeCheckAccessibility())
                 view.frame = NSRect(x: 0, y: 0, width: 365, height: 900)
                 view.layoutSubtreeIfNeeded()
                 print("Budget sizing diagnostic: \(period.rawValue) = \(view.fittingSize.width) pt")
                 let budgetView = DeviceBudgetSettingsView(model: model, drafts: drafts)
                 for (name, part) in budgetView.sizingPartsForChecks {
-                    let partView = NSHostingView(rootView: part)
+                    let partView = NSHostingView(rootView: part.nativeCheckAccessibility())
                     partView.frame = NSRect(x: 0, y: 0, width: 337, height: 900)
                     partView.layoutSubtreeIfNeeded()
                     print("  \(name): \(partView.fittingSize.width) pt")
@@ -100,7 +101,7 @@ import LauncherCore
         }
         #endif
         for width: CGFloat in [365, 438, 554] {
-            let view = NSHostingView(rootView: DeviceBudgetSettingsView(model: model, drafts: drafts).preferredColorScheme(.dark))
+            let view = NSHostingView(rootView: DeviceBudgetSettingsView(model: model, drafts: drafts).preferredColorScheme(.dark).nativeCheckAccessibility())
             view.frame = NSRect(x: 0, y: 0, width: width, height: 650)
             view.layoutSubtreeIfNeeded()
             let fittingWidth = view.fittingSize.width
@@ -110,7 +111,7 @@ import LauncherCore
         let savedDraft = drafts.budget
         for period: DeviceBudgetPeriod in [.week, .month, .quarter, .year] {
             drafts.budget.period = period
-            let view = NSHostingView(rootView: DeviceBudgetSettingsView(model: model, drafts: drafts).preferredColorScheme(.dark))
+            let view = NSHostingView(rootView: DeviceBudgetSettingsView(model: model, drafts: drafts).preferredColorScheme(.dark).nativeCheckAccessibility())
             view.frame = NSRect(x: 0, y: 0, width: 365, height: 900); view.layoutSubtreeIfNeeded()
             check(view.fittingSize.width <= 366, "\(period.rawValue) budget form and cycle help remain contained at 365 pt")
         }
@@ -118,13 +119,107 @@ import LauncherCore
         for year in [2020, 2030] {
             drafts.budget.customStart = calendar.date(from: DateComponents(year: year, month: 1, day: 1))!
             drafts.budget.customEnd = calendar.date(from: DateComponents(year: year, month: 1, day: 31))!
-            let view = NSHostingView(rootView: DeviceBudgetSettingsView(model: model, drafts: drafts).preferredColorScheme(.dark))
+            let view = NSHostingView(rootView: DeviceBudgetSettingsView(model: model, drafts: drafts).preferredColorScheme(.dark).nativeCheckAccessibility())
             view.frame = NSRect(x: 0, y: 0, width: 365, height: 900); view.layoutSubtreeIfNeeded()
             check(view.fittingSize.width <= 366, "custom \(year) budget status explanation remains contained at 365 pt")
         }
         drafts.budget = savedDraft
+        let budgetControl = await checkBudgetControl(model: model, drafts: drafts)
+        count += budgetControl.count; failures += budgetControl.failures
         print("Device monitoring form checks: \(count - failures)/\(count) passed")
         return failures
+    }
+
+    /// Mount the actual dialog rather than a lookalike Toggle. Changing the
+    /// switch edits a draft only; model persistence still requires Save.
+    private static func checkBudgetControl(model: DeviceStatusModel, drafts: DeviceMonitoringDrafts) async -> (count: Int, failures: Int) {
+        var count = 0, failures = 0
+        func check(_ value: Bool, _ message: String) {
+            count += 1; if !value { failures += 1 }
+            print("\(value ? "PASS" : "FAIL") \(message)")
+        }
+        drafts.restoreBudget(model)
+        let saved = model.budget
+        let host = NSHostingView(rootView: DeviceBudgetDialog(model: model, drafts: drafts, dismiss: {}).preferredColorScheme(.dark).nativeCheckAccessibility())
+        let window = NativeUIFixtureWindow(contentRect: NSRect(x: 260, y: 160, width: 470, height: 670), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host
+        defer { window.close(); drafts.restoreBudget(model) }
+        let ready = await NativeUIFixtureWindow.prepare(window: window) {
+            let controls = budgetSwitches(in: host)
+            return controls.count == 1 && controls[0].window === window
+                && !controls[0].isHiddenOrHasHiddenAncestor && controls[0].bounds.width > 0 && controls[0].bounds.height > 0
+        }
+        check(ready, "the budget dialog has an active key-capable visible host with its real native switch before interaction checks")
+        if !ready { describeBudgetHost(host, window: window) }
+        let controls = budgetSwitches(in: host)
+        check(controls.count == 1, "the actual production budget dialog mounts exactly one typed native NSSwitch")
+        if controls.count == 1, let control = controls.first, control.window === window {
+            let rect = window.convertToScreen(control.convert(control.bounds, to: nil))
+            let root = window.convertToScreen(host.convert(host.bounds, to: nil))
+            print("DETAIL native budget control type=\(type(of: control)) controlSize=\(control.controlSize.rawValue) state=\(control.state.rawValue) root=\(NSStringFromRect(root)) switch=\(NSStringFromRect(rect))")
+            check(control.controlSize == .small && rect.width >= 24 && rect.width <= 38 && rect.height >= 14 && rect.height <= 24,
+                  "the real budget enable switch uses compact native dimensions without a stretched Toggle label")
+            check(abs(rect.maxX - (root.maxX - 18)) <= 2,
+                  "the actual budget enable switch sits at the far-right 18-point dialog content boundary")
+            let before = drafts.budget.enabled
+            let point = window.convertPoint(fromScreen: NSPoint(x: rect.midX, y: rect.midY))
+            func mouse(_ type: NSEvent.EventType) -> NSEvent? {
+                NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                   windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)
+            }
+            if let down = mouse(.leftMouseDown), let up = mouse(.leftMouseUp) {
+                // Native controls can track synchronously inside mouseDown.
+                // Queue mouseUp first so that tracking has a real release event.
+                NSApp.postEvent(up, atStart: false)
+                NSApp.sendEvent(down)
+            }
+            for _ in 0..<30 {
+                if drafts.budget.enabled != before { break }
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+            check(drafts.budget.enabled != before && control.state == (drafts.budget.enabled ? .on : .off)
+                    && drafts.budgetDirty && model.budget == saved,
+                  "clicking the mounted real budget switch changes only the draft, preserving the active saved rule")
+        } else {
+            if ready { describeBudgetHost(host, window: window) }
+            check(false, "the actual budget dialog exposes its native enabled switch after mounting")
+        }
+        return (count, failures)
+    }
+
+    private static func describeBudgetHost(_ root: NSView, window: NSWindow) {
+        var native: [String] = [], stack: [(NSView, Int)] = [(root, 0)]
+        while let (view, depth) = stack.popLast(), native.count < 80 {
+            native.append("\(depth):\(type(of: view)) isNSSwitch=\(view is NSSwitch) frame=\(NSStringFromRect(view.frame)) hidden=\(view.isHidden) axElement=\(view.isAccessibilityElement()) id=\(view.accessibilityIdentifier()) axChildren=\(view.accessibilityChildren()?.count ?? -1)")
+            stack.append(contentsOf: view.subviews.reversed().map { ($0, depth + 1) })
+        }
+        var ax: [String] = [], pending: [(NSObject, Int)] = [(root, 0)], visited = Set<ObjectIdentifier>()
+        while let (object, depth) = pending.popLast(), visited.count < 4096 {
+            guard visited.insert(ObjectIdentifier(object)).inserted else { continue }
+            func value(_ key: String) -> String {
+                guard object.responds(to: NSSelectorFromString(key)) else { return "n/a" }
+                return String(describing: object.value(forKey: key) ?? "nil")
+            }
+            if ax.count < 80 { ax.append("\(depth):\(type(of: object)) role=\(value("accessibilityRole")) id=\(value("accessibilityIdentifier")) label=\(value("accessibilityLabel")) frame=\(value("accessibilityFrame"))") }
+            if let view = object as? NSView { pending.append(contentsOf: view.subviews.reversed().map { ($0, depth + 1) }) }
+            if object.responds(to: NSSelectorFromString("accessibilityChildren")),
+               let children = object.value(forKey: "accessibilityChildren") as? [NSObject] { pending.append(contentsOf: children.reversed().map { ($0, depth + 1) }) }
+        }
+        print("DETAIL budget host policy=\(NSApp.activationPolicy().rawValue) active=\(NSApp.isActive) visible=\(window.isVisible) key=\(window.isKeyWindow) canKey=\(window.canBecomeKey) occlusion=\(window.occlusionState.rawValue) window=\(NSStringFromRect(window.frame)) host=\(NSStringFromRect(root.frame)) axVisited=\(visited.count)")
+        print("DETAIL budget native tree " + native.joined(separator: " | "))
+        print("DETAIL budget AX tree " + ax.joined(separator: " | "))
+    }
+
+    /// SwiftUI's virtual AX identifiers are lazy without an external AX client.
+    /// Its actual AppKit switch is already mounted and supports public geometry
+    /// and mouse events, so inspect that real control without creating AX peers.
+    private static func budgetSwitches(in root: NSView) -> [NSSwitch] {
+        var pending = [root], controls: [NSSwitch] = []
+        while let view = pending.popLast() {
+            if let control = view as? NSSwitch { controls.append(control) }
+            pending.append(contentsOf: view.subviews)
+        }
+        return controls
     }
 }
 

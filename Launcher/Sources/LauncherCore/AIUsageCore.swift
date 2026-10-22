@@ -20,13 +20,15 @@ public enum AIQuotaSource: String, Codable, Sendable {
 /// Only names directly exposed by the metering source are retained. A generic
 /// Pro name does not establish a usage multiplier or a billing price.
 public enum AIAccountPlan: String, Codable, Sendable {
-    case free, go, plus, pro, team, business, enterprise, edu
+    case free, go, plus, pro, prolite, promax, team, business, enterprise, edu
     public var title: String {
         switch self {
         case .free: "Free"
         case .go: "Go"
         case .plus: "Plus"
         case .pro: "Pro"
+        case .prolite: "Pro Lite"
+        case .promax: "Pro Max"
         case .team: "Team"
         case .business: "Business"
         case .enterprise: "Enterprise"
@@ -61,6 +63,17 @@ public struct AIQuotaSnapshot: Codable, Equatable, Identifiable, Sendable {
     /// the presence of a primary/secondary slot, determine the displayed label.
     public var availableWindows: [AIQuotaWindow] {
         [shortWindow, weeklyWindow].compactMap { $0 }.sorted { $0.durationMinutes < $1.durationMinutes }
+    }
+    /// Two comparable metric rows, independent of legacy storage slots and plan.
+    /// A real weekly window stays in the second row when the other is absent;
+    /// nil is availability information, never an inferred quota or duration.
+    public var comparisonRows: [AIQuotaWindow?] {
+        let windows = availableWindows
+        guard let first = windows.first else { return [] }
+        if let weeklyIndex = windows.firstIndex(where: { $0.durationMinutes == 10_080 }) {
+            return [windows.enumerated().first(where: { $0.offset != weeklyIndex })?.element, windows[weeklyIndex]]
+        }
+        return [first, windows.dropFirst().first]
     }
     public func isStale(at now: Date = Date()) -> Bool {
         now.timeIntervalSince(observedAt) > 900 || [shortWindow, weeklyWindow].compactMap { $0?.resetsAt }.contains { $0 <= now }

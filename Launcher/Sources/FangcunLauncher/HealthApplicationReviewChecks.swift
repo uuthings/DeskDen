@@ -351,7 +351,7 @@ import SwiftUI
         let coordinator = WorkbenchModalCoordinator()
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 760), styleMask: [.borderless], backing: .buffered, defer: false)
         window.alphaValue = 0; window.ignoresMouseEvents = true; window.isReleasedWhenClosed = false
-        let host = NSHostingView(rootView: ApplicationReviewCheckModalRoot(model: model, coordinator: coordinator))
+        let host = NSHostingView(rootView: ApplicationReviewCheckModalRoot(model: model, coordinator: coordinator).nativeCheckAccessibility())
         window.contentView = host; coordinator.hostWindow = window; window.orderFront(nil)
         defer { coordinator.clear(); window.orderOut(nil); window.contentView = nil; window.close() }
         await pump(window) { host.bounds.width > 0 }

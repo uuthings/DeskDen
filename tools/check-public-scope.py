@@ -11,7 +11,8 @@ import tempfile
 ROOT = Path(__file__).resolve().parent.parent
 ALLOWED = [
     r"(?:README\.md|LICENSE|\.gitignore|\.gitleaks\.toml)",
-    r"Fangcun\.xcodeproj/(?:project\.pbxproj|xcshareddata/xcschemes/Fangcun\.xcscheme)",
+    r"Fangcun\.xcodeproj/(?:project\.pbxproj|xcshareddata/xcschemes/Fangcun\.xcscheme|project\.xcworkspace/xcshareddata/swiftpm/Package\.resolved)",
+    r"updates/appcast\.xml",
     r"Launcher/(?:Package\.swift|Package\.resolved|README\.md)",
     r"Launcher/Sources/(?:FangcunLauncher|LauncherCore)/[A-Za-z0-9_]+\.swift",
     r"Launcher/Tests/(?:LauncherCoreTests|WorkbenchChecks)/[A-Za-z0-9_]+\.swift",

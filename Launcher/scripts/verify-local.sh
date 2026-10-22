@@ -19,7 +19,7 @@ root = Path.cwd()
 paths = [root / 'Package.swift', root / 'Signing/Fangcun.entitlements']
 for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('Resources', '*')]:
     paths.extend(path for path in (root / directory).rglob(pattern) if path.is_file())
-paths.extend(path for path in [root / 'Package.resolved', root.parent / 'Fangcun.xcodeproj/project.pbxproj'] if path.is_file())
+paths.extend(path for path in [root / 'Package.resolved', root.parent / 'Fangcun.xcodeproj/project.pbxproj', root.parent / 'Fangcun.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', root.parent / 'updates/appcast.xml', root.parent / 'tools/prepare-update-feed.py', root.parent / 'tools/test-prepare-update-feed.py'] if path.is_file())
 paths.extend((root.parent / 'Fangcun.xcodeproj/xcshareddata/xcschemes').glob('*.xcscheme'))
 files = {}
 for path in sorted(set(paths)):
@@ -30,6 +30,8 @@ for path in sorted(set(paths)):
 (Path(sys.argv[1]) / 'source-inputs-before.json').write_text(json.dumps({'schema': 'fangcun.verification-inputs/1', 'files': files}, ensure_ascii=False, indent=2) + '\n')
 PY
 python3 ./scripts/check-signing-config.py > "$verification_dir/signing-config-checks.log" 2>&1
+python3 ./scripts/check-update-config.py > "$verification_dir/update-config-checks.log" 2>&1
+python3 ../tools/test-prepare-update-feed.py > "$verification_dir/update-preparation-checks.log" 2>&1
 zsh ./scripts/check-app-icons.sh > "$verification_dir/app-icon-checks.log" 2>&1
 swift test > "$verification_dir/core-tests.log" 2>&1
 # Full mounted health and expanded AI checks are DEBUG-only. Keep their result
@@ -50,13 +52,13 @@ zsh ./scripts/check-vault-compatibility.sh > "$verification_dir/vault-compatibil
 zsh ./scripts/check-ai-model.sh > "$verification_dir/ai-model-checks.log" 2>&1
 python3 - "$verification_dir" "$verify_preserved_designs" <<'PY'
 from pathlib import Path
-import hashlib, json, re, sys
+import hashlib, json, os, re, sys
 verification = Path(sys.argv[1])
 source = Path.cwd()
 paths = [source / 'Package.swift', source / 'Signing/Fangcun.entitlements']
 for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('Resources', '*')]:
     paths.extend(path for path in (source / directory).rglob(pattern) if path.is_file())
-paths.extend(path for path in [source / 'Package.resolved', source.parent / 'Fangcun.xcodeproj/project.pbxproj'] if path.is_file())
+paths.extend(path for path in [source / 'Package.resolved', source.parent / 'Fangcun.xcodeproj/project.pbxproj', source.parent / 'Fangcun.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', source.parent / 'updates/appcast.xml', source.parent / 'tools/prepare-update-feed.py', source.parent / 'tools/test-prepare-update-feed.py'] if path.is_file())
 paths.extend((source.parent / 'Fangcun.xcodeproj/xcshareddata/xcschemes').glob('*.xcscheme'))
 files = {}
 for path in sorted(set(paths)):
@@ -117,6 +119,11 @@ if not core_counts or int(core_counts[-1][0]) <= 0 or int(core_counts[-1][1]) !=
     raise SystemExit('Missing positive successful core test summary')
 summary['core'] = {'log': 'core-tests.log', 'checks': int(core_counts[-1][0]), 'failures': 0}
 icons = checked_log('app-icon-checks.log')
+preparation = checked_log('update-preparation-checks.log')
+preparation_count = re.search(r'^Ran (\d+) tests? in ', preparation, re.MULTILINE)
+if not preparation_count or int(preparation_count[1]) <= 0 or not re.search(r'^OK$', preparation, re.MULTILINE):
+    raise SystemExit('Missing successful update preparation regression summary')
+summary['updatePreparation'] = {'log': 'update-preparation-checks.log', 'checks': int(preparation_count[1]), 'failures': 0}
 icon_counts = re.findall(r'^Application icon checks: (\d+) checks, (\d+) failures$', icons, re.MULTILINE)
 if len(icon_counts) != 1 or int(icon_counts[0][0]) <= 0 or int(icon_counts[0][1]) != 0:
     raise SystemExit('Missing positive successful application icon check summary')
@@ -125,6 +132,7 @@ print(f"Core: {summary['core']['checks']} tests, 0 failures")
 
 checks = [
     ('configuration', 'signing-config-checks.log', 'Signing configuration checks', 'ratio'),
+    ('configuration', 'update-config-checks.log', 'Update configuration checks', 'ratio'),
     ('debug', 'debug-native-checks.log', 'Native checks', 'native'),
     ('debug', 'debug-device-module-checks.log', 'Device module checks', 'ratio'),
     ('release', 'native-checks.log', 'Native checks', 'native'),
@@ -166,7 +174,10 @@ for group, name in [('debug', 'debug-build.log'), ('release', 'build.log')]:
     actual_files = {}
     for path in sorted(app.rglob('*')):
         if path.is_symlink():
-            raise SystemExit('Unexpected symbolic link in the checked bundle: ' + name)
+            if not path.is_relative_to(app / 'Contents/Frameworks/Sparkle.framework') or not path.resolve(strict=True).is_relative_to(app.resolve()):
+                raise SystemExit('Unexpected symbolic link in the checked bundle: ' + name)
+            actual_files[path.relative_to(app).as_posix()] = {'symlink': os.readlink(path)}
+            continue
         if path.is_file():
             data = path.read_bytes()
             actual_files[path.relative_to(app).as_posix()] = {'sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data)}

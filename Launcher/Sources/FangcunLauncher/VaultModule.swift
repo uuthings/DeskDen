@@ -21,6 +21,7 @@ struct VaultRestorePreview:Identifiable {
     @Published private(set) var busy=false
     @Published private(set) var documents:[PrivateDocument] = []
     @Published private(set) var categories:[VaultCategory] = []
+    @Published private(set) var categoryFilter="all"
     @Published private(set) var biometricEnabled=false
     @Published private(set) var biometricAvailable=false
     @Published private(set) var biometricCanRemove=false
@@ -158,7 +159,7 @@ struct VaultRestorePreview:Identifiable {
     }
     private func adopt(_ unlocked:UnlockedVault) {
         key=unlocked.key; salt=unlocked.envelope.salt;openedPayloadVersion=unlocked.contents.version; documents=unlocked.contents.documents;categories=unlocked.contents.categories
-        selectedID=documents.first?.id; isConfigured=true; isUnlocked=true; saveStatus="所有更改已保存"; lockReason=""
+        categoryFilter="all";selectedID=documents.first?.id; isConfigured=true; isUnlocked=true; saveStatus="所有更改已保存"; lockReason=""
         errorMessage=nil; sessionID=UUID(); recordActivity()
     }
     /// A pending ciphertext always represents the latest accepted UI edit. No plaintext is needed to retry a failed write after locking.
@@ -176,17 +177,41 @@ struct VaultRestorePreview:Identifiable {
         } catch { errorMessage="更改尚未应用：\(error.localizedDescription)"; return false }
     }
     func newDocument() {
-        var next=documents; let document=PrivateDocument(title:""); next.insert(document,at:0)
+        guard isUnlocked,!busy,flush() else {return}
+        var next=documents,document=PrivateDocument(title:"")
+        document.categoryID=categoryFilter == "all" ? "unclassified":categoryFilter
+        next.insert(document,at:0)
         if accept(next) { selectedID=document.id }
     }
-    func selectDocument(_ id:UUID) { guard isUnlocked,documents.contains(where:{$0.id == id}) else { return }; selectedID=id; recordActivity() }
+    func selectDocument(_ id:UUID) {
+        guard isUnlocked,!busy,let document=documents.first(where:{$0.id == id}),flush() else {return}
+        if categoryFilter != "all",document.effectiveCategoryID != categoryFilter {categoryFilter="all"}
+        selectedID=id;recordActivity()
+    }
+    func visibleDocuments(matching query:String="")->[PrivateDocument] {
+        documents.filter{(categoryFilter == "all" || $0.effectiveCategoryID == categoryFilter) && (query.isEmpty || $0.title.range(of:query,options:[.caseInsensitive,.diacriticInsensitive,.widthInsensitive]) != nil)}
+    }
+    /// Resolve the current encrypted save before changing either navigation
+    /// value. An empty category deliberately has no editor selection.
+    @discardableResult func selectCategory(_ id:String,matching query:String="")->Bool {
+        guard isUnlocked,!busy,id == "all" || id == "unclassified" || categories.contains(where:{$0.id == id}),flush() else {return false}
+        categoryFilter=id
+        let visible=visibleDocuments(matching:query)
+        if !visible.contains(where:{$0.id == selectedID}) {selectedID=visible.first?.id}
+        recordActivity();return true
+    }
     func updateTitle(_ title:String) { updateSelected { $0.title=title } }
     func updateBody(_ body:String) { updateSelected { $0.body=body;$0.formatting=nil } }
     func updateRichBody(_ body:String,formatting:[VaultTextStyleRun]) {updateSelected{$0.body=body;$0.formatting=formatting.isEmpty ? nil:formatting}}
     func categoryTitle(_ document:PrivateDocument)->String {categoryTitle(id:document.effectiveCategoryID)}
     func categoryTitle(id:String)->String {id == "unclassified" ? "未分类":categories.first{$0.id == id}?.name ?? "未分类"}
     var categoryOptions:[(String,String)] {[("unclassified","未分类")]+categories.map{($0.id,$0.name)}}
-    func moveSelected(to categoryID:String) {guard categoryID == "unclassified" || categories.contains(where:{$0.id == categoryID}) else {return};updateSelected{$0.categoryID=categoryID;$0.category = .unclassified}}
+    func moveSelected(to categoryID:String) {
+        guard categoryID == "unclassified" || categories.contains(where:{$0.id == categoryID}),
+              let index=documents.firstIndex(where:{$0.id == selectedID}),flush() else {return}
+        var next=documents;next[index].categoryID=categoryID;next[index].category = .unclassified;next[index].updatedAt=Date()
+        if accept(next),categoryFilter != "all" {categoryFilter=categoryID}
+    }
     @discardableResult func addCategory(_ name:String)->Bool {
         let name=name.trimmingCharacters(in:.whitespacesAndNewlines)
         guard validCategoryName(name,excluding:nil),categories.count<100 else {errorMessage="分类名称不能重复，需为 1–30 个字；最多 100 个分类。";return false}
@@ -198,10 +223,12 @@ struct VaultRestorePreview:Identifiable {
         var next=categories;next[index].name=name;return accept(documents,categories:next)
     }
     @discardableResult func deleteCategory(_ id:String,movingTo destination:String="unclassified")->Bool {
-        guard id != destination,categories.contains(where:{$0.id == id}),destination == "unclassified" || categories.contains(where:{$0.id == destination}) else {return false}
+        guard id != destination,categories.contains(where:{$0.id == id}),destination == "unclassified" || categories.contains(where:{$0.id == destination}),flush() else {return false}
         var next=documents
         for index in next.indices where next[index].effectiveCategoryID == id {next[index].categoryID=destination;next[index].category = .unclassified;next[index].updatedAt=Date()}
-        return accept(next,categories:categories.filter{$0.id != id})
+        guard accept(next,categories:categories.filter{$0.id != id}) else {return false}
+        if categoryFilter == id {categoryFilter=destination;if selectedDocument == nil {selectedID=visibleDocuments().first?.id}}
+        return true
     }
     private func validCategoryName(_ value:String,excluding:String?)->Bool {
         !value.isEmpty && value.count<=30 && value.compare("未分类",options:[.caseInsensitive,.diacriticInsensitive,.widthInsensitive]) != .orderedSame && !categories.contains{$0.id != excluding && $0.name.compare(value,options:[.caseInsensitive,.diacriticInsensitive,.widthInsensitive]) == .orderedSame}
@@ -214,7 +241,7 @@ struct VaultRestorePreview:Identifiable {
     func deleteDocument(_ id:UUID) -> Bool {
         let next=documents.filter{$0.id != id}
         guard accept(next) else { return false }
-        if selectedID == id { selectedID=next.first?.id }
+        if selectedID == id { selectedID=visibleDocuments().first?.id }
         return true
     }
     @discardableResult func flush() -> Bool {
@@ -234,7 +261,7 @@ struct VaultRestorePreview:Identifiable {
         generation += 1
         biometrics.cancel()
         _=flush()
-        isUnlocked=false; busy=false; key=nil; salt=nil; documents=[];categories=[]; selectedID=nil
+        isUnlocked=false; busy=false; key=nil; salt=nil; documents=[];categories=[];categoryFilter="all"; selectedID=nil
         restoreData=nil; restorePreview=nil; restoreSourceName=nil; sheet=nil
         (panel as? NSSavePanel)?.cancel(nil); panel=nil
         let clearers=Array(plaintextClearers.values); plaintextClearers.removeAll()

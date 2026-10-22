@@ -352,7 +352,7 @@ struct DeviceBudgetDialog: View {
                         Text("启用流量预算").font(.system(size: 12)).foregroundStyle(palette.text)
                         Spacer(minLength: 12)
                         Toggle("启用流量预算", isOn: $drafts.budget.enabled)
-                            .labelsHidden().toggleStyle(.switch).controlSize(.small).tint(palette.accent)
+                            .labelsHidden().toggleStyle(.switch).controlSize(.small).fixedSize().tint(palette.accent)
                             .disabled(drafts.savingBudget).accessibilityIdentifier("fc.network.budget.enabled")
                     }.frame(maxWidth: .infinity, minHeight: 28)
                     Group {

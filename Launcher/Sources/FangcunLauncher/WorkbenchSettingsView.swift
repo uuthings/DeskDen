@@ -36,6 +36,7 @@ struct WorkbenchSettingsView: View {
 
     private var general: some View {
         VStack(alignment: .leading, spacing: 12) {
+            if let owner = model.owner { WorkbenchUpdateSettings(updates: owner.updates) }
             WBCard(title: "启动与入口", symbol: "power", spacing: 10) {
                 VStack(spacing: 0) {
                     settingsRow("登录时启动", model.loginNeedsApproval ? "需要在系统设置的登录项中批准" : "随系统登录在后台运行", first: true) {

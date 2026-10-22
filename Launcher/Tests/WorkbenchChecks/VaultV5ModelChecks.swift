@@ -140,6 +140,69 @@ import LauncherCore
             check(refined.selectedDocument?.effectiveCategoryID == "work" && refined.selectedDocument?.body == richBody && refined.selectedDocument?.formatting == richRuns,"category deletion preserves text and formatting")
             check(refined.deleteCategory("work"),"built-in category can also be deleted coherently")
             check(refined.selectedDocument?.effectiveCategoryID == "unclassified","default category deletion preserves text in unclassified")
+            let navigationBiometrics=VaultSyntheticBiometrics()
+            let navigation=VaultModel(dataDirectory:directory.appendingPathComponent("category-navigation"),protectedDataAvailable:{true},biometrics:navigationBiometrics)
+            check(await navigation.create(password:password,confirmation:password),"category navigation starts with an isolated encrypted vault")
+            navigation.newDocument();navigation.updateTitle("Alpha reference");navigation.updateBody("Synthetic category draft")
+            let alphaID=navigation.selectedID!
+            check(navigation.addCategory("Empty group"),"category navigation can create an empty group")
+            let emptyGroup=navigation.categories.last!
+            check(navigation.selectCategory("work") && navigation.selectedID == nil && navigation.visibleDocuments().isEmpty,
+                  "selecting an empty category clears the old editor selection")
+            navigation.newDocument();navigation.updateTitle("Work reference")
+            let workID=navigation.selectedID!
+            check(navigation.selectedDocument?.effectiveCategoryID == "work" && navigation.categoryFilter == "work",
+                  "new text inherits the active category instead of jumping to all categories")
+            check(navigation.selectCategory("all") && navigation.selectedID == workID && navigation.selectCategory("work") && navigation.selectedID == workID,
+                  "a selected text stays selected when it remains visible in the new category filter")
+            check(navigation.selectCategory(emptyGroup.id) && navigation.selectedID == nil,"another empty group never retains the previous category's editor")
+            navigation.newDocument();navigation.updateTitle("Custom reference")
+            let customID=navigation.selectedID!
+            check(navigation.selectedDocument?.effectiveCategoryID == emptyGroup.id && navigation.visibleDocuments().map(\.id) == [customID],"new text also inherits an empty custom group")
+            check(navigation.renameCategory(emptyGroup.id,to:"Renamed group") && navigation.categoryFilter == emptyGroup.id && navigation.selectedID == customID,
+                  "renaming a selected category preserves its stable filter and editor identity")
+            navigation.moveSelected(to:"personal")
+            check(navigation.categoryFilter == "personal" && navigation.selectedID == customID && navigation.visibleDocuments().map(\.id) == [customID],
+                  "moving the current text follows its destination without leaving an invisible editor selection")
+            check(navigation.deleteCategory("personal",movingTo:"work") && navigation.categoryFilter == "work" && navigation.selectedID == customID,
+                  "deleting the active category follows the explicit destination and preserves the selected text")
+            check(navigation.deleteDocument(customID) && navigation.selectedID == workID && navigation.visibleDocuments().map(\.id) == [workID],
+                  "deleting a selected text chooses the next text inside the current category")
+            check(navigation.selectCategory(emptyGroup.id) && navigation.deleteCategory(emptyGroup.id) && navigation.categoryFilter == "unclassified" && navigation.selectedID == alphaID,
+                  "deleting an empty selected category resolves to an existing destination without deleting texts")
+            check(navigation.selectCategory("all",matching:"alpha") && navigation.selectedID == alphaID && navigation.visibleDocuments(matching:"ALPHA").map(\.id) == [alphaID],
+                  "category selection chooses only a text matching the visible title query")
+            check(!navigation.selectCategory("missing-group") && navigation.categoryFilter == "all" && navigation.selectedID == alphaID,
+                  "an unknown category cannot change the current filter or selected document")
+            navigation.updateBody("Synthetic encrypted draft retained on failed category navigation")
+            let navigationBefore=try Data(contentsOf:navigation.vaultDataURL),preservedNavigation=directory.appendingPathComponent("preserved-category-navigation.fangcunvault")
+            try FileManager.default.moveItem(at:navigation.vaultDataURL,to:preservedNavigation)
+            try FileManager.default.createDirectory(at:navigation.vaultDataURL,withIntermediateDirectories:false)
+            check(!navigation.selectCategory("work") && navigation.categoryFilter == "all" && navigation.selectedID == alphaID && navigation.hasPendingSave,
+                  "a real encrypted-write failure blocks category switching and retains the pending draft")
+            navigation.selectDocument(workID);let countBeforeRejectedCreate=navigation.documents.count;navigation.newDocument()
+            check(navigation.selectedID == alphaID && navigation.documents.count == countBeforeRejectedCreate && navigation.selectedDocument?.body.contains("retained") == true,
+                  "failed saving also blocks switching documents and creating a replacement selection")
+            let categoriesBeforeRejectedDelete=navigation.categories
+            navigation.moveSelected(to:"work")
+            check(!navigation.deleteCategory("work") && navigation.categories == categoriesBeforeRejectedDelete && navigation.selectedDocument?.effectiveCategoryID == "unclassified",
+                  "failed saving cannot move the selected text or remove a category")
+            check(try Data(contentsOf:preservedNavigation) == navigationBefore,"failed navigation preserves the previous encrypted revision byte for byte")
+            try FileManager.default.removeItem(at:navigation.vaultDataURL)
+            try FileManager.default.moveItem(at:preservedNavigation,to:navigation.vaultDataURL)
+            check(navigation.flush() && navigation.selectCategory("work") && navigation.selectedID == workID && !navigation.hasPendingSave,
+                  "retrying the original encrypted save permits the same category navigation")
+            let navigationBytes=try Data(contentsOf:navigation.vaultDataURL)
+            check(!String(decoding:navigationBytes,as:UTF8.self).contains("Synthetic") && !String(decoding:navigationBytes,as:UTF8.self).contains("Renamed group"),
+                  "classification and navigation changes never expose text or category names in plaintext")
+            navigation.lock(reason:"isolated category navigation complete")
+            check(navigation.categoryFilter == "all" && navigation.selectedID == nil && navigation.documents.isEmpty && navigation.categories.isEmpty,
+                  "locking clears category navigation together with private content")
+            check(await navigation.unlock(password:password) && navigation.documents.first{$0.id == alphaID}?.body.contains("retained") == true,
+                  "the draft blocked by navigation still round trips after the save is retried")
+            navigation.lock(reason:"isolated category checks finished")
+            check(navigationBiometrics.enrollments == 0 && navigationBiometrics.reads == 0 && navigationBiometrics.removals == 0,
+                  "category checks never enroll, authenticate, or remove a biometric key")
             refined.updateBody("Plain synthetic replacement")
             check(refined.selectedDocument?.formatting == nil,"plain-body replacement cannot retain stale formatting ranges")
             syntheticBiometrics.available=false;await refined.refreshBiometrics()

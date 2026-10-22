@@ -27,6 +27,7 @@ struct WorkbenchTopEntryInput {
     private var regions: [(screen: NSScreen, rect: CGRect)] = []
     private var observers: [NSObjectProtocol] = []
     private var screenObserver: NSObjectProtocol?
+    private var systemAppearanceObserver: NSKeyValueObservation?
     private var localObservers: [NSObjectProtocol] = []
     private var localEventMonitor: Any?
     private var globalClickMonitor: Any?
@@ -122,6 +123,12 @@ struct WorkbenchTopEntryInput {
         localObservers.append(NotificationCenter.default.addObserver(forName: .fangcunConfigurationChanged, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshAppearance() }
         })
+        systemAppearanceObserver = NSApp.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
+            Task { @MainActor in
+                guard let self, self.owner?.configuration.settings.workbenchAppearance == .system else { return }
+                self.refreshAppearance()
+            }
+        }
         for name in [NSWorkspace.willSleepNotification, NSWorkspace.sessionDidResignActiveNotification, NSWorkspace.screensDidSleepNotification] {
             observers.append(workspaceNotifications.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.suspended = true; self?.handleContextChange(animated: false) }
@@ -181,6 +188,7 @@ struct WorkbenchTopEntryInput {
         timer?.invalidate(); timer = nil
         observers.forEach { workspaceNotifications.removeObserver($0) }; observers.removeAll()
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }; screenObserver = nil
+        systemAppearanceObserver?.invalidate(); systemAppearanceObserver = nil
         localObservers.forEach { NotificationCenter.default.removeObserver($0) }; localObservers.removeAll()
         if let localEventMonitor { NSEvent.removeMonitor(localEventMonitor) }; localEventMonitor = nil
         if let globalClickMonitor { NSEvent.removeMonitor(globalClickMonitor) }; globalClickMonitor = nil
@@ -254,10 +262,26 @@ struct WorkbenchTopEntryInput {
     var isEntryPending: Bool { gate.isDwelling }
     var islandMaterialOpacity: Double? { islandSurface?.materialOpacity }
     var islandUsesLightAppearance: Bool? { islandSurface?.usesLightAppearance }
+    var islandTheme: LauncherTheme? { islandSurface?.theme }
     var islandWindowNumber: Int? { summaryPanel?.windowNumber }
     var islandContentTopInset: CGFloat? { islandSurface?.contentTopInset }
     var islandTargetFrame: CGRect? { islandSurface.map { screenRect($0.targetBounds) } }
     var islandPresentationFrame: CGRect? { islandSurface.map { screenRect($0.presentationBounds) } }
+#if DEBUG
+    /// Explicitly requested, isolated own-view evidence. It never captures other
+    /// windows, the desktop, a pointer or private workbench content.
+    func captureMiniReview(to url: URL) throws {
+        guard url.isFileURL, url.path.hasPrefix("/tmp/"), summaryVisible,
+              let surface = islandSurface, surface.phase == .expanded else { return }
+        surface.layoutSubtreeIfNeeded()
+        guard let bitmap = surface.bitmapImageRepForCachingDisplay(in: surface.bounds) else { return }
+        surface.cacheDisplay(in: surface.bounds, to: bitmap)
+        guard let png = bitmap.representation(using: .png, properties: [:]) else { return }
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try png.write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+#endif
     private func screenRect(_ rect: CGRect) -> CGRect {
         guard let panel = summaryPanel else { return .zero }
         return CGRect(x: panel.frame.minX + rect.minX, y: panel.frame.maxY - rect.maxY, width: rect.width, height: rect.height)
@@ -342,7 +366,7 @@ struct WorkbenchTopEntryInput {
             // A deliberate mini-card action always opens the workbench home.
             self.owner?.workbenchController?.model.navigate(.overview)
             self.owner?.showWorkbenchFromTopEntry(originFrame: self.islandPresentationFrame)
-        }, dismiss: { [weak self] in self?.handleContextChange() }))
+        }, dismiss: { [weak self] in self?.handleContextChange() }).nativeCheckAccessibility())
         islandSurface?.setContent(host)
         model.device.setQuickSummaryVisible(true); model.device.refresh()
         panel.alphaValue = 1; panel.ignoresMouseEvents = !islandContains(input().location)
@@ -378,23 +402,33 @@ private struct WorkbenchTopSummaryView: View {
     private var fresh: Bool { snapshot.performanceSampledAt.map { $0 >= openedAt } ?? false }
     private var palette: ThemePalette { ThemePalette(theme: model.theme, opacity: model.opacity, light: model.light) }
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Text("方寸").font(.system(size: 12, weight: .medium))
+                Image(nsImage: NSImage(named: NSImage.applicationIconName) ?? NSImage())
+                    .resizable().scaledToFit().frame(width: 27, height: 27).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("方寸").font(.system(size: 12, weight: .semibold))
+                    Text("本机速览").font(.system(size: 10)).foregroundStyle(palette.secondary)
+                }
                 Spacer()
                 Button(action: open) {
                     HStack(spacing: 6) { Text("展开工作台"); Image(systemName: "arrow.up.right").font(.system(size: 12, weight: .regular)) }
-                        .font(.system(size: 11, weight: .medium)).padding(.horizontal, 10).frame(height: 25)
-                        .background(palette.soft, in: Capsule())
-                        .overlay(Capsule().strokeBorder(palette.line, lineWidth: 1))
+                        .font(.system(size: 11, weight: .medium)).padding(.horizontal, 10).frame(height: 28)
+                        .background(palette.navSelected, in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(palette.line, lineWidth: 1))
                 }.buttonStyle(.plain).keyboardShortcut(.return, modifiers: []).accessibilityLabel("展开完整工作台")
+                    .accessibilityIdentifier("mini-open-workbench")
                 Button(action: dismiss) { Image(systemName: "xmark").font(.system(size: 10, weight: .medium)).frame(width: 24, height: 24) }
                     .buttonStyle(.plain).foregroundStyle(palette.secondary).accessibilityLabel("关闭快速信息")
-            }
-            HStack(alignment: .top, spacing: 24) {
-                metric("CPU 使用率", value: DeviceFormat.percent(fresh ? snapshot.cpuPercent : nil), note: "")
-                metric("统一内存", value: DeviceFormat.bytes(fresh ? snapshot.memory?.used : nil), note: fresh ? " / " + DeviceFormat.bytes(snapshot.memory?.total) : "")
-                metric("CPU / GPU 温度", value: DeviceFormat.temperature(fresh ? snapshot.cpuTemperature : nil), note: " / " + DeviceFormat.temperature(fresh ? snapshot.gpuTemperature : nil))
+                    .accessibilityIdentifier("mini-close")
+            }.frame(height: 30)
+            HStack(alignment: .top, spacing: 8) {
+                metric("CPU 使用率", symbol: "cpu", value: DeviceFormat.percent(fresh ? snapshot.cpuPercent : nil),
+                       note: fresh ? "全部算力 100%" : "等待读取", identifier: "mini-metric-cpu")
+                metric("统一内存", symbol: "memorychip", value: DeviceFormat.bytes(fresh ? snapshot.memory?.used : nil),
+                       note: fresh ? "共 " + DeviceFormat.bytes(snapshot.memory?.total) : "等待读取", identifier: "mini-metric-memory")
+                metric("CPU 温度", symbol: "thermometer.medium", value: DeviceFormat.temperature(fresh ? snapshot.cpuTemperature : nil),
+                       note: "GPU " + DeviceFormat.temperature(fresh ? snapshot.gpuTemperature : nil), identifier: "mini-metric-temperature")
             }
             HStack(spacing: 14) {
                 Label(DeviceFormat.rate(fresh ? snapshot.network.downloadBytesPerSecond : nil), systemImage: "arrow.down")
@@ -407,21 +441,26 @@ private struct WorkbenchTopSummaryView: View {
                         if battery.isCharging { Image(systemName: "bolt.fill").foregroundStyle(palette.success); Text("正在充电") }
                     }
                 } else { Text(fresh ? "电量不可用" : "正在读取本机数据") }
-            }.font(.system(size: 11)).monospacedDigit().foregroundStyle(palette.secondary)
+            }.font(.system(size: 11)).monospacedDigit().foregroundStyle(palette.secondary).frame(height: 22)
         }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .foregroundStyle(palette.text)
             .workbenchThemeEnvironment(theme: model.theme, opacity: model.opacity, backgroundMotion: false, appearance: model.appearance)
             .environment(\.colorScheme, model.light ? .light : .dark)
     }
-    private func metric(_ title: String, value: String, note: String) -> some View {
+    private func metric(_ title: String, symbol: String, value: String, note: String, identifier: String) -> some View {
         let parts = readingParts(value)
-        return VStack(alignment: .leading, spacing: 5) {
-            Text(title).font(.system(size: 11)).foregroundStyle(palette.secondary)
+        return VStack(alignment: .leading, spacing: 3) {
+            Label(title, systemImage: symbol).font(.system(size: 11)).foregroundStyle(palette.secondary).frame(height: 14)
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text(parts.value).font(.system(size: 22, weight: .regular))
-                Text(parts.unit + note).font(.system(size: 11)).foregroundStyle(palette.secondary)
-            }.monospacedDigit().lineLimit(1).minimumScaleFactor(0.85)
-        }.frame(maxWidth: .infinity, alignment: .leading)
+                Text(parts.unit).font(.system(size: 11)).foregroundStyle(palette.secondary)
+            }.monospacedDigit().lineLimit(1).minimumScaleFactor(0.85).frame(height: 26)
+            Text(note).font(.system(size: 10)).monospacedDigit().foregroundStyle(palette.secondary)
+                .lineLimit(1).minimumScaleFactor(0.85).frame(height: 12)
+        }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).padding(.vertical, 7)
+            .background(palette.soft, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(palette.line, lineWidth: 1).allowsHitTesting(false))
+            .accessibilityElement(children: .combine).accessibilityIdentifier(identifier)
     }
     private func readingParts(_ value: String) -> (value: String, unit: String) {
         if value.hasSuffix("%") { return (String(value.dropLast()), "%") }

@@ -15,6 +15,8 @@ import SwiftUI
     private let glass = GlassBackgroundView()
     private let materialMask = CAShapeLayer()
     private let sceneLayer = CALayer()
+    private let sceneTone = CAGradientLayer()
+    private(set) var theme = Palette.workbenchTheme
     private var host: NSView?
     private(set) var phase: Phase = .closed
     let closedSize: CGSize
@@ -42,6 +44,10 @@ import SwiftUI
         sceneLayer.contentsGravity = .resizeAspectFill
         sceneLayer.masksToBounds = true
         materialContainer.layer?.addSublayer(sceneLayer)
+        sceneTone.frame = bounds
+        sceneTone.startPoint = CGPoint(x: 0, y: 0)
+        sceneTone.endPoint = CGPoint(x: 1, y: 1)
+        materialContainer.layer?.addSublayer(sceneTone)
         glass.frame = bounds
         glass.autoresizingMask = [.width, .height]
         glass.surfaceStyle = .workbench
@@ -58,11 +64,17 @@ import SwiftUI
     func refreshAppearance() {
         appearance = NSAppearance(named: Palette.isLight ? .aqua : .darkAqua)
         glass.refreshAppearance()
+        theme = Palette.workbenchTheme
         outline.strokeColor = NSColor(Palette.workbenchPalette.line).cgColor
         if let image=WorkbenchSceneAssets.image(for:Palette.workbenchTheme) {
             sceneLayer.contents=image.cgImage(forProposedRect:nil,context:nil,hints:nil)
         } else {sceneLayer.contents=nil}
         sceneLayer.frame=bounds
+        // The same scene remains stationary. A quiet, theme-derived veil gives
+        // the compact readings a consistent surface above bright horizons.
+        sceneTone.frame = bounds
+        sceneTone.colors = [NSColor(Palette.workbenchPalette.chrome).withAlphaComponent(Palette.isLight ? 0.16 : 0.20).cgColor,
+                            NSColor(Palette.workbenchPalette.surface).withAlphaComponent(Palette.isLight ? 0.22 : 0.28).cgColor]
     }
     var materialOpacity: Double { Palette.glassOpacity }
     var usesLightAppearance: Bool { appearance?.name == .aqua }
@@ -100,7 +112,7 @@ import SwiftUI
         let rect = CGRect(x: (bounds.width - size.width) / 2, y: 0, width: size.width, height: size.height)
         targetBounds = rect
         let path = Self.path(in: rect, shoulder: phase == .expanded ? 16 : 6,
-                             bottom: phase == .expanded ? 24 : 13)
+                             bottom: phase == .expanded ? 20 : 13)
         let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let duration: TimeInterval = !animated ? 0 : reduce ? 0.10 : 0.32
         let fadeWithoutClipping = reduce && animated && phase == .closed
@@ -123,7 +135,7 @@ import SwiftUI
                 animatePath(contentMask, to: translated, duration: reduce ? 0 : duration, spring: phase == .expanded && !reduce)
             }
             animateOpacity(host.layer, to: phase == .expanded ? 1 : 0,
-                           duration: duration == 0 ? 0 : phase == .expanded ? 0.20 : 0.08,
+                           duration: duration == 0 ? 0 : reduce ? duration : phase == .expanded ? 0.20 : 0.08,
                            delay: phase == .expanded && !reduce && animated ? 0.06 : 0)
         }
         CATransaction.commit()

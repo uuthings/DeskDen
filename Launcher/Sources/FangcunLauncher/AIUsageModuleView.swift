@@ -655,17 +655,19 @@ private struct AIProviderQuotaCard: View {
                 .accessibilityIdentifier("fc.ai.quota.empty." + summary.provider.rawValue)
         } else {
             VStack(alignment: .leading, spacing: rowGap) {
-                ForEach(Array(windows.enumerated()), id: \.offset) { index, window in
-                    AIQuotaRow(window: window, identifier: "fc.ai.quota." + summary.provider.rawValue + "." + String(index))
-                }
-                if windows.count == 1 {
-                    HStack(alignment: .top, spacing: 7) {
-                        Image(systemName: "info.circle").font(.system(size: 11)).padding(.top, 1)
-                        Text("当前来源仅提供上述周期。其他窗口未提供，暂不显示。")
-                            .font(.system(size: 11)).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
-                    }.foregroundStyle(palette.muted).frame(maxWidth: .infinity, minHeight: 64, alignment: .topLeading)
-                        .aiQuotaMeasuredRegion("fc.ai.quota.availableOnly." + summary.provider.rawValue)
-                        .accessibilityIdentifier("fc.ai.quota.availableOnly." + summary.provider.rawValue)
+                ForEach(Array((summary.snapshot?.comparisonRows ?? []).enumerated()), id: \.offset) { index, window in
+                    let identifier = "fc.ai.quota." + summary.provider.rawValue + "." + String(index)
+                    if let window {
+                        AIQuotaRow(window: window, identifier: identifier)
+                    } else {
+                        VStack(alignment: .leading, spacing: 7) {
+                            Label("其他周期未提供", systemImage: "info.circle").font(.system(size: 12))
+                            Text("仅显示来源提供的实际额度，不估算缺失窗口。")
+                                .font(.system(size: 11)).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
+                        }.foregroundStyle(palette.muted).frame(maxWidth: .infinity, alignment: .leading).frame(height: 64, alignment: .top)
+                            .aiQuotaMeasuredRegion(identifier + ".unavailable")
+                            .accessibilityIdentifier(identifier + ".unavailable")
+                    }
                 }
             }
         }
@@ -693,7 +695,8 @@ private struct AIQuotaRow: View {
                 Spacer(minLength: 0)
                 Text(countdown(window) + "剩余 " + window.remainingPercent.formatted(.number.precision(.fractionLength(0...1))) + "%").foregroundStyle(color).lineLimit(1).minimumScaleFactor(0.9)
             }.font(.system(size: 11)).foregroundStyle(palette.muted).frame(height: 16)
-        }.frame(height: 64).accessibilityElement(children: .contain).accessibilityIdentifier(identifier)
+        }.frame(height: 64).aiQuotaMeasuredRegion(identifier)
+            .accessibilityElement(children: .contain).accessibilityIdentifier(identifier)
     }
     private func countdown(_ window: AIQuotaWindow) -> String {
         guard let reset = window.resetsAt else { return "" }

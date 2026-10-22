@@ -14,7 +14,7 @@ import LauncherCore
         let box = DateInputCheckState(draft: .init(item: item, creating: false, defaultDate: due.date!, calendar: calendar))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 434, height: 32), styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
-        let host = NSHostingView(rootView: DateInputCheckView(state: box))
+        let host = NSHostingView(rootView: DateInputCheckView(state: box).nativeCheckAccessibility())
         window.contentView = host; host.frame = NSRect(x: 0, y: 0, width: 434, height: 32)
         defer { window.contentView = nil; window.close() }
         _ = await wait(host) { surfaces(host).count == 2 }

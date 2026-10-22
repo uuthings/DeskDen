@@ -51,7 +51,18 @@ enum WorkbenchNativeChecks {
             }
 
             owner.showWorkbench(route: .overview)
-            await settle()
+            let hostReady: Bool
+            if let window = workbench.window, let host = window.contentView {
+                hostReady = await NativeUIFixtureWindow.prepare(window: window) {
+                    descendants(host).compactMap { $0 as? NSScrollView }.contains { scroll in
+                        guard scroll.window === window, !scroll.isHiddenOrHasHiddenAncestor,
+                              let document = scroll.documentView, document.window === window else { return false }
+                        return scroll.contentSize.width > 0 && scroll.contentSize.height > 0
+                            && document.bounds.width > 0 && document.bounds.height > 0
+                    }
+                }
+            } else { hostReady = false }
+            check(hostReady, "production workbench host becomes active and key with its real page viewport and document mounted")
             check(owner.workbenchController === workbench && workbench.model === model && workbench.window?.isVisible == true && !owner.panel.isVisible,
                   "workbench opens in the same controller with the injected isolated models")
             if let window = workbench.window {
