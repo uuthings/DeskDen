@@ -1,0 +1,121 @@
+#!/bin/zsh
+set -euo pipefail
+cd "${0:A:h}/.."
+app_path="${1:-$PWD/build/方寸.app}"
+build_configuration="${2:-release}"
+if [[ "$build_configuration" != debug && "$build_configuration" != release ]]; then
+    print -u2 'Usage: build-local.sh [absolute-new-app-path] [debug|release]'
+    exit 2
+fi
+evidence_path="$app_path.evidence"
+if [[ "$app_path" != /* ]] || [[ -e "$app_path" ]] || [[ -e "$evidence_path" ]]; then
+    print -u2 'The output must be a new absolute path; existing candidates and evidence are preserved.'
+    exit 2
+fi
+python3 - "$evidence_path" "$build_configuration" <<'PY'
+from pathlib import Path
+import datetime, hashlib, json, plistlib, sys
+
+root = Path.cwd()
+evidence = Path(sys.argv[1])
+required = ['Info.plist', 'PanelLogo.png', 'AppIcon.icns', 'AppIcons/qingbi-chenwu.icns', 'AppIcons/yuebai-yunhai.icns', 'AppIcons/nuanxia-xuanshan.icns', 'Workbench/ar-world.jpg',
+            'Workbench/thunder-cabin.jpg', 'Workbench/claude.png', 'Workbench/chatgpt.png']
+for name in required:
+    path = root / 'Resources' / name
+    if not path.is_file() or path.is_symlink():
+        raise SystemExit(f'Missing regular production resource: Resources/{name}')
+info = plistlib.loads((root / 'Resources/Info.plist').read_bytes())
+qa_keys = {'FangcunDeviceAcceptance', 'FangcunDeviceAcceptanceProfile', 'FangcunUIReview',
+           'FangcunUIReviewDataDirectory', 'FangcunTopEntryDiagnostics'}
+if qa_keys.intersection(info):
+    raise SystemExit('Production Info.plist contains QA keys: ' + ', '.join(sorted(qa_keys.intersection(info))))
+if info.get('CFBundleExecutable') != 'FangcunLauncher':
+    raise SystemExit('Unexpected production executable name')
+paths = [root / 'Package.swift']
+for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('Resources', '*')]:
+    paths.extend(path for path in (root / directory).rglob(pattern) if path.is_file())
+paths.extend(path for path in [root / 'Package.resolved', root.parent / 'Fangcun.xcodeproj/project.pbxproj'] if path.is_file())
+paths.extend((root.parent / 'Fangcun.xcodeproj/xcshareddata/xcschemes').glob('*.xcscheme'))
+files = {}
+for path in sorted(set(paths)):
+    if path.is_symlink():
+        raise SystemExit('Source inputs must not be symbolic links: ' + str(path.relative_to(root.parent)))
+    data = path.read_bytes()
+    files[path.relative_to(root.parent).as_posix()] = {'sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data)}
+evidence.mkdir(parents=True, exist_ok=False)
+snapshot = {'schema': 'fangcun.build-inputs/1', 'configuration': sys.argv[2], 'files': files}
+(evidence / 'source-inputs-before.json').write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + '\n')
+(evidence / 'build-context.json').write_text(json.dumps({'configuration': sys.argv[2], 'createdAt': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'signing': 'ad-hoc local development; no archive, notarization or publication'}, indent=2) + '\n')
+PY
+swift build -c "$build_configuration"
+binary_dir="$(swift build -c "$build_configuration" --show-bin-path)"
+mkdir -p "$app_path/Contents/MacOS" "$app_path/Contents/Resources/Workbench"
+cp "$binary_dir/FangcunLauncher" "$app_path/Contents/MacOS/FangcunLauncher"
+cp "$PWD/Resources/Info.plist" "$app_path/Contents/Info.plist"
+cp "$PWD/Resources/PanelLogo.png" "$app_path/Contents/Resources/PanelLogo.png"
+cp "$PWD/Resources/AppIcon.icns" "$app_path/Contents/Resources/AppIcon.icns"
+mkdir -p "$app_path/Contents/Resources/AppIcons"
+for icon_name in qingbi-chenwu yuebai-yunhai nuanxia-xuanshan; do
+    cp "$PWD/Resources/AppIcons/$icon_name.icns" "$app_path/Contents/Resources/AppIcons/$icon_name.icns"
+done
+for resource_name in ar-world.jpg thunder-cabin.jpg claude.png chatgpt.png; do
+    cp "$PWD/Resources/Workbench/$resource_name" "$app_path/Contents/Resources/Workbench/$resource_name"
+done
+python3 - "$app_path" "$binary_dir/FangcunLauncher" "$evidence_path" <<'PY'
+from pathlib import Path
+import hashlib, json, sys
+source, copied = Path(sys.argv[2]), Path(sys.argv[1]) / 'Contents/MacOS/FangcunLauncher'
+source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+if hashlib.sha256(copied.read_bytes()).hexdigest() != source_hash:
+    raise SystemExit('The bundled executable differs from the current SwiftPM output before signing')
+(Path(sys.argv[3]) / 'executable-before-signing.json').write_text(json.dumps({'sha256': source_hash, 'matchesCurrentSwiftPMOutput': True}, indent=2) + '\n')
+PY
+codesign --force --sign - "$app_path"
+codesign --verify --deep --strict "$app_path"
+python3 - "$app_path" "$evidence_path" <<'PY'
+from pathlib import Path
+import hashlib, json, plistlib, sys
+root, app, evidence = Path.cwd(), Path(sys.argv[1]), Path(sys.argv[2])
+before = json.loads((evidence / 'source-inputs-before.json').read_text())
+paths = [root / 'Package.swift']
+for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('Resources', '*')]:
+    paths.extend(path for path in (root / directory).rglob(pattern) if path.is_file())
+paths.extend(path for path in [root / 'Package.resolved', root.parent / 'Fangcun.xcodeproj/project.pbxproj'] if path.is_file())
+paths.extend((root.parent / 'Fangcun.xcodeproj/xcshareddata/xcschemes').glob('*.xcscheme'))
+files = {}
+for path in sorted(set(paths)):
+    if path.is_symlink():
+        raise SystemExit('Source input became a symbolic link: ' + str(path.relative_to(root.parent)))
+    data = path.read_bytes()
+    files[path.relative_to(root.parent).as_posix()] = {'sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data)}
+after = dict(before, files=files)
+(evidence / 'source-inputs-after.json').write_text(json.dumps(after, ensure_ascii=False, indent=2) + '\n')
+if before != after:
+    raise SystemExit('Source inputs changed during the build; this candidate is not verified')
+resources = ['PanelLogo.png', 'AppIcon.icns', 'AppIcons/qingbi-chenwu.icns', 'AppIcons/yuebai-yunhai.icns', 'AppIcons/nuanxia-xuanshan.icns', 'Workbench/ar-world.jpg', 'Workbench/thunder-cabin.jpg', 'Workbench/claude.png', 'Workbench/chatgpt.png']
+expected = {'Contents/Info.plist': root / 'Resources/Info.plist'}
+expected.update({'Contents/Resources/' + name: root / 'Resources' / name for name in resources})
+for name, source in expected.items():
+    target = app / name
+    if not target.is_file() or target.is_symlink() or target.read_bytes() != source.read_bytes():
+        raise SystemExit('Bundled production input differs from source: ' + name)
+info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
+qa_keys = {'FangcunDeviceAcceptance', 'FangcunDeviceAcceptanceProfile', 'FangcunUIReview', 'FangcunUIReviewDataDirectory', 'FangcunTopEntryDiagnostics'}
+if qa_keys.intersection(info):
+    raise SystemExit('The bundled Info.plist contains QA keys')
+actual_resources = {path.relative_to(app / 'Contents/Resources').as_posix() for path in (app / 'Contents/Resources').rglob('*') if path.is_file()}
+if actual_resources != set(resources):
+    raise SystemExit('The production bundle resource set is incomplete or contains unexpected files')
+bundle = {}
+for path in sorted(app.rglob('*')):
+    if path.is_symlink():
+        raise SystemExit('Unexpected symbolic link in the local bundle')
+    if path.is_file():
+        data = path.read_bytes()
+        bundle[path.relative_to(app).as_posix()] = {'sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data)}
+manifest = {'schema': 'fangcun.local-bundle/1', 'configuration': before['configuration'], 'sourceInputsUnchanged': True, 'productionInfoAndResourcesMatchSource': True, 'codeSignatureVerified': True, 'executableMatchesBuildOutputBeforeSigning': True, 'files': bundle}
+(evidence / 'bundle-integrity.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n')
+print(f'Production bundle verified: {len(bundle)} files; source input and signed bundle SHA-256 evidence saved.')
+PY
+print "Local development app: $app_path"
+print "Build evidence: $evidence_path"

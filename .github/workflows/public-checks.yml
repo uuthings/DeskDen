@@ -1,0 +1,22 @@
+name: Public source checks
+on: [push, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  scope:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+      - run: python3 tools/check-public-scope.py --all-refs
+      - run: python3 tools/test-public-scope.py
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Core tests
+        working-directory: Launcher
+        run: swift test
+      - name: Build native app without distribution signing
+        run: xcodebuild -project Fangcun.xcodeproj -scheme Fangcun -configuration Release -destination 'generic/platform=macOS' -derivedDataPath build/ci build CODE_SIGNING_ALLOWED=NO

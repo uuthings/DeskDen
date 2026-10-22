@@ -1,0 +1,462 @@
+import AppKit
+import Combine
+import QuartzCore
+import SwiftUI
+import LauncherCore
+
+struct WorkbenchTopEntryInput {
+    var location: CGPoint
+    var pressedButtons: Int
+    var uptime: TimeInterval
+    @MainActor static var live: Self {
+        .init(location: NSEvent.mouseLocation, pressedButtons: NSEvent.pressedMouseButtons, uptime: ProcessInfo.processInfo.systemUptime)
+    }
+}
+
+@MainActor final class WorkbenchTopEntryController: ObservableObject {
+    @Published private(set) var preferences = WorkbenchTopEntryPreferences()
+    @Published private(set) var error: String?
+    private weak var owner: LauncherController?
+    private let store: WorkbenchTopEntryStore
+    private let input: () -> WorkbenchTopEntryInput
+    private let workspaceNotifications: NotificationCenter
+    private let monitorSystemInput: Bool
+    private(set) var isRunning = false
+    private var timer: Timer?
+    private var gate = WorkbenchTopEntryGate()
+    private var regions: [(screen: NSScreen, rect: CGRect)] = []
+    private var observers: [NSObjectProtocol] = []
+    private var screenObserver: NSObjectProtocol?
+    private var localObservers: [NSObjectProtocol] = []
+    private var localEventMonitor: Any?
+    private var globalClickMonitor: Any?
+    private var menuTrackingCount = 0
+    private var islandSurface: WorkbenchNotchSurface?
+    private var islandScreen: NSScreen?
+    private var suspended = false
+    private var summaryPanel: NSPanel?
+    private var summaryVisible = false
+    private var summaryOutsideAt: TimeInterval?
+    private var animationID = UUID()
+#if DEBUG
+    private var previewID = UUID()
+    private var previewUntil: TimeInterval = 0
+    private var diagnosticTime: TimeInterval = 0
+    private var diagnosticPollCount = 0
+    private var diagnosticTriggerCount = 0
+    /// Opt-in local acceptance diagnostics; absent from Release builds and never enabled by default.
+    private func recordDiagnostic() {
+        guard Bundle.main.object(forInfoDictionaryKey: "FangcunTopEntryDiagnostics") as? Bool == true else { return }
+        diagnosticPollCount += 1
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - diagnosticTime > 0.5 else { return }
+        diagnosticTime = now
+        let point = NSEvent.mouseLocation
+        let data: [String: Any] = [
+            "uptime": now, "polls": diagnosticPollCount, "triggers": diagnosticTriggerCount,
+            "enabled": preferences.enabled, "mode": preferences.mode.rawValue, "suspended": suspended,
+            "inside": regions.contains { WorkbenchTopEntryGate.contains(point, in: $0.rect) },
+            "point": [point.x, point.y], "regions": regions.map { NSStringFromRect($0.rect) },
+            "active": NSApp.isActive, "buttons": NSEvent.pressedMouseButtons,
+            "key": owner?.workbenchController?.presentationWindow?.isKeyWindow == true,
+            "visible": owner?.workbenchController?.presentationWindow?.isVisible == true,
+            "onActiveSpace": owner?.workbenchController?.presentationWindow?.isOnActiveSpace == true,
+            "occlusionVisible": owner?.workbenchController?.presentationWindow?.occlusionState.contains(.visible) == true,
+            "alpha": owner?.workbenchController?.presentationWindow?.alphaValue ?? -1,
+            "modal": NSApp.modalWindow != nil, "sheet": owner?.workbenchController?.presentationWindow?.attachedSheet != nil,
+            "picker": owner?.pickerActive == true, "editor": owner?.editorPanel != nil,
+            "overlay": owner?.overlay != nil, "editing": owner?.isEditing == true,
+            "menu": owner?.menu != nil, "summary": summaryVisible,
+            "islandFrame": islandTargetFrame.map { NSStringFromRect($0) } ?? "none",
+            "feedback": isHoverFeedbackVisible, "topSession": owner?.workbenchController?.isTopEntryPresented == true
+        ]
+        if let encoded = try? JSONSerialization.data(withJSONObject: data, options: [.prettyPrinted, .sortedKeys]) {
+            try? encoded.write(to: store.url.deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("top-entry-diagnostic.json"), options: .atomic)
+        }
+    }
+    /// Uses the real presentation sequence, but not a synthetic system pointer.
+    /// Only available in opt-in Debug UI checks, never in the distributed Release app.
+    func previewInteraction() {
+        guard Bundle.main.object(forInfoDictionaryKey: "FangcunTopEntryDiagnostics") as? Bool == true,
+              let region = regions.first(where: { WorkbenchTopEntryGate.contains(NSEvent.mouseLocation, in: $0.screen.frame) }) ?? regions.first else { return }
+        handleContextChange(animated: false)
+        let token = UUID(); previewID = token
+        previewUntil = ProcessInfo.processInfo.systemUptime + 30
+        DispatchQueue.main.asyncAfter(deadline: .now() + WorkbenchTopEntryGate.dwell) { [weak self] in
+            guard let self, self.previewID == token else { return }
+            if self.preferences.mode == .summary { self.showSummary(on: region.screen) }
+            else { self.owner?.showWorkbenchFromTopEntry(originFrame: region.rect) }
+        }
+    }
+
+#endif
+
+    init(owner: LauncherController, input: @escaping () -> WorkbenchTopEntryInput = { .live },
+         workspaceNotifications: NotificationCenter = NSWorkspace.shared.notificationCenter,
+         monitorSystemInput: Bool = true) {
+        self.owner = owner
+        self.input = input
+        self.workspaceNotifications = workspaceNotifications
+        self.monitorSystemInput = monitorSystemInput
+        store = WorkbenchTopEntryStore(url: owner.store.url.deletingLastPathComponent().appendingPathComponent("Workbench/top-entry.json"))
+        do { preferences = try store.load() }
+        catch { self.error = error.localizedDescription; preferences.enabled = false }
+    }
+
+    func start(automaticPolling: Bool = true) {
+        guard !isRunning else { return }
+        isRunning = true
+        refreshScreens()
+        if automaticPolling {
+            let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.poll() }
+            }
+            timer.tolerance = 0.025
+            self.timer = timer
+            RunLoop.main.add(timer, forMode: .common)
+        }
+        screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.handleContextChange(animated: false); self?.refreshScreens() }
+        }
+        localObservers.append(NotificationCenter.default.addObserver(forName: .fangcunConfigurationChanged, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshAppearance() }
+        })
+        for name in [NSWorkspace.willSleepNotification, NSWorkspace.sessionDidResignActiveNotification, NSWorkspace.screensDidSleepNotification] {
+            observers.append(workspaceNotifications.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.suspended = true; self?.handleContextChange(animated: false) }
+            })
+        }
+        for name in [NSWorkspace.didWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification, NSWorkspace.screensDidWakeNotification] {
+            observers.append(workspaceNotifications.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.suspended = false; self?.gate.reset(); self?.refreshScreens() }
+            })
+        }
+        observers.append(workspaceNotifications.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] notification in
+            let pid = (notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.processIdentifier
+            MainActor.assumeIsolated {
+                if let pid { self?.handleApplicationActivation(processIdentifier: pid) }
+            }
+        })
+        observers.append(workspaceNotifications.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.handleContextChange() }
+        })
+        for (name, delta) in [(NSMenu.didBeginTrackingNotification, 1), (NSMenu.didEndTrackingNotification, -1)] {
+            localObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.menuTrackingCount = max(0, self.menuTrackingCount + delta)
+                }
+            })
+        }
+        // Global mouse monitoring needs no global keyboard hook or Accessibility permission.
+        // Isolated checks provide explicit click/key calls and a private workspace
+        // center, so unrelated desktop activity cannot race their intended input.
+        guard monitorSystemInput else { return }
+        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
+            MainActor.assumeIsolated { self?.handleOutsideClick(at: NSEvent.mouseLocation) }
+        }
+        localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown]) { [weak self] event in
+            guard let self else { return event }
+            if event.type == .keyDown {
+                let workbench = self.owner?.workbenchController
+                let transientIsVisible = self.summaryVisible || (workbench?.isTopEntryPresented == true && workbench?.presentationWindow?.isVisible == true)
+                let hasChildInteraction = self.menuTrackingCount > 0 || NSApp.modalWindow != nil
+                    || workbench?.presentationWindow?.attachedSheet != nil
+                    || workbench?.presentationWindow?.childWindows?.isEmpty == false
+                if event.keyCode == 53, transientIsVisible, !hasChildInteraction {
+                    self.handleContextChange(); return nil
+                }
+                // Pass Command-Tab through to macOS; don't consume the system shortcut.
+                if event.keyCode == 48, event.modifierFlags.contains(.command) { self.handleContextChange() }
+            } else if self.menuTrackingCount == 0 && NSApp.modalWindow == nil {
+                self.handleOutsideClick(at: NSEvent.mouseLocation)
+            }
+            return event
+        }
+    }
+
+    func stop() {
+        isRunning = false
+        timer?.invalidate(); timer = nil
+        observers.forEach { workspaceNotifications.removeObserver($0) }; observers.removeAll()
+        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }; screenObserver = nil
+        localObservers.forEach { NotificationCenter.default.removeObserver($0) }; localObservers.removeAll()
+        if let localEventMonitor { NSEvent.removeMonitor(localEventMonitor) }; localEventMonitor = nil
+        if let globalClickMonitor { NSEvent.removeMonitor(globalClickMonitor) }; globalClickMonitor = nil
+        menuTrackingCount = 0
+        handleContextChange(animated: false)
+    }
+
+    func setEnabled(_ enabled: Bool) {
+        var value = preferences; value.enabled = enabled; save(value)
+    }
+    func setMode(_ mode: WorkbenchTopEntryMode) {
+        var value = preferences; value.mode = mode; save(value)
+    }
+    private func save(_ value: WorkbenchTopEntryPreferences) {
+        do {
+            try store.save(value); preferences = value; error = nil
+            gate.reset(); dismissSummary(animated: true)
+        } catch { self.error = error.localizedDescription }
+    }
+    private func refreshScreens() {
+        islandScreen = nil; islandSurface = nil
+        regions = NSScreen.screens.map { screen in
+            let notchWidth: CGFloat?
+            if let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea, right.minX > left.maxX {
+                notchWidth = right.minX - left.maxX
+            } else { notchWidth = nil }
+            return (screen, WorkbenchTopEntryGate.activationRect(screen: screen.frame, safeTop: screen.safeAreaInsets.top, notchWidth: notchWidth))
+        }
+        gate.reset()
+    }
+    func poll() {
+#if DEBUG
+        recordDiagnostic()
+        if ProcessInfo.processInfo.systemUptime < previewUntil { return }
+#endif
+        guard isRunning, preferences.enabled, !suspended, let owner else { return }
+        let sample = input()
+        let point = sample.location, now = sample.uptime
+        let region = regions.first { WorkbenchTopEntryGate.contains(point, in: $0.rect) }
+        if summaryVisible {
+            if sample.pressedButtons != 0 || menuTrackingCount > 0 || NSApp.modalWindow != nil || region != nil || islandContains(point, tolerance: 8) {
+                summaryOutsideAt = nil
+            } else if let since = summaryOutsideAt, now - since >= 0.28 {
+                dismissSummary(animated: true)
+            } else if summaryOutsideAt == nil { summaryOutsideAt = now }
+        }
+        if summaryVisible { summaryPanel?.ignoresMouseEvents = !islandContains(point) }
+        let workbenchAlreadyVisible = owner.workbenchController?.isTopEntryPresented == true
+            && owner.workbenchController?.presentationWindow?.isVisible == true
+        let resumesProtectedInteraction = owner.workbenchController?.canResumeSuspendedTopInteraction == true
+        let allowed = !summaryVisible && (!workbenchAlreadyVisible || resumesProtectedInteraction) && menuTrackingCount == 0
+            && sample.pressedButtons == 0 && (NSApp.modalWindow == nil || resumesProtectedInteraction)
+            && !owner.pickerActive && owner.editorPanel == nil && owner.overlay == nil && !owner.isEditing
+            && owner.menu == nil && (owner.workbenchController?.presentationWindow?.attachedSheet == nil || resumesProtectedInteraction)
+
+        let triggered = gate.update(inside: region != nil, allowed: allowed, at: now)
+        guard triggered, let region else { return }
+        // A direct entry starts at the current display's trigger, not a hidden
+        // mini panel left over from an earlier session on another display.
+        let origin = region.rect
+#if DEBUG
+        diagnosticTriggerCount += 1
+#endif
+        if preferences.mode == .workbench || resumesProtectedInteraction {
+            owner.showWorkbenchFromTopEntry(originFrame: origin)
+        }
+        else { showSummary(on: region.screen) }
+    }
+    var isQuickSummaryVisible: Bool { summaryVisible && summaryPanel?.isVisible == true }
+    var isHoverFeedbackVisible: Bool { false }
+    var isEntryPending: Bool { gate.isDwelling }
+    var islandMaterialOpacity: Double? { islandSurface?.materialOpacity }
+    var islandUsesLightAppearance: Bool? { islandSurface?.usesLightAppearance }
+    var islandWindowNumber: Int? { summaryPanel?.windowNumber }
+    var islandContentTopInset: CGFloat? { islandSurface?.contentTopInset }
+    var islandTargetFrame: CGRect? { islandSurface.map { screenRect($0.targetBounds) } }
+    var islandPresentationFrame: CGRect? { islandSurface.map { screenRect($0.presentationBounds) } }
+    private func screenRect(_ rect: CGRect) -> CGRect {
+        guard let panel = summaryPanel else { return .zero }
+        return CGRect(x: panel.frame.minX + rect.minX, y: panel.frame.maxY - rect.maxY, width: rect.width, height: rect.height)
+    }
+    private func islandContains(_ point: CGPoint, tolerance: CGFloat = 0) -> Bool {
+        guard summaryPanel?.isVisible == true, let surface = islandSurface, let panel = summaryPanel else { return false }
+        if tolerance > 0 { return screenRect(surface.presentationBounds).insetBy(dx: -tolerance, dy: -tolerance).contains(point) }
+        return surface.containsVisiblePoint(CGPoint(x: point.x - panel.frame.minX, y: panel.frame.maxY - point.y))
+    }
+
+    /// A context change always cancels pending opening as well as visible temporary surfaces.
+    /// Do not reactivate this app or reveal its sheets while the user is going elsewhere.
+    func cancelPendingEntry(animated: Bool = false) {
+#if DEBUG
+        previewID = UUID(); previewUntil = 0
+#endif
+        gate.reset()
+        dismissSummary(animated: animated)
+    }
+    func handleContextChange(animated: Bool = true) {
+        cancelPendingEntry(animated: animated)
+        owner?.workbenchController?.dismissTopEntryForContextChange(animated: animated)
+    }
+    func handleApplicationActivation(processIdentifier: pid_t) {
+        guard processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
+        handleContextChange()
+    }
+    func handleOutsideClick(at point: CGPoint) {
+        func contains(_ window: NSWindow?) -> Bool {
+            guard let window, window.isVisible else { return false }
+            if window.frame.contains(point) { return true }
+            if contains(window.attachedSheet) { return true }
+            return window.childWindows?.contains(where: { contains($0) }) == true
+        }
+        if summaryVisible && islandContains(point) { return }
+        if let workbench = owner?.workbenchController, workbench.isTopEntryPresented,
+           workbench.presentationWindow?.isVisible == true,
+           contains(workbench.presentationWindow) || contains(NSApp.modalWindow) { return }
+        handleContextChange()
+    }
+    private func prepareIsland(on screen: NSScreen) -> NSPanel {
+        let panel = summaryPanel ?? WorkbenchSummaryPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        summaryPanel = panel
+        panel.isReleasedWhenClosed = false; panel.isOpaque = false; panel.backgroundColor = .clear
+        panel.hasShadow = true; panel.hidesOnDeactivate = false
+        panel.level = .statusBar
+        panel.collectionBehavior = [.canJoinAllSpaces, .canJoinAllApplications, .fullScreenAuxiliary, .ignoresCycle]
+        panel.setAccessibilityLabel("方寸灵动岛")
+        panel.appearance = NSAppearance(named: Palette.isLight ? .aqua : .darkAqua)
+        if islandScreen !== screen || islandSurface == nil {
+            let notchWidth: CGFloat
+            if let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea, right.minX > left.maxX {
+                notchWidth = right.minX - left.maxX
+            } else { notchWidth = 180 }
+            let size = CGSize(width: min(600, screen.frame.width - 32), height: max(8, screen.safeAreaInsets.top) + 176)
+            let surface = WorkbenchNotchSurface(size: size, notchWidth: notchWidth, safeTop: screen.safeAreaInsets.top)
+            islandSurface = surface; islandScreen = screen; panel.contentView = surface
+            panel.setFrame(CGRect(x: screen.frame.midX - size.width / 2, y: screen.frame.maxY - size.height,
+                                  width: size.width, height: size.height), display: false)
+        }
+        return panel
+    }
+    func refreshAppearance() {
+        guard let owner else { return }
+        Palette.workbenchTheme = owner.configuration.settings.workbenchTheme
+        let appearance = owner.configuration.settings.workbenchAppearance
+        Palette.isLight = appearance == .light || (appearance == .system && NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .aqua)
+        Palette.glassOpacity = owner.configuration.settings.glassOpacity
+        summaryPanel?.appearance = NSAppearance(named: Palette.isLight ? .aqua : .darkAqua)
+        islandSurface?.refreshAppearance()
+    }
+    private func showSummary(on screen: NSScreen) {
+        guard let owner else { return }
+        if owner.workbenchController == nil { owner.workbenchController = WorkbenchWindowController(owner: owner) }
+        guard let model = owner.workbenchController?.model else { return }
+        let panel = prepareIsland(on: screen)
+        refreshAppearance()
+        if !panel.isVisible { islandSurface?.setPhase(.closed, animated: false) }
+        animationID = UUID(); summaryVisible = true; summaryOutsideAt = nil
+        let host = NSHostingView(rootView: WorkbenchTopSummaryView(model: model, device: model.device, openedAt: Date(), open: { [weak self] in
+            guard let self else { return }
+            // A deliberate mini-card action always opens the workbench home.
+            self.owner?.workbenchController?.model.navigate(.overview)
+            self.owner?.showWorkbenchFromTopEntry(originFrame: self.islandPresentationFrame)
+        }, dismiss: { [weak self] in self?.handleContextChange() }))
+        islandSurface?.setContent(host)
+        model.device.setQuickSummaryVisible(true); model.device.refresh()
+        panel.alphaValue = 1; panel.ignoresMouseEvents = !islandContains(input().location)
+        panel.orderFrontRegardless(); panel.makeKey()
+        islandSurface?.setPhase(.expanded, animated: true)
+    }
+    private func collapseIsland(animated: Bool) {
+        guard let panel = summaryPanel else { return }
+        let token = UUID(); animationID = token
+        panel.ignoresMouseEvents = true
+        islandSurface?.setPhase(.closed, animated: animated)
+        guard animated, panel.isVisible else { panel.orderOut(nil); panel.alphaValue = 1; return }
+        let delay = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0.1 : 0.33
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak panel] in
+            guard self?.animationID == token else { return }
+            panel?.orderOut(nil); panel?.alphaValue = 1
+        }
+    }
+    func dismissSummary(animated: Bool = true) {
+        summaryVisible = false; summaryOutsideAt = nil
+        owner?.workbenchController?.model.device.setQuickSummaryVisible(false)
+        collapseIsland(animated: animated)
+    }
+}
+
+private struct WorkbenchTopSummaryView: View {
+    @ObservedObject var model: WorkbenchAppModel
+    @ObservedObject var device: DeviceStatusModel
+    let openedAt: Date
+    let open: () -> Void
+    let dismiss: () -> Void
+    private var snapshot: DeviceSnapshot { device.snapshot }
+    private var fresh: Bool { snapshot.performanceSampledAt.map { $0 >= openedAt } ?? false }
+    private var palette: ThemePalette { ThemePalette(theme: model.theme, opacity: model.opacity, light: model.light) }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Text("方寸").font(.system(size: 12, weight: .medium))
+                Spacer()
+                Button(action: open) {
+                    HStack(spacing: 6) { Text("展开工作台"); Image(systemName: "arrow.up.right").font(.system(size: 12, weight: .regular)) }
+                        .font(.system(size: 11, weight: .medium)).padding(.horizontal, 10).frame(height: 25)
+                        .background(palette.soft, in: Capsule())
+                        .overlay(Capsule().strokeBorder(palette.line, lineWidth: 1))
+                }.buttonStyle(.plain).keyboardShortcut(.return, modifiers: []).accessibilityLabel("展开完整工作台")
+                Button(action: dismiss) { Image(systemName: "xmark").font(.system(size: 10, weight: .medium)).frame(width: 24, height: 24) }
+                    .buttonStyle(.plain).foregroundStyle(palette.secondary).accessibilityLabel("关闭快速信息")
+            }
+            HStack(alignment: .top, spacing: 24) {
+                metric("CPU 使用率", value: DeviceFormat.percent(fresh ? snapshot.cpuPercent : nil), note: "")
+                metric("统一内存", value: DeviceFormat.bytes(fresh ? snapshot.memory?.used : nil), note: fresh ? " / " + DeviceFormat.bytes(snapshot.memory?.total) : "")
+                metric("CPU / GPU 温度", value: DeviceFormat.temperature(fresh ? snapshot.cpuTemperature : nil), note: " / " + DeviceFormat.temperature(fresh ? snapshot.gpuTemperature : nil))
+            }
+            HStack(spacing: 14) {
+                Label(DeviceFormat.rate(fresh ? snapshot.network.downloadBytesPerSecond : nil), systemImage: "arrow.down")
+                Label(DeviceFormat.rate(fresh ? snapshot.network.uploadBytesPerSecond : nil), systemImage: "arrow.up")
+                Spacer(minLength: 0)
+                if let battery = snapshot.battery, fresh {
+                    HStack(spacing: 6) {
+                        DeviceBatteryGlyph(fraction: battery.percent / 100).frame(width: 23, height: 11)
+                        Text("\(Int(battery.percent.rounded()))%")
+                        if battery.isCharging { Image(systemName: "bolt.fill").foregroundStyle(palette.success); Text("正在充电") }
+                    }
+                } else { Text(fresh ? "电量不可用" : "正在读取本机数据") }
+            }.font(.system(size: 11)).monospacedDigit().foregroundStyle(palette.secondary)
+        }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .foregroundStyle(palette.text)
+            .workbenchThemeEnvironment(theme: model.theme, opacity: model.opacity, backgroundMotion: false, appearance: model.appearance)
+            .environment(\.colorScheme, model.light ? .light : .dark)
+    }
+    private func metric(_ title: String, value: String, note: String) -> some View {
+        let parts = readingParts(value)
+        return VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.system(size: 11)).foregroundStyle(palette.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text(parts.value).font(.system(size: 22, weight: .regular))
+                Text(parts.unit + note).font(.system(size: 11)).foregroundStyle(palette.secondary)
+            }.monospacedDigit().lineLimit(1).minimumScaleFactor(0.85)
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+    private func readingParts(_ value: String) -> (value: String, unit: String) {
+        if value.hasSuffix("%") { return (String(value.dropLast()), "%") }
+        if let degree = value.firstIndex(of: "°") {
+            return (String(value[..<degree]).trimmingCharacters(in: .whitespaces), String(value[degree...]))
+        }
+        let parts = value.split(maxSplits: 1, whereSeparator: { $0.isWhitespace })
+        return (parts.first.map(String.init) ?? "—", parts.count > 1 ? " " + String(parts[1]) : "")
+    }
+}
+
+struct WorkbenchTopEntrySettingsRow: View {
+    @ObservedObject var controller: WorkbenchTopEntryController
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 18) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("顶部感知入口").font(.system(size: 13, weight: .medium))
+                    Text("滑入顶部直接展开迷你信息，点击进入工作台首页；切换应用自动收起。").font(.system(size: 12))
+                        .foregroundStyle(WorkbenchStyle.secondary).fixedSize(horizontal: false, vertical: true)
+                }.frame(maxWidth: 400, alignment: .leading)
+                Spacer(minLength: 5)
+                WBSelect("顶部入口显示", selection: Binding(get: { controller.preferences.mode }, set: controller.setMode),
+                         options: [(value: .summary, title: "迷你信息面板"), (value: .workbench, title: "直接展开工作台")])
+                    .frame(width: 160).disabled(!controller.preferences.enabled)
+                Toggle("开启顶部感知入口", isOn: Binding(get: { controller.preferences.enabled }, set: controller.setEnabled))
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+            }
+            if let error = controller.error { Text(error).font(.system(size: 11)).foregroundStyle(WorkbenchStyle.warning) }
+        }.padding(.vertical, 17)
+        Divider().opacity(0.25)
+    }
+}
+
+@MainActor private final class WorkbenchSummaryPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+}

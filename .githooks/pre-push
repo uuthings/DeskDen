@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+refs=""
+while read -r local_ref local_oid remote_ref remote_oid; do
+    case "$local_oid" in
+        0000000000000000000000000000000000000000) ;;
+        *) refs="$refs $local_oid" ;;
+    esac
+done
+if [ -n "$refs" ]; then
+    # Scan every ancestor of each proposed ref, including history absent remotely.
+    python3 tools/check-public-scope.py --commits $refs
+fi
