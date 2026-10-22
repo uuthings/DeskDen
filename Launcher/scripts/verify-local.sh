@@ -16,8 +16,8 @@ python3 - "$verification_dir" <<'PY'
 from pathlib import Path
 import hashlib, json, sys
 root = Path.cwd()
-paths = [root / 'Package.swift']
-for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('Resources', '*')]:
+paths = [root / 'Package.swift', root / 'Signing/Fangcun.entitlements']
+for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('Resources', '*')]:
     paths.extend(path for path in (root / directory).rglob(pattern) if path.is_file())
 paths.extend(path for path in [root / 'Package.resolved', root.parent / 'Fangcun.xcodeproj/project.pbxproj'] if path.is_file())
 paths.extend((root.parent / 'Fangcun.xcodeproj/xcshareddata/xcschemes').glob('*.xcscheme'))
@@ -29,6 +29,7 @@ for path in sorted(set(paths)):
     files[path.relative_to(root.parent).as_posix()] = {'sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data)}
 (Path(sys.argv[1]) / 'source-inputs-before.json').write_text(json.dumps({'schema': 'fangcun.verification-inputs/1', 'files': files}, ensure_ascii=False, indent=2) + '\n')
 PY
+python3 ./scripts/check-signing-config.py > "$verification_dir/signing-config-checks.log" 2>&1
 zsh ./scripts/check-app-icons.sh > "$verification_dir/app-icon-checks.log" 2>&1
 swift test > "$verification_dir/core-tests.log" 2>&1
 # Full mounted health and expanded AI checks are DEBUG-only. Keep their result
@@ -52,8 +53,8 @@ from pathlib import Path
 import hashlib, json, re, sys
 verification = Path(sys.argv[1])
 source = Path.cwd()
-paths = [source / 'Package.swift']
-for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('Resources', '*')]:
+paths = [source / 'Package.swift', source / 'Signing/Fangcun.entitlements']
+for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('Resources', '*')]:
     paths.extend(path for path in (source / directory).rglob(pattern) if path.is_file())
 paths.extend(path for path in [source / 'Package.resolved', source.parent / 'Fangcun.xcodeproj/project.pbxproj'] if path.is_file())
 paths.extend((source.parent / 'Fangcun.xcodeproj/xcshareddata/xcschemes').glob('*.xcscheme'))
@@ -109,7 +110,7 @@ def checked_log(name):
         raise SystemExit('Skipped XCTest cases: ' + name)
     return text
 
-summary = {'schema': 'fangcun.local-verification/1', 'sourceInputsUnchanged': True, 'core': {}, 'debug': [], 'release': [], 'models': []}
+summary = {'schema': 'fangcun.local-verification/1', 'sourceInputsUnchanged': True, 'core': {}, 'debug': [], 'release': [], 'models': [], 'configuration': []}
 core = checked_log('core-tests.log')
 core_counts = re.findall(r'^\s*Executed (\d+) tests?, with (\d+) failures\b', core, re.MULTILINE)
 if not core_counts or int(core_counts[-1][0]) <= 0 or int(core_counts[-1][1]) != 0:
@@ -123,6 +124,7 @@ summary['applicationIcons'] = {'log': 'app-icon-checks.log', 'checks': int(icon_
 print(f"Core: {summary['core']['checks']} tests, 0 failures")
 
 checks = [
+    ('configuration', 'signing-config-checks.log', 'Signing configuration checks', 'ratio'),
     ('debug', 'debug-native-checks.log', 'Native checks', 'native'),
     ('debug', 'debug-device-module-checks.log', 'Device module checks', 'ratio'),
     ('release', 'native-checks.log', 'Native checks', 'native'),
@@ -132,6 +134,7 @@ checks = [
     ('models', 'calendar-model-checks.log', 'Calendar model checks', 'ratio'),
     ('models', 'vault-model-checks.log', 'Vault model checks', 'ratio'),
     ('models', 'vault-v5-checks.log', 'Vault V5 checks', 'ratio'),
+    ('models', 'vault-v5-checks.log', 'Vault signing preflight checks', 'ratio'),
     ('models', 'vault-editor-checks.log', 'Vault editor checks', 'ratio'),
     ('models', 'vault-compatibility-checks.log', 'Vault format compatibility checks', 'ratio'),
     ('models', 'ai-model-checks.log', 'AI model checks', 'ratio'),

@@ -12,3 +12,11 @@ swiftc -swift-version 6 -parse-as-library -I "$check_dir" -L "$check_dir" -lLaun
   "$task_root/Sources/FangcunLauncher/VaultModule.swift" \
   "$task_root/Tests/WorkbenchChecks/VaultV5ModelChecks.swift" -o "$check_dir/vault-v5-checks"
 "$check_dir/vault-v5-checks"
+# The signing diagnostic is verified with injected stores only. This second
+# isolated executable never invokes the current process's real Keychain preflight.
+swiftc -swift-version 6 -parse-as-library -I "$check_dir" -L "$check_dir" -lLauncherCore \
+  -Xlinker -rpath -Xlinker "$check_dir" \
+  "$task_root/Sources/FangcunLauncher/VaultModule.swift" \
+  "$task_root/Sources/FangcunLauncher/VaultSigningChecks.swift" \
+  "$task_root/Tests/WorkbenchChecks/VaultSigningPreflightChecks.swift" -o "$check_dir/vault-signing-preflight-checks"
+"$check_dir/vault-signing-preflight-checks"

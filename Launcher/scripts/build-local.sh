@@ -12,6 +12,7 @@ if [[ "$app_path" != /* ]] || [[ -e "$app_path" ]] || [[ -e "$evidence_path" ]];
     print -u2 'The output must be a new absolute path; existing candidates and evidence are preserved.'
     exit 2
 fi
+python3 ./scripts/check-signing-config.py
 python3 - "$evidence_path" "$build_configuration" <<'PY'
 from pathlib import Path
 import datetime, hashlib, json, plistlib, sys
@@ -32,8 +33,8 @@ if qa_keys.intersection(info):
     raise SystemExit('Production Info.plist contains QA keys: ' + ', '.join(sorted(qa_keys.intersection(info))))
 if info.get('CFBundleExecutable') != 'FangcunLauncher':
     raise SystemExit('Unexpected production executable name')
-paths = [root / 'Package.swift']
-for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('Resources', '*')]:
+paths = [root / 'Package.swift', root / 'Signing/Fangcun.entitlements']
+for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('Resources', '*')]:
     paths.extend(path for path in (root / directory).rglob(pattern) if path.is_file())
 paths.extend(path for path in [root / 'Package.resolved', root.parent / 'Fangcun.xcodeproj/project.pbxproj'] if path.is_file())
 paths.extend((root.parent / 'Fangcun.xcodeproj/xcshareddata/xcschemes').glob('*.xcscheme'))
@@ -78,8 +79,8 @@ from pathlib import Path
 import hashlib, json, plistlib, sys
 root, app, evidence = Path.cwd(), Path(sys.argv[1]), Path(sys.argv[2])
 before = json.loads((evidence / 'source-inputs-before.json').read_text())
-paths = [root / 'Package.swift']
-for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('Resources', '*')]:
+paths = [root / 'Package.swift', root / 'Signing/Fangcun.entitlements']
+for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('Resources', '*')]:
     paths.extend(path for path in (root / directory).rglob(pattern) if path.is_file())
 paths.extend(path for path in [root / 'Package.resolved', root.parent / 'Fangcun.xcodeproj/project.pbxproj'] if path.is_file())
 paths.extend((root.parent / 'Fangcun.xcodeproj/xcshareddata/xcschemes').glob('*.xcscheme'))

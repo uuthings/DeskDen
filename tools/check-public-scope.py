@@ -16,6 +16,7 @@ ALLOWED = [
     r"Launcher/Sources/(?:FangcunLauncher|LauncherCore)/[A-Za-z0-9_]+\.swift",
     r"Launcher/Tests/(?:LauncherCoreTests|WorkbenchChecks)/[A-Za-z0-9_]+\.swift",
     r"Launcher/scripts/[a-z0-9-]+\.(?:sh|py|swift)",
+    r"Launcher/Signing/Fangcun\.entitlements",
     r"Launcher/Resources/(?:Info\.plist|AppIcon\.icns|PanelLogo\.png)",
     r"Launcher/Resources/Workbench/(?:(?:ar-world|thunder-cabin|qingbi-chenwu|yuebai-yunhai|nuanxia-xuanshan)\.jpg|(?:chatgpt|claude)\.png)",
     r"Launcher/Artwork/Workbench/(?:(?:qingbi-chenwu|yuebai-yunhai|nuanxia-xuanshan)\.png|README\.md|provenance\.json)",
