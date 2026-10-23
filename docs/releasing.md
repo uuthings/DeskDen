@@ -1,6 +1,6 @@
 # macOS release process
 
-Version 0.1.0 (Build 2) was signed, notarized through Organizer and retained as a local delivery. It has not been publicly published. Later development changes are local test candidates until a new release is explicitly authorized. This document describes the required process; each candidate's own evidence establishes its actual result.
+Version 0.1.0 (Build 2) was signed, notarized through Organizer and retained as a local delivery, without a public Release. Version 0.2.0 (Build 3) is the first public distribution. This document describes the required process; the matching Release and each candidate's retained evidence establish the actual distribution result.
 
 ## Candidate and version
 
