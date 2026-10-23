@@ -1,12 +1,12 @@
 import Foundation
 
 public enum WorkbenchRoute:String,Codable,CaseIterable,Sendable {
-    case overview,device,health,calendar,ai,network,vault,cards,settings
+    case overview,device,health,cleaning,calendar,ai,network,vault,cards,settings
     public var title:String {
-        switch self { case .overview:"首页";case .device:"设备状态";case .health:"体检中心";case .calendar:"日历与提醒";case .ai:"AI 用量";case .network:"网络监控";case .vault:"私密空间";case .cards:"桌面组件";case .settings:"设置" }
+        switch self { case .overview:"首页";case .device:"设备状态";case .health:"体检中心";case .cleaning:"空间清理";case .calendar:"日历与提醒";case .ai:"AI 用量";case .network:"网络监控";case .vault:"私密空间";case .cards:"桌面组件";case .settings:"设置" }
     }
     public var symbol:String {
-        switch self { case .overview:"rectangle.split.2x2";case .device:"waveform.path.ecg";case .health:"heart.text.square";case .calendar:"calendar";case .ai:"chart.bar.xaxis";case .network:"arrow.up.arrow.down";case .vault:"lock";case .cards:"square.grid.2x2";case .settings:"slider.horizontal.3" }
+        switch self { case .overview:"rectangle.split.2x2";case .device:"waveform.path.ecg";case .health:"heart.text.square";case .cleaning:"internaldrive";case .calendar:"calendar";case .ai:"chart.bar.xaxis";case .network:"arrow.up.arrow.down";case .vault:"lock";case .cards:"square.grid.2x2";case .settings:"slider.horizontal.3" }
     }
 }
 public enum DesktopCardKind:String,Codable,CaseIterable,Sendable {

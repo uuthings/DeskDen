@@ -91,7 +91,9 @@ struct HealthCenterView: View {
     @State private var fileQuery = ""
     @State private var fileFilter = "全部"
     @State private var selectedFile: StorageReviewCandidate?
-    init(model: HealthCenterModel, onReadDevice: @escaping (DeviceHealthFactor) -> Void, onBack: @escaping () -> Void) {
+    let onOpenCleaning: (() -> Void)?
+    init(model: HealthCenterModel, onReadDevice: @escaping (DeviceHealthFactor) -> Void, onBack: @escaping () -> Void, onOpenCleaning: (() -> Void)? = nil) {
+        self.onOpenCleaning = onOpenCleaning
         self.model = model; _storage = ObservedObject(wrappedValue: model.storage); _device = ObservedObject(wrappedValue: model.device)
         _applications = ObservedObject(wrappedValue: model.applications)
         self.onReadDevice = onReadDevice; self.onBack = onBack
@@ -127,7 +129,7 @@ struct HealthCenterView: View {
             Button { onBack() } label: { Label("返回" + model.returnContext, systemImage: "arrow.left") }
                 .buttonStyle(WBQuietButtonStyle()).frame(height: 28).padding(.bottom, 12)
             WBPageHeader(title: "体检中心", subtitle: "了解设备状态，让每次处理都有依据") {
-                Button { model.showSpaceCleaning() } label: { Label("清理空间", systemImage: "internaldrive.badge.checkmark") }
+                Button { if let onOpenCleaning { onOpenCleaning() } else { model.showSpaceCleaning() } } label: { Label("清理空间", systemImage: "internaldrive.badge.checkmark") }
                     .buttonStyle(WBButtonStyle()).disabled(storage.isScanning || storage.isProcessing || applications.isProcessing)
                     .accessibilityIdentifier("health-open-space-cleaning")
             }

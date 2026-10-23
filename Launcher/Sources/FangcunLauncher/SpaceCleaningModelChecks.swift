@@ -1,0 +1,252 @@
+import Foundation
+import LauncherCore
+
+/// Exercises the production model, scanner, transaction, persistence and quit
+/// barrier. All source objects, history and the injected Trash are temporary
+/// fixtures; this never invokes the system Trash or scans the user's home.
+@MainActor enum SpaceCleaningModelChecks {
+    static func run() async -> (count: Int, failures: Int) {
+        var count = 0, failures = 0
+        func check(_ condition: Bool, _ label: String) {
+            count += 1; if !condition { failures += 1 }
+            print("\(condition ? "PASS" : "FAIL") \(label)")
+        }
+        let rawRoot = FileManager.default.temporaryDirectory.appendingPathComponent("fangcun-cleaning-model-" + UUID().uuidString)
+        var movers: [SpaceCleaningCheckMover] = []
+        var models: [SpaceCleaningModel] = []
+        defer { movers.forEach { $0.release() }; try? FileManager.default.removeItem(at: rawRoot) }
+        do {
+            try FileManager.default.createDirectory(at: rawRoot, withIntermediateDirectories: true)
+            guard let root = SpaceCleaningScanner.canonicalURL(rawRoot) else { throw CheckError.missing }
+            let first = try fixture(root.appendingPathComponent("restore"), names: ["first.data", "second.data"])
+            let mover = SpaceCleaningCheckMover(root: first.home, trash: first.trash); movers.append(mover)
+            let model = SpaceCleaningModel(dataDirectory: first.data, homeDirectory: first.home, mover: mover); models.append(model)
+            check(model.scopeChoice == .recommended && model.screen == .start && model.method == .trash,
+                  "space cleaning opens with default Mac scope and recoverable Trash method")
+            model.startScan(); await model.waitUntilIdle()
+            check(model.screen == .results && model.items.count == 2 && model.selectedIDs.isEmpty && mover.moveCount == 0,
+                  "default production scan finds fixture downloads without selecting or moving any file")
+            model.executeConfirmed(permanent: false, remember: false)
+            check(mover.moveCount == 0 && !model.isBusy, "selection and a distinct confirmation are required before a cleanup")
+            model.items.forEach { model.toggleItem($0.id) }; model.requestConfirmation()
+            check(model.dialog == .confirm && model.selectedCount == 2, "manual selection opens a concrete two-item confirmation")
+            model.executeConfirmed(permanent: false, remember: false); await model.waitUntilIdle()
+            let trashed = try read(first.data)
+            check(trashed.count == 2 && trashed.allSatisfy { $0.state == .trashed && $0.canRestore } && mover.moveCount == 2,
+                  "verified production moves persist exactly one recoverable receipt per selected item")
+            check(model.screen == .finished && model.requiresRescan && model.selectedIDs.isEmpty,
+                  "processing consumes old scan selection and requires a fresh scan")
+            guard let batch = model.batches.first, let conflicted = trashed.first else { throw CheckError.missing }
+            try Data("new occupant".utf8).write(to: conflicted.originalURL)
+            model.requestRestore(batch.id); model.executeRestore(batchID: batch.id, renameConflicts: false); await model.waitUntilIdle()
+            let afterSkip = try read(first.data)
+            check(afterSkip.filter { $0.state == .restored }.count == 1 && afterSkip.filter { $0.state == .trashed }.count == 1,
+                  "batch restore skips a name conflict while restoring other verified items")
+            check(try String(contentsOf: conflicted.originalURL, encoding: .utf8) == "new occupant",
+                  "conflict skipping never overwrites the current file")
+            model.requestRestoreItem(conflicted.id)
+            check(model.pendingHistoryItems.map(\.id) == [conflicted.id], "history supports selecting a single receipt for restoration")
+            model.executeRestore(batchID: batch.id, renameConflicts: true); await model.waitUntilIdle()
+            guard let renamed = try read(first.data).first(where: { $0.id == conflicted.id }), let destination = renamed.restoredURL else { throw CheckError.missing }
+            check(renamed.state == .restored && destination != conflicted.originalURL && destination.pathExtension == "data",
+                  "single-item restore uses an available name while preserving the file extension")
+            check(try String(contentsOf: destination, encoding: .utf8) == "payload-" + conflicted.candidate.title &&
+                  String(contentsOf: conflicted.originalURL, encoding: .utf8) == "new occupant",
+                  "renamed restoration preserves both the original selected content and the new occupant")
+            let oldIDs = model.items.map(\.id); oldIDs.forEach { model.toggleItem($0) }; model.requestConfirmation()
+            check(model.selectedIDs.isEmpty && model.dialog == nil && model.requiresRescan,
+                  "restored files cannot be processed again using stale candidate identities")
+            let reloaded = SpaceCleaningModel(dataDirectory: first.data, homeDirectory: first.home, mover: mover); models.append(reloaded)
+            await reloaded.waitUntilIdle()
+            check(reloaded.batches.count == 1 && reloaded.batches.first?.restorableCount == 0 && mover.moveCount == 2,
+                  "history reload preserves restored outcomes without repeating any move")
+
+            let permanent = try fixture(root.appendingPathComponent("permanent"), names: ["remove.data"])
+            let permanentMover = SpaceCleaningCheckMover(root: permanent.home, trash: permanent.trash); movers.append(permanentMover)
+            let permanentModel = SpaceCleaningModel(dataDirectory: permanent.data, homeDirectory: permanent.home, mover: permanentMover); models.append(permanentModel)
+            permanentModel.startScan(); await permanentModel.waitUntilIdle()
+            guard let permanentItem = permanentModel.items.first else { throw CheckError.missing }
+            permanentModel.toggleItem(permanentItem.id); permanentModel.requestConfirmation()
+            permanentModel.executeConfirmed(permanent: true, remember: true)
+            check(!permanentModel.isBusy && FileManager.default.fileExists(atPath: permanentItem.url.path),
+                  "choosing permanent deletion or remember preference never bypasses the irreversible-action acknowledgement")
+            permanentModel.acknowledgement = true; permanentModel.executeConfirmed(permanent: true, remember: true); await permanentModel.waitUntilIdle()
+            let permanentRecords = try read(permanent.data)
+            check(permanentRecords.count == 1 && permanentRecords.first?.state == .deleted && permanentMover.moveCount == 0,
+                  "confirmed permanent deletion uses its own verified path and creates no recoverable Trash receipt")
+            let remembered = SpaceCleaningModel(dataDirectory: permanent.data, homeDirectory: permanent.home, mover: permanentMover); models.append(remembered)
+            await remembered.waitUntilIdle()
+            check(remembered.method == .permanent && remembered.rememberMethod && !remembered.acknowledgement && remembered.dialog == nil,
+                  "remembered method survives restart while confirmation and acknowledgement remain required")
+
+            try Data("new removable fixture".utf8).write(to: permanentItem.url)
+            remembered.startScan(); await remembered.waitUntilIdle()
+            if let item = remembered.items.first {
+                remembered.toggleItem(item.id); remembered.requestConfirmation()
+                remembered.executeConfirmed(permanent: false, remember: false); await remembered.waitUntilIdle()
+            }
+            let clearedPreference = SpaceCleaningModel(dataDirectory: permanent.data, homeDirectory: permanent.home, mover: permanentMover)
+            models.append(clearedPreference); await clearedPreference.waitUntilIdle()
+            check(clearedPreference.method == .trash && !clearedPreference.rememberMethod,
+                  "unchecking remember removes the prior permanent preference and restores the default Trash choice")
+
+            let purgeFixture = try fixture(root.appendingPathComponent("purge"), names: ["batch-one.data"])
+            let purgeMover = SpaceCleaningCheckMover(root: purgeFixture.home, trash: purgeFixture.trash); movers.append(purgeMover)
+            let purgeModel = SpaceCleaningModel(dataDirectory: purgeFixture.data, homeDirectory: purgeFixture.home, mover: purgeMover); models.append(purgeModel)
+            try await scanAndTrash(purgeModel)
+            guard let firstBatchID = purgeModel.batches.first?.id else { throw CheckError.missing }
+            try Data("second batch".utf8).write(to: purgeFixture.home.appendingPathComponent("Downloads/batch-two.data"))
+            try await scanAndTrash(purgeModel)
+            let unrelated = purgeFixture.trash.appendingPathComponent("unrelated.data")
+            try Data("keep".utf8).write(to: unrelated)
+            purgeModel.requestPurge(firstBatchID); purgeModel.executePurge(batchID: firstBatchID)
+            check(try !purgeModel.isBusy && read(purgeFixture.data).allSatisfy { $0.state == .trashed },
+                  "batch purge requires its own explicit irreversible-action acknowledgement")
+            purgeModel.acknowledgement = true; purgeModel.executePurge(batchID: firstBatchID); await purgeModel.waitUntilIdle()
+            let purged = try read(purgeFixture.data)
+            check(purged.filter { $0.operationID == firstBatchID }.allSatisfy { $0.state == .deleted } &&
+                  purged.filter { $0.operationID != firstBatchID }.allSatisfy { $0.state == .trashed },
+                  "permanent purge affects only receipts belonging to the selected batch")
+            check(try String(contentsOf: unrelated, encoding: .utf8) == "keep", "batch purge leaves unrelated Trash content untouched")
+
+            let corrupt = try fixture(root.appendingPathComponent("corrupt"), names: ["keep.data"])
+            try FileManager.default.createDirectory(at: corrupt.data, withIntermediateDirectories: true)
+            let corruptURL = corrupt.data.appendingPathComponent("history.json"), invalid = Data("invalid-history".utf8)
+            try invalid.write(to: corruptURL)
+            let corruptMover = SpaceCleaningCheckMover(root: corrupt.home, trash: corrupt.trash); movers.append(corruptMover)
+            let corruptModel = SpaceCleaningModel(dataDirectory: corrupt.data, homeDirectory: corrupt.home, mover: corruptMover); models.append(corruptModel)
+            corruptModel.startScan(); await corruptModel.waitUntilIdle()
+            corruptModel.items.forEach { corruptModel.toggleItem($0.id) }; corruptModel.requestConfirmation()
+            check(corruptModel.items.count == 1 && !corruptModel.canProcess && corruptModel.dialog == nil && corruptMover.moveCount == 0,
+                  "invalid history keeps scanning available but blocks destructive operations")
+            check(try Data(contentsOf: corruptURL) == invalid, "invalid history is retained verbatim instead of silently replaced")
+
+            let quitFixture = try fixture(root.appendingPathComponent("quit"), names: ["first.data", "second.data"])
+            let gated = SpaceCleaningCheckMover(root: quitFixture.home, trash: quitFixture.trash, gateFirst: true); movers.append(gated)
+            let quitModel = SpaceCleaningModel(dataDirectory: quitFixture.data, homeDirectory: quitFixture.home, mover: gated); models.append(quitModel)
+            quitModel.startScan(); await quitModel.waitUntilIdle()
+            quitModel.items.forEach { quitModel.toggleItem($0.id) }; quitModel.requestConfirmation(); quitModel.executeConfirmed(permanent: false, remember: false)
+            let entered = await wait { gated.entered }
+            var returned = false
+            let quitting = Task { await quitModel.prepareForQuit(); returned = true }
+            try? await Task.sleep(for: .milliseconds(30))
+            check(entered && !returned && quitModel.isBusy && gated.moveCount == 1,
+                  "quit waits for the current transaction and its durable result before returning")
+            gated.release(); await quitting.value
+            let quitRecords = try read(quitFixture.data)
+            check(returned && !quitModel.isBusy && gated.moveCount == 1 && quitRecords.count == 1 && quitRecords.first?.state == .trashed,
+                  "quit completes the current verified Trash move and does not start the next selected item")
+            let remaining = try FileManager.default.contentsOfDirectory(at: quitFixture.home.appendingPathComponent("Downloads"), includingPropertiesForKeys: nil).filter { !$0.lastPathComponent.hasPrefix(".") }
+            check(remaining.count == 1 && !gated.timedOut, "the unstarted item remains intact after cancellation during a move")
+        } catch {
+            check(false, "space cleaning model check setup or execution: \(error.localizedDescription)")
+        }
+        for model in models { await model.prepareForQuit() }
+        return (count, failures)
+    }
+
+    /// Opt-in, separate from the routine fixture suite. Creates exactly two own
+    /// temporary objects and moves them via the real OS Trash adapter, then
+    /// restores them. It never enumerates or empties the system Trash. If macOS
+    /// denies verification/restoration, retain the journal and report it.
+    static func runSystemTrash() async -> (count: Int, failures: Int) {
+        await Task.detached(priority: .utility) {
+            var count = 0, failures = 0, retainEvidence = false
+            func check(_ condition: Bool, _ label: String) {
+                count += 1; if !condition { failures += 1 }
+                print("\(condition ? "PASS" : "FAIL") \(label)")
+            }
+            let rawRoot = FileManager.default.temporaryDirectory.appendingPathComponent("fangcun-cleaning-system-trash-" + UUID().uuidString)
+            defer {
+                if retainEvidence { print("System Trash check evidence retained at \(rawRoot.path)") }
+                else { try? FileManager.default.removeItem(at: rawRoot) }
+            }
+            do {
+                try FileManager.default.createDirectory(at: rawRoot, withIntermediateDirectories: true)
+                guard let root = SpaceCleaningScanner.canonicalURL(rawRoot) else { throw CheckError.missing }
+                let source = root.appendingPathComponent("selected")
+                try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+                let file = source.appendingPathComponent("Fangcun-owned-check-" + UUID().uuidString + ".data")
+                let app = source.appendingPathComponent("Fangcun-owned-check-" + UUID().uuidString + ".app")
+                try Data("owned-system-trash-file".utf8).write(to: file)
+                try FileManager.default.createDirectory(at: app.appendingPathComponent("Contents/Resources"), withIntermediateDirectories: true)
+                try Data("owned-system-trash-package".utf8).write(to: app.appendingPathComponent("Contents/Resources/check.data"))
+                let scope = SpaceCleaningScope(directory: source)
+                var context = SpaceCleaningContext(homeDirectory: root)
+                let unknown = SpaceCleaningScanner.scan(scopes: [scope], context: context)
+                guard let package = unknown.candidates.first(where: { $0.url.path == app.path }) else { throw CheckError.missing }
+                context.testDeclarations = [.init(candidate: package)]
+                let report = SpaceCleaningScanner.scan(scopes: [scope], context: context)
+                let history = try SpaceCleaningHistoryStore(fileURL: root.appendingPathComponent("state/history.json"))
+                for candidate in report.candidates {
+                    let moved = SpaceCleaningTransaction.execute(candidate: candidate, operationID: UUID(), method: .trash,
+                        mover: SpaceCleaningAppFileOperations(), validatePolicy: {
+                            SpaceCleaningScanner.revalidate(candidate: $0, context: context) == .unchanged ? nil : "Fixture identity changed"
+                        }, persist: history.record)
+                    check(moved.state == .trashed, "system Trash move verifies complete \(candidate.isDirectory ? "package" : "file") using the held content lease: \(moved.explanation)")
+                    guard moved.canRestore else {
+                        if !FileManager.default.fileExists(atPath: candidate.url.path) { retainEvidence = true }
+                        continue
+                    }
+                    retainEvidence = true
+                    let restored = SpaceCleaningTransaction.restore(record: moved, conflict: .skip, persist: history.record)
+                    check(restored.state == .restored, "system Trash restores owned \(candidate.isDirectory ? "package" : "file") without overwrite: \(restored.explanation)")
+                    if restored.state == .restored { retainEvidence = history.records.contains { $0.state == .trashed || $0.state == .needsReview } }
+                }
+                check(history.records.count == 2 && history.records.allSatisfy { $0.state == .restored },
+                      "both owned system Trash fixtures have durable restored receipts; no unrelated Trash operation")
+                retainEvidence = retainEvidence || history.records.contains { $0.state == .trashed || $0.state == .needsReview }
+            } catch { check(false, "system Trash fixture check: \(error.localizedDescription)"); retainEvidence = true }
+            return (count, failures)
+        }.value
+    }
+
+    private enum CheckError: Error { case missing }
+    private struct Fixture { var home: URL; var data: URL; var trash: URL }
+    private static func fixture(_ home: URL, names: [String]) throws -> Fixture {
+        let downloads = home.appendingPathComponent("Downloads"), trash = home.appendingPathComponent("fake-trash")
+        try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
+        for name in names { try Data(("payload-" + name).utf8).write(to: downloads.appendingPathComponent(name)) }
+        return .init(home: home, data: home.appendingPathComponent("state"), trash: trash)
+    }
+    private static func read(_ directory: URL) throws -> [SpaceCleaningRecord] {
+        try SpaceCleaningHistoryStore(fileURL: directory.appendingPathComponent("history.json")).records
+    }
+    private static func scanAndTrash(_ model: SpaceCleaningModel) async throws {
+        model.startScan(); await model.waitUntilIdle()
+        guard !model.items.isEmpty else { throw CheckError.missing }
+        model.items.forEach { model.toggleItem($0.id) }; model.requestConfirmation()
+        model.executeConfirmed(permanent: false, remember: false); await model.waitUntilIdle()
+    }
+    private static func wait(_ predicate: () -> Bool) async -> Bool {
+        for _ in 0..<300 { if predicate() { return true }; try? await Task.sleep(for: .milliseconds(10)) }
+        return predicate()
+    }
+}
+
+private final class SpaceCleaningCheckMover: SpaceCleaningFileOperating, @unchecked Sendable {
+    private let root: URL
+    private let trash: URL
+    private let gateFirst: Bool
+    private let gate = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private var calls = 0
+    private var reached = false
+    private var expired = false
+    init(root: URL, trash: URL, gateFirst: Bool = false) { self.root = root; self.trash = trash; self.gateFirst = gateFirst }
+    var moveCount: Int { lock.lock(); defer { lock.unlock() }; return calls }
+    var entered: Bool { lock.lock(); defer { lock.unlock() }; return reached }
+    var timedOut: Bool { lock.lock(); defer { lock.unlock() }; return expired }
+    func release() { gate.signal() }
+    func moveToTrash(_ source: URL) throws -> URL {
+        guard source.path.hasPrefix(root.path + "/"), trash.path.hasPrefix(root.path + "/") else { throw CocoaError(.fileWriteNoPermission) }
+        lock.lock(); calls += 1; let shouldWait = gateFirst && calls == 1; if shouldWait { reached = true }; lock.unlock()
+        if shouldWait, gate.wait(timeout: .now() + 10) == .timedOut {
+            lock.lock(); expired = true; lock.unlock(); throw CocoaError(.fileWriteUnknown)
+        }
+        let destination = trash.appendingPathComponent(UUID().uuidString + "-" + source.lastPathComponent)
+        try FileManager.default.moveItem(at: source, to: destination)
+        return destination
+    }
+}

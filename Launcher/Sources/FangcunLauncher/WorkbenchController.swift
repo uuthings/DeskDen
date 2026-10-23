@@ -22,6 +22,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     let preferenceStore:WorkbenchPreferenceStore
     let device:DeviceStatusModel
     let health:HealthCenterModel
+    let cleaning:SpaceCleaningModel
     let context:WorkbenchContextModel
     let modals=WorkbenchModalCoordinator()
     let calendar:CalendarModel
@@ -73,13 +74,14 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     @Published private(set) var windowVisible=false
     private let startServices:Bool
     private var quitPreparationTask:Task<Void,Never>?
-    init(owner:LauncherController,calendar:CalendarModel?=nil,ai:AIUsageModel?=nil,device:DeviceStatusModel?=nil,health:HealthCenterModel?=nil,startServices:Bool=true) {
+    init(owner:LauncherController,calendar:CalendarModel?=nil,ai:AIUsageModel?=nil,device:DeviceStatusModel?=nil,health:HealthCenterModel?=nil,cleaning:SpaceCleaningModel?=nil,startServices:Bool=true) {
         self.owner=owner;self.startServices=startServices
         dataDirectory=owner.store.url.deletingLastPathComponent().appendingPathComponent("Workbench",isDirectory:true)
         preferenceStore=WorkbenchPreferenceStore(url:dataDirectory.appendingPathComponent("preferences.json"))
         let deviceModel=device ?? DeviceStatusModel(dataDirectory:dataDirectory.appendingPathComponent("Device"))
         self.device=deviceModel
         self.health=health ?? HealthCenterModel(device:deviceModel,dataDirectory:dataDirectory.appendingPathComponent("Health"))
+        self.cleaning=cleaning ?? SpaceCleaningModel(dataDirectory:dataDirectory.appendingPathComponent("SpaceCleaning"))
         context=WorkbenchContextModel(dataDirectory:dataDirectory.appendingPathComponent("Context"))
         self.calendar=calendar ?? CalendarModel(dataDirectory:dataDirectory.appendingPathComponent("Calendar"))
         self.ai=ai ?? AIUsageModel(dataDirectory:dataDirectory.appendingPathComponent("AI"))
@@ -128,15 +130,18 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     func launcher() { owner?.show() }
     func setWindowVisible(_ value:Bool) {windowVisible=value;updateSamplingVisibility()}
     private func updateSamplingVisibility() {
+        cleaning.windowVisible=windowVisible && route == .cleaning
+        cleaning.reduceMotion=reduceMotion
         guard startServices else {return}
         context.setVisible(windowVisible && [.overview,.calendar].contains(route))
-        device.setWindowVisible(windowVisible && [.overview,.device,.health,.network].contains(route))
+        device.setWindowVisible(windowVisible && [.overview,.device,.health,.cleaning,.network].contains(route))
         device.setWidgetsVisible(preferences.cards.contains(where:{$0.visible && $0.id == .device}) || (windowVisible && route == .cards))
     }
     func syncAppearance() {
         guard let owner else {return};opacity=owner.configuration.settings.glassOpacity;appearance=owner.configuration.settings.workbenchAppearance
         light=appearance == .light || (appearance == .system && NSApp.effectiveAppearance.bestMatch(from:[.aqua,.darkAqua]) == .aqua)
         theme=owner.configuration.settings.workbenchTheme;backgroundMotion=owner.configuration.settings.backgroundMotionEnabled;reduceMotion=owner.configuration.settings.reduceMotion
+        cleaning.reduceMotion=reduceMotion
         Palette.workbenchTheme=theme;Palette.isLight=light;Palette.glassOpacity=opacity
         hostWindow?.appearance=appearance == .system ? nil:NSAppearance(named:light ? .aqua:.darkAqua)
         widgets.apply(preferences.cards,opacity:opacity,light:light,theme:theme)
@@ -182,6 +187,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
             guard let self,let owner else {return}
             defer {self.quitPreparationTask=nil}
             do {
+                await self.cleaning.prepareForQuit()
                 await self.health.prepareForQuit()
                 try await self.calendar.suspendOwnNotificationsForQuit()
                 self.confirmingQuit=false
@@ -192,6 +198,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
             } catch {
                 self.calendar.resumeOwnNotificationsAfterCancelledQuit()
                 self.health.resumeAfterCancelledQuit()
+                self.cleaning.resumeAfterCancelledQuit()
                 self.quitting=false;self.confirmingQuit=false
                 owner.cancelPendingSystemTermination()
                 self.message="退出前未能暂停方寸提醒：\(error.localizedDescription)"
@@ -258,7 +265,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         struct Report:Codable {var format="fangcun-function-audit";var date:Date;var entries:[WorkbenchAuditEntry]}
         do {let encoder=JSONEncoder();encoder.outputFormatting=[.prettyPrinted,.sortedKeys];encoder.dateEncodingStrategy = .iso8601;try encoder.encode(Report(date:Date(),entries:auditEntries)).write(to:url,options:.atomic);toast="功能审计已导出。"} catch {message="导出失败：\(error.localizedDescription)"}
     }
-    func shutdown() {modals.clear();context.stop();health.cancelAll();vault.lock(reason:"退出方寸");device.stop();widgets.hideAll();owner?.settingsWindowController?.stopEmbedding()}
+    func shutdown() {modals.clear();context.stop();health.cancelAll();cleaning.cancelAll();vault.lock(reason:"退出方寸");device.stop();widgets.hideAll();owner?.settingsWindowController?.stopEmbedding()}
 }
 
 @MainActor final class WorkbenchWindowController:NSWindowController,NSWindowDelegate {
@@ -319,6 +326,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         self.model.hostWindow=window
         self.model.vault.hostWindow=window
         self.model.health.hostWindow=window
+        self.model.cleaning.hostWindow=window
         self.model.modals.hostWindow=window
         window.center();if autosavesFrame {window.setFrameAutosaveName(Bundle.main.object(forInfoDictionaryKey:"FangcunDeviceAcceptance") as? Bool == true ? "FangcunDeviceAcceptance" : "FangcunWorkbench")}
         hostingView=NSHostingView(rootView:AnyView(WorkbenchRootView(model:self.model).nativeCheckAccessibility()));hostingView.frame=NSRect(origin:.zero,size:window.contentLayoutRect.size);hostingView.autoresizingMask=[.width,.height]
@@ -537,6 +545,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         model.hostWindow = target
         model.vault.hostWindow = target
         model.health.hostWindow = target
+        model.cleaning.hostWindow = target
         model.modals.hostWindow = target
     }
     private func parkedOrdinarySurface() -> NSView {
