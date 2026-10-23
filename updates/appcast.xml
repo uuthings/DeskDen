@@ -15,6 +15,7 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
             <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <description sparkle:format="plain-text"><![CDATA[方寸 0.2.0
+发布于 2026-10-23 03:49 UTC
 
 • 接入手动检查更新，可选择每日自动检查，安装仍需确认。
 • 统一工作台入口、程序坞展示及窗口位置恢复。
@@ -31,6 +32,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: ValOMZ0dIP5MD+uj1zlCrvsvn12aPDooHnBay8QGDGtDefNHq52H7HUeKfEmLGjPDv1x9EPQRztKM2GqanicBQ==
-length: 2040
+edSignature: RtjDt3F9RJAhB3HQfC2O6opvSrI4WxEosUL3t9WxJbpLhUi5YZUQjq6fJLENicE5nKLuV4SG86TG4BwoYLyrCw==
+length: 2071
 -->
