@@ -10,7 +10,7 @@ Settings → General contains **Check for Updates** and **Automatically check fo
 
 The updater uses HTTPS, validates the signed feed and verifies the archive's Ed25519 signature before extraction. An Install & Relaunch request uses the same encrypted-write, editor-draft, health-transaction and notification shutdown barriers as a normal quit. Cancelling a save decision prevents termination. Checking for updates does not itself quit the app or change local data.
 
-The feed address is `https://raw.githubusercontent.com/uuthings/DeskDen/main/updates/appcast.xml`. The repository initially contains a signed empty feed; it makes no claim that a public release is available. Until this file is explicitly published, a manual check can report an unavailable channel. Never label a failed feed request as “up to date.” Existing 0.1.0 builds without Sparkle need a one-time manual installation of the first updater-enabled release.
+The feed address is `https://raw.githubusercontent.com/uuthings/DeskDen/main/updates/appcast.xml`. It lists the published, signed updates and their matching GitHub Release assets. Never label a failed feed request as “up to date.” The original 0.1.0 builds without Sparkle need a one-time manual installation of 0.2.0; later published versions can use the in-app updater. See the [installation and upgrade guide](install.md) before migrating an original-format Private Space.
 
 ## Signing material
 
