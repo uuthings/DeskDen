@@ -32,6 +32,10 @@ xcodebuild -project Fangcun.xcodeproj -scheme Fangcun \
 
 自动检查使用临时数据与夹具，不代表已经验证个人账号、系统授权或所有硬件场景；视觉与系统窗口行为还需要启动真实 App 检查。正式版本的签名、公证和完整归档遵循 [发布流程](../docs/releasing.md)，实际结果以对应 Release 与归档证据为准。
 
+## 空间清理
+
+独立的「空间清理」导航提供默认范围扫描、分类复核、测试用途确认、废纸篓／永久删除与历史恢复。规则、事务边界和专项验证入口见 [空间清理](../docs/space-cleaning.md)。
+
 ## 图标与窗口
 
 「设置 → 外观与材质」提供青碧晨雾、月白云海、暖霞悬山三款图标；默认青碧晨雾。已采用的源 PNG 位于 `Artwork/AppIcons/`，通过 `scripts/prepare-app-icons.swift` 生成生产 ICNS，转换来源和校验值保存在同目录元数据中。

@@ -590,6 +590,10 @@ enum NativeChecks {
         count += launcherSettingsChecks.count;failures += launcherSettingsChecks.failures
         let storageServiceChecks=await StorageReviewServiceChecks.run()
         count += storageServiceChecks.count;failures += storageServiceChecks.failures
+        let cleaningModelChecks=await SpaceCleaningModelChecks.run()
+        count += cleaningModelChecks.count;failures += cleaningModelChecks.failures
+        let cleaningNativeChecks=await SpaceCleaningNativeChecks.run()
+        count += cleaningNativeChecks.count;failures += cleaningNativeChecks.failures
         let quitChecks=await WorkbenchQuitChecks.run()
         count += quitChecks.count;failures += quitChecks.failures
         print("Native checks: \(count) checks, \(failures) failures")

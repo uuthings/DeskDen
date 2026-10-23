@@ -26,10 +26,18 @@ struct WorkbenchShellMetrics {
 private struct WorkbenchPageInsetsKey: EnvironmentKey {
     static let defaultValue = EdgeInsets()
 }
+private struct WorkbenchPageScrollHeightKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 0
+}
+enum WorkbenchPageScrollSpace { static let name = "workbench-page-scroll" }
 extension EnvironmentValues {
     var workbenchPageInsets: EdgeInsets {
         get {self[WorkbenchPageInsetsKey.self]}
         set {self[WorkbenchPageInsetsKey.self] = newValue}
+    }
+    var workbenchPageScrollHeight: CGFloat {
+        get {self[WorkbenchPageScrollHeightKey.self]}
+        set {self[WorkbenchPageScrollHeightKey.self] = newValue}
     }
 }
 extension View {
@@ -90,6 +98,7 @@ struct WorkbenchRootView: View {
             .environment(\.workbenchScale, 1)
             .environment(\.workbenchDeviceExpanded, expanded)
             .environment(\.workbenchContentHeight, max(0, viewport.size.height - chromeHeight - 2 - (expanded ? 26:compact ? 20:22) - (expanded || compact ? 20:16)))
+            .environment(\.workbenchPageScrollHeight, max(0, viewport.size.height - chromeHeight - 2))
         }
         .clipShape(RoundedRectangle(cornerRadius: model.isFullScreen ? 0 : WorkbenchViewport.windowRadius))
         .overlay(RoundedRectangle(cornerRadius: model.isFullScreen ? 0 : WorkbenchViewport.windowRadius).strokeBorder(palette.border.opacity(model.isFullScreen ? 0 : 1), lineWidth: 1).allowsHitTesting(false))
@@ -137,7 +146,8 @@ struct WorkbenchRootView: View {
                     switch model.route {
                     case .overview: WorkbenchOverview(device: model.device, calendar: model.calendar, health:model.health,context:model.context,navigate:model.navigate,openHealth:model.openHealth,openDevice:model.openDeviceReading)
                     case .device: EmptyView()
-                    case .health: HealthCenterView(model:model.health,onReadDevice:model.openHealthReading,onBack:model.returnFromHealth)
+                    case .health: HealthCenterView(model:model.health,onReadDevice:model.openHealthReading,onBack:model.returnFromHealth,onOpenCleaning:{model.navigate(.cleaning)})
+                    case .cleaning: SpaceCleaningModuleView(model:model.cleaning,onLegacyHistory:model.health.storage.receipts.isEmpty ? nil:{model.navigate(.health);model.health.showResults(kind:.files)})
                     case .calendar: CalendarModuleView(model: model.calendar,context:model.context,returnToSettingsPrivacy:{model.navigate(.settings);model.settingsTab = .privacy})
                     case .network: EmptyView()
                     case .ai: AIUsageModuleView(model: model.ai, openDesktopCards: { model.navigate(.cards) },returnToSettingsPrivacy:{model.navigate(.settings);model.settingsTab = .privacy})
@@ -150,11 +160,13 @@ struct WorkbenchRootView: View {
                 .id("workbench-page-top")
                 .background(WorkbenchOverlayScrollbars())
               }.scrollContentBackground(.hidden).scrollBounceBehavior(.basedOnSize)
+                .coordinateSpace(name: WorkbenchPageScrollSpace.name)
                 .onChange(of:model.route) {_,_ in resetToTop()}
                 .onChange(of:model.settingsTab) {_,_ in if model.route == .settings {resetToTop()}}
                 .onReceive(model.ai.$destination.removeDuplicates()) {_ in if model.route == .ai {resetToTop()}}
                 .onReceive(model.calendar.$showSources.removeDuplicates()) {_ in if model.route == .calendar {resetToTop()}}
                 .onReceive(model.vault.$showingProtection.removeDuplicates()) {_ in if model.route == .vault {resetToTop()}}
+                .onReceive(model.cleaning.$screen.removeDuplicates()) {_ in if model.route == .cleaning {resetToTop()}}
                 .onReceive(model.health.$phase.removeDuplicates()) {_ in if model.route == .health {resetToTop()}}
                 .onReceive(model.health.$category.removeDuplicates()) {_ in if model.route == .health {resetToTop()}}
                 .onReceive(model.health.$resultKind.removeDuplicates()) {_ in if model.route == .health {resetToTop()}}
@@ -186,9 +198,9 @@ struct WorkbenchRootView: View {
                 Spacer(minLength:24)
                 Text("方寸").font(.system(size:11)).foregroundStyle(palette.muted).padding(.horizontal,12)
             } else {
-                ForEach([WorkbenchRoute.overview,.device,.health,.calendar,.ai,.network,.vault],id:\.self) {route in navigation(route,expanded:expanded)}
+                ForEach([WorkbenchRoute.overview,.device,.health,.cleaning,.calendar,.ai,.network,.vault],id:\.self) {route in navigation(route,expanded:expanded)}
                 navigation(.cards,expanded:expanded)
-                Spacer(minLength:24)
+                Spacer(minLength:0)
                 Button {model.launcher()} label:{
                     HStack(spacing:10) {
                         Image(systemName:"command").font(.system(size:16,weight:.light)).frame(width:18)
