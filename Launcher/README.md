@@ -1,6 +1,6 @@
 # 方寸 · 开发指南
 
-方寸使用 AppKit、SwiftUI 和本地 `LauncherCore` Swift Package，最低部署版本为 macOS 14，Swift 工具版本为 6.0。Xcode 工程负责生成 macOS App，Swift Package 支持核心测试与本地开发构建。
+方寸使用 AppKit、SwiftUI 和本地 `LauncherCore` Swift Package，最低运行版本为 macOS 14。当前源码构建与 CI 使用 Xcode 27.0（Swift 6.4）；Package 的 Swift 6.0 语言模式不表示旧 SDK 能编译全部原生界面。Xcode 工程负责生成 macOS App，Swift Package 支持核心测试与本地开发构建。
 
 ## 构建
 
