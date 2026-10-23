@@ -157,7 +157,7 @@ import LauncherCore
             let rect = window.convertToScreen(control.convert(control.bounds, to: nil))
             let root = window.convertToScreen(host.convert(host.bounds, to: nil))
             print("DETAIL native budget control type=\(type(of: control)) controlSize=\(control.controlSize.rawValue) state=\(control.state.rawValue) root=\(NSStringFromRect(root)) switch=\(NSStringFromRect(rect))")
-            check(control.controlSize == .small && rect.width >= 24 && rect.width <= 38 && rect.height >= 14 && rect.height <= 24,
+            check(control.controlSize == .mini && rect.width >= 24 && rect.width <= 38 && rect.height >= 14 && rect.height <= 24,
                   "the real budget enable switch uses compact native dimensions without a stretched Toggle label")
             check(abs(rect.maxX - (root.maxX - 18)) <= 2,
                   "the actual budget enable switch sits at the far-right 18-point dialog content boundary")

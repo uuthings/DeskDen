@@ -173,7 +173,7 @@ struct DeviceBudgetSettingsView: View {
                 Label("流量预算", systemImage: "slider.horizontal.3").font(.system(size: 12, weight: .medium))
                 Spacer()
                 Toggle("启用流量预算", isOn: $drafts.budget.enabled)
-                    .labelsHidden().toggleStyle(.switch).controlSize(.small).fixedSize()
+                    .labelsHidden().toggleStyle(.switch).controlSize(.mini).fixedSize()
                     .accessibilityIdentifier("fc.network.budget.settings.enabled")
             }
     }
