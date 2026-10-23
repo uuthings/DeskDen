@@ -1,13 +1,36 @@
-<?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
-  <channel>
-    <title>Fangcun updates</title>
-    <link>https://github.com/uuthings/DeskDen</link>
-    <description>Signed updates for Fangcun. No public update has been published.</description>
-    <language>zh-CN</language>
-  </channel>
-</rss><!-- sparkle-signatures:
-edSignature: AndqAlxmtLQMOqn/L20CHbrOEBXK42FC28pkRAi2kio2EYt1uByzDXzZKKVAoukM2JlXnVfgedsu2YIANTxxDg==
-length: 625
+-->
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>Fangcun updates</title>
+        <link>https://github.com/uuthings/DeskDen</link>
+        <description>Official signed software updates for Fangcun.</description>
+        <language>zh-CN</language>
+        <item>
+            <title>0.2.0</title>
+            <pubDate>Fri, 23 Oct 2026 03:49:31 +0000</pubDate>
+            <sparkle:version>3</sparkle:version>
+            <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="plain-text"><![CDATA[方寸 0.2.0
+
+• 接入手动检查更新，可选择每日自动检查，安装仍需确认。
+• 统一工作台入口、程序坞展示及窗口位置恢复。
+• 完善英文首字母与模糊搜索、空间清理、设备卡片和页面滚动。
+• 完善私密文本编辑、分类管理及可选 Touch ID 解锁。
+• 调整 AI 额度展示、节假日颜色，并增加仙山主题与水幕图标。
+
+使用最初 0.1.0 私密空间的用户，请先另存加密备份。新版读取旧资料不会立即转换；保存资料或发起 Touch ID 开启后会采用新格式，最初的 0.1.0 无法读取，请继续使用新版。
+
+完整说明：https://github.com/uuthings/DeskDen/releases/tag/v0.2.0
+]]></description>
+            <enclosure url="https://github.com/uuthings/DeskDen/releases/download/v0.2.0/Fangcun-0.2.0-macos-universal.zip" length="25678882" type="application/octet-stream" sparkle:edSignature="KXr5YBvXvGMjX6nT0aQ3bZUBo7zylIYfDE2L4OtiXVdpSwuBkDbYw/yOeRBZEDhZVWbAR7gO5gph60OE06dECg=="/>
+        </item>
+    </channel>
+</rss>
+<!-- sparkle-signatures:
+edSignature: ValOMZ0dIP5MD+uj1zlCrvsvn12aPDooHnBay8QGDGtDefNHq52H7HUeKfEmLGjPDv1x9EPQRztKM2GqanicBQ==
+length: 2040
 -->
