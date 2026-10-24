@@ -12,6 +12,19 @@ public enum DeviceHealthRules {
     public static let storageCriticalFraction = 0.05
     public static let storageWarningBytes: UInt64 = 20_000_000_000
     public static let storageCriticalBytes: UInt64 = 5_000_000_000
+
+    public static func explanation(for factor: DeviceHealthFactor) -> String {
+        switch factor {
+        case .storage:
+            return "余量 <\(Int(storageCriticalFraction * 100))% 或 <\(storageCriticalBytes / 1_000_000_000) GB 扣40；<\(Int(storageWarningFraction * 100))% 或 <\(storageWarningBytes / 1_000_000_000) GB 扣16；其余不扣分"
+        case .memory:
+            return "正常不扣分；持续\(Int(sustainedPressureSeconds))秒警告扣14；持续\(Int(sustainedPressureSeconds))秒严重扣35"
+        case .thermal:
+            return "正常与略高不扣分；持续\(Int(sustainedThermalSeconds))秒严重扣15；持续\(Int(sustainedThermalSeconds))秒临界扣25"
+        case .battery:
+            return "电池健康只作状态提示，不参与总分；无电池或健康数据缺失不扣分。"
+        }
+    }
 }
 
 public enum DeviceHealthInputState: String, Codable, Equatable, Sendable {
@@ -269,7 +282,7 @@ public enum DeviceHealthAssessor {
                       explanation: "按可用空间占比与绝对余量判断；扫描到多少缓存不参与评分。",
                       evidence: [.init("volume", value.volumeName), .init("totalBytes", String(value.totalBytes)),
                                  .init("availableBytes", String(value.availableBytes)), .init("availableFraction", String(fraction)),
-                                 .init("rule", "余量 <5% 或 <5 GB 扣40；<15% 或 <20 GB 扣16；其余不扣分")])
+                                 .init("rule", DeviceHealthRules.explanation(for: .storage))])
     }
     private static func memory(_ input: DeviceHealthReading<DeviceHealthMemoryReading>, now: Date) -> DeviceHealthFactorResult {
         if let issue = checked(input, factor: .memory, now: now) { return issue }
@@ -282,7 +295,7 @@ public enum DeviceHealthAssessor {
             return item
         }
         var evidence = [DeviceHealthEvidence("pressure", value.pressure.rawValue), .init("sustainedSeconds", String(value.sustainedSeconds)),
-                        .init("rule", "正常不扣分；持续60秒警告扣14；持续60秒严重扣35")]
+                        .init("rule", DeviceHealthRules.explanation(for: .memory))]
         if let swap = value.swapUsedBytes { evidence.append(.init("swapUsedBytes", String(swap))) }
         return result(.memory, input: input, severity: value.pressure == .normal ? .good : value.pressure == .warning ? .watch : .urgent,
                       deduction: value.pressure == .normal ? 0 : value.pressure == .warning ? 14 : 35,
@@ -305,7 +318,7 @@ public enum DeviceHealthAssessor {
                       summary: high ? "系统热压力持续偏高" : value.state == .fair ? "系统热状态略高" : "系统热状态正常",
                       explanation: "依据 macOS 热状态及连续观测时长，不以单个 CPU/GPU 温度值断言硬件健康。",
                       evidence: [.init("thermalState", value.state.rawValue), .init("sustainedSeconds", String(value.sustainedSeconds)),
-                                 .init("rule", "正常与略高不扣分；持续60秒严重扣15；持续60秒临界扣25")])
+                                 .init("rule", DeviceHealthRules.explanation(for: .thermal))])
     }
     private static func battery(_ input: DeviceHealthReading<DeviceHealthBatteryCondition>, now: Date) -> DeviceHealthFactorResult {
         if let issue = checked(input, factor: .battery, now: now) { return issue }
@@ -313,7 +326,7 @@ public enum DeviceHealthAssessor {
         let service = input.value == .serviceRecommended
         return result(.battery, input: input, severity: service ? .watch : .good, deduction: 0,
                       summary: service ? "系统建议检修电池" : "系统电池状态正常", explanation: "电池作为独立提示，不纳入本版设备状态评分。",
-                      evidence: [.init("condition", input.value!.rawValue), .init("rule", "仅供查看，不计分")])
+                      evidence: [.init("condition", input.value!.rawValue), .init("rule", DeviceHealthRules.explanation(for: .battery))])
     }
     private static func validDuration(_ value: TimeInterval) -> Bool { value.isFinite && value >= 0 && value <= 31_536_000 }
 }

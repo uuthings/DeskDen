@@ -79,11 +79,11 @@ enum WorkbenchResponsiveLayoutChecks {
             let workspace = frame("health-workspace", in: host)
             let hostScreenBounds = window.convertToScreen(host.convert(host.bounds, to: nil))
             let workspaceTop = workspace.map { hostScreenBounds.maxY - $0.maxY }
-            // Frozen back row: 28 pt plus 12 pt gap, then the 54 pt
-            // page heading and 18 pt gap. Keep this page-local.
-            let expectedWorkspaceTop: CGFloat = sample.page > 1200 ? 189 : sample.page < 800 ? 179 : 181
+            // Health is an independent module: use the shared page heading
+            // without the former 28 pt return row and its 12 pt gap.
+            let expectedWorkspaceTop: CGFloat = sample.page > 1200 ? 149 : sample.page < 800 ? 139 : 141
             check(workspaceTop.map { abs($0 - expectedWorkspaceTop) < 1 } == true,
-                  "mounted health workspace starts at the frozen \(Int(expectedWorkspaceTop)) pt top after its 28 pt return row in \(label)")
+                  "mounted independent health workspace starts at the shared \(Int(expectedWorkspaceTop)) pt top without a cross-module return row in \(label)")
             check(ring.map { abs($0.width - ringEnvelope) < 1 && abs($0.height - ringEnvelope) < 1 } == true,
                   "mounted health overview score keeps its \(Int(sample.ring)) pt nominal ring with the frozen 7%-per-side halo envelope in \(label)")
             check(start.map { abs($0.width - sample.button) < 2 && abs($0.height - 32) < 1 } == true,

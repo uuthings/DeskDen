@@ -31,7 +31,6 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     private(set) var widgets:DesktopWidgetsController!
     @Published var route:WorkbenchRoute = .overview
     @Published var deviceDetail:DeviceCardID?
-    private var healthReturnRoute:WorkbenchRoute = .overview
     private var readingReturnRoute:WorkbenchRoute?
     @Published var settingsTab:WorkbenchSettingsTab = .general
     @Published private(set) var settingsReturnRoute:WorkbenchRoute = .overview
@@ -111,13 +110,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         if next == .settings, route != .settings {settingsReturnRoute=route}
         route=next;updateSamplingVisibility()
     }
-    func openHealth() {
-        let previous=route
-        navigate(.health)
-        guard route == .health else {return}
-        if previous != .health {healthReturnRoute=previous;health.returnContext=previous.title}
-    }
-    func returnFromHealth() {navigate(healthReturnRoute)}
+    func openHealth() { navigate(.health) }
     func openHealthReading(_ factor:DeviceHealthFactor) {
         readingReturnRoute = .health
         switch factor {case .storage:deviceDetail = .storage;case .memory:deviceDetail = .memory;case .thermal,.battery:deviceDetail = .thermal}

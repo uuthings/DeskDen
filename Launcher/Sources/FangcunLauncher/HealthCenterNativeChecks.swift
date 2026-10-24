@@ -35,7 +35,6 @@ import SwiftUI
             check(model.phase == .overview && model.score == nil && model.latestReport == nil && model.assessmentOutcome == .cancelled,
                   "cancelling before a completed assessment cannot manufacture a report or score")
             model.showOverview()
-            model.returnContext = "设备状态"
             model.startAssessment()
             check(model.phase == .report && model.latestReport?.stage == .report && model.score == nil,
                   "assessment with no performance sample completes evidence collection without a precise score")
@@ -68,16 +67,16 @@ import SwiftUI
             let reportID = healthy.id
             for category in HealthCenterCategory.allCases {
                 model.showCategory(category)
-                check(model.phase == .report && model.category == category && model.latestReport?.id == reportID && model.returnContext == "设备状态",
-                      "health category \(category.rawValue) preserves the report identity and entry return source")
+                check(model.phase == .report && model.category == category && model.latestReport?.id == reportID,
+                      "health category \(category.rawValue) preserves the report identity")
             }
-            model.reportExpanded = true; model.includeCache = false; model.includeDiagnostics = false; model.includeMemory = false
+            model.includeCache = false; model.includeDiagnostics = false; model.includeMemory = false
             model.showReport()
-            check(model.category == .overview && model.reportExpanded && !model.includeCache && !model.includeDiagnostics && !model.includeMemory,
-                  "returning to the report preserves expanded evidence and explicit suggestion choices")
+            check(model.category == .overview && !model.includeCache && !model.includeDiagnostics && !model.includeMemory,
+                  "returning to the report preserves explicit suggestion choices")
             model.showOverview()
-            check(model.phase == .overview && model.category == .overview && model.latestReport?.id == reportID && model.returnContext == "设备状态",
-                  "returning to health overview keeps report and caller context")
+            check(model.phase == .overview && model.category == .overview && model.latestReport?.id == reportID,
+                  "returning to health overview keeps the current report")
             let diskHistory = try readHistory(directory)
             let reloaded = HealthCenterModel(device: device, dataDirectory: directory)
             check(diskHistory.reports.first?.id == reportID && reloaded.latestReport == healthy && reloaded.score == 100,
@@ -147,7 +146,7 @@ import SwiftUI
                   "a genuinely later complete sample recalculates from actual disk evidence without automatic score gain")
             let resultingID = model.latestReport?.id
             model.showResults(); model.showReport(); model.showOverview()
-            check(model.phase == .overview && model.latestReport?.id == resultingID && model.returnContext == "设备状态",
+            check(model.phase == .overview && model.latestReport?.id == resultingID,
                   "result, report and overview navigation preserves the same reassessed evidence and source")
             model.beginProcessing()
             check(model.phase == .overview && !model.storage.isProcessing && model.storage.receipts.isEmpty,
@@ -396,7 +395,7 @@ import SwiftUI
                   "record navigation cannot interrupt an actual pending fake application request")
             executor.release()
             guard await visualWait(host, until: { !applications.isProcessing && applications.hasResults }) else { throw HealthVisualError.invalid("fake application receipt missing") }
-            applications.toggle(application); health.reportExpanded = true
+            applications.toggle(application)
             let reportID = health.latestReport?.id, scanID = storage.report?.id
             let fileSelection = storage.selectedIDs, applicationSelection = applications.selectedIDs
             let journal = try Data(contentsOf: data.appendingPathComponent("storage-actions.json"))
@@ -434,7 +433,7 @@ import SwiftUI
                         let resultID = kind == .files ? "health-file-results" : "health-application-results"
                         let opened = await visualWait(host) { health.phase == .result && health.resultKind == kind && !visualFrames(resultID, in: host).isEmpty }
                         returnToPage()
-                        check(opened && health.latestReport?.id == reportID && storage.report?.id == scanID && health.reportExpanded &&
+                        check(opened && health.latestReport?.id == reportID && storage.report?.id == scanID &&
                               storage.selectedIDs == fileSelection && applications.selectedIDs == applicationSelection,
                               "\(sizeName)/\(page) mounted \(kind) Button action opens the correct real result and preserves report and both selections on return")
                     }

@@ -17,7 +17,7 @@ struct SpaceCleaningModuleView: View {
                         Button("停止核对", action: model.cancelHistoryVerification).buttonStyle(WBQuietButtonStyle())
                     }.padding(.bottom, 12)
                 }
-                let compactHome = model.screen == .start && model.dialog == nil
+                let compactHome = [.start, .scope].contains(model.screen) && model.dialog == nil
                 content(width: geometry.size.width, height: geometry.size.height).frame(maxWidth: .infinity, maxHeight: compactHome ? nil : .infinity)
                 HStack(spacing: 8) {
                     if !compactHome {
@@ -50,23 +50,27 @@ struct SpaceCleaningModuleView: View {
         return "\(model.diskVolumeName ?? "此 Mac") · \(SpaceCleaningFormat.bytes(available)) 可用 / \(SpaceCleaningFormat.bytes(total))"
     }
     private var header: some View {
-        WBPageHeader(title: model.screen == .history ? "清理记录" : "空间清理", subtitle: subtitle) {
-            if model.screen == .scope {
-                Button("返回", action: model.cancelScope).buttonStyle(WBButtonStyle())
-            } else if model.dialog.map({ !isPurpose($0) }) == true {
-                Button("返回", action: model.closeDialog).buttonStyle(WBButtonStyle()).disabled(model.isBusy)
+        VStack(alignment: .leading, spacing: 0) {
+            if model.dialog.map({ !isPurpose($0) }) == true {
+                Button(action: model.closeDialog) { Label("返回", systemImage: "arrow.left") }
+                    .buttonStyle(WBQuietButtonStyle()).disabled(model.isBusy).padding(.bottom, 8)
+            } else if model.screen == .results {
+                Button(action: model.goHome) { Label("扫描设置", systemImage: "chevron.left") }
+                    .buttonStyle(WBQuietButtonStyle()).disabled(model.isBusy).padding(.bottom, 8)
+                    .accessibilityIdentifier("space-cleaning-edit-scope")
             } else if model.screen == .history {
-                Button(action: model.returnFromHistory) { Label("返回清理", systemImage: "arrow.left") }.buttonStyle(WBButtonStyle()).disabled(model.isBusy)
-            } else {
+                Button(action: model.returnFromHistory) { Label("返回空间清理", systemImage: "chevron.left") }
+                    .buttonStyle(WBQuietButtonStyle()).disabled(model.isBusy).padding(.bottom, 8)
+            }
+            WBPageHeader(title: model.screen == .history ? "清理记录" : "空间清理", subtitle: subtitle) {
                 if model.screen == .results {
-                    Button("首页", action: model.goHome).buttonStyle(WBButtonStyle()).disabled(model.isBusy)
-                    Button("更改范围") { model.editScope() }.buttonStyle(WBButtonStyle()).disabled(model.isBusy)
-                        .accessibilityIdentifier("space-cleaning-edit-scope")
                     Button(action: model.startScan) { Label("重新扫描", systemImage: "arrow.clockwise") }
                         .buttonStyle(WBButtonStyle()).disabled(model.isBusy).accessibilityIdentifier("space-cleaning-rescan")
                 }
-                Button(action: model.showHistory) { Label("清理记录", systemImage: "clock.arrow.circlepath") }
-                    .buttonStyle(WBButtonStyle()).disabled(model.isBusy)
+                if model.screen != .history {
+                    Button(action: model.showHistory) { Label("清理记录", systemImage: "clock.arrow.circlepath") }
+                        .buttonStyle(WBButtonStyle()).disabled(model.isBusy || model.screen == .scope)
+                }
             }
         }
     }
@@ -81,8 +85,7 @@ struct SpaceCleaningModuleView: View {
             }
         } else {
             switch model.screen {
-            case .start: home(width: width, compact: height < 600)
-            case .scope: SpaceCleaningScopeView(model: model)
+            case .start, .scope: home(width: width, height: height)
             case .scanning: scanning
             case .results: SpaceCleaningResultsView(model: model)
             case .processing: processing
@@ -91,8 +94,13 @@ struct SpaceCleaningModuleView: View {
         }
     }
     private func isPurpose(_ dialog: CleaningDialog) -> Bool { if case .purpose = dialog { true } else { false } }
-    private func home(width: CGFloat, compact: Bool) -> some View {
-        SpaceCleaningSurface(fillHeight: false) {
+    private var editingScope: Bool { model.screen == .scope }
+    private var displayedScope: CleaningScopeChoice { editingScope ? model.draftScope : model.scopeChoice }
+    private var displayedLocations: [URL] { editingScope ? model.draftDirectories : model.customDirectories }
+    private func home(width: CGFloat, height: CGFloat) -> some View {
+        let compact = height < 600
+        let targetHeight = min(610, max(365, height - 135))
+        return SpaceCleaningSurface(fillHeight: false) {
             if let batch = model.currentBatch {
                 HStack(spacing: 12) {
                     Image(systemName: batch.attentionCount > 0 ? "exclamationmark.circle" : "checkmark.circle")
@@ -107,63 +115,109 @@ struct SpaceCleaningModuleView: View {
                     Button("查看记录", action: model.showHistory).buttonStyle(WBButtonStyle())
                 }.padding(14).background(palette.soft).accessibilityIdentifier("space-cleaning-completion-receipt")
             }
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: compact ? 16 : 24) {
                 HStack(alignment: .center, spacing: 16) {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("看清空间，自在整理").font(.system(size: 11)).foregroundStyle(palette.muted)
+                        if !compact || model.currentBatch == nil {
+                            Text("看清空间，自在整理").font(.system(size: 11)).foregroundStyle(palette.muted)
+                        }
                         Text("让需要的留下。\n给空间留一点余地。")
-                            .font(.system(size: width < 700 ? 24 : 27, weight: .medium)).lineSpacing(5)
+                            .font(.system(size: width < 700 ? 24 : 28, weight: .medium)).lineSpacing(5)
                             .fixedSize(horizontal: true, vertical: true)
                             .accessibilityIdentifier("space-cleaning-home-heading")
-                        Text("可重建缓存会为你选好，其余文件由你选择。")
-                            .font(.system(size: 12)).foregroundStyle(palette.muted).lineSpacing(5)
-                        if !model.items.isEmpty && !model.requiresRescan {
+                        if !compact || model.currentBatch == nil {
+                            Text("可重建缓存会为你选好，其余文件由你选择。")
+                                .font(.system(size: 12)).foregroundStyle(palette.muted).lineSpacing(5)
+                        }
+                        if !editingScope && !model.items.isEmpty && !model.requiresRescan {
                             Button("返回上次扫描结果") { model.screen = .results }.buttonStyle(WBQuietButtonStyle())
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-home-intro")
                     SpaceCleaningAperture(active: model.animationActive)
-                        .frame(width: width * 0.43, height: 140)
+                        .frame(width: width * 0.43, height: compact ? (model.currentBatch == nil ? 130 : 90) : min(280, max(190, targetHeight - 310)))
                 }
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 14) {
                     HStack(spacing: 14) {
-                        Text("扫描范围").font(.system(size: 12, weight: .medium))
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("扫描范围").font(.system(size: 13, weight: .medium))
+                            Text(displayedScope == .global ? "一次检查当前用户常用位置" : "所选文件夹会一起扫描")
+                                .font(.system(size: 11)).foregroundStyle(palette.muted)
+                        }
+                        Spacer(minLength: 0)
                         HStack(spacing: 2) {
-                            scopeButton("全局扫描", icon: "globe", selected: model.scopeChoice == .global) { model.selectScope(.global) }
-                            scopeButton("自定义位置", icon: "folder", selected: model.scopeChoice == .custom) { model.editScope(custom: true) }
+                            scopeButton("全局扫描", icon: "globe", selected: displayedScope == .global) {
+                                if editingScope { model.draftScope = .global } else { model.selectScope(.global) }
+                            }
+                            scopeButton("自定义位置", icon: "folder", selected: displayedScope == .custom) {
+                                if editingScope { model.draftScope = .custom } else { model.editScope(custom: true) }
+                            }
                         }.padding(2).background(RoundedRectangle(cornerRadius: 8).fill(palette.soft))
                             .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.line))
-                        Spacer(minLength: 0)
-                        Button(action: model.startScan) { Label("开始扫描", systemImage: "viewfinder") }
-                            .buttonStyle(WBButtonStyle(primary: true)).disabled(model.isBusy)
-                            .accessibilityIdentifier("space-cleaning-start")
-                    }.accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-home-actions")
-                    if model.scopeChoice == .custom {
-                        selectedLocations(width: width - 28, maximumRows: compact ? 1 : 2)
-                    } else {
-                        Text("一次检查当前用户的缓存、开发与个人常用位置")
-                            .font(.system(size: 11)).foregroundStyle(palette.muted)
                     }
-                }
-            }.padding(14)
+                    if displayedScope == .custom {
+                        selectedLocations(width: width - 28, maximumRows: height >= 600 && model.currentBatch == nil ? 2 : 1)
+                    } else {
+                        globalLocations(compact: compact)
+                    }
+                }.accessibilityElement(children: .contain)
+                    .accessibilityIdentifier(editingScope ? "space-cleaning-scope-editor" : "space-cleaning-scope-options")
+                Spacer(minLength: 0)
+                HStack(spacing: 10) {
+                    Text(displayedScope == .global ? "未获权限的位置会在结果中说明" : "\(displayedLocations.count) 个位置 · 可在上方添加或移除")
+                        .font(.system(size: 11)).foregroundStyle(palette.muted)
+                    Spacer(minLength: 4)
+                    if editingScope {
+                        Button("取消", action: model.cancelScope).buttonStyle(WBQuietButtonStyle())
+                        Button("保存范围", action: model.applyScope).buttonStyle(WBButtonStyle())
+                            .disabled(displayedScope == .custom && displayedLocations.isEmpty)
+                            .accessibilityIdentifier("space-cleaning-apply-scope")
+                    }
+                    Button {
+                        if editingScope { model.applyScope() }
+                        model.startScan()
+                    } label: { Label("开始扫描", systemImage: "viewfinder") }
+                        .buttonStyle(WBButtonStyle(primary: true))
+                        .disabled(model.isBusy || (displayedScope == .custom && displayedLocations.isEmpty))
+                        .accessibilityIdentifier("space-cleaning-start")
+                }.accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-home-actions")
+            }.padding(compact ? 14 : 20).frame(minHeight: targetHeight - (model.currentBatch == nil ? 0 : 70))
         }.fixedSize(horizontal: false, vertical: true)
             .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-home-surface")
     }
+    private func globalLocations(compact: Bool) -> some View {
+        let locations: [(String, String, String)] = [
+            ("下载", "arrow.down.circle", "安装介质与下载文件"), ("桌面", "desktopcomputer", "桌面上的文件与目录"),
+            ("文稿", "doc.text", "文档与个人资料"), ("图片与影音", "photo", "照片、视频与音乐"),
+            ("应用缓存", "square.stack.3d.up", "按已知规则识别"), ("开发与构建", "hammer", "Xcode 与开发目录"),
+            ("用户应用", "app", "已安装应用保持保护"), ("归档与发布材料", "archivebox", "展示占用，保留原件")
+        ]
+        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
+            ForEach(locations, id: \.0) { title, icon, detail in
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(title, systemImage: icon).font(.system(size: 11, weight: .medium)).foregroundStyle(palette.secondary)
+                    if !compact { Text(detail).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1) }
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).frame(height: compact ? 34 : 54)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(palette.soft))
+            }
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-global-locations")
+    }
     private func selectedLocations(width: CGFloat, maximumRows: Int) -> some View {
         let columns = min(4, max(1, Int((width + 8) / 244)))
-        let rows = Int(ceil(Double(model.customDirectories.count) / Double(columns)))
+        let rows = Int(ceil(Double(displayedLocations.count) / Double(columns)))
         let visibleRows = min(maximumRows, max(1, rows))
         let height = CGFloat(visibleRows) * 60 + CGFloat(visibleRows - 1) * 8
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("已选 \(model.customDirectories.count) 个位置" + (rows > maximumRows ? " · 向下滚动查看" : "")).font(.system(size: 11)).foregroundStyle(palette.muted)
+                Text(displayedLocations.isEmpty ? "添加想要检查的文件夹" : "已选 \(displayedLocations.count) 个位置" + (rows > maximumRows ? " · 向下滚动查看" : "")).font(.system(size: 11)).foregroundStyle(palette.muted)
                 Spacer()
-                Button("管理位置") { model.editScope(custom: true) }.buttonStyle(WBQuietButtonStyle())
+                Button { if !editingScope { model.editScope(custom: true) }; model.chooseCustomDirectory() } label: { Label("添加位置", systemImage: "plus") }
+                    .buttonStyle(WBQuietButtonStyle())
                     .accessibilityIdentifier("space-cleaning-manage-locations")
             }
             ScrollView {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8, alignment: .leading), count: columns), spacing: 8) {
-                    ForEach(model.customDirectories, id: \.self) { location in
+                    ForEach(displayedLocations, id: \.self) { location in
                         HStack(spacing: 10) {
                             Image(systemName: "folder.fill").font(.system(size: 22, weight: .light)).foregroundStyle(palette.accent)
                             VStack(alignment: .leading, spacing: 6) {
@@ -171,14 +225,24 @@ struct SpaceCleaningModuleView: View {
                                 Text(model.shortPath(location.deletingLastPathComponent())).font(.system(size: 11)).foregroundStyle(palette.muted)
                                     .lineLimit(1).truncationMode(.middle)
                             }.frame(maxWidth: .infinity, alignment: .leading)
+                            Button {
+                                if !editingScope { model.editScope(custom: true) }
+                                model.removeDraftDirectory(location)
+                            } label: { Image(systemName: "xmark").font(.system(size: 10)) }
+                                .buttonStyle(WBIconButtonStyle(size: 24)).help("从扫描范围移除，不会删除文件")
+                                .accessibilityLabel("移除扫描位置 " + location.lastPathComponent)
                         }.padding(.horizontal, 12).frame(height: 60)
                             .background(RoundedRectangle(cornerRadius: 8).fill(palette.soft))
                             .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.line))
-                            .help(model.shortPath(location)).accessibilityElement(children: .combine)
+                            .help(model.shortPath(location)).accessibilityElement(children: .contain)
                             .accessibilityLabel("扫描文件夹 " + model.shortPath(location))
                             .accessibilityIdentifier("space-cleaning-location-" + location.lastPathComponent)
                     }
                 }.padding(.trailing, rows > maximumRows ? 12 : 0).background(WorkbenchOverlayScrollbars())
+                if displayedLocations.isEmpty {
+                    Text("支持多选文件夹，也可以选择外接磁盘中的位置")
+                        .font(.system(size: 11)).foregroundStyle(palette.muted).frame(maxWidth: .infinity, minHeight: 60)
+                }
             }.frame(height: height).scrollBounceBehavior(.basedOnSize)
                 .accessibilityIdentifier("space-cleaning-home-locations")
         }

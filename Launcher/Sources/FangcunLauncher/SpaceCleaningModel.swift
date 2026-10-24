@@ -102,7 +102,7 @@ import Quartz
     var selectedCount: Int { selectedItems.count }
     var isBusy: Bool { task != nil }
     var canProcess: Bool { !isBusy && !frozenForQuit && !requiresRescan && historyError == nil && selectedCount > 0 }
-    var animationActive: Bool { windowVisible && [.start, .scanning].contains(screen) && !reduceMotion && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion && dialog == nil }
+    var animationActive: Bool { windowVisible && [.start, .scope, .scanning].contains(screen) && !reduceMotion && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion && dialog == nil }
     var scopeSummary: String {
         scopeChoice == .global ? "全局扫描 · 当前用户可访问位置" : "自定义位置 · \(customDirectories.count) 个文件夹"
     }
@@ -255,7 +255,7 @@ import Quartz
     }
     func requestTestPurpose(_ id: UUID) {
         guard !isBusy, !requiresRescan, items.contains(where: { $0.id == id && $0.needsPurposeConfirmation }) else { return }
-        detailID = id; acknowledgement = false; dialog = .purpose(id)
+        detailID = id; acknowledgement = false; dialog = .purpose(id); resultScrollID = id
     }
     func requestRestore(_ id: UUID) {
         guard !isBusy, !frozenForQuit, historyError == nil, batches.contains(where: { $0.id == id && $0.restorableCount > 0 }) else { return }

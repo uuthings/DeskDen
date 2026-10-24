@@ -163,6 +163,37 @@ import LauncherCore
                 try capture(host: host, name: "results-" + name, output: output)
             }
             window.setContentSize(NSSize(width: 1120, height: 758))
+            cleaning.showResults(.protected)
+            _ = await settle(window) { cleaning.visibleItems.contains(where: \.needsPurposeConfirmation) }
+            guard let testPackage = cleaning.visibleItems.first(where: \.needsPurposeConfirmation),
+                  let releasePackage = cleaning.visibleItems.first(where: { $0.kind == .releaseMaterial }) else {
+                throw SpaceCleaningFixtureError.invalid("purpose and release protection fixtures missing")
+            }
+            _ = await settle(window) { exists("space-cleaning-unlock-" + testPackage.id.uuidString, in: host) }
+            check(exists("space-cleaning-unlock-" + testPackage.id.uuidString, in: host) &&
+                  !exists("space-cleaning-unlock-" + releasePackage.id.uuidString, in: host),
+                  "only purpose-reviewable packages expose the inline unlock action")
+            try capture(host: host, name: "protected-results", output: output)
+            cleaning.requestTestPurpose(testPackage.id)
+            _ = await settle(window) { exists("space-cleaning-file-detail", in: host) }
+            check(cleaning.detailID == testPackage.id && cleaning.dialog == .purpose(testPackage.id) && !cleaning.acknowledgement,
+                  "the protection action opens its inline explanation and requires a fresh purpose declaration")
+            _ = await settle(window) {
+                frame("space-cleaning-result-list", in: host).flatMap { list in
+                    frame("space-cleaning-confirm-test-purpose", in: host).map { list.contains($0) }
+                } == true
+            }
+            check(frame("space-cleaning-result-list", in: host).flatMap { list in
+                frame("space-cleaning-confirm-test-purpose", in: host).map { list.contains($0) }
+            } == true, "opening purpose review scrolls its confirmation into the visible result list")
+            try capture(host: host, name: "protected-purpose-review", output: output)
+            cleaning.acknowledgement = true; cleaning.confirmTestPurpose(testPackage.id)
+            await cleaning.waitUntilIdle()
+            check(cleaning.items.first(where: { $0.id == testPackage.id })?.isSelectable == true &&
+                  !cleaning.selectedIDs.contains(testPackage.id) &&
+                  cleaning.items.first(where: { $0.id == releasePackage.id })?.isSelectable == false,
+                  "verified test-purpose packages become manually selectable while release materials stay protected")
+            cleaning.closeDetail(); cleaning.showResults(.recommended)
             cleaning.screen = .scanning
             _ = await settle(window) { exists("space-cleaning-scan", in: host) }
             try capture(host: host, name: "scan-layout", output: output)
@@ -219,6 +250,10 @@ import LauncherCore
             let selectedBefore = cleaning.selectedIDs
             cleaning.editScope(custom: true)
             _ = await settle(window) { exists("space-cleaning-scope-editor", in: host) }
+            check(frame("space-cleaning-home-surface", in: host).flatMap { card in
+                frame("space-cleaning-scope-editor", in: host).map { card.contains($0) }
+            } == true && exists("space-cleaning-home-heading", in: host),
+                  "scope editing stays inside the same home launch card with its heading and animation")
             check(cleaning.draftDirectories.isEmpty && enabled("space-cleaning-apply-scope", in: host) == false,
                   "empty custom scope cannot replace an existing scan")
             cleaning.addDraftDirectories([home.appendingPathComponent("Downloads"), home.appendingPathComponent("Developer")])
@@ -309,6 +344,23 @@ import LauncherCore
             check(cleaning.requiresRescan && cleaning.selectedCount == 0, "restoration invalidates stale cleanup selection")
             check(calendarSystem.requests == 0 && calendarNotifications.requests == 0 && !app.device.isSampling,
                   "cleaning UI fixtures do not request calendar access or start device sampling")
+            app.openHealth(); app.health.showOverview()
+            _ = await settle(window) { exists("health-overview-factor-storage", in: host) }
+            check(DeviceHealthFactor.allCases.allSatisfy {
+                exists("health-factor-deduction-" + $0.rawValue, in: host) && exists("health-factor-basis-" + $0.rawValue, in: host)
+            }, "each health factor exposes its own deduction state and scoring details")
+            check(!objects(host).contains { object in
+                guard object.responds(to: NSSelectorFromString("accessibilityLabel")),
+                      let label = object.value(forKey: "accessibilityLabel") as? String else { return false }
+                return label.contains("返回空间清理") || label.contains("返回设备状态")
+            }, "health opened from cleaning has no cross-module return menu")
+            try capture(host: host, name: "health-factor-deductions", output: output)
+            app.health.scoreDetail = .storage
+            _ = await settle(window) { exists("health-score-detail-storage", in: host) }
+            check(exists("health-score-detail-storage", in: host), "storage scoring rules open in their own detail instead of expanding below the cards")
+            try capture(host: host, name: "health-score-detail", output: output)
+            app.health.scoreDetail = nil
+            app.navigate(.cleaning)
             await cleaning.prepareForQuit()
             print("DETAIL space-cleaning owned-view evidence=\(output.path); real fixture scan and transactions; no actual user Trash; manual screenshot review remains separate")
         } catch { check(false, "space cleaning native fixture: \(error.localizedDescription)") }
@@ -382,6 +434,8 @@ import LauncherCore
         return [
             (contained, "keeps both method choices and the independent checkbox inside the footer and viewport"),
             (separate, "keeps the two choices and remember checkbox from overlapping"),
+            (frames.count == controls.count && frames.allSatisfy { abs($0.midY - frames[0].midY) < 2 },
+             "keeps the remember checkbox on the same row as both deletion methods"),
             (actionVisible, "keeps the active cleanup or confirmation button fully visible")
         ]
     }
@@ -393,15 +447,14 @@ import LauncherCore
         return gap >= -1 && gap <= 35
     }
     private static func homeLayoutChecks(in host: NSView) -> [(Bool, String)] {
-        let intro = frame("space-cleaning-home-intro", in: host)
-        let actions = frame("space-cleaning-home-actions", in: host)
-        let gap = intro.flatMap { upper in actions.map { upper.minY - $0.maxY } }
+        let surface = frame("space-cleaning-home-surface", in: host)
         let module = frame("space-cleaning", in: host)
         let start = frame("space-cleaning-start", in: host)
         let buttonContained = module.flatMap { outer in start.map { outer.insetBy(dx: -1, dy: -1).contains($0) } } ?? false
         return [
             (homeRulesStayWithCard(in: host), "keeps the rules link within 35 pt of the card"),
-            (gap.map { $0 >= -1 && $0 <= 36 } ?? false, "keeps the intro and scan actions within 36 pt"),
+            (surface.flatMap { card in module.map { card.height >= min(360, $0.height * 0.65) } } ?? false,
+             "gives the scan preparation card useful vertical space"),
             (buttonContained, "keeps the scan button inside the visible module"),
             (frame("space-cleaning-home-heading", in: host).map { $0.height >= 44 } ?? false,
              "keeps both lines of the home heading visible")

@@ -81,7 +81,6 @@ struct HealthCenterView: View {
     @ObservedObject private var device: DeviceStatusModel
     @ObservedObject private var applications: HealthApplicationReviewModel
     let onReadDevice: (DeviceHealthFactor) -> Void
-    let onBack: () -> Void
     @Environment(\.workbenchPalette) private var palette
     @Environment(\.workbenchContentHeight) private var contentHeight
     @Environment(\.workbenchDeviceExpanded) private var expanded
@@ -92,11 +91,11 @@ struct HealthCenterView: View {
     @State private var fileFilter = "全部"
     @State private var selectedFile: StorageReviewCandidate?
     let onOpenCleaning: (() -> Void)?
-    init(model: HealthCenterModel, onReadDevice: @escaping (DeviceHealthFactor) -> Void, onBack: @escaping () -> Void, onOpenCleaning: (() -> Void)? = nil) {
+    init(model: HealthCenterModel, onReadDevice: @escaping (DeviceHealthFactor) -> Void, onOpenCleaning: (() -> Void)? = nil) {
         self.onOpenCleaning = onOpenCleaning
         self.model = model; _storage = ObservedObject(wrappedValue: model.storage); _device = ObservedObject(wrappedValue: model.device)
         _applications = ObservedObject(wrappedValue: model.applications)
-        self.onReadDevice = onReadDevice; self.onBack = onBack
+        self.onReadDevice = onReadDevice
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -122,12 +121,13 @@ struct HealthCenterView: View {
             confirmation(presented.plan)
         }
         .workbenchModal(isPresented: Binding(get: { storage.confirmingRestore != nil }, set: { if !$0 { storage.confirmingRestore = nil } }), width: 470) { restoreConfirmation }
+        .workbenchModal(isPresented: Binding(get: { model.scoreDetail != nil }, set: { if !$0 { model.scoreDetail = nil } }), width: 540) {
+            if let factor = model.scoreDetail { scoreDetails(factor) }
+        }
         .accessibilityElement(children: .contain).accessibilityIdentifier("health-center")
     }
     private var pageHeader: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button { onBack() } label: { Label("返回" + model.returnContext, systemImage: "arrow.left") }
-                .buttonStyle(WBQuietButtonStyle()).frame(height: 28).padding(.bottom, 12)
             WBPageHeader(title: "体检中心", subtitle: "了解设备状态，让每次处理都有依据") {
                 Button { if let onOpenCleaning { onOpenCleaning() } else { model.showSpaceCleaning() } } label: { Label("清理空间", systemImage: "internaldrive.badge.checkmark") }
                     .buttonStyle(WBButtonStyle()).disabled(storage.isScanning || storage.isProcessing || applications.isProcessing)
@@ -162,9 +162,7 @@ struct HealthCenterView: View {
                 Label("个人文件、系统进程与未保存工作默认保留", systemImage: "checkmark.shield").font(.system(size: 11)).foregroundStyle(palette.muted)
                 Spacer(minLength: 0)
                 historyActions
-                Button { model.reportExpanded.toggle() } label: { Label("本次评分依据", systemImage: model.reportExpanded ? "chevron.up" : "chevron.down") }.buttonStyle(WBButtonStyle(compact: true))
             }
-            if model.reportExpanded { basis }
         }
     }
     private var overviewCompact: Bool { availableWidth <= 826 && !expanded }
@@ -202,16 +200,67 @@ struct HealthCenterView: View {
                     HStack(spacing: 5) {
                         Label(factor.title, systemImage: factorSymbol(factor)).font(.system(size: 11)).foregroundStyle(palette.secondary)
                         Spacer(minLength: 2)
-                        Image(systemName: finding?.state == .evaluated ? finding?.severity == .good ? "checkmark" : "exclamationmark.circle" : "questionmark.circle").foregroundStyle(tone(finding?.severity ?? .unknown)).font(.system(size: 12))
+                        Text(scoreLabel(factor, finding: finding)).font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(tone(finding?.severity ?? .unknown)).fixedSize()
+                            .accessibilityIdentifier("health-factor-deduction-" + factor.rawValue)
                     }
                     Text(factorValue(factor)).font(.system(size: expanded ? 18 : overviewCompact ? 14 : 16, weight: .medium)).lineLimit(1).minimumScaleFactor(0.8)
                         .accessibilityIdentifier("health-overview-value-" + factor.rawValue)
                     Text(finding?.summary ?? "尚无有效评估").font(.system(size: 11)).foregroundStyle(palette.muted).frame(minHeight: expanded ? 18 : 33, alignment: .topLeading)
-                    Button { onReadDevice(factor) } label: { Label("查看读数", systemImage: "arrow.up.right") }
-                        .buttonStyle(WBButtonStyle(compact: true)).accessibilityIdentifier("health-reading-" + factor.rawValue)
+                    HStack(spacing: 8) {
+                        Button { onReadDevice(factor) } label: { Label("查看读数", systemImage: "arrow.up.right") }
+                            .buttonStyle(WBButtonStyle(compact: true)).accessibilityIdentifier("health-reading-" + factor.rawValue)
+                        Spacer(minLength: 0)
+                        Button("评分依据") { model.scoreDetail = factor }.buttonStyle(ClickablePlainButtonStyle())
+                            .font(.system(size: 11)).foregroundStyle(palette.accent).fixedSize()
+                            .accessibilityIdentifier("health-factor-basis-" + factor.rawValue)
+                    }
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(overviewCompact ? 12 : 14).background(innerSurface)
                     .accessibilityElement(children: .contain).accessibilityIdentifier("health-overview-factor-" + factor.rawValue)
             }
+        }
+    }
+    private func scoreLabel(_ factor: DeviceHealthFactor, finding: DeviceHealthFactorResult?) -> String {
+        guard factor.isRequiredForScore else { return "不计分" }
+        guard let deduction = finding?.deduction else { return "未计分" }
+        return deduction == 0 ? "未扣分" : "−\(deduction) 分"
+    }
+    private func scoreDetails(_ factor: DeviceHealthFactor) -> some View {
+        let finding = model.latestReport?.factors.first { $0.factor == factor }
+        return WorkbenchDialogFrame(title: factor.title + " · 评分依据", dismiss: { model.scoreDetail = nil }) {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(spacing: 8) {
+                    ForEach(DeviceHealthFactor.allCases, id: \.self) { option in
+                        Button(option.title) { model.scoreDetail = option }
+                            .buttonStyle(WBButtonStyle(primary: option == factor, compact: true))
+                    }
+                }
+                HStack {
+                    Text(finding?.summary ?? "尚无有效评估").font(.system(size: 14, weight: .medium))
+                    Spacer()
+                    Text(scoreLabel(factor, finding: finding)).font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(tone(finding?.severity ?? .unknown))
+                }
+                Text(DeviceHealthRules.explanation(for: factor)).font(.system(size: 12)).foregroundStyle(palette.secondary).lineSpacing(5)
+                if let finding {
+                    Text(finding.explanation).font(.system(size: 11)).foregroundStyle(palette.muted).lineSpacing(4)
+                    ForEach(finding.evidence.filter { $0.key != "rule" }.indices, id: \.self) { index in
+                        let evidence = HealthCenterEvidenceDisplay.text(finding.evidence.filter { $0.key != "rule" }[index])
+                        HStack(alignment: .top) {
+                            Text(evidence.label).foregroundStyle(palette.muted)
+                            Spacer(minLength: 12)
+                            Text(evidence.value).multilineTextAlignment(.trailing).textSelection(.enabled)
+                        }.font(.system(size: 11))
+                    }
+                    Text("来源：\(finding.source) · \(finding.sampledAt.map { $0.formatted(date: .abbreviated, time: .standard) } ?? "未读取")")
+                        .font(.system(size: 11)).foregroundStyle(palette.muted)
+                }
+                Text("总分以 100 分减去存储、内存压力与系统热状态的扣分。缺少有效来源时保持未知；清理文件不会自动加分。")
+                    .font(.system(size: 11)).foregroundStyle(palette.muted).lineSpacing(4)
+            }.accessibilityElement(children: .contain).accessibilityIdentifier("health-score-detail-" + factor.rawValue)
+        } actions: {
+            Spacer()
+            Button("知道了") { model.scoreDetail = nil }.buttonStyle(WBButtonStyle(primary: true))
         }
     }
     private var scopeChoices: some View {
@@ -252,22 +301,6 @@ struct HealthCenterView: View {
             Spacer(minLength: 0); Toggle(title, isOn: enabled).labelsHidden().toggleStyle(.checkbox).clickableCursor().tint(palette.accent)
         }.padding(.horizontal, overviewCompact ? 10 : 12).padding(.vertical, 10).frame(maxWidth: .infinity, minHeight: expanded ? 70 : overviewNarrow ? 54 : 64, alignment: .leading)
             .background(innerSurface).overlay(RoundedRectangle(cornerRadius: 12).stroke(enabled.wrappedValue ? palette.accent.opacity(0.32) : .clear, lineWidth: 1))
-    }
-    private var basis: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Divider().overlay(palette.line)
-            Text("本次评分如何得出").font(.system(size: 12, weight: .medium))
-            Text("以持续状态为依据；瞬时负载、缓存大小和待办数量不直接扣分。").font(.system(size: 11)).foregroundStyle(palette.muted)
-            ForEach(model.latestReport?.factors ?? []) { item in
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack { Button { onReadDevice(item.factor) } label: { Label(item.factor.title, systemImage: factorSymbol(item.factor)).frame(width: 120, alignment: .leading) }.buttonStyle(ClickablePlainButtonStyle()).accessibilityIdentifier("health-basis-reading-" + item.factor.rawValue); Text(item.summary).frame(maxWidth: .infinity, alignment: .leading); Text(item.deduction.map { $0 == 0 ? "未扣分" : "−\($0) 分" } ?? "未计入").foregroundStyle(palette.muted) }
-                    Text(item.explanation).foregroundStyle(palette.muted)
-                    Text("来源：\(item.source) · \(item.sampledAt.map { $0.formatted(date: .abbreviated, time: .standard) } ?? "未读取")").foregroundStyle(palette.muted)
-                    ForEach(item.evidence.indices, id: \.self) { index in let evidence = HealthCenterEvidenceDisplay.text(item.evidence[index]); Text(evidence.label + "：" + evidence.value).foregroundStyle(palette.muted).textSelection(.enabled) }
-                }.font(.system(size: 11)).padding(.vertical, 7).frame(maxWidth: .infinity, alignment: .leading)
-            }
-            Text("规则版本：\(model.latestReport?.ruleVersion ?? DeviceHealthRules.version)。缺少来源保持未知，处理后等待新采样，不自动加分。").font(.system(size: 11)).foregroundStyle(palette.muted)
-        }
     }
     private var checking: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -325,10 +358,9 @@ struct HealthCenterView: View {
                 Spacer(minLength: 0)
                 HStack(spacing: 8) {
                     historyActions
-                    Button { model.reportExpanded.toggle() } label: { Label("评分依据", systemImage: model.reportExpanded ? "chevron.up" : "chevron.down").frame(height: 22) }.buttonStyle(WBQuietButtonStyle()).accessibilityIdentifier("health-report-basis")
+                    Button("评分规则") { model.scoreDetail = .storage }.buttonStyle(WBQuietButtonStyle()).accessibilityIdentifier("health-report-basis")
                 }.frame(height: 28)
             }.padding(.vertical, 8).overlay(alignment: .top) { palette.line.frame(height: 1) }
-            if model.reportExpanded { basis.padding(.top, 12) }
             reportColumns.padding(.top, 8)
         }
     }
@@ -670,7 +702,6 @@ struct HealthCenterView: View {
                 Spacer(minLength: 0)
                 Button("重新体检") { model.showOverview() }.buttonStyle(WBButtonStyle())
                 Button("查看本次报告") { model.showReport() }.buttonStyle(WBButtonStyle())
-                Button("返回" + model.returnContext + " ↗", action: onBack).buttonStyle(WBButtonStyle(primary: true))
             }.padding(.top, 12)
         }.accessibilityElement(children: .contain).accessibilityIdentifier("health-application-results")
     }
@@ -690,7 +721,7 @@ struct HealthCenterView: View {
             }.padding(14).background(innerSurface)
             notice("移到废纸篓仍可能占用磁盘，文件大小不等于实际释放空间。继续按实际设备状态评估。", symbol: "info.circle")
             receiptList
-            HStack(spacing: 8) { Spacer(); Button("重新体检") { model.showOverview() }.buttonStyle(WBButtonStyle()); Button(model.isSpaceCleaning ? "返回清理空间" : "查看本次报告") { if model.isSpaceCleaning { model.showSpaceCleaning() } else { model.showReport() } }.buttonStyle(WBButtonStyle()); Button("返回" + model.returnContext + " ↗", action: onBack).buttonStyle(WBButtonStyle(primary: true)) }
+            HStack(spacing: 8) { Spacer(); Button("重新体检") { model.showOverview() }.buttonStyle(WBButtonStyle()); Button(model.isSpaceCleaning ? "返回清理空间" : "查看本次报告") { if model.isSpaceCleaning { model.showSpaceCleaning() } else { model.showReport() } }.buttonStyle(WBButtonStyle()) }
         }.accessibilityElement(children: .contain).accessibilityIdentifier("health-file-results")
     }
     private var receiptList: some View {
