@@ -41,6 +41,7 @@ import Quartz
     @Published private(set) var draftDirectories: [URL] = []
     @Published var resultTab: CleaningResultTab = .recommended
     @Published private(set) var recommendedIDs = Set<UUID>()
+    @Published private(set) var automaticallySelectedIDs = Set<UUID>()
     @Published var searchText = ""
     @Published var onlySelected = false
     @Published var resultScrollID: UUID?
@@ -134,10 +135,11 @@ import Quartz
     }
     var noRecommendationsSummary: String {
         if requiresRescan { return "本次扫描未完成，请重新扫描后再清理。" }
+        if scanReachedLimit { return "本次扫描达到覆盖边界；已完整核验的内容中暂未发现建议整理的项目。" }
         let inUse = items.filter { $0.kind == .runningApplication }.count
         if inUse > 0 { return "有 \(inUse) 项关联应用或工具正在使用，已保留。其他文件由你选择。" }
-        if !coverageIssues.isEmpty { return "部分位置未能完整检查；已检查内容中没有可自动推荐的缓存。" }
-        return "已检查内容中没有符合可重建规则的缓存；下载与个人文件不会自动勾选。"
+        if !coverageIssues.isEmpty { return "部分位置未能完整检查；已检查内容中暂未发现符合整理规则的项目。" }
+        return "暂未发现可重建缓存、待整理安装介质或过期诊断记录；其他文件可自行选择。"
     }
     var visibleSelectableIDs: Set<UUID> { Set(visibleItems.filter(\.isSelectable).map(\.id)) }
     var scanFraction: Double? { scanTotalItems.flatMap { $0 > 0 ? min(1, Double(scanCompletedItems) / Double($0)) : nil } }
@@ -155,9 +157,12 @@ import Quartz
     var reportSummary: String {
         if requiresRescan { return "文件状态已变化，请重新扫描后再选择" }
         if screen == .scanning { return "已检查 \(checkedCount) 项 · 逐项核验用途与保护规则" }
-        if scanReachedLimit { return recommendedIDs.isEmpty ? "本次扫描达到覆盖边界，暂未发现可自动推荐的内容" : "已默认勾选 \(recommendedIDs.count) 项已完整核验的缓存 · 本次扫描覆盖范围有限" }
         if recommendedIDs.isEmpty { return noRecommendationsSummary }
-        return "找到 \(recommendedIDs.count) 项可重建内容，扫描完成时已默认勾选 · 其他文件由你选择"
+        let manualCount = recommendedIDs.subtracting(automaticallySelectedIDs).count
+        let selection = automaticallySelectedIDs.isEmpty
+            ? "这 \(manualCount) 项需确认后手动选择"
+            : "\(automaticallySelectedIDs.count) 项可重建缓存已预选" + (manualCount > 0 ? "，另有 \(manualCount) 项需手动选择" : "")
+        return "找到 \(recommendedIDs.count) 项建议整理内容 · " + selection + (scanReachedLimit ? " · 覆盖范围有限" : "")
     }
     func toggleItem(_ id: UUID) {
         guard !isBusy, !requiresRescan, items.contains(where: { $0.id == id && $0.isSelectable }) else { return }
@@ -223,7 +228,7 @@ import Quartz
         if let hostWindow { panel.beginSheetModal(for: hostWindow, completionHandler: finish) } else { panel.begin(completionHandler: finish) }
     }
     private func invalidateResults() {
-        selectedIDs = []; recommendedIDs = []; detailID = nil; resultScrollID = nil; candidates = [:]; items = []
+        selectedIDs = []; recommendedIDs = []; automaticallySelectedIDs = []; detailID = nil; resultScrollID = nil; candidates = [:]; items = []
         requiresRescan = false; screen = .start; message = historyError
     }
     /// Selecting files and clicking the clearly named Trash action is the user's
@@ -232,6 +237,17 @@ import Quartz
         guard canProcess else { return }
         requestConfirmation()
         if method == .trash { executeConfirmed(permanent: false, remember: rememberMethod) }
+    }
+    func chooseMethod(_ choice: SpaceCleaningMethod) {
+        guard !isBusy, !frozenForQuit, dialog != .confirm else { return }
+        method = choice
+        if rememberMethod { savePreference(choice) }
+    }
+    func setRememberMethod(_ remember: Bool) {
+        guard !isBusy, !frozenForQuit, dialog != .confirm else { return }
+        if remember { savePreference(method) }
+        else if hasSavedMethod { clearPreference() }
+        else { rememberMethod = false }
     }
     private func requestConfirmation() {
         guard canProcess else { return }
@@ -297,7 +313,7 @@ import Quartz
         guard !scopes.isEmpty else { message = "请先选择要扫描的目录。"; return }
         generation = UUID(); let run = generation
         cancellation = StorageReviewCancellation(); let token = cancellation
-        selectedIDs = []; confirmedIDs = []; detailID = nil; resultScrollID = nil; searchText = ""; onlySelected = false; resultTab = .recommended; items = []; recommendedIDs = []; candidates = [:]
+        selectedIDs = []; confirmedIDs = []; detailID = nil; resultScrollID = nil; searchText = ""; onlySelected = false; resultTab = .recommended; items = []; recommendedIDs = []; automaticallySelectedIDs = []; candidates = [:]
         coverageIssues = []; coverageNotes = []; scanReachedLimit = false; requiresRescan = false; checkedCount = 0; scanPhase = .discovering; scanCompletedItems = 0; scanTotalItems = nil; scanDirectory = ""; scanItem = ""
         closeDialog(); message = historyError; screen = .scanning
         task = Task { [weak self] in
@@ -354,9 +370,10 @@ import Quartz
     }
     private func selectRecommendedAfterScan(context: SpaceCleaningContext) {
         recommendedIDs = Set(candidates.values.filter {
-            $0.isRecommendedForSelection && SpaceCleaningScanner.validatePolicy(candidate: $0, context: context) == .unchanged
+            $0.isCleanupSuggestion && SpaceCleaningScanner.validatePolicy(candidate: $0, context: context) == .unchanged
         }.map(\.id))
-        selectedIDs = recommendedIDs
+        automaticallySelectedIDs = Set(candidates.values.filter { recommendedIDs.contains($0.id) && $0.isRecommendedForSelection }.map(\.id))
+        selectedIDs = automaticallySelectedIDs
     }
     func executeConfirmed(permanent: Bool, remember: Bool) {
         guard dialog == .confirm, canProcess, confirmedIDs == Set(selectedItems.map(\.id)),
@@ -601,7 +618,7 @@ import Quartz
         guard preferencesWritable else { return }
         do {
             if FileManager.default.fileExists(atPath: preferenceURL.path) { try FileManager.default.removeItem(at: preferenceURL) }
-            method = .trash; rememberMethod = false; hasSavedMethod = false
+            rememberMethod = false; hasSavedMethod = false
         } catch { message = "本次选择仍有效，但已保存的处理方式未能取消。" }
     }
     private func savePreference(_ method: SpaceCleaningMethod) {
