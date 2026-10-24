@@ -481,4 +481,103 @@ final class SpaceCleaningCoreTests: XCTestCase {
             XCTAssertEqual(SpaceCleaningScanner.revalidate(candidate: candidate, context: .init(homeDirectory: home)), .scopeChanged)
         }
     }
+    func testGlobalScopeCoversPersonalAndDevelopmentFoldersWithoutOtherUsers() throws {
+        try fixture { home in
+            for name in ["Desktop", "Documents", "Movies", "Pictures", "Music", "Public", "Developer"] {
+                try file(home, name + "/personal.data")
+            }
+            try file(home, "Downloads/installer.dmg")
+            try file(home, "Library/Caches/pip/http-v2/cache")
+            let context = SpaceCleaningContext(homeDirectory: home)
+            let scopes = SpaceCleaningScanner.globalScopes(context: context)
+            XCTAssertTrue(scopes.allSatisfy { $0.directory.path.hasPrefix(home.path + "/") })
+            let report = SpaceCleaningScanner.scan(scopes: scopes, context: context)
+            XCTAssertEqual(report.candidates.count, 9)
+            XCTAssertEqual(report.candidates.filter(\.isRecommendedForSelection).count, 1)
+            XCTAssertFalse(report.candidates.filter { $0.kind == .personalFile }.contains(where: \.isRecommendedForSelection))
+        }
+    }
+
+    func testProgressHasUnknownDiscoveryTotalAndRealVerificationDenominator() throws {
+        try fixture { home in
+            for index in 0..<5 { try file(home, "Downloads/file-\(index)") }
+            var events: [SpaceCleaningProgress] = []
+            let report = SpaceCleaningScanner.scan(scopes: [.init(directory: home.appendingPathComponent("Downloads"))],
+                context: .init(homeDirectory: home), progress: { events.append($0) })
+            XCTAssertTrue(report.complete)
+            XCTAssertTrue(events.filter { $0.phase == .discovering }.allSatisfy { $0.totalItems == nil })
+            let verifying = events.filter { $0.phase == .verifying }
+            XCTAssertFalse(verifying.isEmpty)
+            XCTAssertTrue(verifying.allSatisfy { $0.totalItems == 5 && $0.completedItems <= 5 })
+            XCTAssertEqual(verifying.map(\.completedItems), verifying.map(\.completedItems).sorted())
+            XCTAssertEqual(events.last?.completedItems, 5)
+            XCTAssertEqual(events.last?.phase, .finished)
+        }
+    }
+
+    func testDiscoveryToVerificationRejectsAncestorReplacement() throws {
+        try fixture { home in
+            try file(home, "Downloads/nested/file")
+            var changed = false
+            let report = SpaceCleaningScanner.scan(scopes: [.init(directory: home.appendingPathComponent("Downloads"))],
+                context: .init(homeDirectory: home), progress: { progress in
+                    guard progress.phase == .verifying, !changed else { return }
+                    changed = true
+                    let old = home.appendingPathComponent("Downloads/nested")
+                    let moved = home.appendingPathComponent("moved")
+                    try! FileManager.default.moveItem(at: old, to: moved)
+                    try! FileManager.default.createSymbolicLink(at: old, withDestinationURL: moved)
+                })
+            XCTAssertTrue(report.candidates.isEmpty)
+            XCTAssertTrue(report.issues.contains { $0.kind == .changed })
+        }
+    }
+
+    func testRecommendationExcludesDiagnosticsAndIncompleteOrProtectedCaches() throws {
+        try fixture { home in
+            let old = try file(home, "Library/Logs/DiagnosticReports/old.crash")
+            try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -40 * 86400)], ofItemAtPath: old.path)
+            try file(home, "Library/Caches/pip/http-v2/data")
+            let report = scan(home)
+            XCTAssertFalse(try XCTUnwrap(report.candidates.first { $0.kind == .oldDiagnostic }).isRecommendedForSelection)
+            var cache = try XCTUnwrap(report.candidates.first { $0.kind == .packageCache })
+            XCTAssertTrue(cache.isRecommendedForSelection)
+            cache.sizeIsComplete = false; XCTAssertFalse(cache.isRecommendedForSelection)
+            cache.sizeIsComplete = true; cache.group = .protected; XCTAssertFalse(cache.isRecommendedForSelection)
+        }
+    }
+
+    func testIndividualTestReviewPreservesIdentityAndRejectsMutatedOrReleasedPackage() throws {
+        try fixture { home in
+            try file(home, "Builds/Test.app/Contents/MacOS/Test")
+            let original = try XCTUnwrap(scan(home, at: "Builds").candidates.first)
+            var context = SpaceCleaningContext(homeDirectory: home, testDeclarations: [.init(candidate: original)])
+            let reviewed = try XCTUnwrap(SpaceCleaningScanner.reviewTestCandidate(original, context: context))
+            XCTAssertEqual(reviewed.id, original.id)
+            XCTAssertEqual(reviewed.kind, .testApplication)
+            XCTAssertFalse(reviewed.isRecommendedForSelection)
+            context.protectedReleaseURLs = [original.url]
+            XCTAssertNil(SpaceCleaningScanner.reviewTestCandidate(original, context: context))
+            context.protectedReleaseURLs = []
+            try file(home, "Builds/Test.app/Contents/new-file")
+            XCTAssertNil(SpaceCleaningScanner.reviewTestCandidate(original, context: context))
+        }
+    }
+
+    func testLargeDiscoveryDoesNotStarvePreviouslyFoundCacheVerification() throws {
+        try fixture { home in
+            try file(home, "Library/Caches/pip/http-v2/data")
+            for index in 0..<20 { try file(home, "Downloads/personal-\(index)") }
+            let report = SpaceCleaningScanner.scan(scopes: [
+                .init(directory: home.appendingPathComponent("Library/Caches/pip")),
+                .init(directory: home.appendingPathComponent("Downloads"))
+            ], context: .init(homeDirectory: home), options: .init(maximumEntries: 8))
+            XCTAssertTrue(report.reachedLimit)
+            XCTAssertFalse(report.complete)
+            XCTAssertLessThanOrEqual(report.checkedEntries, 16)
+            XCTAssertTrue(try XCTUnwrap(report.candidates.first { $0.kind == .packageCache }).isRecommendedForSelection)
+            XCTAssertTrue(report.issues.contains { $0.kind == .entryLimit })
+        }
+    }
+
 }

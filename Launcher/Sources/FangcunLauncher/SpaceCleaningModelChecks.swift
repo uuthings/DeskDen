@@ -18,10 +18,52 @@ import LauncherCore
         do {
             try FileManager.default.createDirectory(at: rawRoot, withIntermediateDirectories: true)
             guard let root = SpaceCleaningScanner.canonicalURL(rawRoot) else { throw CheckError.missing }
+            let scopeFixture = try fixture(root.appendingPathComponent("scope-policy"), names: ["manual.data"])
+            let cacheFile = scopeFixture.home.appendingPathComponent("Library/Caches/pip/http-v2/cache")
+            let testFile = scopeFixture.home.appendingPathComponent("Developer/Builds/OnlyTest.app/Contents/MacOS/OnlyTest")
+            for url in [cacheFile, testFile] {
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data("owned fixture".utf8).write(to: url)
+            }
+            let scopeMover = SpaceCleaningCheckMover(root: scopeFixture.home, trash: scopeFixture.trash); movers.append(scopeMover)
+            let scopeModel = SpaceCleaningModel(dataDirectory: scopeFixture.data, homeDirectory: scopeFixture.home, mover: scopeMover); models.append(scopeModel)
+            scopeModel.startScan(); await scopeModel.waitUntilIdle()
+            let ids = scopeModel.items.map(\.id), defaults = scopeModel.selectedIDs
+            check(defaults.count == 1 && scopeModel.selectedItems.allSatisfy { $0.group == .rebuildable } && scopeMover.moveCount == 0,
+                  "complete scan defaults only verified cache into selection and never starts cleanup")
+            scopeModel.editScope(custom: true); scopeModel.applyScope()
+            check(scopeModel.screen == .scope && scopeModel.scopeChoice == .global, "an empty custom draft cannot replace global scanning")
+            let downloads = scopeFixture.home.appendingPathComponent("Downloads"), developer = scopeFixture.home.appendingPathComponent("Developer")
+            scopeModel.addDraftDirectories([downloads, developer, developer.appendingPathComponent("Builds"), downloads])
+            check(scopeModel.draftDirectories.count == 2, "custom directory draft deduplicates repeated and nested paths")
+            scopeModel.cancelScope()
+            check(scopeModel.screen == .results && scopeModel.items.map(\.id) == ids && scopeModel.selectedIDs == defaults,
+                  "cancelling custom scope preserves identities, selection and results")
+            scopeModel.editScope(); scopeModel.applyScope()
+            check(scopeModel.screen == .results && scopeModel.selectedIDs == defaults, "saving unchanged scope preserves the review")
+            guard let test = scopeModel.items.first(where: \.needsPurposeConfirmation) else { throw CheckError.missing }
+            scopeModel.requestTestPurpose(test.id); scopeModel.acknowledgement = true; scopeModel.confirmTestPurpose(test.id)
+            await scopeModel.waitUntilIdle()
+            check(scopeModel.items.first { $0.id == test.id }?.isSelectable == true && scopeModel.selectedIDs == defaults && scopeModel.items.map(\.id) == ids,
+                  "individual test declaration rechecks one package without selecting it or replacing other identities")
+            scopeModel.editScope(custom: true); scopeModel.addDraftDirectories([downloads, developer]); scopeModel.applyScope()
+            check(scopeModel.screen == .start && scopeModel.items.isEmpty && scopeModel.selectedIDs.isEmpty && scopeModel.scopeChoice == .custom,
+                  "committing changed scope clears stale results and returns home without scanning")
+            let scopeReload = SpaceCleaningModel(dataDirectory: scopeFixture.data, homeDirectory: scopeFixture.home, mover: scopeMover); models.append(scopeReload)
+            await scopeReload.waitUntilIdle()
+            check(scopeReload.scopeChoice == .custom && scopeReload.customDirectories.count == 2,
+                  "security-scoped custom directory bookmarks survive a model restart")
+            scopeReload.startScan(); await scopeReload.waitUntilIdle()
+            check(scopeReload.items.count == 2 && scopeReload.selectedIDs.isEmpty && scopeMover.moveCount == 0,
+                  "restored custom scope scans both folders without including global cache locations")
+            scopeReload.selectScope(.global)
+            check(scopeReload.screen == .start && scopeReload.scopeChoice == .global && scopeReload.customDirectories.count == 2,
+                  "switching back to global keeps remembered custom folders available")
+
             let first = try fixture(root.appendingPathComponent("restore"), names: ["first.data", "second.data"])
             let mover = SpaceCleaningCheckMover(root: first.home, trash: first.trash); movers.append(mover)
             let model = SpaceCleaningModel(dataDirectory: first.data, homeDirectory: first.home, mover: mover); models.append(model)
-            check(model.scopeChoice == .recommended && model.screen == .start && model.method == .trash,
+            check(model.scopeChoice == .global && model.screen == .start && model.method == .trash,
                   "space cleaning opens with default Mac scope and recoverable Trash method")
             model.startScan(); await model.waitUntilIdle()
             check(model.screen == .results && model.items.count == 2 && model.selectedIDs.isEmpty && mover.moveCount == 0,
@@ -34,7 +76,7 @@ import LauncherCore
             let trashed = try read(first.data)
             check(trashed.count == 2 && trashed.allSatisfy { $0.state == .trashed && $0.canRestore } && mover.moveCount == 2,
                   "verified production moves persist exactly one recoverable receipt per selected item")
-            check(model.screen == .finished && model.requiresRescan && model.selectedIDs.isEmpty,
+            check(model.screen == .start && model.requiresRescan && model.selectedIDs.isEmpty,
                   "processing consumes old scan selection and requires a fresh scan")
             guard let batch = model.batches.first, let conflicted = trashed.first else { throw CheckError.missing }
             try Data("new occupant".utf8).write(to: conflicted.originalURL)
@@ -82,7 +124,7 @@ import LauncherCore
             try Data("new removable fixture".utf8).write(to: permanentItem.url)
             remembered.startScan(); await remembered.waitUntilIdle()
             if let item = remembered.items.first {
-                remembered.toggleItem(item.id); remembered.requestConfirmation()
+                remembered.toggleItem(item.id); remembered.requestConfirmation(); remembered.rememberMethod = false
                 remembered.executeConfirmed(permanent: false, remember: false); await remembered.waitUntilIdle()
             }
             let clearedPreference = SpaceCleaningModel(dataDirectory: permanent.data, homeDirectory: permanent.home, mover: permanentMover)

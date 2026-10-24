@@ -6,8 +6,7 @@ import Quartz
 
 @MainActor final class SpaceCleaningModel: NSObject, ObservableObject, @preconcurrency QLPreviewPanelDataSource {
     @Published var screen: CleaningScreen = .start
-    @Published var scopeChoice: CleaningScopeChoice = .recommended
-    @Published var expandedGroup: CleaningResultGroup?
+    @Published var scopeChoice: CleaningScopeChoice = .global
     @Published var detailID: UUID?
     @Published var selectedIDs = Set<UUID>()
     @Published var dialog: CleaningDialog?
@@ -18,9 +17,7 @@ import Quartz
     @Published var reduceMotion = false
     @Published var message: String?
     @Published private(set) var items: [CleaningItemDisplay] = []
-    @Published private(set) var lanes: [CleaningScanLane] = []
     @Published private(set) var checkedCount = 0
-    @Published private(set) var completedStageCount = 0
     @Published private(set) var diskVolumeName: String?
     @Published private(set) var diskTotal: UInt64?
     @Published private(set) var diskAvailable: UInt64?
@@ -39,8 +36,24 @@ import Quartz
     let dataDirectory: URL
     let homeDirectory: URL
     private let preferenceURL: URL
-    private var customDirectory: URL?
-    private var securityScopedDirectory: URL?
+    @Published private(set) var customDirectories: [URL] = []
+    @Published var draftScope: CleaningScopeChoice = .global
+    @Published private(set) var draftDirectories: [URL] = []
+    @Published var resultTab: CleaningResultTab = .reviewable
+    @Published var searchText = ""
+    @Published var onlySelected = false
+    @Published var resultScrollID: UUID?
+    @Published private(set) var scanPhase: SpaceCleaningScanPhase = .discovering
+    @Published private(set) var scanCompletedItems = 0
+    @Published private(set) var scanTotalItems: Int?
+    @Published private(set) var scanDirectory = ""
+    @Published private(set) var scanItem = ""
+    @Published private(set) var lastScanDate: Date?
+    @Published private(set) var purposeReviewID: UUID?
+    private var securityScopedDirectories: [URL] = []
+    private var scopeOrigin: CleaningScreen = .start
+    private var operationDestination: CleaningScreen = .start
+    private var scopePreferencesWritable = true
     private var task: Task<Void, Never>?
     private var cancellation = StorageReviewCancellation()
     private var generation = UUID()
@@ -56,6 +69,7 @@ import Quartz
     private var currentOperationID: UUID?
     private var historyError: String?
     private var preferencesWritable = true
+    private var hasSavedMethod = false
     private let mover: any SpaceCleaningFileOperating
     private let runtime = SpaceCleaningRuntimeContext()
     private var runtimeObservers: [NSObjectProtocol] = []
@@ -68,6 +82,7 @@ import Quartz
         self.mover = mover
         super.init()
         loadPreferences()
+        loadScopePreference()
         updateRunningApplications()
         for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
             runtimeObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
@@ -85,20 +100,36 @@ import Quartz
     var selectedCount: Int { selectedItems.count }
     var isBusy: Bool { task != nil }
     var canProcess: Bool { !isBusy && !frozenForQuit && !requiresRescan && historyError == nil && selectedCount > 0 }
-    var animationActive: Bool { windowVisible && screen == .scanning && !reduceMotion }
+    var animationActive: Bool { windowVisible && [.start, .scanning].contains(screen) && !reduceMotion && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion && dialog == nil }
     var scopeSummary: String {
-        switch scopeChoice {
-        case .recommended: "此 Mac · 当前用户常用位置"
-        case .xcode: "Xcode · 构建缓存与归档"
-        case .downloads: "下载文件夹"
-        case .custom: customDirectory?.path.replacingOccurrences(of: homeDirectory.path, with: "~") ?? "尚未选择目录"
+        scopeChoice == .global ? "全局扫描 · 当前用户可访问位置" : "自定义位置 · \(customDirectories.count) 个文件夹"
+    }
+    var reviewableItems: [CleaningItemDisplay] { items.filter { $0.group != .protected } }
+    var protectedItems: [CleaningItemDisplay] { items.filter { $0.group == .protected } }
+    var visibleItems: [CleaningItemDisplay] {
+        (resultTab == .protected ? protectedItems : reviewableItems).filter {
+            (!onlySelected || selectedIDs.contains($0.id)) &&
+            (searchText.isEmpty || $0.name.localizedStandardContains(searchText) || $0.url.path.localizedStandardContains(searchText))
         }
     }
+    var visibleSelectableIDs: Set<UUID> { Set(visibleItems.filter(\.isSelectable).map(\.id)) }
+    var scanFraction: Double? { scanTotalItems.flatMap { $0 > 0 ? min(1, Double(scanCompletedItems) / Double($0)) : nil } }
+    func shortPath(_ url: URL) -> String {
+        let path = url.standardizedFileURL.path, home = homeDirectory.standardizedFileURL.path
+        return path == home ? "~" : path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
+    }
+    func toggleVisibleSelection() {
+        guard !isBusy, !requiresRescan else { return }
+        let ids = visibleSelectableIDs
+        if ids.isSubset(of: selectedIDs) { selectedIDs.subtract(ids) } else { selectedIDs.formUnion(ids) }
+    }
+    func clearSelection() { guard !isBusy else { return }; selectedIDs = [] }
+    func goHome() { guard !isBusy else { return }; closeDialog(); screen = .start }
     var reportSummary: String {
         if requiresRescan { return "文件状态已变化，请重新扫描后再选择" }
         if screen == .scanning { return "已检查 \(checkedCount) 项 · 逐项核验用途与保护规则" }
         if scanReachedLimit { return "扫描已到达数量或深度边界 · 仅可选择已完整核验的项目" }
-        return coverageIssues.isEmpty ? "扫描完成 · 所有项目均由你选择后处理" : "已检查 \(checkedCount) 项 · 有 \(coverageIssues.count) 处覆盖范围需要留意"
+        return coverageIssues.isEmpty ? "已默认选中明确可重建内容 · 复核确认后才会清理" : "已检查 \(checkedCount) 项 · 有 \(coverageIssues.count) 处覆盖范围需要留意"
     }
     func toggleItem(_ id: UUID) {
         guard !isBusy, !requiresRescan, items.contains(where: { $0.id == id && $0.isSelectable }) else { return }
@@ -106,35 +137,65 @@ import Quartz
     }
     func selectRecommended() {
         guard !isBusy, !requiresRescan else { return }
-        selectedIDs.formUnion(items.filter { $0.group == .rebuildable && $0.isSelectable }.map(\.id))
+        let context = makeContext()
+        selectedIDs.formUnion(candidates.values.filter {
+            $0.isRecommendedForSelection && SpaceCleaningScanner.validatePolicy(candidate: $0, context: context) == .unchanged
+        }.map(\.id))
     }
-    func toggleGroup(_ group: CleaningResultGroup) { expandedGroup = expandedGroup == group ? nil : group }
-    func showDetail(_ id: UUID) { detailID = id }
+    func showDetail(_ id: UUID) { detailID = detailID == id ? nil : id; acknowledgement = false; if case .purpose = dialog { closeDialog() } }
     func closeDetail() { detailID = nil }
     func showHistory() { guard !isBusy else { return }; previousScreen = screen; screen = .history; reconcileHistory() }
-    func returnFromHistory() { guard !isBusy else { return }; screen = previousScreen == .history ? .start : previousScreen }
+    func returnFromHistory() { guard !isBusy else { return }; screen = previousScreen == .history || requiresRescan ? .start : previousScreen }
     func closeDialog() { dialog = nil; confirmedIDs = []; pendingHistoryIDs = []; acknowledgement = false }
+    func editScope(custom: Bool = false) {
+        guard !isBusy else { return }
+        scopeOrigin = screen; draftScope = custom ? .custom : scopeChoice
+        draftDirectories = customDirectories; screen = .scope
+    }
+    func cancelScope() { guard !isBusy else { return }; draftDirectories = []; releaseUnusedScopeAccess(); screen = scopeOrigin }
     func selectScope(_ choice: CleaningScopeChoice) {
         guard !isBusy else { return }
-        if choice == .custom && customDirectory == nil { chooseCustomDirectory(); return }
-        scopeChoice = choice; invalidateResults(); closeDialog()
+        if choice == .custom { editScope(custom: true); return }
+        guard scopeChoice != choice else { return }
+        scopeChoice = choice; invalidateResults(); saveScopePreference()
+    }
+    func addDraftDirectories(_ urls: [URL]) {
+        guard screen == .scope, !isBusy else { return }
+        for url in urls where !draftDirectories.contains(where: { $0.standardizedFileURL == url.standardizedFileURL }) {
+            guard draftDirectories.count < 128 else { message = "最多选择 128 个位置。"; break }
+            let normalized = url.standardizedFileURL
+            guard normalized.isFileURL else { continue }
+            var directory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: normalized.path, isDirectory: &directory), directory.boolValue,
+                  (try? normalized.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true else { continue }
+            if !securityScopedDirectories.contains(url), url.startAccessingSecurityScopedResource() { securityScopedDirectories.append(url) }
+            draftDirectories.append(url)
+        }
+        // Parent scopes already cover their descendants; never count or process twice.
+        draftDirectories = draftDirectories.filter { child in
+            !draftDirectories.contains { parent in parent != child && child.standardizedFileURL.path.hasPrefix(parent.standardizedFileURL.path + "/") }
+        }.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+    }
+    func removeDraftDirectory(_ url: URL) { draftDirectories.removeAll { $0 == url } }
+    func applyScope() {
+        guard screen == .scope, !isBusy, draftScope == .global || !draftDirectories.isEmpty else { return }
+        let changed = draftScope != scopeChoice || (draftScope == .custom && draftDirectories != customDirectories)
+        scopeChoice = draftScope; customDirectories = draftDirectories
+        if changed { invalidateResults() } else { screen = scopeOrigin }
+        saveScopePreference(); releaseUnusedScopeAccess()
     }
     func chooseCustomDirectory() {
-        guard !isBusy, !frozenForQuit else { return }
-        closeDialog()
+        guard !isBusy, !frozenForQuit, screen == .scope else { return }
         let panel = NSOpenPanel()
-        panel.title = "选择要扫描的目录"; panel.prompt = "选择目录"
-        panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false
+        panel.title = "添加扫描位置"; panel.prompt = "添加位置"
+        panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = true
         let finish: (NSApplication.ModalResponse) -> Void = { [weak self] result in
-            guard let self, result == .OK, let url = panel.url else { return }
-            self.securityScopedDirectory?.stopAccessingSecurityScopedResource()
-            self.securityScopedDirectory = url.startAccessingSecurityScopedResource() ? url : nil
-            self.customDirectory = url; self.scopeChoice = .custom; self.invalidateResults()
+            guard result == .OK else { return }; self?.addDraftDirectories(panel.urls)
         }
         if let hostWindow { panel.beginSheetModal(for: hostWindow, completionHandler: finish) } else { panel.begin(completionHandler: finish) }
     }
     private func invalidateResults() {
-        selectedIDs = []; detailID = nil; candidates = [:]; items = []; lanes = []
+        selectedIDs = []; detailID = nil; resultScrollID = nil; candidates = [:]; items = []
         requiresRescan = false; screen = .start; message = historyError
     }
     func requestConfirmation() {
@@ -143,7 +204,7 @@ import Quartz
     }
     func requestTestPurpose(_ id: UUID) {
         guard !isBusy, !requiresRescan, items.contains(where: { $0.id == id && $0.needsPurposeConfirmation }) else { return }
-        acknowledgement = false; dialog = .purpose(id)
+        detailID = id; acknowledgement = false; dialog = .purpose(id)
     }
     func requestRestore(_ id: UUID) {
         guard !isBusy, !frozenForQuit, historyError == nil, batches.contains(where: { $0.id == id && $0.restorableCount > 0 }) else { return }
@@ -166,7 +227,7 @@ import Quartz
     func prepareForQuit() async {
         frozenForQuit = true; cancelAll()
         if let task { await task.value }
-        securityScopedDirectory?.stopAccessingSecurityScopedResource(); securityScopedDirectory = nil
+        securityScopedDirectories.forEach { $0.stopAccessingSecurityScopedResource() }; securityScopedDirectories = []
     }
     func resumeAfterCancelledQuit() { frozenForQuit = false }
     func refreshDisk() {
@@ -201,29 +262,22 @@ import Quartz
         guard !scopes.isEmpty else { message = "请先选择要扫描的目录。"; return }
         generation = UUID(); let run = generation
         cancellation = StorageReviewCancellation(); let token = cancellation
-        selectedIDs = []; confirmedIDs = []; detailID = nil; expandedGroup = nil; items = []; candidates = [:]
-        coverageIssues = []; coverageNotes = []; scanReachedLimit = false; requiresRescan = false; checkedCount = 0; completedStageCount = 0
+        selectedIDs = []; confirmedIDs = []; detailID = nil; resultScrollID = nil; searchText = ""; onlySelected = false; resultTab = .reviewable; items = []; candidates = [:]
+        coverageIssues = []; coverageNotes = []; scanReachedLimit = false; requiresRescan = false; checkedCount = 0; scanPhase = .discovering; scanCompletedItems = 0; scanTotalItems = nil; scanDirectory = ""; scanItem = ""
         closeDialog(); message = historyError; screen = .scanning
-        lanes = scanLanes(scopes)
         task = Task { [weak self] in
-            let output = await Task.detached(priority: .utility) {
+            let report = await Task.detached(priority: .utility) {
                 var lastUpdate = Date.distantPast
-                var lastCount = 0, stageCounts: [String: Int] = [:]
                 let report = SpaceCleaningScanner.scan(scopes: scopes, context: context, isCancelled: { token.isCancelled }) { progress in
-                    let increment = max(0, progress.checkedEntries - lastCount)
-                    lastCount = progress.checkedEntries
-                    stageCounts[progress.stage.rawValue, default: 0] += increment
-                    let counts = stageCounts
                     guard Date().timeIntervalSince(lastUpdate) >= 0.08 || [.complete, .cancelled, .failed].contains(progress.stage) else { return }
                     lastUpdate = Date()
                     Task { @MainActor [weak self] in
                         guard let self, self.generation == run, self.screen == .scanning else { return }
-                        self.acceptProgress(progress, counts: counts)
+                        self.acceptProgress(progress)
                     }
                 }
-                return (report, stageCounts)
+                return report
             }.value
-            let report = output.0
             guard let self, self.generation == run else { return }
             self.checkedCount = report.checkedEntries
             self.coverageIssues = report.issues.filter { ![.missing, .duplicate].contains($0.kind) }.map { $0.url.path.replacingOccurrences(of: self.homeDirectory.path, with: "~") + " · " + $0.reason }
@@ -236,24 +290,37 @@ import Quartz
             }
             self.requiresRescan = [.cancelled, .failed].contains(report.stage)
             self.scanReachedLimit = report.reachedLimit
-            for index in self.lanes.indices {
-                self.lanes[index].checkedCount = output.1[self.lanes[index].id] ?? 0
-                if report.complete { self.lanes[index].state = .complete }
-            }
-            self.completedStageCount = self.lanes.filter { $0.state == .complete }.count
+            self.lastScanDate = report.finishedAt
+            if report.stage == .complete { self.selectRecommendedAfterScan(context: self.makeContext()) }
             if self.requiresRescan { self.message = report.stage == .cancelled ? "扫描已停止。当前结果仅供查看，请完成一次扫描后再清理。" : "扫描未完整结束，已保留检查结果。请调整范围后重新扫描。" }
             else if report.reachedLimit { self.message = "本次覆盖范围受限。仅完整核验且可处理的项目能够选择；缩小范围可继续查看其余内容。" }
             self.task = nil; self.screen = .results; self.refreshDisk()
         }
     }
     func confirmTestPurpose(_ id: UUID) {
-        guard !isBusy, acknowledgement, dialog == .purpose(id), let candidate = candidates[id], candidate.canConfirmTestPurpose,
-              SpaceCleaningScanner.captureIdentity(at: candidate.url) == candidate.identity else {
-            message = "文件身份已变化，请重新扫描后确认用途。"; closeDialog(); return
+        guard !isBusy, acknowledgement, dialog == .purpose(id), let candidate = candidates[id], candidate.canConfirmTestPurpose else { return }
+        declarations.removeAll { $0.url == candidate.url }; declarations.append(.init(candidate: candidate))
+        let context = makeContext(); cancellation = StorageReviewCancellation(); let token = cancellation
+        purposeReviewID = id
+        task = Task { [weak self] in
+            let fresh = await Task.detached(priority: .utility) {
+                SpaceCleaningScanner.reviewTestCandidate(candidate, context: context, isCancelled: { token.isCancelled })
+            }.value
+            guard let self else { return }
+            if let fresh, let index = self.items.firstIndex(where: { $0.id == id }) {
+                self.candidates[id] = fresh; self.items[index] = Self.display(fresh)
+                self.resultTab = .reviewable; self.onlySelected = false; self.searchText = ""; self.resultScrollID = id
+            } else {
+                self.declarations.removeAll { $0.url == candidate.url }
+                self.message = "文件身份、内容或保护状态已变化，继续保留；请重新扫描。"
+            }
+            self.task = nil; self.purposeReviewID = nil; self.closeDialog()
         }
-        declarations.removeAll { $0.url == candidate.url }
-        declarations.append(.init(candidate: candidate))
-        closeDialog(); startScan()
+    }
+    private func selectRecommendedAfterScan(context: SpaceCleaningContext) {
+        selectedIDs = Set(candidates.values.filter {
+            $0.isRecommendedForSelection && SpaceCleaningScanner.validatePolicy(candidate: $0, context: context) == .unchanged
+        }.map(\.id))
     }
     func executeConfirmed(permanent: Bool, remember: Bool) {
         guard dialog == .confirm, canProcess, confirmedIDs == Set(selectedItems.map(\.id)),
@@ -261,8 +328,8 @@ import Quartz
         let selected = selectedItems.compactMap { candidates[$0.id] }
         guard selected.count == confirmedIDs.count else { return }
         let chosen: SpaceCleaningMethod = permanent ? .permanent : .trash
-        if remember { savePreference(chosen) } else if rememberMethod { clearPreference() }
-        closeDialog(); beginProcessing(count: selected.count)
+        if remember { savePreference(chosen) } else if hasSavedMethod { clearPreference() }
+        operationDestination = .start; closeDialog(); beginProcessing(count: selected.count)
         let operationID = UUID(); currentOperationID = operationID
         let token = cancellation, mover = mover, home = homeDirectory, declarations = declarations, runtime = runtime
         let persistence = SpaceCleaningPersistence(store: historyStore, cancellation: token)
@@ -297,7 +364,7 @@ import Quartz
         guard dialog == .restore(batchID), !isBusy, !frozenForQuit, historyError == nil, let historyStore else { return }
         let selected = records.filter { $0.operationID == batchID && $0.canRestore && pendingHistoryIDs.contains($0.id) }
         guard !selected.isEmpty else { return }
-        closeDialog(); beginProcessing(count: selected.count); currentOperationID = batchID
+        operationDestination = .history; closeDialog(); beginProcessing(count: selected.count); currentOperationID = batchID
         let token = cancellation, persistence = SpaceCleaningPersistence(store: historyStore, cancellation: cancellation)
         let home = homeDirectory, runtime = runtime, declarations = declarations
         task = Task { [weak self] in
@@ -321,7 +388,7 @@ import Quartz
         guard dialog == .purge(batchID), acknowledgement, !isBusy, !frozenForQuit, historyError == nil, let historyStore else { return }
         let selected = records.filter { $0.operationID == batchID && $0.canPurge }
         guard !selected.isEmpty else { return }
-        closeDialog(); beginProcessing(count: selected.count); currentOperationID = batchID
+        operationDestination = .history; closeDialog(); beginProcessing(count: selected.count); currentOperationID = batchID
         let token = cancellation, persistence = SpaceCleaningPersistence(store: historyStore, cancellation: cancellation)
         let home = homeDirectory, runtime = runtime, declarations = declarations
         task = Task { [weak self] in
@@ -350,7 +417,7 @@ import Quartz
         if let error { historyError = error; message = "处理记录未能安全保存，已暂停后续操作。" + error }
         else if cancellation.isCancelled { message = "已停止后续处理。另有 \(max(0, processingTotal - processingCompleted)) 项未开始；实际处理结果与可恢复项目见下方记录。" }
         else { message = nil }
-        rebuildBatches(); task = nil; screen = .finished; refreshDisk()
+        rebuildBatches(); task = nil; screen = operationDestination; refreshDisk()
     }
     private func loadHistory() {
         do {
@@ -392,7 +459,7 @@ import Quartz
             return CleaningHistoryBatchDisplay(id: id, date: entries.first!.createdAt, method: entries.first!.method,
                 items: entries.map { record in
                     CleaningHistoryItemDisplay(id: record.id, name: record.candidate.title, bytes: record.candidate.logicalBytes,
-                        statusText: Self.stateTitle(record.state), explanation: record.explanation + (record.state == .needsReview ? record.previousTrashURL.map { " 上次废纸篓位置：" + $0.path } ?? "" : ""),
+                        state: record.state, statusText: Self.stateTitle(record.state), explanation: record.explanation + (record.state == .needsReview ? record.previousTrashURL.map { " 上次废纸篓位置：" + $0.path } ?? "" : ""),
                         canRestore: record.canRestore && historyError == nil, canPurge: record.canPurge && historyError == nil,
                         originalURL: record.originalURL, resultURL: record.restoredURL ?? record.locationURL)
                 }, bytes: entries.reduce(0) { $0 &+ $1.candidate.logicalBytes })
@@ -421,13 +488,8 @@ import Quartz
               isSelectable: item.canProcess, needsPurposeConfirmation: item.canConfirmTestPurpose)
     }
     private func selectedScopes(_ context: SpaceCleaningContext) -> [SpaceCleaningScope] {
-        let scopes = SpaceCleaningScanner.recommendedScopes(context: context)
-        switch scopeChoice {
-        case .recommended: return scopes
-        case .xcode: return scopes.filter { [.derivedData, .development, .archives, .releaseArchiveDiscovery, .releaseArchives].contains($0.kind) }
-        case .downloads: return scopes.filter { $0.kind == .downloads }
-        case .custom: return customDirectory.map { [.init(directory: $0, kind: .custom, title: $0.lastPathComponent)] } ?? []
-        }
+        scopeChoice == .global ? SpaceCleaningScanner.globalScopes(context: context) :
+            customDirectories.map { .init(directory: $0, title: $0.lastPathComponent) }
     }
     private nonisolated static func runningAt(_ url: URL, context: SpaceCleaningContext) -> Bool {
         let path = url.standardizedFileURL.path
@@ -441,31 +503,49 @@ import Quartz
         .init(homeDirectory: home, runningApplicationURLs: runtime.runningURLs(), testDeclarations: declarations,
               activeToolNames: SpaceCleaningRuntimeContext.activeTools())
     }
-    private func scanLanes(_ scopes: [SpaceCleaningScope]) -> [CleaningScanLane] {
-        let definitions: [(SpaceCleaningStage, String, String)] = [(.caches, "应用缓存", "square.stack.3d.up"), (.development, "开发与构建", "hammer"), (.downloads, "下载与大文件", "arrow.down.doc"), (.protection, "归档与保护核验", "checkmark.shield")]
-        let stages = Set(scopes.map(Self.stage))
-        return definitions.filter { stages.contains($0.0) }.map {
-            .init(id: $0.0.rawValue, title: $0.1, systemImage: $0.2, state: .pending, checkedCount: 0, path: "等待扫描", currentFile: "", decision: "")
+    private func acceptProgress(_ progress: SpaceCleaningProgress) {
+        checkedCount = progress.checkedEntries; scanPhase = progress.phase
+        scanCompletedItems = progress.completedItems; scanTotalItems = progress.totalItems
+        if let path = progress.currentPath {
+            let url = URL(fileURLWithPath: path)
+            scanDirectory = shortPath(url)
+            scanItem = progress.currentFileName ?? url.lastPathComponent
         }
     }
-    private nonisolated static func stage(_ scope: SpaceCleaningScope) -> SpaceCleaningStage {
-        switch scope.kind {
-        case .browserCache, .packageCache, .diagnostics: .caches
-        case .derivedData, .development: .development
-        case .downloads, .custom: .downloads
-        case .archives, .releaseArchives, .releaseArchiveDiscovery, .installedApplications: .protection
+    private struct ScopePreference: Codable { var format = 1; var choice: CleaningScopeChoice; var bookmarks: [Data] }
+    private var scopePreferenceURL: URL { dataDirectory.appendingPathComponent("scope.json") }
+    private func loadScopePreference() {
+        guard FileManager.default.fileExists(atPath: scopePreferenceURL.path) else { return }
+        do {
+            let data = try Data(contentsOf: scopePreferenceURL)
+            guard data.count < 1024 * 1024 else { throw CocoaError(.fileReadCorruptFile) }
+            let saved = try JSONDecoder().decode(ScopePreference.self, from: data)
+            guard saved.format == 1, saved.bookmarks.count <= 128 else { throw CocoaError(.fileReadCorruptFile) }
+            var resolved: [URL] = []
+            for bookmark in saved.bookmarks {
+                var stale = false
+                let url = try URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope, .withoutUI], bookmarkDataIsStale: &stale)
+                if url.startAccessingSecurityScopedResource() { securityScopedDirectories.append(url) }
+                resolved.append(url)
+            }
+            customDirectories = resolved; scopeChoice = saved.choice
+        } catch {
+            scopePreferencesWritable = false
+            message = "扫描位置未能恢复，已保留原设置；本次使用全局扫描，可重新选择位置。"
         }
     }
-    private func acceptProgress(_ progress: SpaceCleaningProgress, counts: [String: Int]) {
-        checkedCount = progress.checkedEntries
-        guard let index = lanes.firstIndex(where: { $0.id == progress.stage.rawValue }) else { return }
-        for i in lanes.indices where i < index { lanes[i].state = .complete }
-        lanes[index].state = .active
-        for i in lanes.indices { lanes[i].checkedCount = counts[lanes[i].id] ?? 0 }
-        lanes[index].path = progress.currentPath ?? "正在检查目录"
-        lanes[index].currentFile = progress.currentFileName ?? ""
-        lanes[index].decision = "已识别 \(progress.recordedCandidates) 项"
-        completedStageCount = lanes.filter { $0.state == .complete }.count
+    private func saveScopePreference() {
+        guard scopePreferencesWritable else { return }
+        do {
+            let bookmarks = try customDirectories.map { try $0.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil) }
+            try FileManager.default.createDirectory(at: dataDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try JSONEncoder().encode(ScopePreference(choice: scopeChoice, bookmarks: bookmarks)).write(to: scopePreferenceURL, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: scopePreferenceURL.path)
+        } catch { message = "本次扫描位置已生效，但未能保存；下次需重新选择。" }
+    }
+    private func releaseUnusedScopeAccess() {
+        for url in securityScopedDirectories where !customDirectories.contains(url) { url.stopAccessingSecurityScopedResource() }
+        securityScopedDirectories.removeAll { !customDirectories.contains($0) }
     }
 
     private struct Preferences: Codable { var format = 1; var method: SpaceCleaningMethod }
@@ -476,14 +556,14 @@ import Quartz
             guard data.count < 64 * 1024 else { throw CocoaError(.fileReadCorruptFile) }
             let saved = try JSONDecoder().decode(Preferences.self, from: data)
             guard saved.format == 1 else { throw CocoaError(.fileReadCorruptFile) }
-            method = saved.method; rememberMethod = true
+            method = saved.method; rememberMethod = true; hasSavedMethod = true
         } catch { preferencesWritable = false; message = "清理偏好无法读取，原文件已保留；本次默认移到废纸篓。" }
     }
     private func clearPreference() {
         guard preferencesWritable else { return }
         do {
             if FileManager.default.fileExists(atPath: preferenceURL.path) { try FileManager.default.removeItem(at: preferenceURL) }
-            method = .trash; rememberMethod = false
+            method = .trash; rememberMethod = false; hasSavedMethod = false
         } catch { message = "本次选择仍有效，但已保存的处理方式未能取消。" }
     }
     private func savePreference(_ method: SpaceCleaningMethod) {
@@ -492,7 +572,7 @@ import Quartz
             try FileManager.default.createDirectory(at: dataDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             try JSONEncoder().encode(Preferences(method: method)).write(to: preferenceURL, options: .atomic)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: preferenceURL.path)
-            self.method = method; rememberMethod = true
+            self.method = method; rememberMethod = true; hasSavedMethod = true
         } catch { message = "本次选择仍有效，但处理方式未能保存：\(error.localizedDescription)" }
     }
     private func updateRunningApplications() {
