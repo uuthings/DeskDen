@@ -4,7 +4,9 @@ import LauncherCore
 @MainActor
 final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let store: ConfigurationStore
-    var configuration = LauncherConfiguration()
+    var configuration = LauncherConfiguration() {
+        didSet { ButtonCursorPolicy.shared.apply(configuration.settings.buttonHoverCursor) }
+    }
     let hotKey = GlobalHotKey()
     let bindingHotKeys = GlobalBindingHotKeys()
     let catalog = ApplicationCatalog()
@@ -1419,7 +1421,7 @@ final class HorizontalNavigationGesture {
 }
 
 /// A full-size hit target around the small visual page marker.
-final class PageIndicatorButton: NSButton {
+final class PageIndicatorButton: ClickableButton {
     let selectedPage: Bool
     let activate: () -> Void
     override var isFlipped: Bool { true }

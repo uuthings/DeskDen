@@ -36,7 +36,7 @@ struct WorkbenchChromeButtonStyle: ButtonStyle {
         configuration.label.foregroundStyle(hovering && closing ? p.critical : hovering ? p.text : p.secondary)
             .background(RoundedRectangle(cornerRadius: 7).fill(configuration.isPressed ? p.soft.opacity(0.9) : hovering ? (closing ? p.critical.opacity(0.12) : p.soft) : .clear))
             .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(hovering ? (closing ? p.critical.opacity(0.25) : p.border) : .clear, lineWidth: 1))
-            .contentShape(RoundedRectangle(cornerRadius: 7)).onHover { hovering = $0 }
+            .contentShape(RoundedRectangle(cornerRadius: 7)).onHover { hovering = $0 }.clickableCursor()
     }
 }
 

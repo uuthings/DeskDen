@@ -242,7 +242,7 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
     private var host: NSHostingView<AnyView>?
     private var hover = false
     private var area: NSTrackingArea?
-    private let actionButton = NSButton(), styleButton = NSButton()
+    private let actionButton = ClickableButton(), styleButton = ClickableButton()
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
     override var canBecomeKeyView: Bool { !isGhost }

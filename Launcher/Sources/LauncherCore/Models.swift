@@ -136,6 +136,11 @@ public enum LauncherAppearance: String, Codable, CaseIterable, Sendable {
     }
 }
 
+public enum ButtonHoverCursor: String, Codable, CaseIterable, Sendable {
+    case pointingHand, arrow
+    public var title: String { self == .pointingHand ? "小手" : "箭头" }
+}
+
 public struct LauncherSettings: Codable, Equatable, Sendable {
     public static let defaultLauncherHotKey = BindingHotKey(keyCode: 2, option: true)
     public static let defaultWorkbenchHotKey = BindingHotKey(keyCode: 3, option: true)
@@ -152,6 +157,7 @@ public struct LauncherSettings: Codable, Equatable, Sendable {
     public var hideOnLaunch = true
     public var resultLayout: ResultLayout = .grid
     public var reduceMotion = false
+    public var buttonHoverCursor: ButtonHoverCursor = .pointingHand
     public var lightAppearance = false
     public var glassOpacity: Double = 0.70
     public var workbenchTheme: LauncherTheme = .qingbiMist
@@ -168,7 +174,7 @@ public struct LauncherSettings: Codable, Equatable, Sendable {
     public var applicationsEnabled = true
     public var scrollSwitchesViews = true
     public init() {}
-    private enum CodingKeys: String, CodingKey { case display, hotKey, launcherHotKey, hideOnLaunch, resultLayout, reduceMotion, lightAppearance, glassOpacity, workbenchTheme, workbenchAppearance, backgroundMotionEnabled, interfaceMaterialVersion, appSort, directLaunchPrefix, applicationViewHotKey, workbenchHotKey, defaultSearchInputMode, defaultView, hideUnboundKeys, actionsEnabled, applicationsEnabled, scrollSwitchesViews }
+    private enum CodingKeys: String, CodingKey { case display, hotKey, launcherHotKey, hideOnLaunch, resultLayout, reduceMotion, buttonHoverCursor, lightAppearance, glassOpacity, workbenchTheme, workbenchAppearance, backgroundMotionEnabled, interfaceMaterialVersion, appSort, directLaunchPrefix, applicationViewHotKey, workbenchHotKey, defaultSearchInputMode, defaultView, hideUnboundKeys, actionsEnabled, applicationsEnabled, scrollSwitchesViews }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         display = try values.decodeIfPresent(DisplayMode.self, forKey: .display) ?? .name
@@ -180,6 +186,7 @@ public struct LauncherSettings: Codable, Equatable, Sendable {
         hideOnLaunch = try values.decodeIfPresent(Bool.self, forKey: .hideOnLaunch) ?? true
         resultLayout = try values.decodeIfPresent(ResultLayout.self, forKey: .resultLayout) ?? .grid
         reduceMotion = try values.decodeIfPresent(Bool.self, forKey: .reduceMotion) ?? false
+        buttonHoverCursor = try values.decodeIfPresent(ButtonHoverCursor.self, forKey: .buttonHoverCursor) ?? .pointingHand
         lightAppearance = try values.decodeIfPresent(Bool.self, forKey: .lightAppearance) ?? false
         let materialVersion = try values.decodeIfPresent(Int.self, forKey: .interfaceMaterialVersion)
         guard materialVersion == nil || materialVersion == 2 else {

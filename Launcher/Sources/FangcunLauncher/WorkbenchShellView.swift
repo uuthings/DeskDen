@@ -184,7 +184,7 @@ struct WorkbenchRootView: View {
                     HStack(spacing:10) {Image(systemName:"arrow.left").frame(width:18).accessibilityHidden(true);Text("返回方寸");Spacer(minLength:0)}
                         .padding(.horizontal,12).frame(height:expanded ? 46:42)
                         .contentShape(RoundedRectangle(cornerRadius:9))
-                }.buttonStyle(.plain).foregroundStyle(palette.secondary)
+                }.buttonStyle(ClickablePlainButtonStyle()).foregroundStyle(palette.secondary)
                 ForEach(WorkbenchSettingsTab.allCases,id:\.self) {tab in
                     Button {model.settingsTab=tab} label:{
                         HStack(spacing:10) {
@@ -196,7 +196,7 @@ struct WorkbenchRootView: View {
                             .foregroundStyle(model.settingsTab == tab ? palette.text:palette.secondary)
                             .background {if model.settingsTab == tab {WorkbenchMaterialSurface(kind:.selected,radius:9)}}
                             .contentShape(RoundedRectangle(cornerRadius:9))
-                    }.buttonStyle(.plain).accessibilityElement(children:.ignore).accessibilityAddTraits(.isButton).accessibilityLabel(tab.title).accessibilityValue(model.settingsTab == tab ? "当前页面":"").accessibilityAddTraits(model.settingsTab == tab ? .isSelected:[]).accessibilityRemoveTraits(model.settingsTab == tab ? []:.isSelected)
+                    }.buttonStyle(ClickablePlainButtonStyle()).accessibilityElement(children:.ignore).accessibilityAddTraits(.isButton).accessibilityLabel(tab.title).accessibilityValue(model.settingsTab == tab ? "当前页面":"").accessibilityAddTraits(model.settingsTab == tab ? .isSelected:[]).accessibilityRemoveTraits(model.settingsTab == tab ? []:.isSelected)
                         .accessibilityIdentifier("settings-navigation-"+tab.rawValue)
                 }
                 Spacer(minLength:24)
@@ -212,7 +212,7 @@ struct WorkbenchRootView: View {
                         Text("启动器").font(.system(size:expanded ? 13:12));Spacer(minLength:0)
                     }.padding(.horizontal,12).frame(height:expanded ? 46:42)
                         .contentShape(RoundedRectangle(cornerRadius:9))
-                }.buttonStyle(.plain).foregroundStyle(palette.muted).accessibilityLabel("启动器").accessibilityIdentifier("navigation-launcher")
+                }.buttonStyle(ClickablePlainButtonStyle()).foregroundStyle(palette.muted).accessibilityLabel("启动器").accessibilityIdentifier("navigation-launcher")
                 navigation(.settings,expanded:expanded)
             }
         }.padding(.horizontal,12).padding(.top,22).padding(.bottom,15)
@@ -232,7 +232,7 @@ struct WorkbenchRootView: View {
                 if model.route == route { WorkbenchMaterialSurface(kind: .selected, radius: 9) }
             }
             .contentShape(RoundedRectangle(cornerRadius: 9))
-        }.buttonStyle(.plain).accessibilityElement(children:.ignore).accessibilityAddTraits(.isButton).accessibilityLabel(route == .overview ? "首页":route == .vault ? "私密空间":route.title).accessibilityValue(model.route == route ? "当前页面" : "").accessibilityAddTraits(model.route == route ? .isSelected:[]).accessibilityRemoveTraits(model.route == route ? []:.isSelected).accessibilityIdentifier("navigation-" + route.rawValue)
+        }.buttonStyle(ClickablePlainButtonStyle()).accessibilityElement(children:.ignore).accessibilityAddTraits(.isButton).accessibilityLabel(route == .overview ? "首页":route == .vault ? "私密空间":route.title).accessibilityValue(model.route == route ? "当前页面" : "").accessibilityAddTraits(model.route == route ? .isSelected:[]).accessibilityRemoveTraits(model.route == route ? []:.isSelected).accessibilityIdentifier("navigation-" + route.rawValue)
     }
 }
 

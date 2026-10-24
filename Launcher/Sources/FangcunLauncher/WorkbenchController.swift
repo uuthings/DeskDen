@@ -54,6 +54,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     @Published private(set) var quitting=false
     @Published private(set) var light=false
     @Published private(set) var appearance:LauncherAppearance = .dark
+    @Published private(set) var buttonHoverCursor:ButtonHoverCursor = .pointingHand
     @Published private(set) var loginEnabled=false
     @Published private(set) var loginNeedsApproval=false
     @Published var message:String?
@@ -87,6 +88,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         self.ai=ai ?? AIUsageModel(dataDirectory:dataDirectory.appendingPathComponent("AI"))
         vault=VaultModel(dataDirectory:dataDirectory.appendingPathComponent("Vault"))
         opacity=owner.configuration.settings.glassOpacity;appearance=owner.configuration.settings.workbenchAppearance
+        buttonHoverCursor=owner.configuration.settings.buttonHoverCursor
         light=appearance == .light || (appearance == .system && NSApp.effectiveAppearance.bestMatch(from:[.aqua,.darkAqua]) == .aqua)
         theme=owner.configuration.settings.workbenchTheme;backgroundMotion=owner.configuration.settings.backgroundMotionEnabled;reduceMotion=owner.configuration.settings.reduceMotion
         do {preferences=try preferenceStore.load()} catch {message=error.localizedDescription}
@@ -139,6 +141,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     }
     func syncAppearance() {
         guard let owner else {return};opacity=owner.configuration.settings.glassOpacity;appearance=owner.configuration.settings.workbenchAppearance
+        buttonHoverCursor=owner.configuration.settings.buttonHoverCursor
         light=appearance == .light || (appearance == .system && NSApp.effectiveAppearance.bestMatch(from:[.aqua,.darkAqua]) == .aqua)
         theme=owner.configuration.settings.workbenchTheme;backgroundMotion=owner.configuration.settings.backgroundMotionEnabled;reduceMotion=owner.configuration.settings.reduceMotion
         cleaning.reduceMotion=reduceMotion
@@ -147,6 +150,10 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         widgets.apply(preferences.cards,opacity:opacity,light:light,theme:theme)
     }
     func changeOpacity(_ value:Double) {guard owner?.setGlobalGlassOpacity(value) == true else {message=owner?.lastSaveError;return};syncAppearance()}
+    func changeButtonHoverCursor(_ value:ButtonHoverCursor) {
+        guard let owner,owner.updateSettings({$0.buttonHoverCursor=value}) else {message=owner?.lastSaveError;return}
+        syncAppearance()
+    }
     func changeLight(_ value:Bool) {changeAppearance(value ? .light:.dark)}
     func changeAppearance(_ value:LauncherAppearance) {
         guard let owner,owner.updateSettings({$0.workbenchAppearance=value;$0.lightAppearance=value == .light}) else {message=owner?.lastSaveError;return}

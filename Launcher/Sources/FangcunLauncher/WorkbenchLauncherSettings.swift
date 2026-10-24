@@ -84,12 +84,12 @@ struct WorkbenchLauncherSettings:View {
                 row("唤出快捷键","在任何应用中打开启动器"){WorkbenchShortcutSetting(owner:owner,target:.launcher)}
                 row("默认视图","Tab 键可切换按键与应用"){WBSelect("默认视图",selection:setting(\.defaultView),options:LauncherDefaultView.allCases.map{($0,$0.title)}).frame(width:174)}
                 row("卡片布局","绑定与未绑定项目使用一致尺寸"){WBSelect("卡片布局",selection:setting(\.display),options:displayOptions).frame(width:174)}
-                row("数字快速启动","搜索后用数字键打开候选应用"){Toggle("数字快速启动",isOn:Binding(get:{model.configuration.settings.defaultSearchInputMode == .quick},set:{value in model.change{$0.defaultSearchInputMode=value ? .quick:.text}})).labelsHidden().toggleStyle(.switch).controlSize(.small).tint(palette.accent)}
+                row("数字快速启动","搜索后用数字键打开候选应用"){Toggle("数字快速启动",isOn:Binding(get:{model.configuration.settings.defaultSearchInputMode == .quick},set:{value in model.change{$0.defaultSearchInputMode=value ? .quick:.text}})).labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.small).tint(palette.accent)}
                 row("背景材质","与全局外观同步",last:true){Button("调整材质",action:adjustMaterial).buttonStyle(WBButtonStyle(compact:true))}
             }}
             WBCard(title:"绑定与搜索",symbol:"keyboard",spacing:10){VStack(spacing:0){
                 row("按键绑定","管理应用、网址、文件及快捷动作"){Button("管理绑定"){model.error=nil;bindingsOpen=true}.buttonStyle(WBButtonStyle(compact:true)).accessibilityIdentifier("fc.settings.launcher.bindings")}
-                row("隐藏未绑定按键","仅影响启动器按键视图",last:true){Toggle("隐藏未绑定按键",isOn:setting(\.hideUnboundKeys)).labelsHidden().toggleStyle(.switch).controlSize(.small).tint(palette.accent)}
+                row("隐藏未绑定按键","仅影响启动器按键视图",last:true){Toggle("隐藏未绑定按键",isOn:setting(\.hideUnboundKeys)).labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.small).tint(palette.accent)}
             }}
             HStack(spacing:12){Button("更多启动器选项…",action:model.moreSettings).buttonStyle(WBQuietButtonStyle()).help("应用扫描、面板开关、独立快捷键、直达前缀与配置恢复");Spacer();Button("打开启动器"){owner.show()}.buttonStyle(WBQuietButtonStyle())}.font(.system(size:11))
             if let error=model.error{Text(error).font(.system(size:11)).foregroundStyle(palette.critical)}
@@ -240,14 +240,14 @@ private struct WorkbenchBindingEditor:View{
         .onAppear{installInspection()}.onDisappear{model.cancelPicker();inspection?.clearEditor()}.accessibilityIdentifier("fc.modal.launcher.bindingEditor.\(key)")
     }
     private var groupSelector:some View{
-        HStack(spacing:2){ForEach(WorkbenchBindingGroup.allCases,id:\.self){value in Button{select(value)}label:{Text(value.title).font(.system(size:11)).frame(maxWidth:.infinity).frame(height:24).foregroundStyle(group == value ? palette.text:palette.muted).background(group == value ? palette.soft:.clear,in:RoundedRectangle(cornerRadius:5))}.buttonStyle(.plain).accessibilityValue(group == value ? "已选择":"")}}.padding(3).frame(height:32).background(WorkbenchMaterialSurface(kind:.control,radius:8))
+        HStack(spacing:2){ForEach(WorkbenchBindingGroup.allCases,id:\.self){value in Button{select(value)}label:{Text(value.title).font(.system(size:11)).frame(maxWidth:.infinity).frame(height:24).foregroundStyle(group == value ? palette.text:palette.muted).background(group == value ? palette.soft:.clear,in:RoundedRectangle(cornerRadius:5))}.buttonStyle(ClickablePlainButtonStyle()).accessibilityValue(group == value ? "已选择":"")}}.padding(3).frame(height:32).background(WorkbenchMaterialSurface(kind:.control,radius:8))
     }
     @ViewBuilder private var targetFields:some View{
         switch kind{
         case .app:
             field("搜索应用"){HStack(spacing:7){Image(systemName:"magnifyingglass").foregroundStyle(palette.muted);TextField("名称或首字母",text:$query).textFieldStyle(.plain)}.padding(.horizontal,10).frame(height:32).background(WorkbenchMaterialSurface(kind:.control,radius:8))}
             ScrollView{LazyVStack(spacing:7){ForEach(model.filteredApplications(query)){target in
-                Button{var value=draft;value.selected=target;value.location=target.location;value.name=target.name;drafts[kind]=value;if !moreOptions{save()}}label:{HStack(spacing:8){WorkbenchBindingIcon(target:target).frame(width:18,height:18);Text(target.name).font(.system(size:12)).lineLimit(1);Spacer();if draft.selected?.id == target.id{Image(systemName:"checkmark").font(.system(size:11)).foregroundStyle(palette.accent)}}.padding(.horizontal,10).frame(height:32).frame(maxWidth:.infinity,alignment:.leading).background(WorkbenchMaterialSurface(kind:.control,radius:8))}.buttonStyle(.plain)
+                Button{var value=draft;value.selected=target;value.location=target.location;value.name=target.name;drafts[kind]=value;if !moreOptions{save()}}label:{HStack(spacing:8){WorkbenchBindingIcon(target:target).frame(width:18,height:18);Text(target.name).font(.system(size:12)).lineLimit(1);Spacer();if draft.selected?.id == target.id{Image(systemName:"checkmark").font(.system(size:11)).foregroundStyle(palette.accent)}}.padding(.horizontal,10).frame(height:32).frame(maxWidth:.infinity,alignment:.leading).background(WorkbenchMaterialSurface(kind:.control,radius:8))}.buttonStyle(ClickablePlainButtonStyle())
             };if model.filteredApplications(query).isEmpty{Text("没有匹配的应用").font(.system(size:11)).foregroundStyle(palette.muted).padding(.vertical,20)}}.background(WorkbenchOverlayScrollbars())}.frame(height:200)
             HStack{Button("选择应用…"){choose(.app)}.buttonStyle(WBButtonStyle(compact:true));Spacer();Button("刷新列表"){Task{await model.refreshApplications(force:true)}}.buttonStyle(WBQuietButtonStyle())}
         case .web:

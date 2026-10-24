@@ -267,7 +267,7 @@ private struct NetworkDailyBars: View {
                                     } else { Text("—").font(.system(size: 13)).foregroundStyle(palette.muted).frame(maxHeight: .infinity) }
                                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
                             }
-                        }.buttonStyle(.plain).accessibilityLabel(detail(date, day: day)).help(detail(date, day: day))
+                        }.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel(detail(date, day: day)).help(detail(date, day: day))
                             .popover(isPresented: Binding(get: { selectedDate == date }, set: { if !$0 { selectedDate = nil } })) {
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text(NetworkLedgerDate.label(date, timeZone: summary.timeZoneIdentifier)).font(.system(size: 12, weight: .medium))
@@ -352,7 +352,7 @@ struct DeviceBudgetDialog: View {
                         Text("启用流量预算").font(.system(size: 12)).foregroundStyle(palette.text)
                         Spacer(minLength: 12)
                         Toggle("启用流量预算", isOn: $drafts.budget.enabled)
-                            .labelsHidden().toggleStyle(.switch).controlSize(.mini).fixedSize().tint(palette.accent)
+                            .labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.mini).fixedSize().tint(palette.accent)
                             .disabled(drafts.savingBudget).accessibilityIdentifier("fc.network.budget.enabled")
                     }.frame(maxWidth: .infinity, minHeight: 28)
                     Group {
@@ -361,7 +361,7 @@ struct DeviceBudgetDialog: View {
                         DeviceRuleNumberField(title: "额度", value: $drafts.budget.limit, unit: "GB", error: drafts.budgetErrors["limit"])
                     }
                     if drafts.budget.period.supportsAnchor {
-                        Toggle("自定义账期起点", isOn: $drafts.budget.usesAnchor).font(.system(size: 12))
+                        Toggle("自定义账期起点", isOn: $drafts.budget.usesAnchor).clickableCursor().font(.system(size: 12))
                         if drafts.budget.usesAnchor { dateField("账期起算日", value: $drafts.budget.anchor) }
                     } else if drafts.budget.period == .custom {
                         HStack(spacing: 12) { dateField("开始日期", value: $drafts.budget.customStart); dateField("结束日期 · 包含当天", value: $drafts.budget.customEnd) }
@@ -374,7 +374,7 @@ struct DeviceBudgetDialog: View {
                     let preview = model.trafficPreview(drafts.budget.rule(from: model.budget))
                     Label("当前账期：\(DeviceTrafficDisplay.period(preview, includeYear: true))\n记录时区：\(preview.timeZoneIdentifier)", systemImage: "calendar")
                         .font(.system(size: 11)).foregroundStyle(palette.secondary).padding(10).frame(maxWidth: .infinity, alignment: .leading).background(palette.soft, in: RoundedRectangle(cornerRadius: 8))
-                    Toggle("系统通知", isOn: $drafts.budget.notifications).font(.system(size: 12))
+                    Toggle("系统通知", isOn: $drafts.budget.notifications).clickableCursor().font(.system(size: 12))
                     }.disabled(!drafts.budget.enabled || drafts.savingBudget)
                     Text("达到阈值时提醒，不会限速或断网。月份不足起算日期时取月末，下期恢复原日期。保存后再申请通知权限。")
                         .font(.system(size: 11)).foregroundStyle(palette.muted).fixedSize(horizontal: false, vertical: true)
@@ -409,7 +409,7 @@ struct DeviceTemperatureDialog: View {
     @State private var discard = false
     var body: some View {
         DeviceDialog(title: "温度提醒", dismiss: close) {
-            Toggle("启用温度提醒", isOn: $drafts.temperature.enabled).toggleStyle(.switch).disabled(drafts.savingTemperature)
+            Toggle("启用温度提醒", isOn: $drafts.temperature.enabled).toggleStyle(.switch).clickableCursor().disabled(drafts.savingTemperature)
             Group {
             HStack(spacing: 12) {
                 DeviceRuleNumberField(title: "CPU 阈值", value: $drafts.temperature.cpu, unit: "°C", error: drafts.temperatureErrors["cpu"])
@@ -422,7 +422,7 @@ struct DeviceTemperatureDialog: View {
             Label("CPU 与 GPU 分别判断。缺失读数会中断计时，恢复正常后才允许再次触发。温度提醒不控制风扇。", systemImage: "info.circle")
                 .font(.system(size: 11)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
                 .padding(10).background(palette.soft, in: RoundedRectangle(cornerRadius: 8))
-            Toggle("系统通知", isOn: $drafts.temperature.notifications).font(.system(size: 12))
+            Toggle("系统通知", isOn: $drafts.temperature.notifications).clickableCursor().font(.system(size: 12))
             }.disabled(!drafts.temperature.enabled || drafts.savingTemperature)
             if drafts.temperatureStatus != "已保存" { Text(drafts.temperatureStatus).font(.system(size: 11)).foregroundStyle(palette.warning) }
         } actions: {

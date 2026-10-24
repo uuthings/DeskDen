@@ -25,12 +25,37 @@ import LauncherCore
                 try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try Data("owned fixture".utf8).write(to: url)
             }
+            let manualFile = scopeFixture.home.appendingPathComponent("Downloads/manual.data")
+            let modifiedDate = Date(timeIntervalSince1970: 1_700_000_000)
+            try FileManager.default.setAttributes([.modificationDate: modifiedDate], ofItemAtPath: manualFile.path)
             let scopeMover = SpaceCleaningCheckMover(root: scopeFixture.home, trash: scopeFixture.trash); movers.append(scopeMover)
             let scopeModel = SpaceCleaningModel(dataDirectory: scopeFixture.data, homeDirectory: scopeFixture.home, mover: scopeMover); models.append(scopeModel)
             scopeModel.startScan(); await scopeModel.waitUntilIdle()
             let ids = scopeModel.items.map(\.id), defaults = scopeModel.selectedIDs
             check(defaults.count == 1 && scopeModel.selectedItems.allSatisfy { $0.group == .rebuildable } && scopeMover.moveCount == 0,
                   "complete scan defaults only verified cache into selection and never starts cleanup")
+            check(scopeModel.resultTab == .recommended && scopeModel.recommendedIDs == defaults &&
+                  Set(scopeModel.visibleItems.map(\.id)) == defaults && scopeModel.recommendedItems.count == 1,
+                  "results open on the actual recommended selection instead of mixing personal files into cleanup suggestions")
+            scopeModel.showResults(.reviewable)
+            check(scopeModel.visibleItems.contains { $0.url == manualFile } &&
+                  scopeModel.visibleItems.allSatisfy { !scopeModel.recommendedIDs.contains($0.id) } && scopeModel.selectedIDs == defaults,
+                  "other-files filtering excludes recommendations and preserves the user's selection")
+            scopeModel.toggleVisibleSelection()
+            check(scopeModel.selectedIDs.isSuperset(of: defaults) && scopeModel.selectedCount == 2,
+                  "selecting visible manual files keeps the recommended selection from the other filter")
+            scopeModel.searchText = "no-matching-file"
+            scopeModel.toggleSelectedFilter()
+            check(scopeModel.searchText.isEmpty && scopeModel.visibleItems.count == scopeModel.selectedCount,
+                  "viewing selected files clears an unrelated search and shows the entire cleanup selection")
+            scopeModel.toggleSelectedFilter()
+            scopeModel.toggleVisibleSelection(); scopeModel.showResults(.recommended)
+            check(scopeModel.selectedIDs == defaults, "deselecting the visible manual files does not clear recommendations")
+            guard let metadata = scopeModel.items.first(where: { $0.url == manualFile }) else { throw CheckError.missing }
+            check(metadata.kind == .downloadedFile && !metadata.isDirectory && !metadata.typeTitle.isEmpty &&
+                  abs(metadata.modifiedDate.timeIntervalSince(modifiedDate)) < 0.001 &&
+                  metadata.subtitle == manualFile.deletingLastPathComponent().path,
+                  "result metadata exposes the scanned modification date, file type and parent folder without repeating the file name")
             scopeModel.editScope(custom: true); scopeModel.applyScope()
             check(scopeModel.screen == .scope && scopeModel.scopeChoice == .global, "an empty custom draft cannot replace global scanning")
             let downloads = scopeFixture.home.appendingPathComponent("Downloads"), developer = scopeFixture.home.appendingPathComponent("Developer")
@@ -68,11 +93,16 @@ import LauncherCore
             model.startScan(); await model.waitUntilIdle()
             check(model.screen == .results && model.items.count == 2 && model.selectedIDs.isEmpty && mover.moveCount == 0,
                   "default production scan finds fixture downloads without selecting or moving any file")
+            check(model.recommendedItems.isEmpty && model.recommendedIDs.isEmpty &&
+                  !model.reportSummary.contains("已默认选中"),
+                  "a scan containing only personal files does not claim that recommendations were automatically selected")
             model.executeConfirmed(permanent: false, remember: false)
-            check(mover.moveCount == 0 && !model.isBusy, "selection and a distinct confirmation are required before a cleanup")
-            model.items.forEach { model.toggleItem($0.id) }; model.requestConfirmation()
-            check(model.dialog == .confirm && model.selectedCount == 2, "manual selection opens a concrete two-item confirmation")
-            model.executeConfirmed(permanent: false, remember: false); await model.waitUntilIdle()
+            model.requestCleanup()
+            check(mover.moveCount == 0 && !model.isBusy, "cleanup remains inert without any selected file")
+            model.items.forEach { model.toggleItem($0.id) }; model.requestCleanup()
+            check(model.dialog == nil && model.screen == .processing && model.isBusy,
+                  "the cleanup action starts the selected Trash transaction directly without a second review screen")
+            await model.waitUntilIdle()
             let trashed = try read(first.data)
             check(trashed.count == 2 && trashed.allSatisfy { $0.state == .trashed && $0.canRestore } && mover.moveCount == 2,
                   "verified production moves persist exactly one recoverable receipt per selected item")
@@ -95,7 +125,7 @@ import LauncherCore
             check(try String(contentsOf: destination, encoding: .utf8) == "payload-" + conflicted.candidate.title &&
                   String(contentsOf: conflicted.originalURL, encoding: .utf8) == "new occupant",
                   "renamed restoration preserves both the original selected content and the new occupant")
-            let oldIDs = model.items.map(\.id); oldIDs.forEach { model.toggleItem($0) }; model.requestConfirmation()
+            let oldIDs = model.items.map(\.id); oldIDs.forEach { model.toggleItem($0) }; model.requestCleanup()
             check(model.selectedIDs.isEmpty && model.dialog == nil && model.requiresRescan,
                   "restored files cannot be processed again using stale candidate identities")
             let reloaded = SpaceCleaningModel(dataDirectory: first.data, homeDirectory: first.home, mover: mover); models.append(reloaded)
@@ -108,7 +138,10 @@ import LauncherCore
             let permanentModel = SpaceCleaningModel(dataDirectory: permanent.data, homeDirectory: permanent.home, mover: permanentMover); models.append(permanentModel)
             permanentModel.startScan(); await permanentModel.waitUntilIdle()
             guard let permanentItem = permanentModel.items.first else { throw CheckError.missing }
-            permanentModel.toggleItem(permanentItem.id); permanentModel.requestConfirmation()
+            permanentModel.toggleItem(permanentItem.id); permanentModel.method = .permanent
+            permanentModel.rememberMethod = true; permanentModel.requestCleanup()
+            check(permanentModel.dialog == .confirm && !permanentModel.isBusy && !permanentModel.acknowledgement,
+                  "the permanent cleanup action still opens an explicit irreversible confirmation")
             permanentModel.executeConfirmed(permanent: true, remember: true)
             check(!permanentModel.isBusy && FileManager.default.fileExists(atPath: permanentItem.url.path),
                   "choosing permanent deletion or remember preference never bypasses the irreversible-action acknowledgement")
@@ -124,8 +157,8 @@ import LauncherCore
             try Data("new removable fixture".utf8).write(to: permanentItem.url)
             remembered.startScan(); await remembered.waitUntilIdle()
             if let item = remembered.items.first {
-                remembered.toggleItem(item.id); remembered.requestConfirmation(); remembered.rememberMethod = false
-                remembered.executeConfirmed(permanent: false, remember: false); await remembered.waitUntilIdle()
+                remembered.toggleItem(item.id); remembered.method = .trash; remembered.rememberMethod = false
+                remembered.requestCleanup(); await remembered.waitUntilIdle()
             }
             let clearedPreference = SpaceCleaningModel(dataDirectory: permanent.data, homeDirectory: permanent.home, mover: permanentMover)
             models.append(clearedPreference); await clearedPreference.waitUntilIdle()
@@ -158,7 +191,7 @@ import LauncherCore
             let corruptMover = SpaceCleaningCheckMover(root: corrupt.home, trash: corrupt.trash); movers.append(corruptMover)
             let corruptModel = SpaceCleaningModel(dataDirectory: corrupt.data, homeDirectory: corrupt.home, mover: corruptMover); models.append(corruptModel)
             corruptModel.startScan(); await corruptModel.waitUntilIdle()
-            corruptModel.items.forEach { corruptModel.toggleItem($0.id) }; corruptModel.requestConfirmation()
+            corruptModel.items.forEach { corruptModel.toggleItem($0.id) }; corruptModel.requestCleanup()
             check(corruptModel.items.count == 1 && !corruptModel.canProcess && corruptModel.dialog == nil && corruptMover.moveCount == 0,
                   "invalid history keeps scanning available but blocks destructive operations")
             check(try Data(contentsOf: corruptURL) == invalid, "invalid history is retained verbatim instead of silently replaced")
@@ -167,7 +200,7 @@ import LauncherCore
             let gated = SpaceCleaningCheckMover(root: quitFixture.home, trash: quitFixture.trash, gateFirst: true); movers.append(gated)
             let quitModel = SpaceCleaningModel(dataDirectory: quitFixture.data, homeDirectory: quitFixture.home, mover: gated); models.append(quitModel)
             quitModel.startScan(); await quitModel.waitUntilIdle()
-            quitModel.items.forEach { quitModel.toggleItem($0.id) }; quitModel.requestConfirmation(); quitModel.executeConfirmed(permanent: false, remember: false)
+            quitModel.items.forEach { quitModel.toggleItem($0.id) }; quitModel.requestCleanup()
             let entered = await wait { gated.entered }
             var returned = false
             let quitting = Task { await quitModel.prepareForQuit(); returned = true }
@@ -258,8 +291,8 @@ import LauncherCore
     private static func scanAndTrash(_ model: SpaceCleaningModel) async throws {
         model.startScan(); await model.waitUntilIdle()
         guard !model.items.isEmpty else { throw CheckError.missing }
-        model.items.forEach { model.toggleItem($0.id) }; model.requestConfirmation()
-        model.executeConfirmed(permanent: false, remember: false); await model.waitUntilIdle()
+        model.items.forEach { model.toggleItem($0.id) }; model.method = .trash
+        model.requestCleanup(); await model.waitUntilIdle()
     }
     private static func wait(_ predicate: () -> Bool) async -> Bool {
         for _ in 0..<300 { if predicate() { return true }; try? await Task.sleep(for: .milliseconds(10)) }

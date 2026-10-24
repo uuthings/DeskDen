@@ -262,7 +262,7 @@ final class ShadeView: FlippedView {
     override func mouseDown(with event: NSEvent) { outsideClick?() }
 }
 
-final class ActionButton: NSButton {
+final class ActionButton: ClickableButton {
     var actionBlock: (() -> Void)?
     var symbol: String?
     var primary = false
@@ -400,7 +400,7 @@ final class LauncherViewSwitcher: FlippedView {
     required init?(coder:NSCoder) { fatalError() }
 }
 
-private final class LauncherSegmentButton: NSButton {
+private final class LauncherSegmentButton: ClickableButton {
     let selectedSegment:Bool
     let symbol:String
     let activate:()->Void
@@ -461,7 +461,7 @@ final class LauncherWorkbenchButton: FlippedView {
     }
     required init?(coder:NSCoder) { fatalError() }
 }
-private final class LauncherWorkbenchAction: NSButton {
+private final class LauncherWorkbenchAction: ClickableButton {
     let activate: () -> Void
     override var isFlipped:Bool { true }
     init(frame:NSRect,activate:@escaping ()->Void) {
@@ -511,7 +511,7 @@ final class LauncherShortcutHint: FlippedView {
     }
 }
 
-final class LauncherLayoutButton: NSButton {
+final class LauncherLayoutButton: ClickableButton {
     var activate:(()->Void)?
     private var area:NSTrackingArea?
     private var hovered=false
@@ -751,7 +751,7 @@ func drawTarget(_ target: LaunchTarget, in rect: NSRect, normalized: Bool = fals
     }
 }
 
-final class KeyTile: NSButton {
+final class KeyTile: ClickableButton {
     let key: String
     let mode: DisplayMode
     let binding: KeyBinding?
@@ -838,7 +838,7 @@ final class ApplicationSearchSurface: FlippedView {
 }
 
 /// Both search affordances retain the small, unframed glyphs of the reference.
-final class SearchAccessoryButton: NSButton {
+final class SearchAccessoryButton: ClickableButton {
     enum Glyph: Equatable { case inputMode, more }
     let glyph: Glyph
     var textMode = false { didSet { needsDisplay = true } }
@@ -885,7 +885,7 @@ final class SearchAccessoryButton: NSButton {
     }
 }
 
-final class ResultTile: NSButton {
+final class ResultTile: ClickableButton {
     let entry: SearchEntry
     let list: Bool
     var selected: Bool { didSet { refreshSelectionAppearance() } }

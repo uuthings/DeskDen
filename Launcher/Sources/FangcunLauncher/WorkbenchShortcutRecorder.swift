@@ -313,7 +313,7 @@ private struct WorkbenchShortcutTrigger:NSViewRepresentable {
     }
     func sizeThatFits(_ proposal:ProposedViewSize,nsView:WorkbenchShortcutTriggerButton,context:Context)->CGSize? {nsView.intrinsicContentSize}
 }
-private final class WorkbenchShortcutTriggerButton:NSButton {
+private final class WorkbenchShortcutTriggerButton:ClickableButton {
     var palette=ThemePalette()
     var activate:(()->Void)?
     private var hovering=false

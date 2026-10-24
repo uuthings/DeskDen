@@ -14,6 +14,7 @@ import LauncherCore
             count += 1; if !value { failures += 1 }
             print("\(value ? "PASS" : "FAIL") \(message)")
         }
+        for result in await cursorChecks() { check(result.0, result.1) }
         let activeBefore = NSApp.isActive
         let keyBefore = NSApp.keyWindow.map(ObjectIdentifier.init)
         var scenarios: [NativeControlHitScenario] = []
@@ -70,6 +71,49 @@ import LauncherCore
         }
         print("DETAIL native-hit-focus activeBefore=\(activeBefore) activeAfter=\(NSApp.isActive) sameKeyWindow=\(keyBefore == NSApp.keyWindow.map(ObjectIdentifier.init))")
         return (count, failures)
+    }
+
+    private static func cursorChecks() async -> [(Bool,String)] {
+        let previous=ButtonCursorPolicy.shared.preference
+        defer { ButtonCursorPolicy.shared.apply(previous) }
+        let button=CursorCheckButton(frame:NSRect(x:0,y:0,width:80,height:32))
+        ButtonCursorPolicy.shared.apply(.pointingHand)
+        button.resetCursorRects()
+        var checks=[(button.recorded.last === NSCursor.pointingHand,"enabled native buttons register the pointing hand")]
+        button.recorded=[];button.isEnabled=false;button.resetCursorRects()
+        checks.append((button.recorded.isEmpty,"disabled native buttons have no pointing-hand region"))
+        ButtonCursorPolicy.shared.apply(.arrow)
+        button.isEnabled=true;button.resetCursorRects()
+        checks.append((button.recorded.last === NSCursor.arrow,"arrow preference applies to native buttons"))
+        // macOS 14+ permits visibleRect to extend beyond bounds when a view
+        // does not clip. Exercise the actual registrations for every host type.
+        button.recordedRects=[];button.simulatedVisibleRect=NSRect(x:-40,y:-40,width:200,height:160)
+        button.resetCursorRects()
+        checks.append((button.recordedRects == [button.bounds],"native button cursor remains inside bounds when visibleRect is larger"))
+        let popup=CursorCheckPopup(frame:NSRect(x:0,y:0,width:100,height:32),pullsDown:false)
+        popup.resetCursorRects()
+        checks.append((popup.recordedRects.last == popup.bounds,"native popup cursor remains inside bounds when visibleRect is larger"))
+        let region=CursorCheckRegion(frame:NSRect(x:0,y:0,width:80,height:32))
+        region.resetCursorRects()
+        checks.append((region.recordedRects == [region.bounds],"SwiftUI cursor region remains inside bounds when visibleRect is larger"))
+        button.recordedRects=[];button.simulatedVisibleRect=NSRect(x:200,y:200,width:20,height:20)
+        button.resetCursorRects()
+        checks.append((button.recordedRects.isEmpty,"fully clipped controls register no cursor rectangle"))
+        let window=NSWindow(contentRect:NSRect(x:0,y:0,width:320,height:220),styleMask:[.borderless],backing:.buffered,defer:false)
+        window.isReleasedWhenClosed=false;window.alphaValue=0;window.ignoresMouseEvents=true
+        let host=NSHostingView(rootView:VStack(spacing:12) {
+            Button("Plain") {}.buttonStyle(ClickablePlainButtonStyle())
+            Button("Styled") {}.buttonStyle(WBButtonStyle())
+            Button("Disabled") {}.buttonStyle(WBButtonStyle()).disabled(true)
+            TextField("Text entry",text:.constant("Synthetic"))
+        }.padding(14))
+        host.frame=window.contentLayoutRect;window.contentView=host;window.orderFront(nil)
+        for _ in 0..<5 { host.layoutSubtreeIfNeeded();try? await Task.sleep(for:.milliseconds(40)) }
+        let regions=descendants(host).compactMap{$0 as? ClickableCursorView}
+        checks.append((regions.count == 3 && regions.filter(\.enabled).count == 2,"plain and styled controls receive cursor regions; disabled state is inherited"))
+        checks.append((regions.allSatisfy{$0.bounds.width>0 && $0.bounds.height>0 && $0.hitTest(.zero)==nil},"cursor regions have real bounds and never intercept clicks or text input"))
+        window.orderOut(nil);window.contentView=nil;window.close()
+        return checks
     }
 
     private static func mountedControls(in root: NSView) async -> (slider: NSSlider?, popup: WBPopUpButton?) {
@@ -248,4 +292,24 @@ private final class NativeControlHitSliderView: NSSlider {
     override var mouseDownCanMoveWindow: Bool { false }
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+@MainActor private final class CursorCheckButton: ClickableButton {
+    var recorded:[NSCursor]=[]
+    var recordedRects:[NSRect]=[]
+    var simulatedVisibleRect:NSRect?
+    override var visibleRect:NSRect { simulatedVisibleRect ?? super.visibleRect }
+    override func addCursorRect(_ rect:NSRect,cursor:NSCursor) { recorded.append(cursor);recordedRects.append(rect) }
+}
+
+@MainActor private final class CursorCheckPopup: ClickablePopUpButton {
+    var recordedRects:[NSRect]=[]
+    override var visibleRect:NSRect { NSRect(x:-40,y:-40,width:240,height:160) }
+    override func addCursorRect(_ rect:NSRect,cursor:NSCursor) { recordedRects.append(rect) }
+}
+
+@MainActor private final class CursorCheckRegion: ClickableCursorView {
+    var recordedRects:[NSRect]=[]
+    override var visibleRect:NSRect { NSRect(x:-40,y:-40,width:200,height:160) }
+    override func addCursorRect(_ rect:NSRect,cursor:NSCursor) { recordedRects.append(rect) }
 }

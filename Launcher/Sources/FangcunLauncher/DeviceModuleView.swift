@@ -394,7 +394,7 @@ private struct DeviceLinkedDetailCard<Content: View>: View {
                             .padding(.leading, 11).padding(.trailing, 1).padding(.vertical, 4)
                             .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain).focusEffectDisabled().focused($actionFocused)
+                    .buttonStyle(ClickablePlainButtonStyle()).focusEffectDisabled().focused($actionFocused)
                     .onHover { actionHovered = $0 }
                     .help(actionTitle).accessibilityLabel(actionTitle)
                     .accessibilityIdentifier(identifier + ".action")
@@ -552,7 +552,7 @@ struct DeviceSheetView: View {
             DeviceFact(label: "不可用数据", value: "显示 —，不视为 0")
             explanation("颜色只提示状态，并配合文字与数值。系统热状态独立展示，不把它换算成未经测量的温度。")
         case .networkOptions:
-            Toggle("自动统计物理 Wi-Fi / 有线网卡", isOn: $useAutomatic).font(.system(size: 12)).padding(.bottom, 15)
+            Toggle("自动统计物理 Wi-Fi / 有线网卡", isOn: $useAutomatic).clickableCursor().font(.system(size: 12)).padding(.bottom, 15)
             VStack(alignment: .leading, spacing: 12) {
                 ForEach(model.interfaces) { interface in
                     Toggle(isOn: Binding(get: { selected.contains(interface.id) }, set: { if $0 { selected.insert(interface.id) } else { selected.remove(interface.id) } })) {
@@ -561,7 +561,7 @@ struct DeviceSheetView: View {
                             Spacer()
                             Text(interface.isVirtual ? "虚拟网卡" : interface.isActive ? "活跃" : "未连接").foregroundStyle(palette.muted)
                         }
-                    }.disabled(useAutomatic).font(.system(size: 12))
+                    }.clickableCursor().disabled(useAutomatic).font(.system(size: 12))
                 }
                 if model.interfaces.isEmpty { explanation("当前尚未读到网卡。请稍后刷新。") }
             }

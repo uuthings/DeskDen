@@ -55,6 +55,11 @@ struct WorkbenchSettingsView: View {
                     }
                 }
             }
+            WBCard(title: "操作反馈", symbol: "cursorarrow", spacing: 10) {
+                settingsRow("按钮悬停指针", "默认使用小手，提示按钮、选项与导航可以点击", first: true, last: true) {
+                    WBSelect("按钮悬停指针", selection: Binding(get: { model.buttonHoverCursor }, set: model.changeButtonHoverCursor), options: ButtonHoverCursor.allCases.map { (value: $0, title: $0.title) }).frame(width: 174)
+                }
+            }
             WBCard(title: "数据更新", symbol: "arrow.clockwise", spacing: 10) {
                 VStack(spacing: 0) {
                     settingsRow("设备采样间隔", "隐藏时降低性能采样频率，保留网络累计", first: true) {
@@ -222,7 +227,7 @@ struct WorkbenchSettingsView: View {
     }
 
     private func settingToggle(_ label: String, get: @escaping @MainActor @Sendable () -> Bool, set: @escaping @MainActor @Sendable (Bool) -> Void) -> some View {
-        Toggle(label, isOn: Binding(get: get, set: set)).labelsHidden().toggleStyle(.switch).controlSize(.small)
+        Toggle(label, isOn: Binding(get: get, set: set)).labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.small)
             .tint(palette.accent)
     }
 

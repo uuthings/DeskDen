@@ -120,7 +120,7 @@ struct WBSelect<Value: Hashable>: NSViewRepresentable {
 
 /// AppKit equivalent for the embedded launcher settings; preserves the standard
 /// popup cell's keyboard and menu behavior instead of reimplementing selection.
-final class WBPopUpButton: NSPopUpButton {
+final class WBPopUpButton: ClickablePopUpButton {
     var workbenchTheme: LauncherTheme = .arWorld
     var interfaceOpacity: Double = 0.70
     var interfaceLight = false
@@ -231,7 +231,7 @@ struct WBButtonStyle:ButtonStyle {
             .background(RoundedRectangle(cornerRadius:8).fill(primary ? palette.primary.opacity(configuration.isPressed ? 0.78 : 1) : configuration.isPressed ? palette.accent.opacity(0.18) : hovering ? palette.soft : palette.control))
             .overlay(RoundedRectangle(cornerRadius:8).strokeBorder(primary ? palette.primary.opacity(0.50) : palette.controlBorder,lineWidth:1))
             .contentShape(RoundedRectangle(cornerRadius:8)).opacity(enabled ? 1:0.4)
-            .onHover {hovering=$0}
+            .onHover {hovering=$0}.clickableCursor()
     }
 }
 struct WBIconButtonStyle:ButtonStyle {
@@ -244,7 +244,7 @@ struct WBIconButtonStyle:ButtonStyle {
         configuration.label.font(.system(size:14*displayScale,weight:.regular)).frame(width:size*displayScale,height:size*displayScale)
             .foregroundStyle(hovering ? palette.text:palette.secondary)
             .background(RoundedRectangle(cornerRadius:7).fill(palette.accent.opacity(configuration.isPressed ? 0.16:hovering ? 0.09:0)))
-            .contentShape(RoundedRectangle(cornerRadius:7)).opacity(enabled ? 1:0.4).onHover{hovering=$0}
+            .contentShape(RoundedRectangle(cornerRadius:7)).opacity(enabled ? 1:0.4).onHover{hovering=$0}.clickableCursor()
     }
 }
 struct WBQuietButtonStyle:ButtonStyle {
@@ -254,7 +254,7 @@ struct WBQuietButtonStyle:ButtonStyle {
     @State private var hovering=false
     func makeBody(configuration:Configuration)->some View {
         configuration.label.font(.system(size:11*displayScale)).foregroundStyle(hovering ? palette.text:palette.secondary)
-            .padding(.vertical,3*displayScale).contentShape(Rectangle()).opacity(enabled ? (configuration.isPressed ? 0.6:1):0.4).onHover{hovering=$0}
+            .padding(.vertical,3*displayScale).contentShape(Rectangle()).opacity(enabled ? (configuration.isPressed ? 0.6:1):0.4).onHover{hovering=$0}.clickableCursor()
     }
 }
 struct WBTextTabs<Selection:Hashable>:View {
@@ -270,7 +270,7 @@ struct WBTextTabs<Selection:Hashable>:View {
                         Text(title(item)).font(.system(size:12)).foregroundStyle(selection==item ? palette.text:palette.muted)
                         Capsule().fill(selection==item ? palette.accent:.clear).frame(height:2)
                     }.fixedSize(horizontal:true,vertical:false).padding(.top,3)
-                }.buttonStyle(.plain).accessibilityValue(selection==item ? "已选择":"")
+                }.buttonStyle(ClickablePlainButtonStyle()).accessibilityValue(selection==item ? "已选择":"")
             }
         }
     }
@@ -335,4 +335,82 @@ final class WorkbenchTrafficLights:NSView {
     @objc private func closeWindow(){window?.performClose(nil)}
     @objc private func minimizeWindow(){window?.performMiniaturize(nil)}
     @objc private func fullScreenWindow(){window?.toggleFullScreen(nil)}
+}
+
+/// Cursor rectangles let AppKit restore text, resize and drag cursors naturally.
+/// Unlike push/pop in onHover, they cannot leave a stale hand when a page closes.
+@MainActor final class ButtonCursorPolicy {
+    static let shared = ButtonCursorPolicy()
+    private(set) var preference: ButtonHoverCursor = .pointingHand
+    private let views = NSHashTable<NSView>.weakObjects()
+    var cursor: NSCursor { preference == .pointingHand ? .pointingHand : .arrow }
+    func register(_ view: NSView) { views.add(view) }
+    func apply(_ preference: ButtonHoverCursor) {
+        guard self.preference != preference else { return }
+        self.preference = preference
+        for view in views.allObjects { view.window?.invalidateCursorRects(for: view) }
+    }
+}
+
+class ClickableButton: NSButton {
+    override var isEnabled: Bool { didSet { window?.invalidateCursorRects(for: self) } }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow(); ButtonCursorPolicy.shared.register(self)
+        window?.invalidateCursorRects(for: self)
+    }
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        let rect = bounds.intersection(visibleRect)
+        if isEnabled && !rect.isEmpty { addCursorRect(rect, cursor: ButtonCursorPolicy.shared.cursor) }
+    }
+}
+
+class ClickablePopUpButton: NSPopUpButton {
+    override var isEnabled: Bool { didSet { window?.invalidateCursorRects(for: self) } }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow(); ButtonCursorPolicy.shared.register(self)
+        window?.invalidateCursorRects(for: self)
+    }
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        let rect = bounds.intersection(visibleRect)
+        if isEnabled && !rect.isEmpty { addCursorRect(rect, cursor: ButtonCursorPolicy.shared.cursor) }
+    }
+}
+
+class ClickableCursorView: NSView {
+    var enabled = true { didSet { if oldValue != enabled { window?.invalidateCursorRects(for: self) } } }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow(); ButtonCursorPolicy.shared.register(self)
+        window?.invalidateCursorRects(for: self)
+    }
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        let rect = bounds.intersection(visibleRect)
+        if enabled && !rect.isEmpty { addCursorRect(rect, cursor: ButtonCursorPolicy.shared.cursor) }
+    }
+}
+
+private struct ClickableCursorRegion: NSViewRepresentable {
+    let enabled: Bool
+    func makeNSView(context: Context) -> ClickableCursorView { ClickableCursorView(frame: .zero) }
+    func updateNSView(_ view: ClickableCursorView, context: Context) { view.enabled = enabled }
+}
+
+private struct ClickableCursorModifier: ViewModifier {
+    @Environment(\.isEnabled) private var enabled
+    func body(content: Content) -> some View {
+        content.background(ClickableCursorRegion(enabled: enabled).accessibilityHidden(true))
+    }
+}
+
+extension View {
+    func clickableCursor() -> some View { modifier(ClickableCursorModifier()) }
+}
+
+struct ClickablePlainButtonStyle: PrimitiveButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        PlainButtonStyle().makeBody(configuration: configuration).clickableCursor()
+    }
 }

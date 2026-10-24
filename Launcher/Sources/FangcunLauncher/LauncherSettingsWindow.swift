@@ -26,8 +26,8 @@ final class LauncherSettingsWindowController: NSWindowController, NSWindowDelega
     private let pageContent = FlippedView()
     private let titleLabel = NSTextField(labelWithString: "通用")
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
-    private let backButton = NSButton()
-    private let forwardButton = NSButton()
+    private let backButton = ClickableButton()
+    private let forwardButton = ClickableButton()
     private var actions: [SettingsControlAction] = []
     private var headerActions: [SettingsControlAction] = []
     private var pages = Page.allCases
@@ -481,7 +481,7 @@ final class LauncherSettingsWindowController: NSWindowController, NSWindowDelega
         popup.addItems(withTitles: titles); popup.selectItem(at: selected); view.addSubview(popup); return popup
     }
     private func nativeButton(_ title: String, x: CGFloat, y: CGFloat, width: CGFloat, in view: NSView) -> NSButton {
-        let button = NSButton(title: title, target: nil, action: nil); button.frame = NSRect(x: x, y: y, width: width, height: 28)
+        let button = ClickableButton(title: title, target: nil, action: nil); button.frame = NSRect(x: x, y: y, width: width, height: 28)
         button.bezelStyle = .rounded; button.font = .systemFont(ofSize: 12); view.addSubview(button); return button
     }
     private func toggle(_ title: String, y: CGFloat, value: Bool, in view: NSView, change: @escaping (Bool) -> Bool) {

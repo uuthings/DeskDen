@@ -10,11 +10,7 @@ struct SpaceCleaningDialogContent: View {
         switch dialog {
         case .rules: SpaceCleaningRulesDialog(dismiss: model.closeDialog)
         case .scope: scopeDialog
-        case .confirm:
-            SpaceCleaningConfirmationDialog(items: model.selectedItems.map { .init(id: $0.id.uuidString, name: $0.name, bytes: $0.bytes) },
-                                            totalBytes: model.selectedBytes, initiallyPermanent: model.method == .permanent, initiallyRemember: model.rememberMethod,
-                                            acknowledgement: $model.acknowledgement, dismiss: model.closeDialog,
-                                            confirm: model.executeConfirmed)
+        case .confirm: EmptyView() // Permanent confirmation stays with the result list.
         case .purpose(let id): purposeDialog(id)
         case .restore(let id):
             if model.batches.contains(where: { $0.id == id }) || model.currentBatch?.id == id {
@@ -43,7 +39,7 @@ struct SpaceCleaningDialogContent: View {
                 Text("名称、签名或存放时间无法证明它只是测试文件。确认用途后，这一项会进入人工复核；不会自动勾选，也不会改变其他归档的保护。")
                     .font(.system(size: 12)).foregroundStyle(palette.secondary).lineSpacing(5)
                 Toggle("我确认它仅用于测试，不是正式发布原件或唯一保留归档", isOn: $model.acknowledgement)
-                    .toggleStyle(.checkbox).font(.system(size: 11)).foregroundStyle(palette.secondary)
+                    .toggleStyle(.checkbox).clickableCursor().font(.system(size: 11)).foregroundStyle(palette.secondary)
                     .accessibilityIdentifier("space-cleaning-test-purpose-acknowledgement")
             }
         } actions: {
@@ -141,7 +137,7 @@ struct SpaceCleaningChoiceRow: View {
                     Text(subtitle).font(.system(size: 11)).foregroundStyle(palette.muted).lineSpacing(3)
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }.padding(.vertical, 13).contentShape(Rectangle())
-        }.buttonStyle(.plain).disabled(disabled).opacity(disabled ? 0.45 : 1)
+        }.buttonStyle(ClickablePlainButtonStyle()).disabled(disabled).opacity(disabled ? 0.45 : 1)
             .accessibilityElement(children: .ignore).accessibilityLabel(title + "，" + subtitle)
             .accessibilityValue(selected ? "已选择" : "未选择")
             .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
@@ -152,53 +148,6 @@ struct SpaceCleaningConfirmationItem: Identifiable {
     let id: String
     let name: String
     let bytes: UInt64
-}
-
-struct SpaceCleaningConfirmationDialog: View {
-    let items: [SpaceCleaningConfirmationItem]
-    let totalBytes: UInt64
-    let dismiss: () -> Void
-    let confirm: (_ permanently: Bool, _ remember: Bool) -> Void
-    @State private var permanently: Bool
-    @State private var remember: Bool
-    @Binding private var acknowledged: Bool
-    @Environment(\.workbenchPalette) private var palette
-
-    init(items: [SpaceCleaningConfirmationItem], totalBytes: UInt64, initiallyPermanent: Bool, initiallyRemember: Bool, acknowledgement: Binding<Bool>,
-         dismiss: @escaping () -> Void, confirm: @escaping (Bool, Bool) -> Void) {
-        self.items = items; self.totalBytes = totalBytes; self.dismiss = dismiss; self.confirm = confirm
-        _permanently = State(initialValue: initiallyPermanent)
-        _remember = State(initialValue: initiallyRemember)
-        _acknowledged = acknowledgement
-    }
-    var body: some View {
-        WorkbenchDialogFrame(title: "确认处理 \(items.count) 项文件", dismiss: dismiss) {
-            VStack(alignment: .leading, spacing: 0) {
-                Text("仅处理你明确选择的项目").font(.system(size: 11)).foregroundStyle(palette.muted)
-                Text(SpaceCleaningFormat.bytes(totalBytes)).font(.system(size: 30, weight: .medium)).monospacedDigit().padding(.top, 12).padding(.bottom, 16)
-                Rectangle().fill(palette.line).frame(height: 1)
-                SpaceCleaningChoiceRow(title: "移到废纸篓", subtitle: "可从清理记录恢复。移入废纸篓暂不计为已释放空间。", selected: !permanently) { permanently = false; acknowledged = false }
-                Rectangle().fill(palette.line).frame(height: 1)
-                SpaceCleaningChoiceRow(title: "永久删除", subtitle: "直接删除所选文件，无法从本次记录恢复。", selected: permanently) { permanently = true; acknowledged = false }
-                SpaceCleaningConfirmationList(items: items).padding(.top, 4)
-                Toggle("记住这种处理方式，下次仍需确认", isOn: $remember)
-                    .toggleStyle(.checkbox).font(.system(size: 11)).foregroundStyle(palette.secondary).padding(.top, 16)
-                    .accessibilityIdentifier("space-cleaning-remember-method")
-                if permanently {
-                    Toggle("我已复核所选项目，理解永久删除无法恢复", isOn: $acknowledged)
-                        .toggleStyle(.checkbox).font(.system(size: 11)).foregroundStyle(palette.secondary).padding(.top, 12)
-                        .accessibilityIdentifier("space-cleaning-permanent-acknowledgement")
-                }
-            }
-        } actions: {
-            Button("返回复核", action: dismiss).buttonStyle(WBButtonStyle())
-            Spacer()
-            Button(permanently ? "永久删除所选项目" : "移到废纸篓") { confirm(permanently, remember) }
-                .buttonStyle(WBButtonStyle(primary: !permanently, destructive: permanently))
-                .disabled(items.isEmpty || (permanently && !acknowledged))
-                .accessibilityIdentifier("space-cleaning-confirm-execute")
-        }.accessibilityIdentifier("space-cleaning-confirmation")
-    }
 }
 
 private struct SpaceCleaningConfirmationList: View {
@@ -269,7 +218,7 @@ struct SpaceCleaningPurgeDialog: View {
                     .font(.system(size: 12)).foregroundStyle(palette.secondary).lineSpacing(5)
                 SpaceCleaningConfirmationList(items: items)
                 Toggle("我理解这一步完成后，这些项目将无法恢复", isOn: $acknowledged)
-                    .toggleStyle(.checkbox).font(.system(size: 11)).foregroundStyle(palette.secondary)
+                    .toggleStyle(.checkbox).clickableCursor().font(.system(size: 11)).foregroundStyle(palette.secondary)
                     .accessibilityIdentifier("space-cleaning-purge-acknowledgement")
             }
         } actions: {

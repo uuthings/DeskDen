@@ -2,6 +2,25 @@ import XCTest
 @testable import LauncherCore
 
 final class LauncherPresentationTests:XCTestCase {
+    func testHoverPointerDefaultsAndPersistsWithoutChangingOtherSettings() throws {
+        let legacy=try JSONDecoder().decode(LauncherSettings.self,from:Data("{}".utf8))
+        XCTAssertEqual(legacy.buttonHoverCursor,.pointingHand)
+        XCTAssertEqual(LauncherSettings().buttonHoverCursor,.pointingHand)
+        var settings=LauncherSettings();settings.buttonHoverCursor = .arrow
+        settings.glassOpacity=0.57;settings.reduceMotion=true
+        let reloaded=try JSONDecoder().decode(LauncherSettings.self,from:JSONEncoder().encode(settings))
+        XCTAssertEqual(reloaded,settings)
+        XCTAssertEqual(reloaded.buttonHoverCursor,.arrow)
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at:directory) }
+        let store=ConfigurationStore(url:directory.appendingPathComponent("configuration.json"))
+        var configuration=LauncherConfiguration();configuration.settings=settings
+        try store.save(configuration)
+        XCTAssertEqual(try store.load()?.settings,settings)
+        var object=try JSONSerialization.jsonObject(with:JSONEncoder().encode(settings)) as! [String:Any]
+        object["buttonHoverCursor"]="future-cursor"
+        XCTAssertThrowsError(try JSONDecoder().decode(LauncherSettings.self,from:JSONSerialization.data(withJSONObject:object)))
+    }
     func testLegacyDefaultsKeepKeysAndAllThirtyEightPositions() throws {
         let settings=try JSONDecoder().decode(LauncherSettings.self,from:Data("{}".utf8))
         XCTAssertEqual(settings.defaultView,.keys);XCTAssertFalse(settings.hideUnboundKeys)

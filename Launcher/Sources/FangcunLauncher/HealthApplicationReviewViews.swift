@@ -41,7 +41,7 @@ struct HealthApplicationCandidatesView: View {
     private func candidateRow(_ candidate: HealthApplicationCandidate, showsSeparator: Bool) -> some View {
         HStack(spacing: 8) {
             Toggle("选择退出" + candidate.name, isOn: Binding(get: { model.selectedIDs.contains(candidate.id) }, set: { _ in model.toggle(candidate) }))
-                .labelsHidden().toggleStyle(.checkbox).disabled(!model.canSelect(candidate))
+                .labelsHidden().toggleStyle(.checkbox).clickableCursor().disabled(!model.canSelect(candidate))
                 .accessibilityIdentifier("health-app-select-" + candidate.id)
             if !compact {
                 DeviceProcessIcon(path: candidate.application?.bundlePath ?? candidate.mainProcess?.executablePath)
@@ -117,7 +117,7 @@ struct HealthApplicationConfirmationView: View {
                     }
                 }.frame(height: min(210, CGFloat(max(1, plan.candidates.count)) * 34))
                 Toggle("已保存所选应用中的工作，确认请求正常退出", isOn: $model.savedWorkConfirmed)
-                    .toggleStyle(.checkbox).font(.system(size: 11)).accessibilityIdentifier("health-app-saved-work-consent")
+                    .toggleStyle(.checkbox).clickableCursor().font(.system(size: 11)).accessibilityIdentifier("health-app-saved-work-consent")
                 Text("发送请求前再次核验应用身份、所属用户与来源时间，变化项目将跳过。本次不会处理文件，也不会强制结束进程。")
                     .font(.system(size: 11)).foregroundStyle(palette.muted).lineSpacing(5).fixedSize(horizontal: false, vertical: true)
             }

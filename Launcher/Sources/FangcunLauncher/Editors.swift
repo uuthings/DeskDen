@@ -267,7 +267,7 @@ extension LauncherController {
 
 }
 
-final class ClosurePopup: NSPopUpButton {
+final class ClosurePopup: ClickablePopUpButton {
     override var isFlipped:Bool { true }
     override func draw(_ dirtyRect:NSRect) {
         let path = NSBezierPath(roundedRect:bounds.insetBy(dx:0.5,dy:0.5),xRadius:7,yRadius:7)
@@ -281,14 +281,14 @@ final class ClosurePopup: NSPopUpButton {
     required init?(coder:NSCoder) { fatalError() }
     @objc func change() { changed?() }
 }
-final class ClosureCheckbox: NSButton {
+final class ClosureCheckbox: ClickableButton {
     var changed:(()->Void)?
     init(title:String,frame:NSRect) { super.init(frame:frame); self.title = title; setButtonType(.switch); target = self; action = #selector(change) }
     required init?(coder:NSCoder) { fatalError() }
     @objc func change() { changed?() }
 }
 
-private final class BindingTypeRow: NSButton {
+private final class BindingTypeRow: ClickableButton {
     let kind: TargetKind
     private let activate: () -> Void
     private var hovered = false
@@ -716,7 +716,7 @@ final class EditorSymbolView: FlippedView {
     override func draw(_ dirtyRect: NSRect) { drawSymbol(symbol, in: bounds, color: Palette.text) }
 }
 
-final class TargetChoiceRow: NSButton {
+final class TargetChoiceRow: ClickableButton {
     let launchTarget: LaunchTarget
     var keyboardSelected: Bool { didSet { needsDisplay = true } }
     let showsSubtitle: Bool

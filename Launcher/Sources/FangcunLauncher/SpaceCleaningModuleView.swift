@@ -20,9 +20,9 @@ struct SpaceCleaningModuleView: View {
                 content.frame(maxWidth: .infinity, maxHeight: .infinity)
                 HStack(spacing: 8) {
                     Text(model.scopeSummary).lineLimit(1).truncationMode(.middle)
-                    if model.screen == .results { Text("· 已完成") }
+                    if model.screen == .results { Text(model.requiresRescan ? "· 需重新扫描" : "· 已检查") }
                     Spacer(minLength: 4)
-                    Button("覆盖范围与保留规则") { model.dialog = .rules }.buttonStyle(.plain)
+                    Button("覆盖范围与保留规则") { model.dialog = .rules }.buttonStyle(ClickablePlainButtonStyle())
                         .disabled(model.isBusy).accessibilityIdentifier("space-cleaning-rules-link")
                 }.font(.system(size: 11)).foregroundStyle(palette.secondary).padding(.top, 16)
                 if let message = model.message {
@@ -30,7 +30,7 @@ struct SpaceCleaningModuleView: View {
                         Image(systemName: "info.circle")
                         Text(message).lineLimit(3).frame(maxWidth: .infinity, alignment: .leading)
                         Button { model.message = nil } label: { Image(systemName: "xmark") }
-                            .buttonStyle(.plain).accessibilityLabel("关闭提示")
+                            .buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel("关闭提示")
                     }.font(.system(size: 11)).foregroundStyle(palette.secondary).padding(.top, 10)
                         .accessibilityIdentifier("space-cleaning-message")
                 }
@@ -73,8 +73,6 @@ struct SpaceCleaningModuleView: View {
                 }.scrollBounceBehavior(.basedOnSize)
                 Spacer(minLength: 0)
             }
-        } else if model.dialog == .confirm {
-            SpaceCleaningReviewView(model: model)
         } else {
             switch model.screen {
             case .start: home
@@ -88,72 +86,71 @@ struct SpaceCleaningModuleView: View {
     }
     private func isPurpose(_ dialog: CleaningDialog) -> Bool { if case .purpose = dialog { true } else { false } }
     private var home: some View {
-        SpaceCleaningSurface {
-            if let batch = model.currentBatch {
-                HStack(spacing: 12) {
-                    Image(systemName: batch.attentionCount > 0 ? "exclamationmark.circle" : "checkmark.circle").foregroundStyle(batch.attentionCount > 0 ? palette.warning : palette.accent)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(batch.attentionCount > 0 ? "本次处理已结束 · \(batch.attentionCount) 项需要核对" : "本次处理已结束 · \(batch.items.count) 项").font(.system(size: 12, weight: .medium))
-                        Text(batch.restorableCount > 0 ? "\(batch.restorableCount) 项可恢复 · 移入废纸篓的占用尚未释放" : "实际处理状态已保存至清理记录")
-                            .font(.system(size: 11)).foregroundStyle(palette.muted)
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                    if batch.restorableCount > 0 {
-                        Button("恢复本次") { model.requestRestore(batch.id) }.buttonStyle(WBQuietButtonStyle())
-                    }
-                    Button("查看记录", action: model.showHistory).buttonStyle(WBButtonStyle())
-                }.padding(18).background(palette.soft).accessibilityIdentifier("space-cleaning-completion-receipt")
-            }
-            GeometryReader { geo in
-                HStack(spacing: 0) {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text("看清空间，自在整理").font(.system(size: 11)).foregroundStyle(palette.muted).padding(.bottom, 20)
+        GeometryReader { geometry in
+            SpaceCleaningSurface(fillHeight: false) {
+                if let batch = model.currentBatch {
+                    HStack(spacing: 12) {
+                        Image(systemName: batch.attentionCount > 0 ? "exclamationmark.circle" : "checkmark.circle")
+                            .foregroundStyle(batch.attentionCount > 0 ? palette.warning : palette.accent)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(batch.attentionCount > 0 ? "本次处理已结束 · \(batch.attentionCount) 项需要核对" : "本次处理已结束 · \(batch.items.count) 项")
+                                .font(.system(size: 12, weight: .medium))
+                            Text(batch.restorableCount > 0 ? "\(batch.restorableCount) 项可恢复 · 移入废纸篓的占用尚未释放" : "实际处理状态已保存至清理记录")
+                                .font(.system(size: 11)).foregroundStyle(palette.muted)
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                        if batch.restorableCount > 0 { Button("恢复本次") { model.requestRestore(batch.id) }.buttonStyle(WBQuietButtonStyle()) }
+                        Button("查看记录", action: model.showHistory).buttonStyle(WBButtonStyle())
+                    }.padding(14).background(palette.soft).accessibilityIdentifier("space-cleaning-completion-receipt")
+                }
+                HStack(spacing: 14) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("看清空间，自在整理").font(.system(size: 11)).foregroundStyle(palette.muted)
                         Text("让需要的留下。\n给空间留一点余地。")
-                            .font(.system(size: geo.size.width < 700 ? 25 : 29, weight: .medium)).lineSpacing(8).fixedSize(horizontal: true, vertical: false)
-                        Text("从这台 Mac 开始，辨认每一份占用。\n先看清，再决定。")
-                            .font(.system(size: 12)).foregroundStyle(palette.muted).lineSpacing(8).padding(.top, 22)
-                        HStack(spacing: 12) {
-                            Button(action: model.startScan) {
-                                Label(model.scopeChoice == .global ? "开始全局扫描" : "扫描所选位置", systemImage: "viewfinder")
-                            }.buttonStyle(WBButtonStyle(primary: true)).disabled(model.isBusy)
-                                .accessibilityIdentifier("space-cleaning-start")
-                            Text("只扫描，不自动清理").font(.system(size: 11)).foregroundStyle(palette.muted)
-                        }.padding(.top, 28)
+                            .font(.system(size: geometry.size.width < 700 ? 24 : 29, weight: .medium)).lineSpacing(6)
+                            .fixedSize(horizontal: true, vertical: false)
+                        Text("先扫描，再决定。\n可重建缓存会为你选好，其余文件由你选择。")
+                            .font(.system(size: 12)).foregroundStyle(palette.muted).lineSpacing(6)
                         if !model.items.isEmpty && !model.requiresRescan {
-                            Button("返回上次扫描结果") { model.screen = .results }.buttonStyle(WBQuietButtonStyle()).padding(.top, 12)
+                            Button("返回上次扫描结果") { model.screen = .results }.buttonStyle(WBQuietButtonStyle())
                         }
-                    }.frame(width: geo.size.width * 0.48, alignment: .leading)
-                    SpaceCleaningAperture(active: model.animationActive).frame(maxWidth: .infinity, maxHeight: .infinity)
-                }.frame(height: geo.size.height)
-            }.padding(.horizontal, 30)
-            VStack(spacing: 0) {
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                    SpaceCleaningAperture(active: model.animationActive)
+                        .frame(width: geometry.size.width * 0.43)
+                }.padding(.horizontal, 28)
+                    .frame(height: min(280, max(195, geometry.size.height - (model.currentBatch == nil ? 110 : 182))))
                 Rectangle().fill(palette.line).frame(height: 1)
-                HStack(alignment: .top, spacing: 32) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("扫描范围").font(.system(size: 12))
-                        Text(model.scopeChoice == .global ? "默认检查这台 Mac" : "按选择的位置检查").font(.system(size: 11)).foregroundStyle(palette.muted)
-                    }.frame(width: 110, alignment: .leading).padding(.top, 10)
-                    VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 14) {
+                        Text("扫描范围").font(.system(size: 12, weight: .medium))
                         HStack(spacing: 2) {
                             scopeButton("全局扫描", icon: "globe", selected: model.scopeChoice == .global) { model.selectScope(.global) }
                             scopeButton("自定义位置", icon: "folder", selected: model.scopeChoice == .custom) { model.editScope(custom: true) }
-                        }.padding(3).background(RoundedRectangle(cornerRadius: 8).fill(palette.soft))
+                        }.padding(2).background(RoundedRectangle(cornerRadius: 8).fill(palette.soft))
                             .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.line))
-                        HStack(spacing: 12) {
-                            Text(model.scopeChoice == .global ? "检查当前用户的可访问位置" : "已选择 \(model.customDirectories.count) 个文件夹")
-                            if model.scopeChoice == .custom {
-                                Button("编辑位置") { model.editScope(custom: true) }.buttonStyle(.plain).foregroundStyle(palette.accent)
-                            }
-                        }.font(.system(size: 11)).foregroundStyle(palette.muted)
+                        Spacer(minLength: 0)
+                        Button(action: model.startScan) {
+                            Label("开始扫描", systemImage: "viewfinder")
+                        }.buttonStyle(WBButtonStyle(primary: true)).disabled(model.isBusy)
+                            .accessibilityIdentifier("space-cleaning-start")
                     }
-                    Spacer(minLength: 0)
-                }.padding(.vertical, 20)
-            }.padding(.horizontal, 30).padding(.bottom, 12)
+                    HStack(spacing: 10) {
+                        Text(model.scopeChoice == .global ? "一次检查当前用户的缓存、开发与个人常用位置" : model.customDirectories.map { model.shortPath($0) }.joined(separator: " · "))
+                            .lineLimit(1).truncationMode(.middle)
+                        if model.scopeChoice == .custom {
+                            Button("编辑 \(model.customDirectories.count) 个位置") { model.editScope(custom: true) }
+                                .buttonStyle(ClickablePlainButtonStyle()).foregroundStyle(palette.accent).fixedSize()
+                        }
+                        Spacer(minLength: 0)
+                        Text("扫描不会删除文件").fixedSize()
+                    }.font(.system(size: 11)).foregroundStyle(palette.muted)
+                }.padding(14)
+            }.frame(maxHeight: .infinity, alignment: .top)
         }
     }
     private func scopeButton(_ title: String, icon: String, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) { Label(title, systemImage: icon).font(.system(size: 12)).padding(.horizontal, 12).frame(height: 32)
             .background(RoundedRectangle(cornerRadius: 6).fill(selected ? palette.accent.opacity(0.18) : .clear)) }
-            .buttonStyle(.plain).disabled(model.isBusy).accessibilityValue(selected ? "已选择" : "未选择")
+            .buttonStyle(ClickablePlainButtonStyle()).disabled(model.isBusy).accessibilityValue(selected ? "已选择" : "未选择")
     }
     private var scanning: some View {
         SpaceCleaningSurface {
@@ -215,11 +212,12 @@ struct SpaceCleaningModuleView: View {
 }
 
 struct SpaceCleaningSurface<Content: View>: View {
+    var fillHeight = true
     @ViewBuilder let content: () -> Content
     var body: some View {
         VStack(alignment: .leading, spacing: 0, content: content)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background { ZStack { Rectangle().fill(.ultraThinMaterial); WorkbenchMaterialSurface(radius: 15) } }.clipShape(RoundedRectangle(cornerRadius: 15))
+            .frame(maxWidth: .infinity, maxHeight: fillHeight ? .infinity : nil, alignment: .topLeading)
+            .background(WorkbenchMaterialSurface(radius: 15)).clipShape(RoundedRectangle(cornerRadius: 15))
     }
 }
 struct SpaceCleaningProgressTrack: View {

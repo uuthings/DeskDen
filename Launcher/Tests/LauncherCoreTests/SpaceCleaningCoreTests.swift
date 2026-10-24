@@ -580,4 +580,38 @@ final class SpaceCleaningCoreTests: XCTestCase {
         }
     }
 
+    func testCustomCacheParentPreservesNestedKnownBrowserRules() throws {
+        try fixture { home in
+            try file(home, "Library/Caches/Google/Chrome/Default/Cache/data", bytes: 31)
+            try file(home, "Library/Caches/Firefox/Profiles/profile/cache2/entries/data", bytes: 47)
+            try file(home, "Library/Caches/Google/Other/personal.data", bytes: 53)
+            let report = scan(home, at: "Library/Caches")
+            XCTAssertTrue(report.complete)
+            XCTAssertEqual(report.candidates.filter(\.isRecommendedForSelection).count, 2)
+            XCTAssertEqual(report.candidates.filter(\.isRecommendedForSelection).reduce(0) { $0 + $1.logicalBytes }, 78)
+            XCTAssertFalse(try XCTUnwrap(report.candidates.first { $0.title == "personal.data" }).isRecommendedForSelection)
+            XCTAssertEqual(report.logicalBytes, 131)
+        }
+    }
+
+    func testProtectedBrowserCannotStarveLaterRebuildableCacheVerification() throws {
+        try fixture { home in
+            for index in 0..<20 { try file(home, "Library/Caches/Google/Chrome/Default/cache-\(index)") }
+            try file(home, "Library/Caches/pip/http-v2/data", bytes: 73)
+            let context = SpaceCleaningContext(homeDirectory: home,
+                runningApplicationURLs: [home.appendingPathComponent("Google Chrome.app")])
+            let report = SpaceCleaningScanner.scan(scopes: [
+                .init(directory: home.appendingPathComponent("Library/Caches/Google/Chrome")),
+                .init(directory: home.appendingPathComponent("Library/Caches/pip"))
+            ], context: context, options: .init(maximumEntries: 8))
+            let candidate = try XCTUnwrap(report.candidates.first { $0.kind == .packageCache })
+            XCTAssertTrue(candidate.isRecommendedForSelection)
+            XCTAssertEqual(candidate.logicalBytes, 73)
+            XCTAssertEqual(SpaceCleaningScanner.revalidate(candidate: candidate, context: context), .unchanged)
+            XCTAssertTrue(report.candidates.filter { $0.kind == .runningApplication }.allSatisfy { !$0.canProcess })
+            XCTAssertTrue(report.reachedLimit)
+            XCTAssertLessThanOrEqual(report.checkedEntries, 16)
+        }
+    }
+
 }
