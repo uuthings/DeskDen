@@ -18,7 +18,7 @@ import LauncherCore
         do {
             try FileManager.default.createDirectory(at: rawRoot, withIntermediateDirectories: true)
             guard let root = SpaceCleaningScanner.canonicalURL(rawRoot) else { throw CheckError.missing }
-            let scopeFixture = try fixture(root.appendingPathComponent("scope-policy"), names: ["manual.data"])
+            let scopeFixture = try fixture(root.appendingPathComponent("scope-policy"), names: ["manual.data", "installer.pkg"])
             let cacheFile = scopeFixture.home.appendingPathComponent("Library/Caches/pip/http-v2/cache")
             let testFile = scopeFixture.home.appendingPathComponent("Developer/Builds/OnlyTest.app/Contents/MacOS/OnlyTest")
             for url in [cacheFile, testFile] {
@@ -34,9 +34,13 @@ import LauncherCore
             let ids = scopeModel.items.map(\.id), defaults = scopeModel.selectedIDs
             check(defaults.count == 1 && scopeModel.selectedItems.allSatisfy { $0.group == .rebuildable } && scopeMover.moveCount == 0,
                   "complete scan defaults only verified cache into selection and never starts cleanup")
-            check(scopeModel.resultTab == .recommended && scopeModel.recommendedIDs == defaults &&
-                  Set(scopeModel.visibleItems.map(\.id)) == defaults && scopeModel.recommendedItems.count == 1,
-                  "results open on the actual recommended selection instead of mixing personal files into cleanup suggestions")
+            guard let installer = scopeModel.items.first(where: { $0.kind == .installerPackage }) else { throw CheckError.missing }
+            check(scopeModel.resultTab == .recommended && scopeModel.recommendedIDs == defaults.union([installer.id]) &&
+                  Set(scopeModel.visibleItems.map(\.id)) == scopeModel.recommendedIDs && scopeModel.recommendedItems.count == 2 &&
+                  scopeModel.automaticallySelectedIDs == defaults && !scopeModel.selectedIDs.contains(installer.id) && installer.needsSuggestionReview,
+                  "recommendations include an installer for manual selection while only verified cache is preselected")
+            check(scopeModel.reportSummary.contains("1 项可重建缓存已预选") && scopeModel.reportSummary.contains("1 项需手动选择"),
+                  "report distinguishes cleanup suggestions from the smaller automatic selection")
             scopeModel.showResults(.reviewable)
             check(scopeModel.visibleItems.contains { $0.url == manualFile } &&
                   scopeModel.visibleItems.allSatisfy { !scopeModel.recommendedIDs.contains($0.id) } && scopeModel.selectedIDs == defaults,
@@ -79,11 +83,41 @@ import LauncherCore
             check(scopeReload.scopeChoice == .custom && scopeReload.customDirectories.count == 2,
                   "security-scoped custom directory bookmarks survive a model restart")
             scopeReload.startScan(); await scopeReload.waitUntilIdle()
-            check(scopeReload.items.count == 2 && scopeReload.selectedIDs.isEmpty && scopeMover.moveCount == 0,
+            check(scopeReload.items.count == 3 && scopeReload.selectedIDs.isEmpty && scopeMover.moveCount == 0 &&
+                  scopeReload.recommendedItems.count == 1 && scopeReload.recommendedItems.first?.kind == .installerPackage,
                   "restored custom scope scans both folders without including global cache locations")
             scopeReload.selectScope(.global)
             check(scopeReload.screen == .start && scopeReload.scopeChoice == .global && scopeReload.customDirectories.count == 2,
                   "switching back to global keeps remembered custom folders available")
+
+            let installerFixture = try fixture(root.appendingPathComponent("installer-only"), names: ["download.dmg"])
+            let installerMover = SpaceCleaningCheckMover(root: installerFixture.home, trash: installerFixture.trash); movers.append(installerMover)
+            let installerModel = SpaceCleaningModel(dataDirectory: installerFixture.data, homeDirectory: installerFixture.home, mover: installerMover); models.append(installerModel)
+            installerModel.startScan(); await installerModel.waitUntilIdle()
+            check(installerModel.recommendedItems.count == 1 && installerModel.otherItems.isEmpty && installerModel.selectedIDs.isEmpty &&
+                  installerModel.automaticallySelectedIDs.isEmpty && installerModel.reportSummary.contains("手动选择"),
+                  "an installer-only scan presents a useful suggestion without claiming automatic selection or completed installation")
+            installerModel.requestCleanup()
+            check(installerMover.moveCount == 0 && !installerModel.isBusy, "an unselected installation image is never processed")
+            installerModel.toggleVisibleSelection(); installerModel.requestCleanup(); await installerModel.waitUntilIdle()
+            check(try installerMover.moveCount == 1 && read(installerFixture.data).first?.state == .trashed,
+                  "a manually selected installation image follows the same verified recoverable transaction")
+
+            let preferenceFixture = try fixture(root.appendingPathComponent("method-preference"), names: [])
+            let preferenceMover = SpaceCleaningCheckMover(root: preferenceFixture.home, trash: preferenceFixture.trash); movers.append(preferenceMover)
+            let preferenceModel = SpaceCleaningModel(dataDirectory: preferenceFixture.data, homeDirectory: preferenceFixture.home, mover: preferenceMover); models.append(preferenceModel)
+            preferenceModel.chooseMethod(.permanent); preferenceModel.setRememberMethod(true)
+            let preferenceReload = SpaceCleaningModel(dataDirectory: preferenceFixture.data, homeDirectory: preferenceFixture.home, mover: preferenceMover); models.append(preferenceReload)
+            check(preferenceReload.method == .permanent && preferenceReload.rememberMethod && !preferenceReload.acknowledgement && preferenceMover.moveCount == 0,
+                  "the standalone remember checkbox saves immediately without requiring any cleanup or consenting to deletion")
+            preferenceModel.chooseMethod(.trash)
+            let trashPreferenceReload = SpaceCleaningModel(dataDirectory: preferenceFixture.data, homeDirectory: preferenceFixture.home, mover: preferenceMover); models.append(trashPreferenceReload)
+            check(trashPreferenceReload.method == .trash && trashPreferenceReload.rememberMethod,
+                  "changing a remembered method updates the next-session preference immediately")
+            preferenceModel.chooseMethod(.permanent); preferenceModel.setRememberMethod(false)
+            let forgottenPreference = SpaceCleaningModel(dataDirectory: preferenceFixture.data, homeDirectory: preferenceFixture.home, mover: preferenceMover); models.append(forgottenPreference)
+            check(preferenceModel.method == .permanent && !preferenceModel.rememberMethod && forgottenPreference.method == .trash && !forgottenPreference.rememberMethod,
+                  "unchecking remember keeps the current method but restores Trash as the next-session default")
 
             let first = try fixture(root.appendingPathComponent("restore"), names: ["first.data", "second.data"])
             let mover = SpaceCleaningCheckMover(root: first.home, trash: first.trash); movers.append(mover)

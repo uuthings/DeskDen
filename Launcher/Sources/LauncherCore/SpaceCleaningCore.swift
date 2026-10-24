@@ -9,7 +9,7 @@ import Glibc
 public enum SpaceCleaningGroup: String, Codable, CaseIterable, Sendable { case rebuildable, review, protected }
 public enum SpaceCleaningKind: String, Codable, CaseIterable, Sendable {
     case browserCache, packageCache, derivedData, oldDiagnostic, recentDiagnostic
-    case downloadedFile, developmentFile, personalFile, testApplication, testArchive
+    case downloadedFile, installerPackage, downloadedDiskImage, developmentFile, personalFile, testApplication, testArchive
     case unknownApplication, unknownArchive, releaseArchive, releaseMaterial, installedApplication
     case symbolicLink, hardLink, package, runningApplication, cloudPlaceholder, unsupported
 }
@@ -98,6 +98,14 @@ public struct SpaceCleaningCandidate: Identifiable, Codable, Equatable, Sendable
     public var isRecommendedForSelection: Bool {
         canProcess && group == .rebuildable && [.browserCache, .packageCache, .derivedData].contains(kind)
     }
+    /// Useful cleanup candidates can require a user's choice. Recognizing an
+    /// installer or download image does not establish that installation finished.
+    public var isCleanupSuggestion: Bool {
+        guard canProcess else { return false }
+        return isRecommendedForSelection ||
+            (group == .review && [.installerPackage, .downloadedDiskImage].contains(kind)) ||
+            (group == .rebuildable && kind == .oldDiagnostic)
+    }
     public init(id: UUID = UUID(), scopeID: UUID = UUID(), url: URL, rootURL: URL,
                 rootIdentity: StorageReviewFileIdentity, identity: StorageReviewFileIdentity,
                 ancestorIdentities: [SpaceCleaningPathIdentity] = [], kind: SpaceCleaningKind,
@@ -158,7 +166,7 @@ public enum SpaceCleaningValidation: String, Codable, Equatable, Sendable {
 }
 
 public enum SpaceCleaningScanner {
-    public static let ruleVersion = "2026-10-24.1"
+    public static let ruleVersion = "2026-10-24.2"
 
     /// Known locations are explicit. This never makes the home directory a cache scope.
     public static func recommendedScopes(context: SpaceCleaningContext = .init()) -> [SpaceCleaningScope] {
@@ -614,6 +622,16 @@ private final class Worker {
             return .init(kind: known, group: .rebuildable, reason: known == .derivedData ? "已识别的 Xcode 可重建内容。" : "来自已知的可重建缓存位置。",
                          impact: known == .derivedData ? "下次构建或索引可能更慢。" : "相关内容可能需要重新下载或生成。")
         }
+        if Scanner.isRegular(identity), ext == "pkg" {
+            return .init(kind: .installerPackage, group: .review,
+                         reason: "PKG 安装包，可在不再需要安装或保留此版本时选择清理。",
+                         impact: "尚未核验安装是否完成；清理后如需安装，需重新获取此安装包。")
+        }
+        if Scanner.isRegular(identity), ext == "dmg", within(url, "Downloads") || within(url, "Desktop") {
+            return .init(kind: .downloadedDiskImage, group: .review,
+                         reason: "下载或桌面中的磁盘映像，可核对用途后选择清理。",
+                         impact: "磁盘映像也可能包含个人文件；尚未核验其内容或安装状态。")
+        }
         if isPackage(url) { return .init(kind: .package, group: .protected, reason: "应用资源或文稿包默认保留。", impact: "不会拆开包选择内部文件。") }
         if Scanner.isRegular(identity), within(url, "Library/Logs/DiagnosticReports") {
             if ["log", "crash", "ips", "diag", "trace"].contains(ext) {
@@ -777,7 +795,7 @@ private final class Worker {
         Scanner.contains(url.path, in: "/Applications") || Scanner.contains(url.path, in: "/System/Applications") || within(url, "Applications")
     }
     func isPackage(_ url: URL) -> Bool {
-        ["app", "xcarchive", "dsym", "bundle", "framework", "plugin", "photoslibrary", "photolibrary", "rtfd", "pages", "numbers", "key", "xcodeproj", "xcworkspace"].contains(url.pathExtension.lowercased()) ||
+        ["app", "xcarchive", "dsym", "pkg", "bundle", "framework", "plugin", "photoslibrary", "photolibrary", "rtfd", "pages", "numbers", "key", "xcodeproj", "xcworkspace"].contains(url.pathExtension.lowercased()) ||
             (try? url.resourceValues(forKeys: [.isPackageKey]).isPackage) == true
     }
     func hasPackageAncestor(_ url: URL) -> Bool {

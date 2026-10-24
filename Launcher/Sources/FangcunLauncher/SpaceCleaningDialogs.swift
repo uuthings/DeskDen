@@ -93,13 +93,16 @@ struct SpaceCleaningRulesDialog: View {
                 Text("默认从当前用户的常用位置开始。系统文件、其他用户目录、外接磁盘和云端未下载的内容不自动纳入。")
                     .font(.system(size: 12)).foregroundStyle(palette.secondary).lineSpacing(5)
                 VStack(spacing: 0) {
-                    rule("可重建缓存", status: "独立规则识别")
+                    rule("已核验的可重建缓存", status: "建议清理 · 默认勾选")
+                    rule("PKG 安装包、下载与桌面中的 DMG", status: "建议整理 · 手动选择")
+                    rule("已满 30 天的诊断记录", status: "建议整理 · 手动选择")
+                    rule("个人文件与普通压缩包", status: "自行选择")
                     rule("测试 App 与测试归档", status: "可见 · 人工选择")
                     rule("用途不明的归档", status: "保留 · 可确认用途")
                     rule("正式发布原件与关联材料", status: "可见 · 受保护")
                     rule("已安装或正在使用的 App", status: "不直接清理")
                 }
-                Text("公证、签名、体积与修改时间，不单独决定是否属于测试文件。未获权限的位置会单独显示；扫描覆盖范围与全盘占用分别呈现。")
+                Text("安装介质不等于已安装残留，DMG 也可能包含个人资料。确认无需保留后再勾选；公证与签名不单独决定发布或测试用途。未获权限的位置会单独显示。")
                     .font(.system(size: 11)).foregroundStyle(palette.muted).lineSpacing(5)
             }
         } actions: {

@@ -108,6 +108,11 @@ struct SpaceCleaningResultsView: View {
                         HStack(spacing: 7) {
                             Image(systemName: item.isDirectory ? "folder" : "doc").foregroundStyle(palette.muted)
                             Text(item.name).fontWeight(.medium).lineLimit(1).truncationMode(.middle)
+                            if item.needsSuggestionReview {
+                                Text("需手选").font(.system(size: 10)).foregroundStyle(palette.warning)
+                                    .padding(.horizontal, 6).padding(.vertical, 3)
+                                    .background(Capsule().fill(palette.warning.opacity(0.12))).fixedSize()
+                            }
                             Image(systemName: model.detailID == item.id ? "chevron.up" : "chevron.down").font(.system(size: 9)).foregroundStyle(palette.muted)
                         }.font(.system(size: 12))
                         Text(model.shortPath(item.url.deletingLastPathComponent()))
@@ -130,7 +135,7 @@ struct SpaceCleaningResultsView: View {
     private var emptyResults: some View {
         VStack(spacing: 12) {
             Image(systemName: model.searchText.isEmpty ? "checkmark.circle" : "magnifyingglass").font(.system(size: 26, weight: .light)).foregroundStyle(palette.accent)
-            Text(!model.searchText.isEmpty ? "没有匹配的项目" : model.onlySelected ? "还没有选择文件" : model.resultTab == .recommended ? "没有需要自动推荐清理的内容" : "这个分类没有项目")
+            Text(!model.searchText.isEmpty ? "没有匹配的项目" : model.onlySelected ? "还没有选择文件" : model.resultTab == .recommended ? "暂未发现建议整理的内容" : "这个分类没有项目")
                 .font(.system(size: 14, weight: .medium))
             if model.resultTab == .recommended && model.searchText.isEmpty && !model.onlySelected {
                 Text(model.noRecommendationsSummary).font(.system(size: 11)).foregroundStyle(palette.muted).multilineTextAlignment(.center).frame(maxWidth: 430)
@@ -172,38 +177,89 @@ struct SpaceCleaningResultsView: View {
     private var selectionFooter: some View {
         VStack(spacing: 0) {
             if confirming { permanentConfirmation }
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 10) {
-                        Text(model.selectedCount == 0 ? "尚未选择文件" : "已选 \(model.selectedCount) 项 · \(SpaceCleaningFormat.bytes(model.selectedBytes))")
-                            .font(.system(size: 12, weight: .medium))
-                        if model.selectedCount > 0 {
-                            Button(model.onlySelected ? "返回分类" : "查看已选") { model.toggleSelectedFilter() }
-                                .buttonStyle(ClickablePlainButtonStyle()).font(.system(size: 11)).foregroundStyle(palette.accent)
-                            Button("取消选择", action: model.clearSelection).buttonStyle(ClickablePlainButtonStyle()).font(.system(size: 11)).foregroundStyle(palette.muted).disabled(confirming)
-                        }
-                    }
-                    Text(model.method == .trash ? "移入废纸篓，可从清理记录恢复" : "永久删除将释放占用，无法恢复")
-                        .font(.system(size: 11)).foregroundStyle(model.method == .trash ? palette.muted : palette.warning)
-                }.frame(maxWidth: .infinity, alignment: .leading)
-                if !confirming {
-                    Menu {
-                        Button { model.method = .trash } label: { Label("移入废纸篓", systemImage: model.method == .trash ? "checkmark" : "trash") }
-                        Button { model.method = .permanent } label: { Label("永久删除", systemImage: model.method == .permanent ? "checkmark" : "trash.slash") }
-                        Divider()
-                        Toggle("记住处理方式", isOn: $model.rememberMethod)
-                    } label: {
-                        Label(model.method == .trash ? "移入废纸篓" : "永久删除", systemImage: model.method == .trash ? "trash" : "trash.slash")
-                            .font(.system(size: 11))
-                    }.menuStyle(.borderlessButton).fixedSize().clickableCursor().disabled(model.isBusy)
-                    Button(action: model.requestCleanup) {
-                        Text(model.method == .trash ? "清理 \(model.selectedCount) 项" : "永久删除 \(model.selectedCount) 项…")
-                    }.buttonStyle(WBButtonStyle(primary: model.method == .trash, destructive: model.method == .permanent))
-                        .disabled(!model.canProcess).accessibilityIdentifier("space-cleaning-cleanup")
-                }
-            }.padding(14).frame(minHeight: 68)
+            else { selectionActions }
         }.background(WorkbenchMaterialSurface(radius: 15))
             .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-selection-footer")
+    }
+    private var selectionActions: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 16) {
+                selectionSummary.fixedSize(horizontal: true, vertical: false)
+                Spacer(minLength: 0)
+                VStack(alignment: .leading, spacing: 8) {
+                    methodSelector
+                    rememberMethodToggle
+                }
+                cleanupButton
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .center, spacing: 12) {
+                    selectionSummary.frame(maxWidth: .infinity, alignment: .leading)
+                    rememberMethodToggle
+                }
+                HStack(spacing: 12) {
+                    methodSelector
+                    Spacer(minLength: 0)
+                    cleanupButton
+                }
+            }
+        }.padding(14)
+    }
+    private var selectionSummary: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                Text(model.selectedCount == 0 ? "尚未选择文件" : "已选 \(model.selectedCount) 项 · \(SpaceCleaningFormat.bytes(model.selectedBytes))")
+                    .font(.system(size: 12, weight: .medium))
+                if model.selectedCount > 0 {
+                    Button(model.onlySelected ? "返回分类" : "查看已选") { model.toggleSelectedFilter() }
+                        .buttonStyle(ClickablePlainButtonStyle()).font(.system(size: 11)).foregroundStyle(palette.accent)
+                        .disabled(model.isBusy || confirming)
+                    Button("取消选择", action: model.clearSelection)
+                        .buttonStyle(ClickablePlainButtonStyle()).font(.system(size: 11)).foregroundStyle(palette.muted)
+                        .disabled(model.isBusy || confirming)
+                }
+            }
+            Text(model.method == .trash ? "移入废纸篓，可从清理记录恢复" : "永久删除将释放占用，无法恢复")
+                .font(.system(size: 11)).foregroundStyle(model.method == .trash ? palette.muted : palette.warning)
+        }.fixedSize(horizontal: false, vertical: true)
+    }
+    private var methodSelector: some View {
+        HStack(spacing: 2) {
+            methodOption(.trash, title: "移入废纸篓", icon: "trash")
+            methodOption(.permanent, title: "永久删除", icon: "trash.slash")
+        }.padding(2)
+            .background(RoundedRectangle(cornerRadius: 8).fill(palette.soft))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.line))
+            .fixedSize().disabled(model.isBusy || confirming)
+            .accessibilityElement(children: .contain).accessibilityLabel("清理方式")
+    }
+    private func methodOption(_ method: SpaceCleaningMethod, title: String, icon: String) -> some View {
+        let selected = model.method == method
+        let color = method == .permanent ? palette.warning : palette.accent
+        return Button { model.chooseMethod(method) } label: {
+            HStack(spacing: 6) {
+                Image(systemName: icon).font(.system(size: 12))
+                Text(title).font(.system(size: 11, weight: selected ? .medium : .regular))
+            }.foregroundStyle(selected ? color : palette.secondary)
+                .padding(.horizontal, 10).frame(height: 28)
+                .background(RoundedRectangle(cornerRadius: 6).fill(selected ? color.opacity(0.16) : .clear))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(selected ? color.opacity(0.45) : .clear))
+                .contentShape(RoundedRectangle(cornerRadius: 6))
+        }.buttonStyle(ClickablePlainButtonStyle())
+            .accessibilityValue(selected ? "已选择" : "未选择")
+            .accessibilityIdentifier(method == .trash ? "space-cleaning-method-trash" : "space-cleaning-method-permanent")
+    }
+    private var rememberMethodToggle: some View {
+        Toggle("记住处理方式", isOn: Binding(get: { model.rememberMethod }, set: model.setRememberMethod))
+            .toggleStyle(.checkbox).font(.system(size: 11)).foregroundStyle(palette.secondary)
+            .fixedSize().clickableCursor().disabled(model.isBusy || confirming)
+            .accessibilityIdentifier("space-cleaning-remember-method")
+    }
+    private var cleanupButton: some View {
+        Button(action: model.requestCleanup) {
+            Text(model.method == .trash ? "清理 \(model.selectedCount) 项" : "永久删除 \(model.selectedCount) 项…")
+        }.buttonStyle(WBButtonStyle(primary: model.method == .trash, destructive: model.method == .permanent))
+            .fixedSize().disabled(!model.canProcess).accessibilityIdentifier("space-cleaning-cleanup")
     }
     private var permanentConfirmation: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -224,7 +280,7 @@ struct SpaceCleaningResultsView: View {
                     .buttonStyle(WBButtonStyle(destructive: true)).disabled(!model.canProcess || !model.acknowledgement)
                     .accessibilityIdentifier("space-cleaning-confirm-execute")
             }
-        }.padding(14).overlay(alignment: .bottom) { Rectangle().fill(palette.line).frame(height: 1) }
+        }.padding(14)
             .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-confirmation")
     }
 }

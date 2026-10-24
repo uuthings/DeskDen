@@ -440,6 +440,8 @@ final class SpaceCleaningCoreTests: XCTestCase {
             let report = scan(home, at: "Library/Logs/DiagnosticReports")
             XCTAssertEqual(report.candidates.first { $0.title == "old.ips" }?.kind, .oldDiagnostic)
             XCTAssertEqual(report.candidates.first { $0.title == "recent.log" }?.kind, .recentDiagnostic)
+            XCTAssertTrue(try XCTUnwrap(report.candidates.first { $0.title == "old.ips" }).isCleanupSuggestion)
+            XCTAssertFalse(try XCTUnwrap(report.candidates.first { $0.title == "recent.log" }).isCleanupSuggestion)
             XCTAssertEqual(try JSONDecoder().decode(SpaceCleaningReport.self, from: JSONEncoder().encode(report)), report)
         }
     }
@@ -539,11 +541,127 @@ final class SpaceCleaningCoreTests: XCTestCase {
             try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -40 * 86400)], ofItemAtPath: old.path)
             try file(home, "Library/Caches/pip/http-v2/data")
             let report = scan(home)
-            XCTAssertFalse(try XCTUnwrap(report.candidates.first { $0.kind == .oldDiagnostic }).isRecommendedForSelection)
+            let diagnostic = try XCTUnwrap(report.candidates.first { $0.kind == .oldDiagnostic })
+            XCTAssertTrue(diagnostic.isCleanupSuggestion)
+            XCTAssertFalse(diagnostic.isRecommendedForSelection)
             var cache = try XCTUnwrap(report.candidates.first { $0.kind == .packageCache })
             XCTAssertTrue(cache.isRecommendedForSelection)
-            cache.sizeIsComplete = false; XCTAssertFalse(cache.isRecommendedForSelection)
-            cache.sizeIsComplete = true; cache.group = .protected; XCTAssertFalse(cache.isRecommendedForSelection)
+            XCTAssertTrue(cache.isCleanupSuggestion)
+            cache.sizeIsComplete = false
+            XCTAssertFalse(cache.isRecommendedForSelection)
+            XCTAssertFalse(cache.isCleanupSuggestion)
+            cache.sizeIsComplete = true; cache.group = .protected
+            XCTAssertFalse(cache.isRecommendedForSelection)
+            XCTAssertFalse(cache.isCleanupSuggestion)
+        }
+    }
+
+    func testInstallerSuggestionsStayManualAndDoNotAbsorbPersonalImagesOrArchives() throws {
+        try fixture { home in
+            for relative in ["Downloads/Setup.dmg", "Desktop/nested/Setup.DMG", "Custom/Setup.pkg",
+                             "Documents/Private.dmg", "Downloads/Files.zip", "Downloads/Private.sparseimage",
+                             "Documents/Notes.txt", "Downloads/Private.sparsebundle/bands/data"] {
+                try file(home, relative)
+            }
+            let report = scan(home)
+            let suggestions = report.candidates.filter(\.isCleanupSuggestion)
+            XCTAssertEqual(Set(suggestions.map { $0.url.path.replacingOccurrences(of: home.path + "/", with: "") }),
+                           ["Downloads/Setup.dmg", "Desktop/nested/Setup.DMG", "Custom/Setup.pkg"])
+            XCTAssertEqual(suggestions.filter { $0.kind == .downloadedDiskImage }.count, 2)
+            XCTAssertEqual(suggestions.filter { $0.kind == .installerPackage }.count, 1)
+            XCTAssertTrue(suggestions.allSatisfy { $0.group == .review && $0.canProcess && !$0.isRecommendedForSelection })
+            XCTAssertTrue(report.candidates.filter { !suggestions.map(\.id).contains($0.id) }.allSatisfy { !$0.isCleanupSuggestion })
+            XCTAssertEqual(try JSONDecoder().decode(SpaceCleaningReport.self, from: JSONEncoder().encode(report)), report)
+        }
+    }
+
+    func testDirectoryInstallerPackageRemainsProtectedAsOneObject() throws {
+        try fixture { home in
+            try file(home, "Downloads/Legacy.pkg/Contents/Archive.pax.gz")
+            let report = scan(home, at: "Downloads")
+            XCTAssertEqual(report.candidates.count, 1)
+            let candidate = try XCTUnwrap(report.candidates.first)
+            XCTAssertEqual(candidate.title, "Legacy.pkg")
+            XCTAssertEqual(candidate.kind, .package)
+            XCTAssertEqual(candidate.group, .protected)
+            XCTAssertFalse(candidate.isCleanupSuggestion)
+            XCTAssertFalse(candidate.isRecommendedForSelection)
+            XCTAssertFalse(candidate.canProcess)
+        }
+    }
+
+    func testKnownRebuildableCacheRulesTakePrecedenceOverInstallerPresentation() throws {
+        try fixture { home in
+            try file(home, "Library/Caches/Homebrew/Setup.pkg", bytes: 31)
+            try file(home, "Library/Caches/Homebrew/Legacy.pkg/Contents/Archive.pax.gz", bytes: 47)
+            let contents = scan(home, at: "Library/Caches/Homebrew")
+            XCTAssertEqual(contents.candidates.count, 2)
+            XCTAssertTrue(contents.candidates.allSatisfy {
+                $0.kind == .packageCache && $0.group == .rebuildable && $0.isCleanupSuggestion && $0.isRecommendedForSelection
+            })
+            XCTAssertTrue(contents.candidates.contains { $0.title == "Legacy.pkg" && $0.isDirectory })
+            let aggregate = scan(home, at: "Library/Caches")
+            XCTAssertEqual(aggregate.candidates.count, 1)
+            let cache = try XCTUnwrap(aggregate.candidates.first)
+            XCTAssertEqual(cache.kind, .packageCache)
+            XCTAssertEqual(cache.logicalBytes, 78)
+            XCTAssertTrue(cache.isCleanupSuggestion)
+            XCTAssertTrue(cache.isRecommendedForSelection)
+        }
+    }
+
+    func testReleaseAndHardLinkProtectionOverrideInstallerSuggestions() throws {
+        try fixture { home in
+            let explicitRelease = try file(home, "Downloads/Published.pkg")
+            try file(home, "Desktop/ReleaseArchives/Published.dmg")
+            let source = try file(home, "Documents/Original.dmg")
+            let linked = home.appendingPathComponent("Downloads/Linked.dmg")
+            try FileManager.default.createDirectory(at: linked.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.linkItem(at: source, to: linked)
+            let report = SpaceCleaningScanner.scan(scopes: [
+                .init(directory: home.appendingPathComponent("Downloads")),
+                .init(directory: home.appendingPathComponent("Desktop"))
+            ], context: .init(homeDirectory: home, protectedReleaseURLs: [explicitRelease]))
+            XCTAssertTrue(report.candidates.allSatisfy { !$0.isCleanupSuggestion && !$0.isRecommendedForSelection })
+            XCTAssertEqual(report.candidates.first { $0.url == explicitRelease }?.kind, .releaseMaterial)
+            XCTAssertEqual(report.candidates.first { $0.url == linked }?.kind, .hardLink)
+            XCTAssertTrue(report.candidates.contains { $0.kind == .releaseMaterial && $0.url.path.contains("ReleaseArchives") })
+        }
+    }
+
+    func testInstallerCloudPlaceholderAndIncompleteSnapshotCannotBeSuggested() throws {
+        try fixture { home in
+            let image = try file(home, "Downloads/Cloud.dmg")
+            let package = try file(home, "Downloads/Setup.pkg")
+            let report = SpaceCleaningScanner.scan(scopes: [.init(directory: home.appendingPathComponent("Downloads"))],
+                context: .init(homeDirectory: home), metadata: .init(flags: { $0 == image ? UInt32(SF_DATALESS) : 0 }))
+            let cloud = try XCTUnwrap(report.candidates.first { $0.url == image })
+            XCTAssertEqual(cloud.kind, .cloudPlaceholder)
+            XCTAssertFalse(cloud.isCleanupSuggestion)
+            XCTAssertFalse(cloud.canProcess)
+            var installer = try XCTUnwrap(report.candidates.first { $0.url == package })
+            XCTAssertTrue(installer.isCleanupSuggestion)
+            installer.sizeIsComplete = false
+            XCTAssertFalse(installer.isCleanupSuggestion)
+            XCTAssertFalse(installer.isRecommendedForSelection)
+        }
+    }
+
+    func testInstallerPolicyRevalidationAndReceiptPolicyRemainDistinct() throws {
+        try fixture { home in
+            for relative in ["Downloads/Setup.dmg", "Custom/Setup.pkg"] {
+                let url = try file(home, relative)
+                let candidate = try XCTUnwrap(scan(home, at: url.deletingLastPathComponent().lastPathComponent).candidates.first)
+                let context = SpaceCleaningContext(homeDirectory: home)
+                XCTAssertTrue(candidate.isCleanupSuggestion)
+                XCTAssertFalse(candidate.isRecommendedForSelection)
+                XCTAssertEqual(SpaceCleaningScanner.revalidate(candidate: candidate, context: context), .unchanged)
+                try FileManager.default.removeItem(at: url)
+                XCTAssertEqual(SpaceCleaningScanner.validatePolicy(candidate: candidate, context: context), .unchanged)
+                XCTAssertEqual(SpaceCleaningScanner.revalidate(candidate: candidate, context: context), .missing)
+                XCTAssertEqual(SpaceCleaningScanner.validatePolicy(candidate: candidate,
+                    context: .init(homeDirectory: home, protectedReleaseURLs: [url])), .protected)
+            }
         }
     }
 

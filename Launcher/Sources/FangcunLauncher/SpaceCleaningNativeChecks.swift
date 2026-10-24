@@ -138,8 +138,15 @@ import LauncherCore
             check(cleaning.screen == .results && cleaning.selectedCount == 1 && cleaning.selectedItems.allSatisfy { $0.group == .rebuildable },
                   "real scan selects only positively identified rebuildable cache by default")
             check(cleaning.resultTab == .recommended && Set(cleaning.visibleItems.map(\.id)) == cleaning.recommendedIDs &&
-                  cleaning.selectedIDs == cleaning.recommendedIDs,
-                  "the initial results filter displays the actual recommended and preselected files")
+                  cleaning.recommendedItems.count == 2 && cleaning.selectedIDs.isStrictSubset(of: cleaning.recommendedIDs),
+                  "initial recommendations include installer media while default selection remains limited to rebuildable cache")
+            check(cleaning.recommendedItems.contains { $0.url == download && !cleaning.selectedIDs.contains($0.id) } &&
+                  !cleaning.recommendedItems.contains { $0.url == otherDownload },
+                  "downloaded disk images are visible suggestions without auto-selecting them or personal recordings")
+            check(cleaning.method == .trash && !cleaning.rememberMethod &&
+                  accessibilityValue("space-cleaning-method-trash", in: host) == "已选择" &&
+                  accessibilityValue("space-cleaning-method-permanent", in: host) == "未选择",
+                  "direct method choices visibly default to Trash with remembering off")
             check(cleaning.items.allSatisfy { $0.url.path.hasPrefix(home.path + "/") }, "global fixture scanning stays inside the injected home")
             check(Set(cleaning.items.map(\.group)) == Set(CleaningResultGroup.allCases), "real scanner retains distinct protection and review classifications")
             check(exists("space-cleaning-rescan", in: host) && exists("space-cleaning-edit-scope", in: host), "rescan and scope editing remain visible in the results header")
@@ -149,20 +156,31 @@ import LauncherCore
                 check(selectionAligned(item: recommended.id, in: host),
                       "the visible-selection control and recommended row checkbox share the same column")
             }
-            try capture(host: host, name: "results-window", output: output)
+            for (name, size) in sizes {
+                window.setContentSize(size)
+                _ = await settle(window) { exists("space-cleaning-remember-method", in: host) }
+                for result in footerLayoutChecks(in: host) { check(result.0, "\(name) recommended results " + result.1) }
+                try capture(host: host, name: "results-" + name, output: output)
+            }
+            window.setContentSize(NSSize(width: 1120, height: 758))
             cleaning.screen = .scanning
             _ = await settle(window) { exists("space-cleaning-scan", in: host) }
             try capture(host: host, name: "scan-layout", output: output)
             check(!cleaning.animationActive, "reduced motion pauses the scan illustration")
             cleaning.screen = .results
             _ = await settle(window) { exists("space-cleaning-result-list", in: host) }
-            guard let item = cleaning.items.first(where: { $0.url == download && $0.isSelectable }) else { throw SpaceCleaningFixtureError.invalid("download candidate unavailable") }
+            guard let item = cleaning.items.first(where: { $0.url == download && $0.isSelectable }),
+                  let manualItem = cleaning.items.first(where: { $0.url == otherDownload && $0.isSelectable }) else {
+                throw SpaceCleaningFixtureError.invalid("download candidates unavailable")
+            }
             let recommendedSelection = cleaning.selectedIDs
             cleaning.showResults(.reviewable)
-            _ = await settle(window) { exists("space-cleaning-select-" + item.id.uuidString, in: host) }
+            _ = await settle(window) { exists("space-cleaning-select-" + manualItem.id.uuidString, in: host) }
             check(cleaning.selectedIDs == recommendedSelection && cleaning.visibleItems.allSatisfy { !cleaning.recommendedIDs.contains($0.id) },
                   "switching to other files preserves recommendations without repeating them in the manual list")
+            cleaning.showResults(.recommended)
             cleaning.clearSelection(); cleaning.toggleItem(item.id)
+            _ = await settle(window) { exists("space-cleaning-select-" + item.id.uuidString, in: host) }
             guard let page = pageScroll(in: host) else { throw SpaceCleaningFixtureError.invalid("internal result scroll missing") }
             let sidebarBefore = frame("workbench-sidebar", in: host)
             let surfaceBefore = frame("space-cleaning-results-surface", in: host)
@@ -172,14 +190,20 @@ import LauncherCore
             check(frame("space-cleaning-file-detail", in: host).map { $0.width > 600 } == true, "file review expands inline across the list instead of opening a popup or side panel")
             check(frame("space-cleaning-results-surface", in: host) == surfaceBefore && frame("space-cleaning-selection-footer", in: host) == footerBefore,
                   "expanding a file preserves card geometry and the fixed selection footer")
+            check(item.handlingNote != nil && cleaning.selectedIDs == [item.id],
+                  "installer review explains its manual decision and only becomes selected through an explicit choice")
+            try capture(host: host, name: "recommendation-installer-detail", output: output)
+            cleaning.showResults(.reviewable); cleaning.showDetail(manualItem.id)
+            _ = await settle(window) { exists("space-cleaning-file-detail", in: host) }
             try capture(host: host, name: "file-review-window", output: output)
             for (name, size) in sizes {
                 window.setContentSize(size)
                 _ = await settle(window) { host.bounds.size == size }
-                cleaning.resultScrollID = item.id
-                _ = await settle(window) { exists("space-cleaning-select-" + item.id.uuidString, in: host) }
-                check(selectionAligned(item: item.id, in: host),
+                cleaning.resultScrollID = manualItem.id
+                _ = await settle(window) { exists("space-cleaning-select-" + manualItem.id.uuidString, in: host) }
+                check(selectionAligned(item: manualItem.id, in: host),
                       "\(name) the visible-selection control aligns with the manual file checkbox")
+                for result in footerLayoutChecks(in: host) { check(result.0, "\(name) selected results " + result.1) }
                 let footer = frame("space-cleaning-selection-footer", in: host)
                 move(page, fraction: 0.55)
                 _ = await settle(window) { frame("space-cleaning-selection-footer", in: host) == footer }
@@ -203,10 +227,26 @@ import LauncherCore
             cleaning.cancelScope()
             check(cleaning.screen == .results && cleaning.selectedIDs == selectedBefore && cleaning.scopeChoice == .global,
                   "cancelling the scope draft preserves the existing results and selection")
-            cleaning.closeDetail(); cleaning.method = .permanent; cleaning.requestCleanup()
+            cleaning.closeDetail(); cleaning.chooseMethod(.permanent); cleaning.setRememberMethod(true)
+            _ = await settle(window) { accessibilityValue("space-cleaning-method-permanent", in: host) == "已选择" }
+            check(cleaning.method == .permanent && cleaning.rememberMethod &&
+                  accessibilityValue("space-cleaning-method-permanent", in: host) == "已选择" &&
+                  accessibilityValue("space-cleaning-method-trash", in: host) == "未选择",
+                  "changing the direct choice updates the selected state while remembering stays a separate option")
+            for (name, size) in sizes {
+                window.setContentSize(size)
+                _ = await settle(window) { exists("space-cleaning-remember-method", in: host) }
+                for result in footerLayoutChecks(in: host) { check(result.0, "\(name) remembered permanent choice " + result.1) }
+                try capture(host: host, name: "results-permanent-remember-" + name, output: output)
+            }
+            window.setContentSize(NSSize(width: 1120, height: 758))
+            cleaning.requestCleanup()
             _ = await settle(window) { exists("space-cleaning-confirm-execute", in: host) }
             check(enabled("space-cleaning-confirm-execute", in: host) == false && !cleaning.acknowledgement,
                   "permanent confirmation is visibly disabled before explicit acknowledgement")
+            cleaning.chooseMethod(.trash); cleaning.setRememberMethod(false)
+            check(cleaning.method == .permanent && cleaning.rememberMethod,
+                  "pending permanent confirmation also rejects method and preference changes at the model boundary")
             check(cleaning.screen == .results && exists("space-cleaning-result-list", in: host),
                   "irreversible confirmation retains the result list instead of replacing it with another review page")
             cleaning.executeConfirmed(permanent: true, remember: false)
@@ -215,11 +255,26 @@ import LauncherCore
             cleaning.acknowledgement = true
             _ = await settle(window) { enabled("space-cleaning-confirm-execute", in: host) == true }
             check(enabled("space-cleaning-confirm-execute", in: host) == true, "acknowledgement enables the mounted permanent action")
-            try capture(host: host, name: "permanent-confirmation", output: output)
+            for (name, size) in sizes {
+                window.setContentSize(size)
+                _ = await settle(window) { exists("space-cleaning-confirm-execute", in: host) }
+                for result in footerLayoutChecks(in: host) { check(result.0, "\(name) permanent confirmation " + result.1) }
+                check(!exists("space-cleaning-method-trash", in: host) &&
+                      !exists("space-cleaning-method-permanent", in: host) &&
+                      !exists("space-cleaning-remember-method", in: host),
+                      "\(name) confirmation replaces redundant method controls to preserve list space")
+                try capture(host: host, name: "permanent-confirmation-" + name, output: output)
+            }
+            window.setContentSize(NSSize(width: 1120, height: 758))
             cleaning.closeDialog()
             check(manager.fileExists(atPath: download.path), "cancelling confirmation leaves the selected file unchanged")
-
-            cleaning.method = .trash; cleaning.requestCleanup()
+            cleaning.requestCleanup()
+            _ = await settle(window) { exists("space-cleaning-confirm-execute", in: host) }
+            check(cleaning.rememberMethod && cleaning.dialog == .confirm && !cleaning.acknowledgement &&
+                  enabled("space-cleaning-confirm-execute", in: host) == false,
+                  "remembering permanent deletion never reuses a previous acknowledgement")
+            cleaning.closeDialog(); cleaning.setRememberMethod(false)
+            cleaning.chooseMethod(.trash); cleaning.requestCleanup()
             check(cleaning.isBusy && cleaning.screen == .processing && cleaning.dialog == nil,
                   "the selected file enters its Trash transaction after one cleanup action")
             await cleaning.waitUntilIdle()
@@ -294,6 +349,41 @@ import LauncherCore
     private static func enabled(_ identifier: String, in root: NSView) -> Bool? {
         guard let object = element(identifier, in: root), object.responds(to: NSSelectorFromString("isAccessibilityEnabled")) else { return nil }
         return object.value(forKey: "accessibilityEnabled") as? Bool
+    }
+    private static func accessibilityValue(_ identifier: String, in root: NSView) -> String? {
+        guard let object = element(identifier, in: root), object.responds(to: NSSelectorFromString("accessibilityValue")) else { return nil }
+        return object.value(forKey: "accessibilityValue") as? String
+    }
+    private static func footerLayoutChecks(in host: NSView) -> [(Bool, String)] {
+        let footer = frame("space-cleaning-selection-footer", in: host)
+        let module = frame("space-cleaning", in: host)
+        if let confirm = frame("space-cleaning-confirm-execute", in: host),
+           let acknowledgement = frame("space-cleaning-permanent-acknowledgement", in: host) {
+            return [
+                (footer.map { $0.contains(confirm) && $0.contains(acknowledgement) } ?? false,
+                 "keeps acknowledgement and confirmation inside the footer"),
+                (module.map { $0.contains(confirm) && $0.contains(acknowledgement) } ?? false,
+                 "keeps permanent confirmation inside the viewport"),
+                (frame("space-cleaning-result-list", in: host).map { $0.height >= 68 } ?? false,
+                 "keeps at least one complete result row visible while confirming")
+            ]
+        }
+        let controls = ["space-cleaning-method-trash", "space-cleaning-method-permanent", "space-cleaning-remember-method"]
+        let frames = controls.compactMap { frame($0, in: host) }
+        let contained = frames.count == controls.count && frames.allSatisfy { control in
+            guard let footer, let module else { return false }
+            return footer.insetBy(dx: -1, dy: -1).contains(control) && module.insetBy(dx: -1, dy: -1).contains(control)
+        }
+        let separate = frames.count == controls.count && frames.enumerated().allSatisfy { index, rect in
+            frames.dropFirst(index + 1).allSatisfy { rect.intersection($0).isEmpty }
+        }
+        let action = frame("space-cleaning-confirm-execute", in: host) ?? frame("space-cleaning-cleanup", in: host)
+        let actionVisible = action.flatMap { rect in module.map { $0.insetBy(dx: -1, dy: -1).contains(rect) } } ?? false
+        return [
+            (contained, "keeps both method choices and the independent checkbox inside the footer and viewport"),
+            (separate, "keeps the two choices and remember checkbox from overlapping"),
+            (actionVisible, "keeps the active cleanup or confirmation button fully visible")
+        ]
     }
     private static func homeRulesStayWithCard(in host: NSView) -> Bool {
         guard let surface = frame("space-cleaning-home-surface", in: host),
