@@ -92,7 +92,7 @@ struct DeviceProcessActionsMenu: NSViewRepresentable {
     }
 }
 
-@MainActor final class DeviceProcessMenuButton: NSButton {
+@MainActor final class DeviceProcessMenuButton: ClickableButton {
     var processName = "进程"
     var wholeApplication = false
     var canQuit = false

@@ -158,7 +158,7 @@ public enum SpaceCleaningValidation: String, Codable, Equatable, Sendable {
 }
 
 public enum SpaceCleaningScanner {
-    public static let ruleVersion = "2026-10-23.1"
+    public static let ruleVersion = "2026-10-24.1"
 
     /// Known locations are explicit. This never makes the home directory a cache scope.
     public static func recommendedScopes(context: SpaceCleaningContext = .init()) -> [SpaceCleaningScope] {
@@ -447,7 +447,16 @@ private final class Worker {
         }
         phase = .verifying; phaseChecked = 0; phaseLimited = false
         emit(scope: nil, url: nil)
+        // A large protected or unknown directory must not consume the verification
+        // budget before positively identified rebuildable content has been checked.
+        // Preserve discovery order within each priority and keep the same total bound.
+        var rebuildableCandidates: [PendingCandidate] = [], otherCandidates: [PendingCandidate] = []
         for pending in pendingCandidates {
+            guard !cancelled() else { break }
+            if verificationPriority(pending) == 0 { rebuildableCandidates.append(pending) }
+            else { otherCandidates.append(pending) }
+        }
+        for pending in rebuildableCandidates + otherCandidates {
             guard !cancelled() else { break }
             stage = stageFor(pending.scope.kind)
             emit(scope: pending.scope, url: pending.url)
@@ -476,6 +485,12 @@ private final class Worker {
         return .init(id: UUID(), scannedAt: now, finishedAt: max(Date(), now), ruleVersion: Scanner.ruleVersion,
                      scopes: scopes, candidates: candidates, issues: issues, stage: stage, complete: complete,
                      coverageComplete: coverageComplete, reachedLimit: limit, checkedEntries: checked)
+    }
+
+    func verificationPriority(_ pending: PendingCandidate) -> Int {
+        guard cacheKind(pending.url) != nil else { return 1 }
+        let classification = classify(pending.url, identity: pending.identity)
+        return classification.group == .rebuildable ? 0 : 1
     }
 
     func walk(_ scope: SpaceCleaningScope, directory: URL, root: URL, rootIdentity: StorageReviewFileIdentity,
@@ -542,7 +557,7 @@ private final class Worker {
             issue(scope, url, .cloudPlaceholder, "内容尚未下载到本机，未读取或计入可清理容量。")
         } else if directory {
             measurement = measure(url, rootIdentity: identity, scope: scope, allowBundleLinks: ["app", "xcarchive"].contains(url.pathExtension.lowercased()),
-                                  protectedBudget: [.releaseArchive, .releaseMaterial, .installedApplication].contains(classification.kind))
+                                  protectedBudget: classification.group == .protected && !classification.testable)
         } else if Scanner.isRegular(identity) {
             measurement.logical = identity.sizeBytes; measurement.allocated = identity.allocatedBytes
         }
@@ -554,7 +569,7 @@ private final class Worker {
         } else if !measurement.complete {
             let alreadyProtected = classification.group == .protected && !classification.testable
             classification.group = .protected
-            classification.reason = alreadyProtected ? "受保护目录仅完成部分容量统计，文件继续保留。" : "内容核验未完成，本次保留；可缩小扫描范围后重试。"
+            classification.reason = alreadyProtected ? classification.reason + "仅完成部分容量统计。" : "内容核验未完成，本次保留；可缩小扫描范围后重试。"
             classification.testable = false
         } else if measurement.releaseContent && classification.group != .protected {
             classification = .init(kind: .releaseMaterial, group: .protected, reason: "目录包含发布材料，保留整个目录。", impact: "请单独核对原件与副本。")
@@ -688,6 +703,7 @@ private final class Worker {
         if isPackage(url) || isReleaseProtected(url) { return true }
         if cacheKind(url) != nil { return true }
         if url.deletingLastPathComponent().path == home.appendingPathComponent("Library/Caches").path,
+           !["Google", "Firefox"].contains(url.lastPathComponent),
            !visitedRoots.contains(where: { Scanner.contains($0, in: url.path) }) { return true }
         // Directories in Downloads/custom locations remain navigable, never wholesale inferred junk.
         return false

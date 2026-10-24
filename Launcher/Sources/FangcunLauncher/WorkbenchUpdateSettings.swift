@@ -26,7 +26,7 @@ struct WorkbenchUpdateSettings: View {
                     }
                     Spacer(minLength: 8)
                     Toggle("自动检查更新", isOn: Binding(get: { updates.automaticallyChecks }, set: updates.setAutomaticallyChecks))
-                        .labelsHidden().toggleStyle(.switch).controlSize(.small).tint(palette.accent)
+                        .labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.small).tint(palette.accent)
                         .disabled(!AppUpdateController.configurationIsValid(Bundle.main.infoDictionary ?? [:]))
                         .accessibilityIdentifier("updates-automatic")
                 }.padding(.top, 13)

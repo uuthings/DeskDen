@@ -591,7 +591,7 @@ private struct AIProviderQuotaCard: View {
         Group {
             if showsAction {
                 Button(action: action) { cardContent }
-                    .buttonStyle(.plain)
+                    .buttonStyle(ClickablePlainButtonStyle())
                     .focused($actionFocused)
                     .help("查看 " + summary.title + " 用量详情")
                     .accessibilityLabel("查看 " + summary.title + " 用量详情")
@@ -744,7 +744,7 @@ private struct AICardTitle: View {
                     Image(systemName: "arrow.up.right").font(.system(size: 11))
                         .opacity(cardHovered || actionFocused ? 1 : 0)
                         .frame(width: 26, height: 26).contentShape(Rectangle())
-                }.buttonStyle(.plain).foregroundStyle(palette.secondary)
+                }.buttonStyle(ClickablePlainButtonStyle()).foregroundStyle(palette.secondary)
                     .focused($actionFocused).help(actionTitle).accessibilityLabel(actionTitle)
             }
         }.frame(height: 22).padding(.bottom, 10)
@@ -911,7 +911,7 @@ private struct AIUsageDialogContent: View {
                         Text("仅对新鲜、有效的来源读数触发").aiText(11, color: palette.muted)
                     }
                     Spacer()
-                    Toggle("额度接近上限时提醒", isOn: $model.alertEnabled).labelsHidden().toggleStyle(.switch).controlSize(.small).accessibilityIdentifier("fc.ai.alert.enabled")
+                    Toggle("额度接近上限时提醒", isOn: $model.alertEnabled).labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.small).accessibilityIdentifier("fc.ai.alert.enabled")
                 }
                 HStack(spacing: 14) {
                     AIFieldLabel("留意 · 已用达到（%）") { TextField("75", text: $model.alertWarningText).textFieldStyle(AIFieldStyle()).accessibilityIdentifier("fc.ai.alert.warning") }
@@ -943,7 +943,7 @@ private struct AIUsageDialogContent: View {
                 DisclosureGroup("采集时间与重置时间", isExpanded: $manualTimesExpanded) {
                     VStack(alignment: .leading, spacing: 12) {
                         dateTimeField("实际采集时间", selection: $model.manualDraft.observedAt)
-                        Toggle("已知实际重置时间", isOn: $model.manualDraft.specifiesResetTimes).toggleStyle(.checkbox)
+                        Toggle("已知实际重置时间", isOn: $model.manualDraft.specifiesResetTimes).toggleStyle(.checkbox).clickableCursor()
                         if model.manualDraft.specifiesResetTimes {
                             dateTimeField("5 小时重置", selection: $model.manualDraft.shortReset)
                             dateTimeField("每周重置", selection: $model.manualDraft.weeklyReset)

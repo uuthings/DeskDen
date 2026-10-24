@@ -176,7 +176,7 @@ private struct DesktopWidgetView: View {
             Button { open(card.id == .ai ? .ai : card.id == .today ? .calendar : .device) } label: {
                 DesktopCardContent(card: card, device: device, calendar: calendar, ai: ai)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).contentShape(Rectangle())
-            }.buttonStyle(.plain)
+            }.buttonStyle(ClickablePlainButtonStyle())
         }
         .padding(14)
         .frame(width: DesktopWidgetSize.size(for: card).width, height: DesktopWidgetSize.size(for: card).height)
@@ -391,7 +391,7 @@ struct DesktopCardsView: View {
                     .buttonStyle(WBIconButtonStyle(size: 22)).help("更多组件设置")
                     .accessibilityLabel(card.id.title + "更多设置")
                 Toggle("显示" + card.id.title, isOn: preference(card, \.visible))
-                    .labelsHidden().toggleStyle(.switch).controlSize(.small).tint(palette.accent)
+                    .labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.small).tint(palette.accent)
             }.frame(height: 22)
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
@@ -413,10 +413,10 @@ struct DesktopCardsView: View {
                     WBSelect("组件大小", selection: preference(card, \.small), options: [(value: false, title: "标准"), (value: true, title: "小号")])
                 }
                 widgetField("锁定位置", controlHeight: 20) {
-                    Toggle("锁定" + card.id.title + "位置", isOn: preference(card, \.locked)).labelsHidden().toggleStyle(.switch).controlSize(.small).tint(palette.accent)
+                    Toggle("锁定" + card.id.title + "位置", isOn: preference(card, \.locked)).labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.small).tint(palette.accent)
                 }
                 widgetField("鼠标穿透", controlHeight: 20) {
-                    Toggle(card.id.title + "鼠标穿透", isOn: preference(card, \.clickThrough)).labelsHidden().toggleStyle(.switch).controlSize(.small).tint(palette.accent)
+                    Toggle(card.id.title + "鼠标穿透", isOn: preference(card, \.clickThrough)).labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.small).tint(palette.accent)
                 }
                 if card.id == .ai {
                     widgetField("额度来源") {
@@ -469,7 +469,7 @@ private struct DesktopCardSettings: View {
                 field("显示方式",selection:$draft.floating,options:[(false,"融入桌面 · 可被窗口遮挡"),(true,"悬浮置顶 · 保持在前")])
                 field("卡片尺寸",selection:$draft.small,options:[(false,"标准"),(true,"小")])
                 if draft.id == .ai {field("显示来源",selection:$draft.source,options:[("both","Codex + Claude"),("codex","仅 Codex"),("claude","仅 Claude")])}
-                VStack(alignment:.leading,spacing:14){Toggle("显示组件",isOn:$draft.visible);Toggle("锁定位置",isOn:$draft.locked);Toggle("鼠标穿透",isOn:$draft.clickThrough)}.toggleStyle(.checkbox)
+                VStack(alignment:.leading,spacing:14){Toggle("显示组件",isOn:$draft.visible).clickableCursor();Toggle("锁定位置",isOn:$draft.locked).clickableCursor();Toggle("鼠标穿透",isOn:$draft.clickThrough).clickableCursor()}.toggleStyle(.checkbox)
                 Text("开启穿透后，卡片不接收鼠标操作。请在工作台的“桌面组件”中关闭穿透以恢复交互。").font(.system(size:11)).foregroundStyle(palette.muted).lineSpacing(3).fixedSize(horizontal:false,vertical:true).padding(.top,12)
             }.font(.system(size:12))
         }actions:{

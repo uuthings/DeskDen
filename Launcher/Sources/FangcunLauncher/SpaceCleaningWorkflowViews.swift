@@ -79,69 +79,7 @@ struct SpaceCleaningScopeView: View {
                 Image(systemName: model.draftScope == value ? "checkmark.circle.fill" : "circle").foregroundStyle(palette.accent)
             }.padding(14).background(RoundedRectangle(cornerRadius: 10).fill(model.draftScope == value ? palette.soft : .clear))
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(model.draftScope == value ? palette.accent.opacity(0.45) : palette.line))
-        }.buttonStyle(.plain).accessibilityValue(model.draftScope == value ? "已选择" : "未选择")
-    }
-}
-
-struct SpaceCleaningReviewView: View {
-    @ObservedObject var model: SpaceCleaningModel
-    @Environment(\.workbenchPalette) private var palette
-    var body: some View {
-        SpaceCleaningSurface {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("最后复核一次").font(.system(size: 22, weight: .medium))
-                    Text("确认所选文件与处理方式。执行前还会重新核验文件和保护状态。")
-                        .font(.system(size: 12)).foregroundStyle(palette.muted)
-                }
-                Spacer()
-                Text("\(model.selectedCount) 项").font(.system(size: 24)).monospacedDigit()
-            }.padding(24)
-            Rectangle().fill(palette.line).frame(height: 1)
-            HStack(alignment: .top, spacing: 24) {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(model.selectedItems) { item in
-                            HStack(alignment: .top, spacing: 10) {
-                                Image(systemName: "doc").foregroundStyle(palette.accent)
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text(item.name).font(.system(size: 12)).lineLimit(2)
-                                    Text(model.shortPath(item.url)).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(2).truncationMode(.middle)
-                                }.frame(maxWidth: .infinity, alignment: .leading)
-                                Text(SpaceCleaningFormat.bytes(item.bytes)).font(.system(size: 11)).monospacedDigit()
-                            }.padding(.vertical, 14)
-                            Rectangle().fill(palette.line).frame(height: 1)
-                        }
-                    }.background(WorkbenchOverlayScrollbars())
-                }.scrollBounceBehavior(.basedOnSize).frame(maxWidth: .infinity)
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
-                        Text(SpaceCleaningFormat.bytes(model.selectedBytes)).font(.system(size: 29)).monospacedDigit()
-                        Text("所选项目占用").font(.system(size: 11)).foregroundStyle(palette.muted)
-                        SpaceCleaningMethodPicker(method: $model.method)
-                        Text(model.method == .trash ? "移入废纸篓后，可从清理记录恢复。此时占用尚未释放；需要释放空间时，可单独永久删除这一批项目。" : "所选项目将直接删除，无法从清理记录恢复。")
-                            .font(.system(size: 12)).foregroundStyle(palette.secondary).lineSpacing(6)
-                        Toggle("记住这种处理方式，下次仍需确认", isOn: $model.rememberMethod)
-                            .toggleStyle(.checkbox).font(.system(size: 11)).accessibilityIdentifier("space-cleaning-remember-method")
-                        if model.method == .permanent {
-                            Toggle("我已复核所选项目，理解永久删除无法恢复", isOn: $model.acknowledgement)
-                                .toggleStyle(.checkbox).font(.system(size: 11)).foregroundStyle(palette.warning)
-                                .accessibilityIdentifier("space-cleaning-permanent-acknowledgement")
-                        }
-                    }.padding(.top, 14).background(WorkbenchOverlayScrollbars())
-                }.frame(width: 250).scrollBounceBehavior(.basedOnSize)
-            }.padding(.horizontal, 24).padding(.bottom, 20)
-            HStack {
-                Button("返回复核", action: model.closeDialog).buttonStyle(WBButtonStyle())
-                Spacer()
-                Button(model.method == .trash ? "移到废纸篓" : "永久删除所选项目") {
-                    model.executeConfirmed(permanent: model.method == .permanent, remember: model.rememberMethod)
-                }.buttonStyle(WBButtonStyle(primary: model.method == .trash, destructive: model.method == .permanent))
-                    .disabled(!model.canProcess || (model.method == .permanent && !model.acknowledgement))
-                    .accessibilityIdentifier("space-cleaning-confirm-execute")
-            }.padding(20).background(palette.soft)
-        }.onChange(of: model.method) { _, _ in model.acknowledgement = false }
-            .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-confirmation")
+        }.buttonStyle(ClickablePlainButtonStyle()).accessibilityValue(model.draftScope == value ? "已选择" : "未选择")
     }
 }
 
@@ -187,7 +125,7 @@ struct SpaceCleaningHistoryView: View {
                                 .font(.system(size: 11)).foregroundStyle(palette.muted)
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-                }.buttonStyle(.plain)
+                }.buttonStyle(ClickablePlainButtonStyle())
                 Text(SpaceCleaningFormat.bytes(batch.bytes)).font(.system(size: 15)).monospacedDigit()
                 if batch.restorableCount > 0 {
                     Button("恢复本次") { model.requestRestore(batch.id) }.buttonStyle(WBButtonStyle()).disabled(model.isBusy)

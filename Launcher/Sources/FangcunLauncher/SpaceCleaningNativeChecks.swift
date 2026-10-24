@@ -96,9 +96,18 @@ import LauncherCore
             _ = await settle(window) { exists("space-cleaning-result-list", in: host) }
             check(cleaning.screen == .results && cleaning.selectedCount == 1 && cleaning.selectedItems.allSatisfy { $0.group == .rebuildable },
                   "real scan selects only positively identified rebuildable cache by default")
+            check(cleaning.resultTab == .recommended && Set(cleaning.visibleItems.map(\.id)) == cleaning.recommendedIDs &&
+                  cleaning.selectedIDs == cleaning.recommendedIDs,
+                  "the initial results filter displays the actual recommended and preselected files")
             check(cleaning.items.allSatisfy { $0.url.path.hasPrefix(home.path + "/") }, "global fixture scanning stays inside the injected home")
             check(Set(cleaning.items.map(\.group)) == Set(CleaningResultGroup.allCases), "real scanner retains distinct protection and review classifications")
             check(exists("space-cleaning-rescan", in: host) && exists("space-cleaning-edit-scope", in: host), "rescan and scope editing remain visible in the results header")
+            check(enabled("space-cleaning-cleanup", in: host) == true,
+                  "the default recommended selection exposes an enabled direct cleanup action")
+            if let recommended = cleaning.recommendedItems.first {
+                check(selectionAligned(item: recommended.id, in: host),
+                      "the visible-selection control and recommended row checkbox share the same column")
+            }
             try capture(host: host, name: "results-window", output: output)
             cleaning.screen = .scanning
             _ = await settle(window) { exists("space-cleaning-scan", in: host) }
@@ -107,6 +116,11 @@ import LauncherCore
             cleaning.screen = .results
             _ = await settle(window) { exists("space-cleaning-result-list", in: host) }
             guard let item = cleaning.items.first(where: { $0.url == download && $0.isSelectable }) else { throw SpaceCleaningFixtureError.invalid("download candidate unavailable") }
+            let recommendedSelection = cleaning.selectedIDs
+            cleaning.showResults(.reviewable)
+            _ = await settle(window) { exists("space-cleaning-select-" + item.id.uuidString, in: host) }
+            check(cleaning.selectedIDs == recommendedSelection && cleaning.visibleItems.allSatisfy { !cleaning.recommendedIDs.contains($0.id) },
+                  "switching to other files preserves recommendations without repeating them in the manual list")
             cleaning.clearSelection(); cleaning.toggleItem(item.id)
             guard let page = pageScroll(in: host) else { throw SpaceCleaningFixtureError.invalid("internal result scroll missing") }
             let sidebarBefore = frame("workbench-sidebar", in: host)
@@ -121,11 +135,15 @@ import LauncherCore
             for (name, size) in sizes {
                 window.setContentSize(size)
                 _ = await settle(window) { host.bounds.size == size }
+                cleaning.resultScrollID = item.id
+                _ = await settle(window) { exists("space-cleaning-select-" + item.id.uuidString, in: host) }
+                check(selectionAligned(item: item.id, in: host),
+                      "\(name) the visible-selection control aligns with the manual file checkbox")
                 let footer = frame("space-cleaning-selection-footer", in: host)
                 move(page, fraction: 0.55)
                 _ = await settle(window) { frame("space-cleaning-selection-footer", in: host) == footer }
-                check(frame("space-cleaning-selection-footer", in: host) == footer && enabled("space-cleaning-review-continue", in: host) == true,
-                      "\(name) scrolling the results keeps the enabled review action fixed")
+                check(frame("space-cleaning-selection-footer", in: host) == footer && enabled("space-cleaning-cleanup", in: host) == true,
+                      "\(name) scrolling the results keeps the enabled cleanup action fixed")
                 check(objects(host).compactMap { $0 as? NSScrollView }.filter { !$0.isHiddenOrHasHiddenAncestor }.count == 1,
                       "\(name) has only an internal result scroll, no outer Content scrollbar")
                 try capture(host: host, name: "results-scrolled-" + name, output: output)
@@ -144,10 +162,12 @@ import LauncherCore
             cleaning.cancelScope()
             check(cleaning.screen == .results && cleaning.selectedIDs == selectedBefore && cleaning.scopeChoice == .global,
                   "cancelling the scope draft preserves the existing results and selection")
-            cleaning.closeDetail(); cleaning.method = .permanent; cleaning.requestConfirmation()
+            cleaning.closeDetail(); cleaning.method = .permanent; cleaning.requestCleanup()
             _ = await settle(window) { exists("space-cleaning-confirm-execute", in: host) }
             check(enabled("space-cleaning-confirm-execute", in: host) == false && !cleaning.acknowledgement,
                   "permanent confirmation is visibly disabled before explicit acknowledgement")
+            check(cleaning.screen == .results && exists("space-cleaning-result-list", in: host),
+                  "irreversible confirmation retains the result list instead of replacing it with another review page")
             cleaning.executeConfirmed(permanent: true, remember: false)
             check(manager.fileExists(atPath: download.path) && cleaning.dialog == .confirm && !cleaning.isBusy,
                   "model independently rejects unacknowledged permanent deletion")
@@ -158,7 +178,9 @@ import LauncherCore
             cleaning.closeDialog()
             check(manager.fileExists(atPath: download.path), "cancelling confirmation leaves the selected file unchanged")
 
-            cleaning.method = .trash; cleaning.requestConfirmation(); cleaning.executeConfirmed(permanent: false, remember: false)
+            cleaning.method = .trash; cleaning.requestCleanup()
+            check(cleaning.isBusy && cleaning.screen == .processing && cleaning.dialog == nil,
+                  "the selected file enters its Trash transaction after one cleanup action")
             await cleaning.waitUntilIdle()
             _ = await settle(window) { cleaning.screen == .start }
             guard let batch = cleaning.currentBatch, let record = batch.items.first(where: \.canRestore) else { throw SpaceCleaningFixtureError.invalid("isolated Trash transaction produced no recoverable record") }
@@ -230,6 +252,12 @@ import LauncherCore
     private static func enabled(_ identifier: String, in root: NSView) -> Bool? {
         guard let object = element(identifier, in: root), object.responds(to: NSSelectorFromString("isAccessibilityEnabled")) else { return nil }
         return object.value(forKey: "accessibilityEnabled") as? Bool
+    }
+    private static func selectionAligned(item: UUID, in host: NSView) -> Bool {
+        guard let header = frame("space-cleaning-select-visible", in: host),
+              let row = frame("space-cleaning-select-" + item.uuidString, in: host) else { return false }
+        return abs(header.midX - row.midX) < 1 && abs(header.width - row.width) < 1 &&
+            header.width >= 20 && header.width <= 28
     }
     private static func pageScroll(in host: NSView) -> NSScrollView? {
         objects(host).compactMap { $0 as? NSScrollView }.filter { !$0.isHiddenOrHasHiddenAncestor && $0.documentView != nil }

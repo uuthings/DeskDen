@@ -237,7 +237,7 @@ private struct WorkbenchWeatherDialog:View {
                     Button(action:search){if searching {ProgressView().controlSize(.small)} else {Text("搜索")}}.buttonStyle(WBButtonStyle()).disabled(searching || query.trimmingCharacters(in:.whitespacesAndNewlines).count<2)
                 }
                 if !results.isEmpty {
-                    ScrollView {VStack(spacing:3){ForEach(results){item in Button{select(item)}label:{HStack{Text(item.displayName).multilineTextAlignment(.leading);Spacer();if item == city {Image(systemName:"checkmark")}}.padding(8).frame(maxWidth:.infinity,alignment:.leading).background(item == city ? palette.navSelected:.clear,in:RoundedRectangle(cornerRadius:7))}.buttonStyle(.plain)}}.background(WorkbenchOverlayScrollbars())}.frame(maxHeight:120)
+                    ScrollView {VStack(spacing:3){ForEach(results){item in Button{select(item)}label:{HStack{Text(item.displayName).multilineTextAlignment(.leading);Spacer();if item == city {Image(systemName:"checkmark")}}.padding(8).frame(maxWidth:.infinity,alignment:.leading).background(item == city ? palette.navSelected:.clear,in:RoundedRectangle(cornerRadius:7))}.buttonStyle(ClickablePlainButtonStyle())}}.background(WorkbenchOverlayScrollbars())}.frame(maxHeight:120)
                 } else if searched && !searching {Text("未找到城市，请尝试完整名称或英文名称。").font(.system(size:11)).foregroundStyle(palette.muted)}
                 if let city {
                     HStack {Text(city.displayName).lineLimit(2);Spacer();Button("刷新"){load(city,force:true)}.buttonStyle(WBButtonStyle(compact:true))}

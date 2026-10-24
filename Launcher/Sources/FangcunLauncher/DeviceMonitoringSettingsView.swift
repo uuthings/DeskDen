@@ -173,7 +173,7 @@ struct DeviceBudgetSettingsView: View {
                 Label("流量预算", systemImage: "slider.horizontal.3").font(.system(size: 12, weight: .medium))
                 Spacer()
                 Toggle("启用流量预算", isOn: $drafts.budget.enabled)
-                    .labelsHidden().toggleStyle(.switch).controlSize(.mini).fixedSize()
+                    .labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.mini).fixedSize()
                     .accessibilityIdentifier("fc.network.budget.settings.enabled")
             }
     }
@@ -204,7 +204,7 @@ struct DeviceBudgetSettingsView: View {
             }
     }
     private var notificationToggle: some View {
-        Toggle("达到提示比例或额度时发送通知", isOn: $drafts.budget.notifications)
+        Toggle("达到提示比例或额度时发送通知", isOn: $drafts.budget.notifications).clickableCursor()
                 .font(.system(size: 12)).disabled(!drafts.budget.enabled)
     }
     private var coverageHelp: some View {
@@ -226,7 +226,7 @@ struct DeviceBudgetSettingsView: View {
     #endif
     @ViewBuilder private var cycleEditor: some View {
         if drafts.budget.period.supportsAnchor {
-            Toggle("自定义账期起点", isOn: $drafts.budget.usesAnchor).font(.system(size: 12))
+            Toggle("自定义账期起点", isOn: $drafts.budget.usesAnchor).clickableCursor().font(.system(size: 12))
             if drafts.budget.usesAnchor {
                 DeviceRuleField("参考起算日") { dateField("参考起算日", value: $drafts.budget.anchor) }
                 DeviceRuleHelp(text: "按参考日期的日号循环。\n每季间隔 3 个月，每年间隔 12 个月。\n该月无对应日期时取月末，下期恢复原日号。")
@@ -268,7 +268,7 @@ struct DeviceTemperatureSettingsView: View {
             HStack {
                 Label("温度提醒", systemImage: "bell").font(.system(size: 12, weight: .medium))
                 Spacer()
-                Toggle("启用提醒", isOn: $drafts.temperature.enabled).toggleStyle(.switch).controlSize(.small).font(.system(size: 11))
+                Toggle("启用提醒", isOn: $drafts.temperature.enabled).toggleStyle(.switch).clickableCursor().controlSize(.small).font(.system(size: 11))
             }
             LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)], alignment: .leading, spacing: 16) {
                 DeviceRuleNumberField(title: "CPU 温度阈值", value: $drafts.temperature.cpu, unit: "°C", error: drafts.temperatureErrors["cpu"])
@@ -276,7 +276,7 @@ struct DeviceTemperatureSettingsView: View {
                 DeviceRuleNumberField(title: "持续超过阈值", value: $drafts.temperature.duration, unit: "秒", error: drafts.temperatureErrors["duration"])
                 DeviceRuleNumberField(title: "提醒冷却时间", value: $drafts.temperature.cooldown, unit: "分钟", error: drafts.temperatureErrors["cooldown"])
             }.disabled(!drafts.temperature.enabled)
-            Toggle("满足条件时发送系统通知", isOn: $drafts.temperature.notifications)
+            Toggle("满足条件时发送系统通知", isOn: $drafts.temperature.notifications).clickableCursor()
                 .font(.system(size: 12)).disabled(!drafts.temperature.enabled)
             DeviceRuleHelp(text: drafts.temperature.enabled ? "任一温度持续超阈值后提醒；短暂升温不提醒。恢复正常后重新计时，同一项在冷却期内不重复提醒。" : "提醒已关闭，温度监测继续保留。")
             DeviceRuleHelp(text: "仅使用实际传感器读数。缺少读数时暂停该项判断，不以 0 或旧读数代替。")

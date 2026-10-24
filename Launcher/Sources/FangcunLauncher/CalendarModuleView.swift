@@ -99,7 +99,7 @@ struct CalendarModuleView:View {
                     Text("放假");Text("班").foregroundStyle(palette.critical).padding(.horizontal,3).background(palette.critical.opacity(0.08),in:RoundedRectangle(cornerRadius:3));Text("调休上班")
                 } else {Text("此年未载入调休数据")}
                 Spacer(minLength:4)
-                Button {model.showSources=true} label:{HStack(spacing:3){Text("中国大陆节假日");Image(systemName:"chevron.right").font(.system(size:9))}}.buttonStyle(.plain)
+                Button {model.showSources=true} label:{HStack(spacing:3){Text("中国大陆节假日");Image(systemName:"chevron.right").font(.system(size:9))}}.buttonStyle(ClickablePlainButtonStyle())
             }.font(.system(size:11)).foregroundStyle(palette.muted).lineLimit(1).frame(height:18).padding(.top,12)
         }
     }
@@ -153,7 +153,7 @@ private struct CalendarSegment<Value:Hashable>:View {
     var body:some View {
         HStack(spacing:2){ForEach(items,id:\.self){item in
             Button {selection=item} label:{Text(title(item)).font(.system(size:11)).padding(.horizontal,8).frame(height:26).background(selection == item ? palette.control:.clear,in:RoundedRectangle(cornerRadius:6))}
-                .buttonStyle(.plain).foregroundStyle(selection == item ? palette.text:palette.muted).accessibilityValue(selection == item ? "已选择":"")
+                .buttonStyle(ClickablePlainButtonStyle()).foregroundStyle(selection == item ? palette.text:palette.muted).accessibilityValue(selection == item ? "已选择":"")
         }}.padding(2).background(palette.soft,in:RoundedRectangle(cornerRadius:8)).overlay(RoundedRectangle(cornerRadius:8).strokeBorder(palette.line,lineWidth:1))
     }
 }
@@ -190,7 +190,7 @@ private struct CalendarDayCell:View {
                 .overlay(RoundedRectangle(cornerRadius:10).strokeBorder(palette.accent.opacity(today ? 0.45:selected ? 0.30:0),lineWidth:1))
                 .overlay(alignment:.topTrailing){CalendarHolidayBadge(day:info).padding(4)}
                 .opacity(outside ? 0.35:1).contentShape(RoundedRectangle(cornerRadius:10)).clipped()
-        }.buttonStyle(.plain).disabled(outside).onHover{hovering=$0}
+        }.buttonStyle(ClickablePlainButtonStyle()).disabled(outside).onHover{hovering=$0}
             .accessibilityLabel("\(calendarFormat(date,"M月d日",calendar:calendar))，\(info.namedLabel ?? info.label)，\(entries.count) 项安排")
             .accessibilityAddTraits(selected ? [.isSelected]:[])
             .accessibilityIdentifier("fc.calendar.day.\(calendarFormat(date,"yyyy-MM-dd",calendar:calendar))")
@@ -215,12 +215,12 @@ private struct CalendarWeekGrid:View {
             Button {model.selectDay(date)} label:{
                 HStack(spacing:4){Text(calendarFormat(date,"EE d",calendar:model.displayCalendar)).font(.system(size:11,weight:.medium));CalendarHolidayBadge(day:info)}
                     .frame(maxWidth:.infinity).frame(height:30)
-            }.buttonStyle(.plain).accessibilityLabel(calendarFormat(date,"M月d日",calendar:model.displayCalendar)+(info.namedLabel.map{"，"+$0} ?? ""))
+            }.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel(calendarFormat(date,"M月d日",calendar:model.displayCalendar)+(info.namedLabel.map{"，"+$0} ?? ""))
             ZStack(alignment:.top) {
                 VStack(spacing:0){ForEach(0..<6,id:\.self){_ in Rectangle().fill(palette.line).frame(height:1);Spacer(minLength:0)}}
                 ForEach(Array(entries.enumerated()),id:\.element.id){index,entry in
                     Button {open(entry)} label:{VStack(alignment:.leading,spacing:3){Text(entry.title).lineLimit(2);Text(calendarTime(entry,calendar:model.displayCalendar)).foregroundStyle(palette.secondary)}.font(.system(size:11)).padding(5).frame(maxWidth:.infinity,alignment:.leading).frame(minHeight:39,maxHeight:58).background(palette.soft,in:RoundedRectangle(cornerRadius:6)).overlay(RoundedRectangle(cornerRadius:6).strokeBorder(palette.line,lineWidth:1))}
-                        .buttonStyle(.plain).padding(.top,offset(entry,index:index)).accessibilityLabel("\(entry.title)，\(calendarTime(entry,calendar:model.displayCalendar))")
+                        .buttonStyle(ClickablePlainButtonStyle()).padding(.top,offset(entry,index:index)).accessibilityLabel("\(entry.title)，\(calendarTime(entry,calendar:model.displayCalendar))")
                 }
             }.frame(height:350)
         }.frame(minWidth:52,maxWidth:.infinity).overlay(alignment:.leading){palette.line.frame(width:1)}
@@ -245,14 +245,14 @@ private struct CalendarAgendaRow:View {
             if showTime {Text(calendarTime(entry,calendar:model.displayCalendar)).font(.system(size:11)).monospacedDigit().foregroundStyle(palette.muted).frame(width:33,alignment:.leading).padding(.top,1)}
             if case .reminder(let item)=entry {
                 Button {Task {await model.toggle(item)}} label:{ZStack {Circle().strokeBorder(item.isCompleted ? palette.accent:palette.muted.opacity(0.65),lineWidth:1);if item.isCompleted {Circle().fill(palette.accent);Image(systemName:"checkmark").font(.system(size:8,weight:.semibold)).foregroundStyle(palette.primaryText)}}.frame(width:14,height:14).contentShape(Rectangle())}
-                    .buttonStyle(.plain).padding(.top,1).disabled(!item.isWritable || model.isWorking).accessibilityLabel("\(item.isCompleted ? "恢复待办":"完成提醒")：\(item.title)")
+                    .buttonStyle(ClickablePlainButtonStyle()).padding(.top,1).disabled(!item.isWritable || model.isWorking).accessibilityLabel("\(item.isCompleted ? "恢复待办":"完成提醒")：\(item.title)")
             } else {Circle().fill(palette.cool).frame(width:5,height:5).padding(.top,6).frame(width:14)}
             Button {switch entry {case .reminder(let item):model.selectedReminder=item;case .event(let event):model.selectedEvent=event}} label:{
                 VStack(alignment:.leading,spacing:3) {
                     Text(entry.title).font(.system(size:12)).foregroundStyle(entry.isCompleted ? palette.muted:palette.text).strikethrough(entry.isCompleted).lineLimit(2).frame(minHeight:17,alignment:.top)
                     Text(detail).font(.system(size:11)).foregroundStyle(palette.muted).lineLimit(2)
                 }.frame(maxWidth:.infinity,alignment:.leading).contentShape(Rectangle())
-            }.buttonStyle(.plain)
+            }.buttonStyle(ClickablePlainButtonStyle())
         }.padding(.vertical,10).overlay(alignment:.bottom){palette.line.frame(height:1)}
     }
     private var detail:String {
@@ -344,8 +344,8 @@ private struct CalendarReminderEditor:View {
                 TextField("要记住什么？",text:$draft.item.title).textFieldStyle(.plain).font(.system(size:12)).padding(.horizontal,10).frame(height:32).background(palette.soft,in:RoundedRectangle(cornerRadius:8)).overlay(RoundedRectangle(cornerRadius:8).strokeBorder(palette.line,lineWidth:1)).focused($titleFocused).disabled(!writable)
             }
             HStack(alignment:.top,spacing:12) {
-                VStack(alignment:.leading,spacing:8){Toggle("日期",isOn:$draft.hasDate).toggleStyle(.checkbox).font(.system(size:12));WBDateInput("提醒日期",selection:$draft.date,components:.date,calendar:draft.calendar).frame(maxWidth:.infinity).frame(height:32).disabled(!draft.hasDate)}.frame(maxWidth:.infinity)
-                VStack(alignment:.leading,spacing:8){Toggle("时间 · 可留空",isOn:$draft.hasTime).toggleStyle(.checkbox).font(.system(size:12)).disabled(!draft.hasDate);WBDateInput("提醒时间",selection:$draft.time,components:.time,calendar:draft.calendar).frame(maxWidth:.infinity).frame(height:32).disabled(!draft.hasDate || !draft.hasTime)}.frame(maxWidth:.infinity)
+                VStack(alignment:.leading,spacing:8){Toggle("日期",isOn:$draft.hasDate).toggleStyle(.checkbox).clickableCursor().font(.system(size:12));WBDateInput("提醒日期",selection:$draft.date,components:.date,calendar:draft.calendar).frame(maxWidth:.infinity).frame(height:32).disabled(!draft.hasDate)}.frame(maxWidth:.infinity)
+                VStack(alignment:.leading,spacing:8){Toggle("时间 · 可留空",isOn:$draft.hasTime).toggleStyle(.checkbox).clickableCursor().font(.system(size:12)).disabled(!draft.hasDate);WBDateInput("提醒时间",selection:$draft.time,components:.time,calendar:draft.calendar).frame(maxWidth:.infinity).frame(height:32).disabled(!draft.hasDate || !draft.hasTime)}.frame(maxWidth:.infinity)
             }.environment(\.calendar,draft.calendar).environment(\.timeZone,draft.calendar.timeZone).disabled(!writable)
                 .onChange(of:draft.hasDate){_,value in if !value {draft.hasTime=false}}
             VStack(alignment:.leading,spacing:6) {
@@ -363,7 +363,7 @@ private struct CalendarReminderEditor:View {
                 TextEditor(text:$draft.item.notes).font(.system(size:12)).scrollContentBackground(.hidden).padding(6).frame(height:74).background(palette.soft,in:RoundedRectangle(cornerRadius:8)).overlay(RoundedRectangle(cornerRadius:8).strokeBorder(palette.line,lineWidth:1)).disabled(!writable)
             }
             if draft.item.origin == .local {
-                Toggle("到时提醒我",isOn:$draft.item.notificationsEnabled).toggleStyle(.checkbox).font(.system(size:12)).disabled(!writable)
+                Toggle("到时提醒我",isOn:$draft.item.notificationsEnabled).toggleStyle(.checkbox).clickableCursor().font(.system(size:12)).disabled(!writable)
                 Text("本机提醒无需日历授权；需设置日期和时间才会通知，通知权限不影响保存。"+(model.preferences.notificationsEnabled && model.notificationAccess == .granted ? "":"本机通知尚未开启，可在来源中管理。"))
                     .font(.system(size:11)).foregroundStyle(palette.muted).fixedSize(horizontal:false,vertical:true)
             } else {Text("系统提醒沿用提醒事项中的闹钟与通知设置，方寸不重复发送。").font(.system(size:11)).foregroundStyle(palette.muted)}
@@ -483,7 +483,7 @@ private struct CalendarSourcesPage:View {
                 }
                 WBCard(title:"系统来源",symbol:"calendar") {
                     systemSource(reminders:false)
-                    ForEach(model.calendarSources){source in sourceRow(source.title,source.account.isEmpty ? "系统日历 · 只读显示":source.account+" · 只读显示") {Toggle("显示\(source.title)",isOn:Binding(get:{model.isSourceVisible(source.id)},set:{model.setSourceVisible(source.id,$0)})).labelsHidden().toggleStyle(.switch).controlSize(.small).tint(palette.accent)}}
+                    ForEach(model.calendarSources){source in sourceRow(source.title,source.account.isEmpty ? "系统日历 · 只读显示":source.account+" · 只读显示") {Toggle("显示\(source.title)",isOn:Binding(get:{model.isSourceVisible(source.id)},set:{model.setSourceVisible(source.id,$0)})).labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.small).tint(palette.accent)}}
                     systemSource(reminders:true)
                 }
                 VStack(alignment:.leading,spacing:8) {

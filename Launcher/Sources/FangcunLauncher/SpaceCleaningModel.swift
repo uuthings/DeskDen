@@ -39,7 +39,8 @@ import Quartz
     @Published private(set) var customDirectories: [URL] = []
     @Published var draftScope: CleaningScopeChoice = .global
     @Published private(set) var draftDirectories: [URL] = []
-    @Published var resultTab: CleaningResultTab = .reviewable
+    @Published var resultTab: CleaningResultTab = .recommended
+    @Published private(set) var recommendedIDs = Set<UUID>()
     @Published var searchText = ""
     @Published var onlySelected = false
     @Published var resultScrollID: UUID?
@@ -105,12 +106,38 @@ import Quartz
         scopeChoice == .global ? "全局扫描 · 当前用户可访问位置" : "自定义位置 · \(customDirectories.count) 个文件夹"
     }
     var reviewableItems: [CleaningItemDisplay] { items.filter { $0.group != .protected } }
+    var recommendedItems: [CleaningItemDisplay] { items.filter { recommendedIDs.contains($0.id) } }
+    var otherItems: [CleaningItemDisplay] { reviewableItems.filter { !recommendedIDs.contains($0.id) } }
     var protectedItems: [CleaningItemDisplay] { items.filter { $0.group == .protected } }
     var visibleItems: [CleaningItemDisplay] {
-        (resultTab == .protected ? protectedItems : reviewableItems).filter {
-            (!onlySelected || selectedIDs.contains($0.id)) &&
-            (searchText.isEmpty || $0.name.localizedStandardContains(searchText) || $0.url.path.localizedStandardContains(searchText))
+        let source: [CleaningItemDisplay]
+        if onlySelected { source = selectedItems }
+        else {
+            switch resultTab {
+            case .recommended: source = recommendedItems
+            case .reviewable: source = otherItems
+            case .protected: source = protectedItems
+            }
         }
+        return source.filter {
+            searchText.isEmpty || $0.name.localizedStandardContains(searchText) || $0.url.path.localizedStandardContains(searchText)
+        }
+    }
+    func showResults(_ tab: CleaningResultTab) {
+        resultTab = tab; onlySelected = false; detailID = nil; resultScrollID = nil
+        if case .purpose = dialog { closeDialog() }
+    }
+    func toggleSelectedFilter() {
+        onlySelected.toggle()
+        if onlySelected { searchText = "" }
+        detailID = nil; resultScrollID = nil
+    }
+    var noRecommendationsSummary: String {
+        if requiresRescan { return "本次扫描未完成，请重新扫描后再清理。" }
+        let inUse = items.filter { $0.kind == .runningApplication }.count
+        if inUse > 0 { return "有 \(inUse) 项关联应用或工具正在使用，已保留。其他文件由你选择。" }
+        if !coverageIssues.isEmpty { return "部分位置未能完整检查；已检查内容中没有可自动推荐的缓存。" }
+        return "已检查内容中没有符合可重建规则的缓存；下载与个人文件不会自动勾选。"
     }
     var visibleSelectableIDs: Set<UUID> { Set(visibleItems.filter(\.isSelectable).map(\.id)) }
     var scanFraction: Double? { scanTotalItems.flatMap { $0 > 0 ? min(1, Double(scanCompletedItems) / Double($0)) : nil } }
@@ -128,8 +155,9 @@ import Quartz
     var reportSummary: String {
         if requiresRescan { return "文件状态已变化，请重新扫描后再选择" }
         if screen == .scanning { return "已检查 \(checkedCount) 项 · 逐项核验用途与保护规则" }
-        if scanReachedLimit { return "扫描已到达数量或深度边界 · 仅可选择已完整核验的项目" }
-        return coverageIssues.isEmpty ? "已默认选中明确可重建内容 · 复核确认后才会清理" : "已检查 \(checkedCount) 项 · 有 \(coverageIssues.count) 处覆盖范围需要留意"
+        if scanReachedLimit { return recommendedIDs.isEmpty ? "本次扫描达到覆盖边界，暂未发现可自动推荐的内容" : "已默认勾选 \(recommendedIDs.count) 项已完整核验的缓存 · 本次扫描覆盖范围有限" }
+        if recommendedIDs.isEmpty { return noRecommendationsSummary }
+        return "找到 \(recommendedIDs.count) 项可重建内容，扫描完成时已默认勾选 · 其他文件由你选择"
     }
     func toggleItem(_ id: UUID) {
         guard !isBusy, !requiresRescan, items.contains(where: { $0.id == id && $0.isSelectable }) else { return }
@@ -195,10 +223,17 @@ import Quartz
         if let hostWindow { panel.beginSheetModal(for: hostWindow, completionHandler: finish) } else { panel.begin(completionHandler: finish) }
     }
     private func invalidateResults() {
-        selectedIDs = []; detailID = nil; resultScrollID = nil; candidates = [:]; items = []
+        selectedIDs = []; recommendedIDs = []; detailID = nil; resultScrollID = nil; candidates = [:]; items = []
         requiresRescan = false; screen = .start; message = historyError
     }
-    func requestConfirmation() {
+    /// Selecting files and clicking the clearly named Trash action is the user's
+    /// confirmation. Keep the same selection snapshot and verified transaction.
+    func requestCleanup() {
+        guard canProcess else { return }
+        requestConfirmation()
+        if method == .trash { executeConfirmed(permanent: false, remember: rememberMethod) }
+    }
+    private func requestConfirmation() {
         guard canProcess else { return }
         confirmedIDs = Set(selectedItems.map(\.id)); acknowledgement = false; dialog = .confirm
     }
@@ -262,7 +297,7 @@ import Quartz
         guard !scopes.isEmpty else { message = "请先选择要扫描的目录。"; return }
         generation = UUID(); let run = generation
         cancellation = StorageReviewCancellation(); let token = cancellation
-        selectedIDs = []; confirmedIDs = []; detailID = nil; resultScrollID = nil; searchText = ""; onlySelected = false; resultTab = .reviewable; items = []; candidates = [:]
+        selectedIDs = []; confirmedIDs = []; detailID = nil; resultScrollID = nil; searchText = ""; onlySelected = false; resultTab = .recommended; items = []; recommendedIDs = []; candidates = [:]
         coverageIssues = []; coverageNotes = []; scanReachedLimit = false; requiresRescan = false; checkedCount = 0; scanPhase = .discovering; scanCompletedItems = 0; scanTotalItems = nil; scanDirectory = ""; scanItem = ""
         closeDialog(); message = historyError; screen = .scanning
         task = Task { [weak self] in
@@ -318,9 +353,10 @@ import Quartz
         }
     }
     private func selectRecommendedAfterScan(context: SpaceCleaningContext) {
-        selectedIDs = Set(candidates.values.filter {
+        recommendedIDs = Set(candidates.values.filter {
             $0.isRecommendedForSelection && SpaceCleaningScanner.validatePolicy(candidate: $0, context: context) == .unchanged
         }.map(\.id))
+        selectedIDs = recommendedIDs
     }
     func executeConfirmed(permanent: Bool, remember: Bool) {
         guard dialog == .confirm, canProcess, confirmedIDs == Set(selectedItems.map(\.id)),
@@ -485,7 +521,9 @@ import Quartz
         .init(id: item.id, name: item.title, url: item.url, bytes: item.logicalBytes, sizeIsComplete: item.sizeIsComplete,
               group: CleaningResultGroup(rawValue: item.group.rawValue) ?? .protected,
               subtitle: item.url.deletingLastPathComponent().path, reason: item.reason, impact: item.impact,
-              isSelectable: item.canProcess, needsPurposeConfirmation: item.canConfirmTestPurpose)
+              isSelectable: item.canProcess, needsPurposeConfirmation: item.canConfirmTestPurpose,
+              kind: item.kind, isDirectory: item.isDirectory,
+              modifiedDate: Date(timeIntervalSince1970: Double(item.identity.modifiedSeconds) + Double(item.identity.modifiedNanoseconds) / 1_000_000_000))
     }
     private func selectedScopes(_ context: SpaceCleaningContext) -> [SpaceCleaningScope] {
         scopeChoice == .global ? SpaceCleaningScanner.globalScopes(context: context) :

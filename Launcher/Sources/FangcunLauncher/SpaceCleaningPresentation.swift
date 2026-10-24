@@ -4,7 +4,7 @@ import LauncherCore
 enum CleaningScreen: Equatable { case start, scope, scanning, results, processing, history }
 enum CleaningResultGroup: String, CaseIterable { case rebuildable, review, protected }
 enum CleaningScopeChoice: String, CaseIterable, Codable { case global, custom }
-enum CleaningResultTab { case reviewable, protected }
+enum CleaningResultTab { case recommended, reviewable, protected }
 
 struct CleaningItemDisplay: Identifiable {
     let id: UUID
@@ -18,6 +18,30 @@ struct CleaningItemDisplay: Identifiable {
     let impact: String
     let isSelectable: Bool
     let needsPurposeConfirmation: Bool
+    let kind: SpaceCleaningKind
+    let isDirectory: Bool
+    let modifiedDate: Date
+
+    var typeTitle: String {
+        switch url.pathExtension.lowercased() {
+        case "app": return "应用程序"
+        case "xcarchive": return "Xcode 归档"
+        case "dmg": return "DMG 磁盘映像"
+        case "pkg": return "PKG 安装包"
+        case "zip", "tar", "gz", "7z", "rar": return url.pathExtension.uppercased() + " 压缩包"
+        default:
+            if isDirectory { return "文件夹" }
+            return url.pathExtension.isEmpty ? "文件" : url.pathExtension.uppercased() + " 文件"
+        }
+    }
+    /// Personal-file rows already carry their useful facts. Only show an
+    /// explanation when a scan rule actually changes the available action.
+    var handlingNote: String? {
+        if group == .protected || group == .rebuildable || needsPurposeConfirmation || [.testApplication, .testArchive].contains(kind) {
+            return reason + " " + impact
+        }
+        return nil
+    }
 }
 
 struct CleaningHistoryItemDisplay: Identifiable {

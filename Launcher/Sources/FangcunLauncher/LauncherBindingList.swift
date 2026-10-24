@@ -45,7 +45,7 @@ import LauncherCore
     required init?(coder:NSCoder){fatalError()}
 }
 
-@MainActor final class LauncherBindingListRow:NSButton {
+@MainActor final class LauncherBindingListRow:ClickableButton {
     let key:String
     let binding:KeyBinding?
     let editing:Bool

@@ -249,7 +249,7 @@ struct HealthCenterView: View {
         HStack(spacing: overviewCompact ? 7 : 9) {
             if !overviewCompact || overviewNarrow { iconTile(symbol, size: 28) }
             VStack(alignment: .leading, spacing: 5) { Text(title).font(.system(size: 11, weight: .medium)); Text(subtitle).font(.system(size: 11)).foregroundStyle(palette.muted) }
-            Spacer(minLength: 0); Toggle(title, isOn: enabled).labelsHidden().toggleStyle(.checkbox).tint(palette.accent)
+            Spacer(minLength: 0); Toggle(title, isOn: enabled).labelsHidden().toggleStyle(.checkbox).clickableCursor().tint(palette.accent)
         }.padding(.horizontal, overviewCompact ? 10 : 12).padding(.vertical, 10).frame(maxWidth: .infinity, minHeight: expanded ? 70 : overviewNarrow ? 54 : 64, alignment: .leading)
             .background(innerSurface).overlay(RoundedRectangle(cornerRadius: 12).stroke(enabled.wrappedValue ? palette.accent.opacity(0.32) : .clear, lineWidth: 1))
     }
@@ -260,7 +260,7 @@ struct HealthCenterView: View {
             Text("以持续状态为依据；瞬时负载、缓存大小和待办数量不直接扣分。").font(.system(size: 11)).foregroundStyle(palette.muted)
             ForEach(model.latestReport?.factors ?? []) { item in
                 VStack(alignment: .leading, spacing: 5) {
-                    HStack { Button { onReadDevice(item.factor) } label: { Label(item.factor.title, systemImage: factorSymbol(item.factor)).frame(width: 120, alignment: .leading) }.buttonStyle(.plain).accessibilityIdentifier("health-basis-reading-" + item.factor.rawValue); Text(item.summary).frame(maxWidth: .infinity, alignment: .leading); Text(item.deduction.map { $0 == 0 ? "未扣分" : "−\($0) 分" } ?? "未计入").foregroundStyle(palette.muted) }
+                    HStack { Button { onReadDevice(item.factor) } label: { Label(item.factor.title, systemImage: factorSymbol(item.factor)).frame(width: 120, alignment: .leading) }.buttonStyle(ClickablePlainButtonStyle()).accessibilityIdentifier("health-basis-reading-" + item.factor.rawValue); Text(item.summary).frame(maxWidth: .infinity, alignment: .leading); Text(item.deduction.map { $0 == 0 ? "未扣分" : "−\($0) 分" } ?? "未计入").foregroundStyle(palette.muted) }
                     Text(item.explanation).foregroundStyle(palette.muted)
                     Text("来源：\(item.source) · \(item.sampledAt.map { $0.formatted(date: .abbreviated, time: .standard) } ?? "未读取")").foregroundStyle(palette.muted)
                     ForEach(item.evidence.indices, id: \.self) { index in let evidence = HealthCenterEvidenceDisplay.text(item.evidence[index]); Text(evidence.label + "：" + evidence.value).foregroundStyle(palette.muted).textSelection(.enabled) }
@@ -384,7 +384,7 @@ struct HealthCenterView: View {
                                     Spacer(minLength: 0)
                                     Text(factorValue(item.factor)).lineLimit(1).multilineTextAlignment(.trailing)
                                 }.font(.system(size: 11)).foregroundStyle(palette.secondary).frame(maxWidth: .infinity, minHeight: 33).contentShape(Rectangle())
-                            }.buttonStyle(.plain).help("查看" + item.factor.title + "读数").accessibilityIdentifier("health-checked-" + item.factor.rawValue)
+                            }.buttonStyle(ClickablePlainButtonStyle()).help("查看" + item.factor.title + "读数").accessibilityIdentifier("health-checked-" + item.factor.rawValue)
                         }
                     }.padding(.top, 5).overlay(alignment: .top) { palette.line.frame(height: 1) }.padding(.top, 5)
                 }
@@ -413,7 +413,7 @@ struct HealthCenterView: View {
                             Text(categorySize(item)).font(.system(size: compactReport ? 11 : 12, weight: .medium)).foregroundStyle(palette.secondary).fixedSize()
                             HStack(spacing: 3) { if fullReport { Text("复核").font(.system(size: 11)) }; Image(systemName: "chevron.right").font(.system(size: 11)) }.foregroundStyle(palette.accent)
                         }.padding(.top, 12).padding(.bottom, item == adviceCategories.last ? 0 : 12).frame(maxWidth: .infinity, minHeight: fullReport ? 82 : 70, alignment: .leading).contentShape(Rectangle())
-                    }.buttonStyle(.plain).accessibilityIdentifier("health-advice-" + item.rawValue)
+                    }.buttonStyle(ClickablePlainButtonStyle()).accessibilityIdentifier("health-advice-" + item.rawValue)
                     if item != adviceCategories.last { palette.line.frame(height: 1) }
                 }
                 if adviceCategories.isEmpty { Text("本次仅检查设备健康，未选择额外建议范围。").font(.system(size: 11)).foregroundStyle(palette.muted).padding(.vertical, 20).frame(maxWidth: .infinity) }
@@ -532,7 +532,7 @@ struct HealthCenterView: View {
                         .background(model.category == category ? palette.soft : .clear, in: RoundedRectangle(cornerRadius: 9))
                         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(model.category == category ? palette.accent.opacity(0.3) : .clear, lineWidth: 1))
                         .contentShape(RoundedRectangle(cornerRadius: 9))
-                }.buttonStyle(.plain).accessibilityIdentifier("health-review-category-" + category.rawValue)
+                }.buttonStyle(ClickablePlainButtonStyle()).accessibilityIdentifier("health-review-category-" + category.rawValue)
             }
             Spacer(minLength: 12)
             HStack(alignment: .top, spacing: 7) {
@@ -588,13 +588,13 @@ struct HealthCenterView: View {
     private func fileRow(_ file: StorageReviewCandidate) -> some View {
         let status = storage.candidateStatus(for: file)
         return HStack(alignment: .top, spacing: 8) {
-            Toggle(file.relativePath, isOn: Binding(get: { status.isSelectable && storage.selectedIDs.contains(file.id) }, set: { _ in storage.toggle(file) })).labelsHidden().toggleStyle(.checkbox).disabled(!storage.canSelect(file))
+            Toggle(file.relativePath, isOn: Binding(get: { status.isSelectable && storage.selectedIDs.contains(file.id) }, set: { _ in storage.toggle(file) })).labelsHidden().toggleStyle(.checkbox).clickableCursor().disabled(!storage.canSelect(file))
                 .accessibilityIdentifier("health-file-select-" + file.id.uuidString)
             if !compactReport {
                 Image(systemName: file.category == .symbolicLink ? "link" : "doc").font(.system(size: 15)).foregroundStyle(palette.accent)
                     .frame(width: 27, height: 29).background(palette.soft, in: RoundedRectangle(cornerRadius: 7)).accessibilityHidden(true)
             }
-            Button { selectedFile = file } label: { VStack(alignment: .leading, spacing: 5) { Text(URL(fileURLWithPath: file.relativePath).lastPathComponent).font(.system(size: 12, weight: .medium)).foregroundStyle(palette.text); Text(file.relativePath).font(.system(size: 10)).foregroundStyle(palette.muted).lineLimit(1).truncationMode(.middle); Text(status == .pendingReview || status == .retained ? file.explanation : status.explanation).font(.system(size: 10)).foregroundStyle(palette.muted).lineLimit(2) }.frame(maxWidth: .infinity, alignment: .leading) }.buttonStyle(.plain)
+            Button { selectedFile = file } label: { VStack(alignment: .leading, spacing: 5) { Text(URL(fileURLWithPath: file.relativePath).lastPathComponent).font(.system(size: 12, weight: .medium)).foregroundStyle(palette.text); Text(file.relativePath).font(.system(size: 10)).foregroundStyle(palette.muted).lineLimit(1).truncationMode(.middle); Text(status == .pendingReview || status == .retained ? file.explanation : status.explanation).font(.system(size: 10)).foregroundStyle(palette.muted).lineLimit(2) }.frame(maxWidth: .infinity, alignment: .leading) }.buttonStyle(ClickablePlainButtonStyle())
                 .accessibilityIdentifier("health-file-details-" + file.id.uuidString)
             VStack(alignment: .trailing, spacing: 6) {
                 Text(DeviceFormat.bytes(file.logicalBytes)).font(.system(size: 11))

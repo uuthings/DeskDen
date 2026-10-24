@@ -46,7 +46,7 @@ struct WorkbenchOverview:View {
                         Text((context.settings.city?.name ?? "选择城市")+(context.weather?.freshness == .stale ? " · 已过期":"")).font(.system(size:11)).foregroundStyle(palette.muted)
                     }
                 }.contentShape(Rectangle())
-            }.buttonStyle(.plain).accessibilityLabel("查看天气与城市")
+            }.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel("查看天气与城市")
             TimelineView(.periodic(from:.now,by:1)) {timeline in
                 Button{context.showClock=true}label:{
                     HStack(spacing:compact ? 8:14) {
@@ -58,7 +58,7 @@ struct WorkbenchOverview:View {
                             HStack(spacing:4){Text(WorkbenchContextModel.zoneTitle(context.dateContext.timeZoneIdentifier,at:timeline.date));Image(systemName:"chevron.down").font(.system(size:9))}.font(.system(size:11)).foregroundStyle(palette.muted)
                         }
                     }.padding(.leading,10).frame(minHeight:46).contentShape(Rectangle())
-                }.buttonStyle(.plain).accessibilityLabel("日期时间与时区")
+                }.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel("日期时间与时区")
             }
         }
     }
@@ -95,9 +95,9 @@ struct WorkbenchOverview:View {
             }.frame(maxHeight:.infinity,alignment:.top)
             Rectangle().fill(palette.line).frame(height:1).padding(.top,expanded ? 22:15).padding(.bottom,expanded ? 16:12)
             HStack(alignment:.center,spacing:12) {
-                Button{openDevice(.thermal)}label:{VStack(alignment:.leading,spacing:4){Label(s.battery.map{String(format:"%.0f%%",$0.percent)} ?? "—",systemImage:s.battery?.isPluggedIn == true ? "battery.100.bolt":"battery.100").font(.system(size:12));Text(s.battery.map{$0.isPluggedIn ? "已连接电源":"使用电池"} ?? "电源读数不可用").font(.system(size:11)).foregroundStyle(palette.muted)}}.buttonStyle(.plain)
+                Button{openDevice(.thermal)}label:{VStack(alignment:.leading,spacing:4){Label(s.battery.map{String(format:"%.0f%%",$0.percent)} ?? "—",systemImage:s.battery?.isPluggedIn == true ? "battery.100.bolt":"battery.100").font(.system(size:12));Text(s.battery.map{$0.isPluggedIn ? "已连接电源":"使用电池"} ?? "电源读数不可用").font(.system(size:11)).foregroundStyle(palette.muted)}}.buttonStyle(ClickablePlainButtonStyle())
                 Spacer(minLength:0)
-                Button{navigate(.network)}label:{VStack(alignment:.trailing,spacing:4){Text("↓ "+DeviceFormat.rate(s.network.downloadBytesPerSecond)+"  ·  ↑ "+DeviceFormat.rate(s.network.uploadBytesPerSecond)).font(.system(size:compact ? 10:11)).lineLimit(1).minimumScaleFactor(0.8);Text(todayTraffic).font(.system(size:11)).foregroundStyle(palette.muted)}}.buttonStyle(.plain)
+                Button{navigate(.network)}label:{VStack(alignment:.trailing,spacing:4){Text("↓ "+DeviceFormat.rate(s.network.downloadBytesPerSecond)+"  ·  ↑ "+DeviceFormat.rate(s.network.uploadBytesPerSecond)).font(.system(size:compact ? 10:11)).lineLimit(1).minimumScaleFactor(0.8);Text(todayTraffic).font(.system(size:11)).foregroundStyle(palette.muted)}}.buttonStyle(ClickablePlainButtonStyle())
             }
         }.padding(14).frame(minHeight:expanded ? 310:compact ? 288:269).frame(maxHeight:.infinity).background(WorkbenchMaterialSurface(radius:15))
     }
@@ -110,7 +110,7 @@ struct WorkbenchOverview:View {
             Text("共 "+DeviceFormat.capacity(total)).font(.system(size:11)).foregroundStyle(palette.muted)
             WBProgress(value:(percent ?? 0)/100,color:warning ? palette.warning:nil).accessibilityLabel(progressLabel).padding(.top,8).padding(.bottom,6)
             Text(note).font(.system(size:11)).foregroundStyle(palette.secondary).lineLimit(1).minimumScaleFactor(0.8)
-        }.frame(maxWidth:.infinity,alignment:.leading).contentShape(Rectangle())}.buttonStyle(.plain).accessibilityLabel(title+"，"+DeviceFormat.capacity(used)+"，"+note)
+        }.frame(maxWidth:.infinity,alignment:.leading).contentShape(Rectangle())}.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel(title+"，"+DeviceFormat.capacity(used)+"，"+note)
     }
     private var agenda:some View {
         VStack(alignment:.leading,spacing:0) {
@@ -148,7 +148,7 @@ struct WorkbenchOverview:View {
                     HStack(spacing:3){Text(String(displayCalendar.component(.day,from:date))).font(.system(size:18,weight:.medium)).foregroundStyle(palette.text);CalendarHolidayBadge(day:civilDay)}.frame(height:22)
                     HStack(spacing:3){ForEach(0..<min(3,count),id:\.self){_ in Circle().fill(palette.accent).frame(width:3,height:3)}}.frame(height:5)
                 }.frame(maxWidth:.infinity).frame(height:expanded ? 76:66).background(selected ? palette.navSelected:.clear,in:RoundedRectangle(cornerRadius:9)).overlay(RoundedRectangle(cornerRadius:9).strokeBorder(selected ? palette.accent.opacity(0.25):offset == 0 ? palette.accent.opacity(0.35):.clear,lineWidth:1)).foregroundStyle(selected ? palette.accent:palette.secondary).contentShape(Rectangle())
-            }.buttonStyle(.plain).accessibilityLabel("查看\(displayCalendar.component(.month,from:date))月\(displayCalendar.component(.day,from:date))日安排"+(civilDay.namedLabel.map{"，"+$0} ?? "")).accessibilityAddTraits(selected ? .isSelected:[])
+            }.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel("查看\(displayCalendar.component(.month,from:date))月\(displayCalendar.component(.day,from:date))日安排"+(civilDay.namedLabel.map{"，"+$0} ?? "")).accessibilityAddTraits(selected ? .isSelected:[])
         }}
     }
     private func planColumn(title:String,subtitle:String,items:[CalendarAgendaEntry],empty:String)->some View {
@@ -164,10 +164,10 @@ struct WorkbenchOverview:View {
     private func planRow(_ item:CalendarAgendaEntry)->some View {
         HStack(alignment:.top,spacing:8) {
             if case .reminder(let reminder)=item {
-                Button{Task{await calendar.toggle(reminder)}}label:{ZStack{Circle().strokeBorder(reminder.isCompleted ? palette.accent:palette.muted.opacity(0.55),lineWidth:1);if reminder.isCompleted {Circle().fill(palette.accent);Image(systemName:"checkmark").font(.system(size:9,weight:.semibold)).foregroundStyle(palette.primaryText)}}.frame(width:16,height:16).padding(.top,1)}.buttonStyle(.plain).disabled(calendar.isWorking || !reminder.isWritable).accessibilityLabel((reminder.isCompleted ? "恢复":"完成")+reminder.title)
+                Button{Task{await calendar.toggle(reminder)}}label:{ZStack{Circle().strokeBorder(reminder.isCompleted ? palette.accent:palette.muted.opacity(0.55),lineWidth:1);if reminder.isCompleted {Circle().fill(palette.accent);Image(systemName:"checkmark").font(.system(size:9,weight:.semibold)).foregroundStyle(palette.primaryText)}}.frame(width:16,height:16).padding(.top,1)}.buttonStyle(ClickablePlainButtonStyle()).disabled(calendar.isWorking || !reminder.isWritable).accessibilityLabel((reminder.isCompleted ? "恢复":"完成")+reminder.title)
             } else {Image(systemName:"calendar").font(.system(size:14)).foregroundStyle(palette.cool).frame(width:16,height:16).padding(.top,1)}
             VStack(alignment:.leading,spacing:3) {
-                Button{switch item {case .reminder(let reminder):calendar.openReminder(reminder);case .event(let event):calendar.selectedEvent=event}}label:{Text(item.title).font(.system(size:12,weight:.regular)).foregroundStyle(item.isCompleted ? palette.muted:palette.text).strikethrough(item.isCompleted).multilineTextAlignment(.leading).frame(maxWidth:.infinity,alignment:.leading).fixedSize(horizontal:false,vertical:true)}.buttonStyle(.plain)
+                Button{switch item {case .reminder(let reminder):calendar.openReminder(reminder);case .event(let event):calendar.selectedEvent=event}}label:{Text(item.title).font(.system(size:12,weight:.regular)).foregroundStyle(item.isCompleted ? palette.muted:palette.text).strikethrough(item.isCompleted).multilineTextAlignment(.leading).frame(maxWidth:.infinity,alignment:.leading).fixedSize(horizontal:false,vertical:true)}.buttonStyle(ClickablePlainButtonStyle())
                 Text(itemDescription(item)).font(.system(size:11)).foregroundStyle(palette.muted).fixedSize(horizontal:false,vertical:true)
             }
         }.padding(.vertical,9).frame(maxWidth:.infinity,minHeight:52,alignment:.topLeading)
