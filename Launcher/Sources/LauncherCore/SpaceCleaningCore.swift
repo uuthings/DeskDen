@@ -17,6 +17,7 @@ public enum SpaceCleaningScopeKind: String, Codable, Sendable {
     case browserCache, packageCache, derivedData, diagnostics, downloads, development, archives
     case releaseArchives, releaseArchiveDiscovery, installedApplications, custom
 }
+public enum SpaceCleaningScanPhase: String, Sendable { case discovering, verifying, finished }
 public enum SpaceCleaningStage: String, Codable, Sendable { case caches, development, downloads, protection, complete, cancelled, failed }
 public enum SpaceCleaningIssueKind: String, Codable, Sendable {
     case missing, permissionDenied, unreadable, unsafePath, changed, duplicate, depthLimit, entryLimit, cloudPlaceholder, cancelled
@@ -92,6 +93,11 @@ public struct SpaceCleaningCandidate: Identifiable, Codable, Equatable, Sendable
     public var treeFingerprint: String?
     public var sizeIsComplete: Bool
     public var canProcess: Bool { group != .protected && sizeIsComplete }
+    /// Default selection requires positive reconstruction evidence, not just an
+    /// age threshold or permission to delete. Personal and diagnostic files stay manual.
+    public var isRecommendedForSelection: Bool {
+        canProcess && group == .rebuildable && [.browserCache, .packageCache, .derivedData].contains(kind)
+    }
     public init(id: UUID = UUID(), scopeID: UUID = UUID(), url: URL, rootURL: URL,
                 rootIdentity: StorageReviewFileIdentity, identity: StorageReviewFileIdentity,
                 ancestorIdentities: [SpaceCleaningPathIdentity] = [], kind: SpaceCleaningKind,
@@ -125,6 +131,9 @@ public struct SpaceCleaningProgress: Equatable, Sendable {
     public var logicalBytes: UInt64
     public var completedScopes: Int
     public var totalScopes: Int
+    public var phase: SpaceCleaningScanPhase = .discovering
+    public var completedItems: Int = 0
+    public var totalItems: Int? = nil
 }
 public struct SpaceCleaningReport: Identifiable, Codable, Equatable, Sendable {
     public var id: UUID
@@ -176,6 +185,18 @@ public enum SpaceCleaningScanner {
             if let identity = captureIdentity(at: protected), isDirectory(identity), !["app", "xcarchive"].contains(protected.pathExtension.lowercased()) {
                 scopes.append(.init(directory: protected, kind: .releaseArchives, title: "受保护发布档案"))
             }
+        }
+        return scopes
+    }
+
+    /// One default pass across known cleanup locations and the user's personal
+    /// folders. System data, other users and mounted volumes require separate consent.
+    public static func globalScopes(context: SpaceCleaningContext = .init()) -> [SpaceCleaningScope] {
+        let home = canonicalURL(context.homeDirectory) ?? context.homeDirectory
+        var scopes = recommendedScopes(context: context)
+        for name in ["Desktop", "Documents", "Movies", "Pictures", "Music", "Public", "Developer", "Applications"] {
+            scopes.append(.init(directory: home.appendingPathComponent(name),
+                                kind: name == "Applications" ? .installedApplications : .custom, title: name))
         }
         return scopes
     }
@@ -236,6 +257,30 @@ public enum SpaceCleaningScanner {
             guard fresh.kind == candidate.kind, fresh.group == candidate.group, fresh.treeFingerprint == candidate.treeFingerprint,
                   fresh.logicalBytes == candidate.logicalBytes, fresh.allocatedBytes == candidate.allocatedBytes else { return .changed }
             return .unchanged
+        }
+    }
+
+    /// Recheck only the explicitly reviewed test package. Existing selections and
+    /// unrelated archive protection must not change when a declaration is added.
+    public static func reviewTestCandidate(_ candidate: SpaceCleaningCandidate, context: SpaceCleaningContext,
+                                          isCancelled: () -> Bool = { false }) -> SpaceCleaningCandidate? {
+        guard candidate.canConfirmTestPurpose, candidate.sizeIsComplete,
+              context.testDeclarations.contains(.init(candidate: candidate)),
+              captureIdentity(at: candidate.url) == candidate.identity,
+              canonicalURL(candidate.url)?.path == candidate.url.path,
+              candidate.ancestorIdentities.allSatisfy({
+                  captureIdentity(at: $0.url)?.fileKey == $0.identity.fileKey && canonicalURL($0.url)?.path == $0.url.path
+              }), let root = captureIdentity(at: candidate.rootURL), root.fileKey == candidate.rootIdentity.fileKey else { return nil }
+        return withoutActuallyEscaping(isCancelled) { cancelled in
+            let worker = Worker(context: context, options: .init(), now: Date(), cancelled: cancelled, progress: { _ in })
+            guard var fresh = worker.makeCandidate(candidate.url, identity: candidate.identity,
+                scope: .init(id: candidate.scopeID, directory: candidate.rootURL), root: candidate.rootURL,
+                rootIdentity: root, ancestors: candidate.ancestorIdentities), !cancelled(),
+                fresh.canProcess, [.testApplication, .testArchive].contains(fresh.kind),
+                fresh.treeFingerprint == candidate.treeFingerprint,
+                fresh.logicalBytes == candidate.logicalBytes, fresh.allocatedBytes == candidate.allocatedBytes else { return nil }
+            fresh.id = candidate.id
+            return fresh
         }
     }
 
@@ -331,12 +376,28 @@ private final class Worker {
     var issues: [SpaceCleaningIssue] = []
     var checked = 0
     var limit = false
+    // Discovery cannot consume the capacity reserved for content verification.
+    // Both phases remain independently bounded; checked is the actual total.
+    var phaseChecked = 0
+    var phaseLimited = false
+    func markLimit() { limit = true; phaseLimited = true }
     var visitedFiles: Set<String> = []
     var visitedRoots: [String] = []
     var completedScopes = 0
     var totalScopes = 0
     var stage: SpaceCleaningStage = .caches
     var recordedBytes: UInt64 = 0
+    var phase: SpaceCleaningScanPhase = .discovering
+    var completedItems = 0
+    struct PendingCandidate {
+        let url: URL
+        let identity: StorageReviewFileIdentity
+        let scope: SpaceCleaningScope
+        let root: URL
+        let rootIdentity: StorageReviewFileIdentity
+        let ancestors: [SpaceCleaningPathIdentity]
+    }
+    var pendingCandidates: [PendingCandidate] = []
 
     init(context: SpaceCleaningContext, options: SpaceCleaningOptions, now: Date, metadata: SpaceCleaningMetadataReader = .live,
          cancelled: @escaping () -> Bool, progress: @escaping (SpaceCleaningProgress) -> Void) {
@@ -349,7 +410,7 @@ private final class Worker {
     func scan(_ scopes: [SpaceCleaningScope]) -> SpaceCleaningReport {
         totalScopes = scopes.count
         for scope in scopes {
-            guard !cancelled(), !limit else { break }
+            guard !cancelled(), !phaseLimited else { break }
             stage = stageFor(scope.kind)
             emit(scope: scope, url: scope.directory)
             guard scope.directory.isFileURL else { issue(scope, scope.directory, .unsafePath, "扫描范围必须是本机目录。"); continue }
@@ -362,9 +423,9 @@ private final class Worker {
             if cloudPlaceholder(scope.directory) {
                 let parent = scope.directory.deletingLastPathComponent()
                 if let parentIdentity = Scanner.captureIdentity(at: parent),
-                   let candidate = makeCandidate(scope.directory, identity: original, scope: scope, root: parent,
-                                                 rootIdentity: parentIdentity, ancestors: [.init(url: parent, identity: parentIdentity)]) {
-                    candidates.append(candidate)
+                   Scanner.isDirectory(parentIdentity) {
+                    pendingCandidates.append(.init(url: scope.directory, identity: original, scope: scope, root: parent,
+                        rootIdentity: parentIdentity, ancestors: [.init(url: parent, identity: parentIdentity)]))
                 }
                 issue(scope, scope.directory, .cloudPlaceholder, "此目录尚未下载到本机，未读取其中内容。"); completedScopes += 1; continue
             }
@@ -384,7 +445,29 @@ private final class Worker {
             if scope.kind != .releaseArchiveDiscovery { visitedRoots.append(root.path) }
             completedScopes += 1
         }
+        phase = .verifying; phaseChecked = 0; phaseLimited = false
+        emit(scope: nil, url: nil)
+        for pending in pendingCandidates {
+            guard !cancelled() else { break }
+            stage = stageFor(pending.scope.kind)
+            emit(scope: pending.scope, url: pending.url)
+            if Scanner.captureIdentity(at: pending.url) == pending.identity,
+               pending.ancestors.allSatisfy({
+                   Scanner.captureIdentity(at: $0.url)?.fileKey == $0.identity.fileKey && Scanner.canonicalURL($0.url)?.path == $0.url.path
+               }) {
+                if let candidate = makeCandidate(pending.url, identity: pending.identity, scope: pending.scope,
+                    root: pending.root, rootIdentity: pending.rootIdentity, ancestors: pending.ancestors) {
+                    candidates.append(candidate)
+                    recordedBytes = saturatingAdd(recordedBytes, candidate.logicalBytes)
+                }
+            } else {
+                issue(pending.scope, pending.url, .changed, "发现后文件发生变化，已跳过；请重新扫描。")
+            }
+            completedItems += 1
+            emit(scope: pending.scope, url: pending.url)
+        }
         let wasCancelled = cancelled()
+        phase = .finished
         if wasCancelled, let scope = scopes.first { issue(scope, scope.directory, .cancelled, "扫描已停止，结果不完整。") }
         stage = wasCancelled ? .cancelled : scopes.isEmpty ? .failed : .complete
         let complete = !wasCancelled && !limit && !scopes.isEmpty
@@ -400,8 +483,8 @@ private final class Worker {
         // Iteration avoids retaining a maximum-sized sibling array at every recursion depth.
         var pending: [(URL, [SpaceCleaningPathIdentity], Int)] = [(directory, ancestors, depth)]
         while let (current, chain, currentDepth) = pending.popLast() {
-            guard !cancelled(), !limit else { return }
-            guard currentDepth <= options.maximumDepth else { limit = true; issue(scope, current, .depthLimit, "已到达扫描深度上限。"); return }
+            guard !cancelled(), !phaseLimited else { return }
+            guard currentDepth <= options.maximumDepth else { markLimit(); issue(scope, current, .depthLimit, "已到达扫描深度上限。"); return }
             guard let children = readChildren(current, scope: scope) else { continue }
             for child in children {
                 if visitedRoots.contains(where: { Scanner.contains(child.path, in: $0) }) { continue }
@@ -412,8 +495,9 @@ private final class Worker {
                         issue(scope, child, .unsafePath, "跨卷目录或路径已变化，未继续扫描。"); continue
                     }
                     pending.append((child, chain + [.init(url: child, identity: identity)], currentDepth + 1))
-                } else if let candidate = makeCandidate(child, identity: identity, scope: scope, root: root, rootIdentity: rootIdentity, ancestors: chain) {
-                    candidates.append(candidate); recordedBytes = saturatingAdd(recordedBytes, candidate.logicalBytes)
+                } else {
+                    pendingCandidates.append(.init(url: child, identity: identity, scope: scope, root: root,
+                                                   rootIdentity: rootIdentity, ancestors: chain))
                 }
                 emit(scope: scope, url: child)
             }
@@ -436,11 +520,9 @@ private final class Worker {
                   !Scanner.isSymbolicLink(archiveIdentity) else { continue }
             let ancestors: [SpaceCleaningPathIdentity] = [.init(url: root, identity: rootIdentity)] +
                 (archive == appFolder ? [] : [.init(url: appFolder, identity: identity)])
-            if let candidate = makeCandidate(archive, identity: archiveIdentity, scope: scope, root: root,
-                                             rootIdentity: rootIdentity, ancestors: ancestors) {
-                candidates.append(candidate); recordedBytes = saturatingAdd(recordedBytes, candidate.logicalBytes)
-                visitedRoots.append(archive.path)
-            }
+            pendingCandidates.append(.init(url: archive, identity: archiveIdentity, scope: scope, root: root,
+                                           rootIdentity: rootIdentity, ancestors: ancestors))
+            visitedRoots.append(archive.path)
         }
     }
 
@@ -543,13 +625,13 @@ private final class Worker {
         let measurementLimit = protectedBudget ? min(10_000, options.maximumEntries) : options.maximumEntries
         var measuredEntries = 0
         measurementLoop: while let (directory, depth) = pending.popLast() {
-            guard !cancelled(), !limit else { result.complete = false; break }
+            guard !cancelled(), !phaseLimited else { result.complete = false; break }
             if cloudPlaceholder(directory) {
                 result.complete = false; result.cloudContent = true
                 issue(scope, directory, .cloudPlaceholder, "目录尚未下载到本机，未读取其中内容。"); continue
             }
             guard depth <= options.maximumDepth else {
-                if !protectedBudget { limit = true }
+                if !protectedBudget { markLimit() }
                 result.complete = false; issue(scope, directory, .depthLimit, "已到达目录内容核验深度上限。"); break
             }
             guard let identity = Scanner.captureIdentity(at: directory), Scanner.isDirectory(identity), identity.device == rootIdentity.device,
@@ -559,7 +641,7 @@ private final class Worker {
             for child in children {
                 guard measuredEntries < measurementLimit else {
                     result.complete = false
-                    if !protectedBudget { limit = true }
+                    if !protectedBudget { markLimit() }
                     issue(scope, root, .entryLimit, protectedBudget ? "受保护目录仅完成有界容量统计，文件继续保留。" : "目录内容超出本次核验上限。")
                     break measurementLoop
                 }
@@ -715,21 +797,23 @@ private final class Worker {
     }
     func visit(_ url: URL, scope: SpaceCleaningScope) -> Bool {
         guard !cancelled() else { return false }
-        guard checked < options.maximumEntries else {
-            if !limit { issue(scope, url, .entryLimit, "已到达本次扫描条目上限，结果不完整。") }
-            limit = true; return false
+        guard phaseChecked < options.maximumEntries else {
+            if !phaseLimited { issue(scope, url, .entryLimit, "已到达本次扫描条目上限，结果不完整。") }
+            markLimit(); return false
         }
-        checked += 1; emit(scope: scope, url: url); return true
+        checked += 1; phaseChecked += 1; emit(scope: scope, url: url); return true
     }
     func emit(scope: SpaceCleaningScope?, url: URL?) {
         progress(.init(stage: stage, currentScopeID: scope?.id, currentPath: url?.deletingLastPathComponent().path,
                        currentFileName: url?.lastPathComponent, checkedEntries: checked, recordedCandidates: candidates.count,
-                       logicalBytes: recordedBytes, completedScopes: completedScopes, totalScopes: totalScopes))
+                       logicalBytes: recordedBytes, completedScopes: completedScopes, totalScopes: totalScopes,
+                       phase: phase, completedItems: completedItems,
+                       totalItems: phase == .discovering ? nil : pendingCandidates.count))
     }
     /// Directory reads are descriptor-bound and capped before retaining names in memory.
     func readChildren(_ url: URL, scope: SpaceCleaningScope, maximumNames: Int? = nil) -> [URL]? {
         guard !cloudPlaceholder(url) else { issue(scope, url, .cloudPlaceholder, "目录尚未下载到本机，未枚举其内容。"); return nil }
-        guard !cancelled(), !limit, Scanner.canonicalURL(url)?.path == url.path else { return nil }
+        guard !cancelled(), !phaseLimited, Scanner.canonicalURL(url)?.path == url.path else { return nil }
         #if canImport(Darwin)
         let flags = O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW_ANY | O_NONBLOCK
         #else
@@ -762,7 +846,7 @@ private final class Worker {
                 $0.withMemoryRebound(to: CChar.self, capacity: MemoryLayout.size(ofValue: entry.pointee.d_name)) { String(cString: $0) }
             }
             if name == "." || name == ".." { continue }
-            if children.count >= min(options.maximumEntries - checked + 1, maximumNames ?? options.maximumEntries + 1) {
+            if children.count >= min(options.maximumEntries - phaseChecked + 1, maximumNames ?? options.maximumEntries + 1) {
                 // The extra name is a sentinel: visiting it reports the bound after
                 // genuinely checking the retained entries, rather than claiming work.
                 break

@@ -1,10 +1,10 @@
 import Foundation
 import LauncherCore
 
-enum CleaningScreen: Equatable { case start, scanning, results, processing, finished, history }
+enum CleaningScreen: Equatable { case start, scope, scanning, results, processing, history }
 enum CleaningResultGroup: String, CaseIterable { case rebuildable, review, protected }
-enum CleaningScopeChoice: String, CaseIterable, Codable { case recommended, xcode, downloads, custom }
-enum CleaningLaneState { case pending, active, complete }
+enum CleaningScopeChoice: String, CaseIterable, Codable { case global, custom }
+enum CleaningResultTab { case reviewable, protected }
 
 struct CleaningItemDisplay: Identifiable {
     let id: UUID
@@ -20,21 +20,11 @@ struct CleaningItemDisplay: Identifiable {
     let needsPurposeConfirmation: Bool
 }
 
-struct CleaningScanLane: Identifiable {
-    let id: String
-    let title: String
-    let systemImage: String
-    var state: CleaningLaneState
-    var checkedCount: Int
-    var path: String
-    var currentFile: String
-    var decision: String
-}
-
 struct CleaningHistoryItemDisplay: Identifiable {
     let id: UUID
     let name: String
     let bytes: UInt64
+    let state: SpaceCleaningRecordState
     let statusText: String
     let explanation: String
     let canRestore: Bool
@@ -49,6 +39,8 @@ struct CleaningHistoryBatchDisplay: Identifiable {
     let method: SpaceCleaningMethod
     let items: [CleaningHistoryItemDisplay]
     let bytes: UInt64
+    var deletedCount: Int { items.filter { $0.state == .deleted }.count }
+    var attentionCount: Int { items.filter { [.failed, .needsReview, .prepared, .isolated, .deleting, .restoring].contains($0.state) }.count }
     var restorableCount: Int { items.filter(\.canRestore).count }
     var purgeableCount: Int { items.filter(\.canPurge).count }
 }

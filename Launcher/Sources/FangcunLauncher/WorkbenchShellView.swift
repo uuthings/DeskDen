@@ -135,6 +135,10 @@ struct WorkbenchRootView: View {
         if model.route == .device {
             DeviceModuleView(model: model.device, onOpenNetwork:{model.navigate(.network)},onOpenHealth:model.openHealth, requestedDetail:$model.deviceDetail,requestedDetailReturnTitle:model.requestedReadingReturnTitle,onCloseRequestedDetail:model.closeRequestedDeviceDetail)
                 .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.top)
+        } else if model.route == .cleaning {
+            SpaceCleaningModuleView(model:model.cleaning,onLegacyHistory:model.health.storage.receipts.isEmpty ? nil:{model.navigate(.health);model.health.showResults(kind:.files)})
+                .workbenchPageCanvas()
+                .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.top)
         } else if model.route == .network {
             NetworkMonitorView(model:model.device)
                 .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.top)
@@ -147,7 +151,7 @@ struct WorkbenchRootView: View {
                     case .overview: WorkbenchOverview(device: model.device, calendar: model.calendar, health:model.health,context:model.context,navigate:model.navigate,openHealth:model.openHealth,openDevice:model.openDeviceReading)
                     case .device: EmptyView()
                     case .health: HealthCenterView(model:model.health,onReadDevice:model.openHealthReading,onBack:model.returnFromHealth,onOpenCleaning:{model.navigate(.cleaning)})
-                    case .cleaning: SpaceCleaningModuleView(model:model.cleaning,onLegacyHistory:model.health.storage.receipts.isEmpty ? nil:{model.navigate(.health);model.health.showResults(kind:.files)})
+                    case .cleaning: EmptyView()
                     case .calendar: CalendarModuleView(model: model.calendar,context:model.context,returnToSettingsPrivacy:{model.navigate(.settings);model.settingsTab = .privacy})
                     case .network: EmptyView()
                     case .ai: AIUsageModuleView(model: model.ai, openDesktopCards: { model.navigate(.cards) },returnToSettingsPrivacy:{model.navigate(.settings);model.settingsTab = .privacy})

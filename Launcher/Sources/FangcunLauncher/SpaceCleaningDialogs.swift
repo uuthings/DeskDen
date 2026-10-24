@@ -33,34 +33,7 @@ struct SpaceCleaningDialogContent: View {
         }
     }
     private var scopeDialog: some View {
-        WorkbenchDialogFrame(title: "扫描范围", dismiss: model.closeDialog) {
-            VStack(alignment: .leading, spacing: 0) {
-                Text("默认从这台 Mac 的常用位置开始").font(.system(size: 11)).foregroundStyle(palette.muted).padding(.bottom, 12)
-                scopeChoice(.recommended, title: "此 Mac · 推荐范围", subtitle: "当前用户缓存、开发构建、下载文件及保护核验")
-                scopeChoice(.xcode, title: "Xcode 与本地测试构建", subtitle: "DerivedData、Archives 与本地构建位置")
-                scopeChoice(.downloads, title: "下载文件夹", subtitle: "只查看下载目录中的文件，并核验保护规则")
-                Rectangle().fill(palette.line).frame(height: 1)
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("自选目录").font(.system(size: 12, weight: .medium))
-                        Text(model.scopeChoice == .custom ? model.scopeSummary : "需要时，指定其他本地文件夹")
-                            .font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(3).truncationMode(.middle)
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                    Button("选择文件夹", action: model.chooseCustomDirectory).buttonStyle(WBButtonStyle()).disabled(model.isBusy)
-                }.padding(.vertical, 13)
-                Text("调整范围不会立即扫描，也不会自动选择文件。")
-                    .font(.system(size: 11)).foregroundStyle(palette.muted).padding(.top, 8)
-            }
-        } actions: {
-            Spacer()
-            Button("完成", action: model.closeDialog).buttonStyle(WBButtonStyle(primary: true))
-        }.accessibilityIdentifier("space-cleaning-scope-dialog")
-    }
-    private func scopeChoice(_ choice: CleaningScopeChoice, title: String, subtitle: String) -> some View {
-        VStack(spacing: 0) {
-            Rectangle().fill(palette.line).frame(height: 1)
-            SpaceCleaningChoiceRow(title: title, subtitle: subtitle, selected: model.scopeChoice == choice, disabled: model.isBusy) { model.selectScope(choice) }
-        }
+        Text("扫描范围已移至独立编辑页面")
     }
     private func purposeDialog(_ id: UUID) -> some View {
         let file = model.items.first { $0.id == id }

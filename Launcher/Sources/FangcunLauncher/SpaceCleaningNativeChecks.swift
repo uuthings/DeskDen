@@ -86,74 +86,71 @@ import LauncherCore
             for theme in LauncherTheme.allCases {
                 owner.configuration.settings.workbenchTheme = theme; app.syncAppearance()
                 _ = await settle(window) { exists("space-cleaning-start", in: host) }
-                check(app.theme == theme && exists("space-cleaning-disk", in: host), "\(theme.rawValue) cleaning inherits the shared theme and readable disk header")
+                check(app.theme == theme && exists("space-cleaning-start", in: host), "\(theme.rawValue) cleaning inherits the shared theme and readable disk header")
+                try capture(host: host, name: "theme-" + theme.rawValue, output: output)
             }
             owner.configuration.settings.workbenchTheme = .qingbiMist; app.syncAppearance()
             cleaning.startScan()
             check(cleaning.screen == .scanning && cleaning.selectedCount == 0, "explicit scan begins without selecting any candidate")
             await cleaning.waitUntilIdle()
-            _ = await settle(window) { exists("space-cleaning-group-protected", in: host) }
-            check(cleaning.screen == .results && cleaning.selectedCount == 0 && cleaning.checkedCount > 0,
-                  "real isolated scan publishes checked entries with zero automatic selections")
-            check(cleaning.items.allSatisfy { $0.url.path.hasPrefix(home.path + "/") }, "injected home keeps recommended scanning out of actual user directories")
-            check(Set(cleaning.items.map(\.group)) == Set(CleaningResultGroup.allCases), "isolated cache, download and release fixtures populate all three real result groups")
-            check(["rebuildable", "review", "protected"].allSatisfy { exists("space-cleaning-group-" + $0, in: host) }, "production results expose all three classified group controls")
-            check(cleaning.expandedGroup == nil, "a completed scan starts with all three result groups collapsed")
+            _ = await settle(window) { exists("space-cleaning-result-list", in: host) }
+            check(cleaning.screen == .results && cleaning.selectedCount == 1 && cleaning.selectedItems.allSatisfy { $0.group == .rebuildable },
+                  "real scan selects only positively identified rebuildable cache by default")
+            check(cleaning.items.allSatisfy { $0.url.path.hasPrefix(home.path + "/") }, "global fixture scanning stays inside the injected home")
+            check(Set(cleaning.items.map(\.group)) == Set(CleaningResultGroup.allCases), "real scanner retains distinct protection and review classifications")
+            check(exists("space-cleaning-rescan", in: host) && exists("space-cleaning-edit-scope", in: host), "rescan and scope editing remain visible in the results header")
             try capture(host: host, name: "results-window", output: output)
+            cleaning.screen = .scanning
+            _ = await settle(window) { exists("space-cleaning-scan", in: host) }
+            try capture(host: host, name: "scan-layout", output: output)
+            check(!cleaning.animationActive, "reduced motion pauses the scan illustration")
+            cleaning.screen = .results
+            _ = await settle(window) { exists("space-cleaning-result-list", in: host) }
             guard let item = cleaning.items.first(where: { $0.url == download && $0.isSelectable }) else { throw SpaceCleaningFixtureError.invalid("download candidate unavailable") }
-            guard let page = pageScroll(in: host) else { throw SpaceCleaningFixtureError.invalid("production page scroll missing") }
-            let viewport = visiblePageFrame(page, in: host)
-            check(frame("space-cleaning-selection-footer", in: host).map { $0.minY > viewport.minY + 10 } == true,
-                  "short results keep the selection footer inside their natural surface")
+            cleaning.clearSelection(); cleaning.toggleItem(item.id)
+            guard let page = pageScroll(in: host) else { throw SpaceCleaningFixtureError.invalid("internal result scroll missing") }
             let sidebarBefore = frame("workbench-sidebar", in: host)
-            cleaning.toggleGroup(.review); cleaning.toggleItem(item.id)
-            _ = await settle(window) { (page.documentView?.bounds.height ?? 0) > page.contentView.bounds.height * 2 }
-            move(page, fraction: 0.45)
-            _ = await settle(window) {
-                frame("space-cleaning-selection-footer", in: host).map { abs($0.minY - viewport.minY) < 3 } == true
-            }
-            check(frame("space-cleaning-selection-footer", in: host).map { abs($0.minY - viewport.minY) < 3 && $0.height >= 66 } == true,
-                  "long results pin the same selection footer to the document viewport while scrolling")
-            check(enabled("space-cleaning-review-continue", in: host) == true && frame("space-cleaning-review-continue", in: host).map(viewport.contains) == true,
-                  "the selected-file action remains visible and enabled after scrolling the long list")
-            check(frame("workbench-sidebar", in: host) == sidebarBefore && objects(host).compactMap { $0 as? NSScrollView }.count == 1,
-                  "sticky selection preserves the fixed native shell and the single page scroll view")
-            try capture(host: host, name: "results-long-list-scrolled", output: output)
-            for (name, size) in sizes.dropFirst() {
-                window.setContentSize(size)
-                _ = await settle(window) { host.bounds.size == size }
-                move(page, fraction: 0.45)
-                _ = await settle(window) {
-                    let visible = visiblePageFrame(page, in: host)
-                    return frame("space-cleaning-selection-footer", in: host).map { abs($0.minY - visible.minY) < 3 } == true
-                }
-                let visible = visiblePageFrame(page, in: host)
-                print("DETAIL sticky \(name) viewport=\(visible) footer=\(String(describing: frame("space-cleaning-selection-footer", in: host))) action=\(String(describing: frame("space-cleaning-review-continue", in: host))) clip=\(page.contentView.bounds)")
-                check(frame("space-cleaning-selection-footer", in: host).map { abs($0.minY - visible.minY) < 3 } == true &&
-                      frame("space-cleaning-review-continue", in: host).map(visible.contains) == true,
-                      "\(name) long results keep the selection and continue action in the current viewport")
-                try capture(host: host, name: "results-long-list-" + name, output: output)
-            }
-            window.setContentSize(NSSize(width: 1120, height: 758))
-            move(page, fraction: 0); cleaning.toggleGroup(.review); cleaning.toggleItem(item.id)
-            _ = await settle(window) { cleaning.selectedCount == 0 && exists("space-cleaning-group-protected", in: host) }
+            let surfaceBefore = frame("space-cleaning-results-surface", in: host)
+            let footerBefore = frame("space-cleaning-selection-footer", in: host)
             cleaning.showDetail(item.id)
             _ = await settle(window) { exists("space-cleaning-file-detail", in: host) }
-            check(frame("space-cleaning-file-detail", in: host).map { abs($0.width - 280) < 2 } == true, "normal-window file review uses the approved 280 pt side panel")
-            check(host.bounds.size == NSSize(width: 1120, height: 758), "opening file review cannot grow the native window")
+            check(frame("space-cleaning-file-detail", in: host).map { $0.width > 600 } == true, "file review expands inline across the list instead of opening a popup or side panel")
+            check(frame("space-cleaning-results-surface", in: host) == surfaceBefore && frame("space-cleaning-selection-footer", in: host) == footerBefore,
+                  "expanding a file preserves card geometry and the fixed selection footer")
             try capture(host: host, name: "file-review-window", output: output)
-            window.setContentSize(NSSize(width: 900, height: 620))
-            _ = await settle(window) { exists("space-cleaning-file-detail", in: host) }
-            check(frame("space-cleaning-file-detail", in: host).map { $0.width > 600 } == true, "compact file review reflows within the shared content column")
-            try capture(host: host, name: "file-review-compact", output: output)
-            window.setContentSize(NSSize(width: 1120, height: 758)); cleaning.closeDetail()
-            cleaning.toggleItem(item.id); cleaning.method = .permanent; cleaning.requestConfirmation()
+            for (name, size) in sizes {
+                window.setContentSize(size)
+                _ = await settle(window) { host.bounds.size == size }
+                let footer = frame("space-cleaning-selection-footer", in: host)
+                move(page, fraction: 0.55)
+                _ = await settle(window) { frame("space-cleaning-selection-footer", in: host) == footer }
+                check(frame("space-cleaning-selection-footer", in: host) == footer && enabled("space-cleaning-review-continue", in: host) == true,
+                      "\(name) scrolling the results keeps the enabled review action fixed")
+                check(objects(host).compactMap { $0 as? NSScrollView }.filter { !$0.isHiddenOrHasHiddenAncestor }.count == 1,
+                      "\(name) has only an internal result scroll, no outer Content scrollbar")
+                try capture(host: host, name: "results-scrolled-" + name, output: output)
+            }
+            window.setContentSize(NSSize(width: 1120, height: 758))
+            _ = await settle(window) { host.bounds.width == 1120 }
+            check(frame("workbench-sidebar", in: host) == sidebarBefore, "result interactions preserve the existing shell navigation geometry")
+            let selectedBefore = cleaning.selectedIDs
+            cleaning.editScope(custom: true)
+            _ = await settle(window) { exists("space-cleaning-scope-editor", in: host) }
+            check(cleaning.draftDirectories.isEmpty && enabled("space-cleaning-apply-scope", in: host) == false,
+                  "empty custom scope cannot replace an existing scan")
+            cleaning.addDraftDirectories([home.appendingPathComponent("Downloads"), home.appendingPathComponent("Developer")])
+            _ = await settle(window) { enabled("space-cleaning-apply-scope", in: host) == true }
+            try capture(host: host, name: "custom-scope", output: output)
+            cleaning.cancelScope()
+            check(cleaning.screen == .results && cleaning.selectedIDs == selectedBefore && cleaning.scopeChoice == .global,
+                  "cancelling the scope draft preserves the existing results and selection")
+            cleaning.closeDetail(); cleaning.method = .permanent; cleaning.requestConfirmation()
             _ = await settle(window) { exists("space-cleaning-confirm-execute", in: host) }
             check(enabled("space-cleaning-confirm-execute", in: host) == false && !cleaning.acknowledgement,
                   "permanent confirmation is visibly disabled before explicit acknowledgement")
             cleaning.executeConfirmed(permanent: true, remember: false)
             check(manager.fileExists(atPath: download.path) && cleaning.dialog == .confirm && !cleaning.isBusy,
-                  "model also rejects unacknowledged permanent deletion independently of disabled UI")
+                  "model independently rejects unacknowledged permanent deletion")
             cleaning.acknowledgement = true
             _ = await settle(window) { enabled("space-cleaning-confirm-execute", in: host) == true }
             check(enabled("space-cleaning-confirm-execute", in: host) == true, "acknowledgement enables the mounted permanent action")
@@ -163,12 +160,19 @@ import LauncherCore
 
             cleaning.method = .trash; cleaning.requestConfirmation(); cleaning.executeConfirmed(permanent: false, remember: false)
             await cleaning.waitUntilIdle()
-            _ = await settle(window) { cleaning.screen == .finished }
+            _ = await settle(window) { cleaning.screen == .start }
             guard let batch = cleaning.currentBatch, let record = batch.items.first(where: \.canRestore) else { throw SpaceCleaningFixtureError.invalid("isolated Trash transaction produced no recoverable record") }
             check(!manager.fileExists(atPath: download.path) && record.resultURL.map { $0.path.hasPrefix(root.path + "/Trash/") } == true,
                   "real transaction moves only the selected fixture into the injected temporary Trash")
             check(manager.fileExists(atPath: otherDownload.path) && manager.fileExists(atPath: release.path),
                   "unselected download and protected release materials remain untouched")
+            _ = await settle(window) { exists("space-cleaning-completion-receipt", in: host) }
+            check(exists("space-cleaning-start", in: host) && exists("space-cleaning-completion-receipt", in: host), "cleanup returns to the home launch surface with a compact result receipt")
+            try capture(host: host, name: "home-after-cleaning", output: output)
+            window.setContentSize(NSSize(width: 900, height: 620))
+            _ = await settle(window) { exists("space-cleaning-start", in: host) }
+            try capture(host: host, name: "home-after-cleaning-compact", output: output)
+            window.setContentSize(NSSize(width: 1120, height: 758))
             cleaning.showHistory()
             await cleaning.waitUntilIdle()
             _ = await settle(window) { exists("space-cleaning", in: host) }
