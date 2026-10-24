@@ -80,8 +80,49 @@ import LauncherCore
                 check(frame("workbench-sidebar", in: host).map { abs($0.width - metrics.sidebarWidth) < 2 } == true,
                       "\(name) cleaning preserves the production sidebar width")
                 check(host.bounds.size == size, "\(name) cleaning keeps the native viewport size")
+                for result in homeLayoutChecks(in: host) { check(result.0, "\(name) global home " + result.1) }
                 try capture(host: host, name: "start-\(name)", output: output)
             }
+            cleaning.editScope(custom: true)
+            cleaning.addDraftDirectories([home.appendingPathComponent("Downloads")]); cleaning.applyScope()
+            for (name, size) in sizes {
+                window.setContentSize(size)
+                _ = await settle(window) { exists("space-cleaning-location-Downloads", in: host) }
+                check(cleaning.scopeChoice == .custom && cleaning.customDirectories.count == 1 &&
+                      exists("space-cleaning-home-locations", in: host) && exists("space-cleaning-location-Downloads", in: host),
+                      "\(name) custom home displays its selected folder as a location card")
+                for result in homeLayoutChecks(in: host) { check(result.0, "\(name) custom home " + result.1) }
+                try capture(host: host, name: "home-custom-\(name)", output: output)
+            }
+            // Layout-only locations are siblings of Home, so they cannot change
+            // the later global scan fixture or its classification counts.
+            let locationsRoot = root.appendingPathComponent("HomeLayoutLocations")
+            let locationNames = [
+                "A Sample Folder With A Deliberately Long Name For Checking Directory Card Truncation",
+                "Build Output", "Design Assets", "Media Export", "Project Snapshots", "Reference Files", "Temporary Samples"
+            ]
+            let locations = locationNames.map { locationsRoot.appendingPathComponent($0) }
+            for location in locations { try manager.createDirectory(at: location, withIntermediateDirectories: true) }
+            cleaning.editScope(custom: true)
+            for location in cleaning.draftDirectories { cleaning.removeDraftDirectory(location) }
+            cleaning.addDraftDirectories(locations); cleaning.applyScope()
+            for (name, size) in sizes {
+                window.setContentSize(size)
+                _ = await settle(window) { exists("space-cleaning-location-" + locationNames[0], in: host) }
+                check(cleaning.customDirectories.count == locations.count && exists("space-cleaning-manage-locations", in: host) &&
+                      exists("space-cleaning-location-" + locationNames[0], in: host),
+                      "\(name) multiple-location home retains every selected directory and displays its long-name card")
+                for result in homeLayoutChecks(in: host) { check(result.0, "\(name) multiple-location home " + result.1) }
+                try capture(host: host, name: "home-multiple-\(name)", output: output)
+            }
+            cleaning.selectScope(.global)
+            // Restore the original empty custom draft for the existing scope
+            // cancellation checks, without scanning the layout-only directories.
+            cleaning.editScope()
+            for location in cleaning.draftDirectories { cleaning.removeDraftDirectory(location) }
+            cleaning.applyScope()
+            check(cleaning.scopeChoice == .global && cleaning.customDirectories.isEmpty && cleaning.items.isEmpty && !cleaning.isBusy,
+                  "home layout scenarios restore the original global scan without scanning their extra directories")
             window.setContentSize(NSSize(width: 1120, height: 758))
             for theme in LauncherTheme.allCases {
                 owner.configuration.settings.workbenchTheme = theme; app.syncAppearance()
@@ -193,6 +234,7 @@ import LauncherCore
             try capture(host: host, name: "home-after-cleaning", output: output)
             window.setContentSize(NSSize(width: 900, height: 620))
             _ = await settle(window) { exists("space-cleaning-start", in: host) }
+            for result in homeLayoutChecks(in: host) { check(result.0, "compact post-cleanup home " + result.1) }
             try capture(host: host, name: "home-after-cleaning-compact", output: output)
             window.setContentSize(NSSize(width: 1120, height: 758))
             cleaning.showHistory()
@@ -252,6 +294,28 @@ import LauncherCore
     private static func enabled(_ identifier: String, in root: NSView) -> Bool? {
         guard let object = element(identifier, in: root), object.responds(to: NSSelectorFromString("isAccessibilityEnabled")) else { return nil }
         return object.value(forKey: "accessibilityEnabled") as? Bool
+    }
+    private static func homeRulesStayWithCard(in host: NSView) -> Bool {
+        guard let surface = frame("space-cleaning-home-surface", in: host),
+              let rules = frame("space-cleaning-rules-link", in: host) else { return false }
+        // AX frames are in screen coordinates, where the lower edge has minY.
+        let gap = surface.minY - rules.maxY
+        return gap >= -1 && gap <= 35
+    }
+    private static func homeLayoutChecks(in host: NSView) -> [(Bool, String)] {
+        let intro = frame("space-cleaning-home-intro", in: host)
+        let actions = frame("space-cleaning-home-actions", in: host)
+        let gap = intro.flatMap { upper in actions.map { upper.minY - $0.maxY } }
+        let module = frame("space-cleaning", in: host)
+        let start = frame("space-cleaning-start", in: host)
+        let buttonContained = module.flatMap { outer in start.map { outer.insetBy(dx: -1, dy: -1).contains($0) } } ?? false
+        return [
+            (homeRulesStayWithCard(in: host), "keeps the rules link within 35 pt of the card"),
+            (gap.map { $0 >= -1 && $0 <= 36 } ?? false, "keeps the intro and scan actions within 36 pt"),
+            (buttonContained, "keeps the scan button inside the visible module"),
+            (frame("space-cleaning-home-heading", in: host).map { $0.height >= 44 } ?? false,
+             "keeps both lines of the home heading visible")
+        ]
     }
     private static func selectionAligned(item: UUID, in host: NSView) -> Bool {
         guard let header = frame("space-cleaning-select-visible", in: host),
