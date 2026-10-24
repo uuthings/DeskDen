@@ -80,14 +80,12 @@ enum HealthCenterEvidenceDisplay {
     @Published var includeCache = true
     @Published var includeDiagnostics = true
     @Published var includeMemory = true
-    @Published var reportExpanded = false
+    @Published var scoreDetail: DeviceHealthFactor?
     @Published private(set) var storageError: String?
     @Published private(set) var waitingForFreshSample = false
     @Published private(set) var assessmentOutcome: HealthCenterAssessmentOutcome = .none
     @Published private(set) var resultKind: HealthCenterResultKind = .files
     @Published private(set) var isSpaceCleaning = false
-    /// The shell owns the actual return route/detail; this label survives module navigation.
-    var returnContext = "首页"
     weak var hostWindow: NSWindow?
     #if DEBUG
     var historyNavigationInspection: HealthHistoryNavigationInspection?

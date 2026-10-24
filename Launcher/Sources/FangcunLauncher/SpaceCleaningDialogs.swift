@@ -29,7 +29,7 @@ struct SpaceCleaningDialogContent: View {
         }
     }
     private var scopeDialog: some View {
-        Text("扫描范围已移至独立编辑页面")
+        Text("扫描范围可在空间清理首页直接设置")
     }
     private func purposeDialog(_ id: UUID) -> some View {
         let file = model.items.first { $0.id == id }

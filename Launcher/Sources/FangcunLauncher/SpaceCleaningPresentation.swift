@@ -45,6 +45,30 @@ struct CleaningItemDisplay: Identifiable {
     var needsSuggestionReview: Bool {
         isSelectable && [.installerPackage, .downloadedDiskImage, .oldDiagnostic].contains(kind)
     }
+    var protectionTitle: String? {
+        guard group == .protected else { return nil }
+        if needsPurposeConfirmation { return "可确认用途" }
+        if !sizeIsComplete { return "核验未完成" }
+        switch kind {
+        case .releaseArchive, .releaseMaterial: return "发布材料"
+        case .runningApplication: return "正在使用"
+        case .installedApplication: return "已安装应用"
+        case .cloudPlaceholder: return "云端占位"
+        default: return "保持保留"
+        }
+    }
+    var protectionGuidance: String? {
+        guard group == .protected else { return nil }
+        if needsPurposeConfirmation { return "若这是本地测试副本，可点「确认测试用途」。重新核验通过后会移到其他文件，由你勾选。" }
+        if !sizeIsComplete { return "当前未完成内容核验，不能解除保护；可缩小扫描范围后重新检查。" }
+        switch kind {
+        case .releaseArchive, .releaseMaterial: return "发布原件及关联材料在清理中保持保护，不提供一键解除；签名或公证本身不是这条保护规则的依据。"
+        case .runningApplication: return "退出相关应用或结束构建后重新扫描，使用状态解除后会重新判断。"
+        case .installedApplication: return "这是已安装应用，不能通过空间清理解除保护；如需移除，应使用应用卸载流程。"
+        case .unknownApplication, .unknownArchive: return "包内容未通过测试副本核验，当前不能解除保护。"
+        default: return "这类内容不提供直接解除保护；具体原因以上方说明为准。"
+        }
+    }
 }
 
 struct CleaningHistoryItemDisplay: Identifiable {

@@ -150,7 +150,7 @@ struct WorkbenchRootView: View {
                     switch model.route {
                     case .overview: WorkbenchOverview(device: model.device, calendar: model.calendar, health:model.health,context:model.context,navigate:model.navigate,openHealth:model.openHealth,openDevice:model.openDeviceReading)
                     case .device: EmptyView()
-                    case .health: HealthCenterView(model:model.health,onReadDevice:model.openHealthReading,onBack:model.returnFromHealth,onOpenCleaning:{model.navigate(.cleaning)})
+                    case .health: HealthCenterView(model:model.health,onReadDevice:model.openHealthReading,onOpenCleaning:{model.navigate(.cleaning)})
                     case .cleaning: EmptyView()
                     case .calendar: CalendarModuleView(model: model.calendar,context:model.context,returnToSettingsPrivacy:{model.navigate(.settings);model.settingsTab = .privacy})
                     case .network: EmptyView()
