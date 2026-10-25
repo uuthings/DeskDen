@@ -62,7 +62,7 @@ struct WorkbenchModalHost: View {
         GeometryReader { viewport in
             if let presentation = coordinator.top {
                 ZStack {
-                    Color(red: 0.086, green: 0.153, blue: 0.259).opacity(0.33)
+                    Color.black.opacity(palette.light ? 0.12 : 0.18)
                         .contentShape(Rectangle()).onTapGesture { coordinator.dismissTop() }
                     ForEach(coordinator.presentations) { item in
                     item.content
@@ -159,15 +159,19 @@ extension View {
 /// Overlay scrollers never reserve document width. Keep the policy active
 /// across SwiftUI disabled/modal transitions and system scrollbar preferences.
 struct WorkbenchOverlayScrollbars: View {
+    @Environment(\.colorScheme) private var scheme
+    private var light: Bool { scheme == .light }
     var body: some View {
-        WorkbenchScrollbarConfigurationProbe().frame(width: 0, height: 0)
+        WorkbenchScrollbarConfigurationProbe(light: light).frame(width: 0, height: 0)
             .allowsHitTesting(false).accessibilityHidden(true)
     }
 }
 private struct WorkbenchScrollbarConfigurationProbe: NSViewRepresentable {
-    func makeNSView(context: Context) -> Probe { Probe() }
-    func updateNSView(_ view: Probe, context: Context) { view.configure() }
+    let light: Bool
+    func makeNSView(context: Context) -> Probe { let view = Probe(); view.light = light; return view }
+    func updateNSView(_ view: Probe, context: Context) { view.light = light; view.configure() }
     final class Probe: NSView {
+        var light = false
         private weak var ownerScroll: NSScrollView?
         private var styleObservation: NSKeyValueObservation?
         private var scrollerObservation: NSKeyValueObservation?
@@ -199,6 +203,8 @@ private struct WorkbenchScrollbarConfigurationProbe: NSViewRepresentable {
             if scroll.scrollerStyle != .overlay { scroll.scrollerStyle = .overlay }
             if !scroll.autohidesScrollers { scroll.autohidesScrollers = true }
             scroll.drawsBackground = false
+            scroll.scrollerKnobStyle = light ? .dark : .light
+            scroll.scrollerInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         }
     }
 }

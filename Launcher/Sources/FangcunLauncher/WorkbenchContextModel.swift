@@ -253,7 +253,7 @@ enum WorkbenchCityCatalog {
     }
 }
 
-private struct WorkbenchWeatherDialog:View {
+struct WorkbenchWeatherDialog:View {
     @ObservedObject var model:WorkbenchContextModel
     @ObservedObject var close:WorkbenchDraftCloseCoordinator
     @State private var draft:WorkbenchWeatherDraft
@@ -289,7 +289,7 @@ private struct WorkbenchWeatherDialog:View {
                             ForEach(results) {item in
                                 Button {select(item)} label:{
                                     HStack(spacing:10) {
-                                        Image(systemName:"mappin").foregroundStyle(palette.muted).frame(width:16)
+                                        Image(systemName:"building.2.crop.circle").font(.system(size:22,weight:.light)).foregroundStyle(palette.secondary).frame(width:28,height:28)
                                         VStack(alignment:.leading,spacing:3) {Text(item.name).font(.system(size:12));Text([item.administrativeArea,item.country].compactMap{$0}.joined(separator:" · ")).font(.system(size:10)).foregroundStyle(palette.muted)}
                                         Spacer(minLength:6)
                                         if item.id == city?.id {Image(systemName:"checkmark").foregroundStyle(palette.accent)}
@@ -304,8 +304,8 @@ private struct WorkbenchWeatherDialog:View {
                                     .font(.system(size:11)).foregroundStyle(palette.muted).lineSpacing(4)
                                     .frame(maxWidth:.infinity,minHeight:100)
                             }
-                        }.background(WorkbenchOverlayScrollbars())
-                    }.frame(height:144).scrollBounceBehavior(.basedOnSize)
+                        }.padding(.trailing,12).background(WorkbenchOverlayScrollbars())
+                    }.frame(height:176).scrollBounceBehavior(.basedOnSize)
                         .accessibilityIdentifier("context-city-results")
                 }
                 if let issue {Text(issue).font(.system(size:11)).foregroundStyle(palette.warning).lineSpacing(4)}

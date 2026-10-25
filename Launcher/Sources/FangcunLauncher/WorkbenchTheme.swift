@@ -42,8 +42,8 @@ struct ThemePalette: Sendable {
     var line: Color { light ? token(ar ? 0x1F5D7C : 0x706445, 0.18) : token(ar ? 0xC2EDFF : 0xDED5BF, ar ? 61 / 255.0 : 54 / 255.0) }
     var primary: Color { theme.isMountain ? accent : token(light ? (ar ? 0x175F7B : 0x8A642C) : (ar ? 0x97EDFF : 0xDFBB80)) }
     var primaryText: Color { light ? .white : token(themed(ar ? 0x06415A : 0x2B2923, 0x103B32, 0x252C51, 0x483127)) }
-    // Floating surfaces remain neutral; accents identify actions, not the panel.
-    var overlay: Color { token(light ? 0xF5F6F8 : 0x20262E, min(0.98, opacity + 0.24)) }
+    // Floating controls use the same surface and user-selected opacity as cards.
+    var overlay: Color { surface }
     var sidebar: Color { token(themed(light ? (ar ? 0xDAEEF7 : 0xEBE6DB) : (ar ? 0x0C2D45 : 0x181F26), light ? 0xD9EBE0:0x102C28, light ? 0xDEE5F5:0x20273E, light ? 0xEFE1D5:0x30262C), opacity * 0.82) }
     var chrome: Color { token(themed(light ? (ar ? 0xE6F6FC : 0xF2EDDF) : (ar ? 0x11344D : 0x1A2026), light ? 0xE6F4EB:0x17362F, light ? 0xEAF0FC:0x29334D, light ? 0xF9EEE0:0x3B2C31), opacity * 0.66) }
     var shell: Color { token(themed(light ? (ar ? 0xD8EEF7 : 0xEEE6D5) : (ar ? 0x082C46 : 0x12181F), light ? 0xD5EADD:0x0B2821, light ? 0xDDE4F5:0x171F35, light ? 0xF3E1D0:0x2C2226), opacity * 0.34) }
@@ -124,11 +124,11 @@ struct WorkbenchMaterialSurface: View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         ZStack {
             if kind == .card || kind == .panel || kind == .selected {
-                WorkbenchBackdropBlur().opacity(kind == .panel ? 0.24 : 0.14)
+                WorkbenchBackdropBlur().opacity(0.14)
             }
             switch kind {
             case .card: shape.fill(palette.surfaceGradient)
-            case .panel: shape.fill(palette.overlay)
+            case .panel: shape.fill(palette.surfaceGradient)
             case .chrome: shape.fill(palette.chrome)
             case .sidebar: shape.fill(palette.sidebar)
             case .shell: shape.fill(palette.shell)

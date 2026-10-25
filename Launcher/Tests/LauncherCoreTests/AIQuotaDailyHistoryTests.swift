@@ -107,4 +107,29 @@ final class AIQuotaDailyHistoryTests: XCTestCase {
         XCTAssertEqual(history.series.map(\.durationMinutes), [300])
         XCTAssertEqual(history.series.first?.days.compactMap(\.reading).first?.window.usedPercent, 22)
     }
+    func testDailyTokensDeduplicateAndKeepProvidersMissingAndZeroDistinct() {
+        let timestamp = date("2026-10-25T12:00:00Z")
+        let record = AITokenRecord(id: "one", provider: .codex, timestamp: timestamp,
+            model: "fixture", tokens: .init(input: 100, output: 20, cacheRead: 30, cacheWrite: 4))
+        var other = record; other.provider = .claude
+        let zero = AITokenRecord(id: "zero", provider: .codex, timestamp: date("2026-10-24T12:00:00Z"), model: "fixture", tokens: .init())
+        let result = AIDailyTokenHistory.totals([record, record, other, zero], provider: .codex,
+            now: date("2026-10-25T18:00:00Z"), calendar: calendar)
+        XCTAssertEqual(result[calendar.startOfDay(for: timestamp)]?.total, 154)
+        XCTAssertEqual(result[calendar.startOfDay(for: zero.timestamp)]?.total, 0)
+        XCTAssertNil(result[calendar.startOfDay(for: date("2026-10-23T12:00:00Z"))])
+        XCTAssertEqual(result.count, 2)
+    }
+
+    func testDailyTokensRespectLocalMidnightDSTAndRetainedRange() {
+        let records = ["2026-03-08T04:59:00Z", "2026-03-08T05:00:00Z", "2026-03-09T03:59:00Z", "2026-03-09T04:00:00Z", "2026-02-01T12:00:00Z", "2026-03-10T12:00:00Z"].enumerated().map { index, time in
+            AITokenRecord(id: String(index), provider: .codex, timestamp: date(time), model: "fixture", tokens: .init(input: 1))
+        }
+        let result = AIDailyTokenHistory.totals(records, provider: .codex, now: date("2026-03-09T12:00:00Z"), calendar: calendar)
+        XCTAssertEqual(result[calendar.startOfDay(for: records[0].timestamp)]?.total, 1)
+        XCTAssertEqual(result[calendar.startOfDay(for: records[1].timestamp)]?.total, 2)
+        XCTAssertEqual(result[calendar.startOfDay(for: records[3].timestamp)]?.total, 1)
+        XCTAssertEqual(result.count, 3)
+    }
+
 }

@@ -81,3 +81,21 @@ public struct AIQuotaDailyHistory: Equatable, Sendable {
         return .init(startDate: first, endDate: today, days: days, series: series)
     }
 }
+
+/// Daily token metadata is independent from account quota snapshots. An absent
+/// day stays nil: a directory scan does not establish whole-account coverage.
+public enum AIDailyTokenHistory {
+    public static func totals(_ records: [AITokenRecord], provider: AIProvider,
+                              now: Date = Date(), calendar: Calendar = .current,
+                              dayCount: Int = 31) -> [Date: AITokenCounts] {
+        guard (1...366).contains(dayCount),
+              let first = calendar.date(byAdding: .day, value: 1 - dayCount, to: calendar.startOfDay(for: now)) else { return [:] }
+        var result: [Date: AITokenCounts] = [:]
+        for record in AIUsageAggregation.deduplicate(records) where record.provider == provider &&
+            record.timestamp >= first && record.timestamp <= now {
+            let day = calendar.startOfDay(for: record.timestamp)
+            result[day] = (result[day] ?? AITokenCounts()) + record.tokens
+        }
+        return result
+    }
+}

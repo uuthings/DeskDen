@@ -159,7 +159,7 @@ import SwiftUI
         }
         guard let scroll = descendants(host).compactMap({ $0 as? NSScrollView }).max(by: { $0.bounds.width < $1.bounds.width }),
               let document = scroll.documentView else {
-            check(false, "daily heatmap is hosted in the actual page scroller"); return (count, failures)
+            check(false, "daily bar chart is hosted in the actual page scroller"); return (count, failures)
         }
         let originalOrigin = scroll.contentView.bounds.origin
         let previousPointer = CGEvent(source: nil)?.location
@@ -201,16 +201,18 @@ import SwiftUI
                 guard day.isInRange, let frame = inspection.frame(dailyCellID(provider, duration: series.durationMinutes, day: day.date)) else { return nil }
                 return (index, day, frame)
             }
-            check(grid.map { abs($0.width - 554) < 0.5 } == true && mounted.count == 31 &&
-                  mounted.allSatisfy { abs($0.2.width - 14) < 0.5 && abs($0.2.height - 14) < 0.5 },
-                  "\(series.title) renders fixed 14 by 14 pt squares in a left-aligned 31-day intensity strip")
+            check(grid.map { $0.width > 500 && abs($0.height - 88) < 0.5 } == true && mounted.count == 31 &&
+                  mounted.allSatisfy { $0.2.width > 8 && abs($0.2.height - 88) < 0.5 },
+                  "\(series.title) has 31 date columns on a responsive 88 pt bar plot")
             check(grid.map { bounds in mounted.allSatisfy { index, _, cell in
-                abs(cell.minX - bounds.minX - CGFloat(index) * 18) < 0.5 &&
+                abs(cell.minX - bounds.minX - CGFloat(index) * (bounds.width + 5) / 31) < 0.5 &&
                     abs(bounds.maxY - cell.maxY) < 0.5
-            } } == true, "\(series.title) daily cells progress continuously left to right with 4 pt gaps and no calendar rows")
-            check(inspection.frame("fc.ai.history." + provider.rawValue + ".section").flatMap { section in
-                grid.map { abs($0.minX - section.minX - 14) < 0.5 }
-            } == true, "\(series.title) intensity strip starts at the shared card content inset instead of centering itself")
+            } } == true, "\(series.title) daily bars have a common baseline and 5 pt gaps")
+            check(mounted.allSatisfy { _, day, _ in
+                let bar = inspection.frame(prefix + ".bar." + String(Int(day.date.timeIntervalSince1970)))
+                guard let amount = day.reading?.window.usedPercent else { return bar == nil }
+                return bar.map { abs($0.height - max(2, 88 * amount / 100)) < 0.5 } == true
+            }, "\(series.title) paints real percentage heights, distinct zero marks and absent bars for missing readings")
             check(series.days.filter { !$0.isInRange }.allSatisfy {
                 inspection.frame(dailyCellID(provider, duration: series.durationMinutes, day: $0.date)) == nil
             }, "\(series.title) week-alignment padding creates no false observed or missing day cells")
@@ -223,17 +225,16 @@ import SwiftUI
                 }
             }
             check(labelsMatch, "\(series.title) exposes actual observations and missing days as distinct accessible states")
-            print("DETAIL daily heatmap \(label) duration=\(series.durationMinutes) grid=\(String(describing: grid)) cells=\(mounted.count) observedDays=\(series.observedDayCount)")
+            print("DETAIL daily bar chart \(label) duration=\(series.durationMinutes) grid=\(String(describing: grid)) cells=\(mounted.count) observedDays=\(series.observedDayCount)")
         }
         if provider == .claude, let short = history.series.first(where: { $0.durationMinutes == 300 }),
            let zero = short.days.first(where: { $0.reading?.window.usedPercent == 0 }),
            let missing = short.days.first(where: { $0.isInRange && $0.reading == nil }),
            let zeroFrame = inspection.frame(dailyCellID(provider, duration: 300, day: zero.date)),
-           let missingFrame = inspection.frame(dailyCellID(provider, duration: 300, day: missing.date)) {
-            let zeroColor = dailyCellColor(zeroFrame, host: host, window: window)
-            let missingColor = dailyCellColor(missingFrame, host: host, window: window)
-            check(zeroColor.flatMap { a in missingColor.map { b in abs(a.redComponent - b.redComponent) + abs(a.greenComponent - b.greenComponent) + abs(a.blueComponent - b.blueComponent) > 0.02 } } == true,
-                  "a real observed 0% paints a different cell surface from a missing observation")
+           inspection.frame(dailyCellID(provider, duration: 300, day: missing.date)) != nil {
+            check(inspection.frame("fc.ai.history.claude.300.bar." + String(Int(zero.date.timeIntervalSince1970))).map { abs($0.height - 2) < 0.5 } == true &&
+                  inspection.frame("fc.ai.history.claude.300.bar." + String(Int(missing.date.timeIntervalSince1970))) == nil,
+                  "a real observed zero paints a baseline mark while a missing observation has no bar")
             let primaryTop = NSScreen.screens.first?.frame.maxY ?? 0
             CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
                 mouseCursorPosition: CGPoint(x: zeroFrame.midX, y: primaryTop - zeroFrame.midY), mouseButton: .left)?.post(tap: .cghidEventTap)
@@ -245,17 +246,17 @@ import SwiftUI
             // the explicit day descriptions expose AXLabel. A containing
             // accessibility group may join the caption's two visible lines.
             // Check the actual visible text fields, never the day's help text.
-            let captionFields = dailyCaptionText(in: host).filter { normalizedDailyCaption($0.text).contains("· 窗口已用") }
+            let captionFields = dailyCaptionText(in: host).filter { normalizedDailyCaption($0.text).contains("窗口已用") }
             print("DETAIL daily hover \(label) expected=\(String(reflecting: expectedCaption)) actual=" +
                 captionFields.prefix(12).map { $0.field + "=" + String(reflecting: $0.text) }.joined(separator: " | "))
             check(showsObservation, "hovering a daily cell shows that day's last real observation rather than an inferred daily total")
             let after = inspection.frame(dailyCellID(provider, duration: 300, day: zero.date))
             check(after.map { abs($0.minX - zeroFrame.minX) < 0.5 && abs($0.minY - zeroFrame.minY) < 0.5 && abs($0.width - zeroFrame.width) < 0.5 && abs($0.height - zeroFrame.height) < 0.5 } == true,
-                  "daily hover leaves the actual square and neighboring calendar layout stable")
+                  "daily hover leaves the bar target and neighboring date columns stable")
         }
         if ProcessInfo.processInfo.environment["FANGCUN_HOVER_VISUAL_DIR"] != nil {
             check(captureDailyHistory(host, name: provider.rawValue + "-" + String(Int(pageWidth))),
-                  "daily heatmap exports its mounted synthetic provider page screenshot")
+                  "daily bar chart exports its mounted synthetic provider page screenshot")
         }
         return (count, failures)
     }
@@ -295,7 +296,7 @@ import SwiftUI
             try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
             try png.write(to: output.appendingPathComponent("ai-daily-heatmap-" + name + ".png"))
             return true
-        } catch { print("DETAIL AI daily heatmap capture: " + error.localizedDescription); return false }
+        } catch { print("DETAIL AI daily bar chart capture: " + error.localizedDescription); return false }
     }
     private static func checkOverviewQuotaGeometry(host: NSView, pageWidth: CGFloat, inspection: AIQuotaLayoutInspection) -> (count: Int, failures: Int) {
         var count = 0, failures = 0

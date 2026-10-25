@@ -632,12 +632,17 @@ struct ClickablePlainButtonStyle: ButtonStyle {
         isReleasedWhenClosed = false; isOpaque = false; backgroundColor = .clear; hasShadow = true
         level = .popUpMenu; animationBehavior = .none; hidesOnDeactivate = true
         let surface = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
-        surface.wantsLayer = true; surface.layer?.backgroundColor = NSColor(palette.overlay).cgColor
-        surface.layer?.cornerRadius = 10; surface.layer?.borderWidth = 1
-        surface.layer?.borderColor = NSColor(palette.line).cgColor
+        surface.wantsLayer = true
+        let material = NSHostingView(rootView: WorkbenchMaterialSurface(kind: .panel, radius: 10)
+            .workbenchThemeEnvironment(theme: anchor.workbenchTheme, opacity: anchor.interfaceOpacity, appearance: anchor.interfaceLight ? .light : .dark))
+        material.frame = surface.bounds; material.autoresizingMask = [.width, .height]
+        surface.addSubview(material)
+        surface.layer?.cornerRadius = 10
+        surface.layer?.masksToBounds = true
         scroller.frame = surface.bounds.insetBy(dx: 4, dy: 4)
         scroller.hasVerticalScroller = true; scroller.scrollerStyle = .overlay; scroller.autohidesScrollers = true
         scroller.drawsBackground = false; scroller.borderType = .noBorder
+        scroller.scrollerKnobStyle = anchor.interfaceLight ? .dark : .light
         list.frame = NSRect(x: 0, y: 0, width: width - 8, height: CGFloat(items.count) * 28)
         for (index, item) in items.enumerated() {
             let row = WBChoiceRow(frame: NSRect(x: 0, y: CGFloat(index) * 28, width: width - 8, height: 28),
@@ -751,5 +756,73 @@ struct ClickablePlainButtonStyle: ButtonStyle {
         let textColor = (active ? palette.nsText : palette.nsSecondary).withAlphaComponent(isEnabled ? 1 : 0.4)
         if chosen { drawSymbol("checkmark", in: NSRect(x: 7, y: 8, width: 12, height: 12), color: palette.nsAccent) }
         drawText(title, in: NSRect(x: 28, y: 6, width: bounds.width - 36, height: 17), size: 12, color: textColor)
+    }
+}
+
+/// Shared chart callout: the pointer terminates on the actual plotted mark.
+/// The surface follows the same theme and opacity as every workbench card.
+struct WBChartCallout<Content: View>: View {
+    let anchor: CGRect
+    let canvas: CGSize
+    let size: CGSize
+    @ViewBuilder let content: () -> Content
+    @Environment(\.workbenchPalette) private var palette
+
+    var body: some View {
+        let placement = WBChartCalloutPlacement(anchor: anchor, canvas: canvas, size: size)
+        ZStack(alignment: .topLeading) {
+            Path { path in
+                path.move(to: placement.tip)
+                path.addLine(to: placement.baseStart)
+                path.addLine(to: placement.baseEnd)
+                path.closeSubpath()
+            }.fill(palette.surfaceGradient)
+            Path { path in
+                path.move(to: placement.baseStart)
+                path.addLine(to: placement.tip)
+                path.addLine(to: placement.baseEnd)
+            }.stroke(palette.border, lineWidth: 1)
+            content().frame(width: placement.frame.width, height: placement.frame.height, alignment: .topLeading)
+                .background(WorkbenchMaterialSurface(kind: .panel, radius: 8))
+                .position(x: placement.frame.midX, y: placement.frame.midY)
+            Circle().fill(palette.accent).frame(width: 5, height: 5)
+                .position(placement.tip)
+        }.allowsHitTesting(false)
+    }
+}
+
+struct WBChartCalloutPlacement {
+    let frame: CGRect
+    let tip: CGPoint
+    let baseStart: CGPoint
+    let baseEnd: CGPoint
+    init(anchor: CGRect, canvas: CGSize, size: CGSize) {
+        let width = min(size.width, max(0, canvas.width))
+        let height = min(size.height, max(0, canvas.height - 10))
+        tip = CGPoint(x: anchor.midX, y: anchor.minY)
+        let above = anchor.minY >= height + 10
+        let below = anchor.minY + 10 + height <= canvas.height
+        if above || below {
+            let x = min(max(anchor.midX - width / 2, 0), max(0, canvas.width - width))
+            let y = above ? anchor.minY - height - 10 : anchor.minY + 10
+            frame = CGRect(x: x, y: y, width: width, height: height)
+            let baseX = min(max(anchor.midX, x + 14), x + width - 14)
+            let edgeY = above ? frame.maxY : frame.minY
+            baseStart = CGPoint(x: baseX - 6, y: edgeY)
+            baseEnd = CGPoint(x: baseX + 6, y: edgeY)
+        } else {
+            // Mid-height marks leave insufficient vertical room. Move beside
+            // the mark so the pointer never points into the bubble itself.
+            let left = anchor.midX > canvas.width / 2
+            let available = max(0, (left ? anchor.midX : canvas.width - anchor.midX) - 10)
+            let fittedWidth = min(width, available)
+            let x = left ? anchor.midX - 10 - fittedWidth : anchor.midX + 10
+            let y = min(max(0, anchor.minY - height / 2), max(0, canvas.height - height))
+            frame = CGRect(x: x, y: y, width: fittedWidth, height: height)
+            let edgeX = left ? frame.maxX : frame.minX
+            let baseY = min(max(anchor.minY, y + 14), y + height - 14)
+            baseStart = CGPoint(x: edgeX, y: baseY - 6)
+            baseEnd = CGPoint(x: edgeX, y: baseY + 6)
+        }
     }
 }
