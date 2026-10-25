@@ -863,7 +863,7 @@ private struct WorkbenchParkedSurface: View {
     let restore: () -> Void
     var body: some View {
         VStack(spacing: 14) {
-            WorkbenchBrandMark().frame(width: 36, height: 36)
+            WorkbenchBrandMark(pointSize: 36)
             Text("工作台正在顶部浮层中显示").font(.system(size: 18, weight: .medium))
             Button("回到此窗口", action: restore).buttonStyle(WBButtonStyle())
         }
@@ -930,13 +930,14 @@ struct WorkbenchUptime:View {
 }
 struct WorkbenchBrandMark:View {
     @ObservedObject private var icons = ApplicationIconController.shared
+    var pointSize: CGFloat = 32
     var body:some View {
         Group {
-            if let image = icons.image(for: icons.selection) {
+            if let image = icons.brandImage(pointSize: pointSize) {
                 Image(nsImage: image).resizable().interpolation(.high).scaledToFit()
             } else {
-                Image(systemName: "square.on.square").resizable().scaledToFit().foregroundStyle(.cyan)
+                Image(systemName: "desktopcomputer").resizable().scaledToFit().foregroundStyle(.secondary)
             }
-        }.shadow(color:.black.opacity(0.2),radius:3,y:2).accessibilityHidden(true)
+        }.frame(width: pointSize, height: pointSize).accessibilityHidden(true)
     }
 }

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+<title id="title">方寸 · 桌面主图标</title><desc id="description">浅暖色底板，空心工作窗口与下方桌面支撑；程序坞与软件内共用。</desc>
+<defs>
+<linearGradient id="surface" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#F7F3EC"/><stop offset="1" stop-color="#EEE8DE"/></linearGradient>
+<filter id="shadow" x="-12%" y="-12%" width="124%" height="132%" color-interpolation-filters="sRGB"><feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#3A342D" flood-opacity=".09"/></filter>
+</defs>
+<rect x="80" y="80" width="864" height="864" rx="192" fill="url(#surface)" filter="url(#shadow)"/>
+<rect x="81.5" y="81.5" width="861" height="861" rx="190.5" fill="none" stroke="#FFFFFF" stroke-opacity=".46" stroke-width="3"/>
+<g fill="none" stroke="#49453F" stroke-linecap="round" stroke-linejoin="round">
+<rect x="324" y="320" width="376" height="216" rx="42" stroke-width="24"/>
+<path d="M282 606H742M330 606V690M694 606V690" stroke-width="26"/>
+</g></svg>

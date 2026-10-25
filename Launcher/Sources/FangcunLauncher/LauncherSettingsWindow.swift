@@ -189,7 +189,7 @@ final class LauncherSettingsWindowController: NSWindowController, NSWindowDelega
         guard let launcher else { return }
         if !embedding {
         let hero = group(height: 122)
-        let icon = NSImageView(frame: NSRect(x: 22, y: 29, width: 64, height: 64)); icon.image = NSImage(named: NSImage.applicationIconName); hero.addSubview(icon)
+        let icon = NSImageView(frame: NSRect(x: 22, y: 29, width: 64, height: 64)); icon.image = ApplicationIconController.shared.brandImage(pointSize: 64); hero.addSubview(icon)
         text("方寸", x: 108, y: 24, width: 340, size: 27, weight: .semibold, in: hero)
         text("键位启动与应用搜索", x: 108, y: 64, width: 340, size: 13, color: .secondaryLabelColor, in: hero)
         if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {

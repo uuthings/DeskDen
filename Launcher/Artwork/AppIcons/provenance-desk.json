@@ -1,0 +1,144 @@
+{
+  "id" : "desk",
+  "method" : "Approved desktop outline SVG masters with separately rasterized optical-size representations. Packaging copies approved pixels directly; iconutil combines the ten standard representations without resampling.",
+  "production" : [
+    {
+      "path" : "Resources/PanelLogo.png",
+      "pixels" : 256,
+      "sha256" : "beaf0bdfc6b3d5bae1f1f49bc60f68b713a8beed42e198521bd367b2a797b532",
+      "source" : "Desk/desk-panel.png"
+    },
+    {
+      "path" : "Resources/AppIcons/desk-small.png",
+      "pixels" : 64,
+      "sha256" : "43efcc454b58475bf3f137984d1c1a582f94c11d1648d82e06b9e032d32b5083",
+      "source" : "Desk/desk-small.png"
+    },
+    {
+      "path" : "Resources/AppIcons/desk-small-1x.png",
+      "pixels" : 32,
+      "sha256" : "b19038e1b18479b1bc569a81073e6a66e68bc7ed0778fd8f293967981b44da42",
+      "source" : "Desk/desk-small-1x.png"
+    },
+    {
+      "path" : "Resources/AppIcons/desk-menubar.png",
+      "pixels" : 36,
+      "sha256" : "17741e2ff328eaf7e7bcaedec4607959bc341fe7c147e4786abce8f63a314679",
+      "source" : "Desk/desk-menubar.png"
+    },
+    {
+      "path" : "Resources/AppIcons/desk-menubar-1x.png",
+      "pixels" : 18,
+      "sha256" : "2afc600c1941cc7c76925910256872ccac910b0a09f25cfb4cd1a68f5919551d",
+      "source" : "Desk/desk-menubar-1x.png"
+    },
+    {
+      "path" : "Resources/AppIcons/desk.icns",
+      "sha256" : "f5adc74f504e8cff1fec34f46ba200cfe98ab458610b6d00b71c7a1ac039c18f",
+      "source" : "Desk/desk.iconset"
+    },
+    {
+      "path" : "Resources/AppIcon.icns",
+      "sha256" : "f5adc74f504e8cff1fec34f46ba200cfe98ab458610b6d00b71c7a1ac039c18f",
+      "source" : "Desk/desk.iconset"
+    }
+  ],
+  "schema" : 1,
+  "sources" : [
+    {
+      "path" : "Desk/app-master.svg",
+      "sha256" : "62c0a98b2c3218d727566ff56218146245b2b5fb0db0c037a86db920c7da75fa"
+    },
+    {
+      "path" : "Desk/app-small.svg",
+      "sha256" : "31bdfdc450d06e732566600d59318eaad07dc4392d959ca3c6d758d3f353f6c7"
+    },
+    {
+      "path" : "Desk/menu-template-16.svg",
+      "sha256" : "d5c78b8752441e6144480c7a959a94c11b61156c4355768154c017828fc898ed"
+    },
+    {
+      "path" : "Desk/menu-template-18.svg",
+      "sha256" : "e46e25ce9069ed85d3965c5ec66f9c74f5dad4a10990803da55f400077ac51a3"
+    },
+    {
+      "path" : "Desk/menu-template-20.svg",
+      "sha256" : "bdf88554b69fa957ccae1d56ea70cd9490dee67a419421a8265f2b8d337ab9fc"
+    },
+    {
+      "path" : "Desk/desk.iconset/icon_16x16.png",
+      "pixels" : 16,
+      "sha256" : "5db4249470124b9d80b67a30a250ddd866ec70c9792885c6268b885439d735c6"
+    },
+    {
+      "path" : "Desk/desk.iconset/icon_16x16@2x.png",
+      "pixels" : 32,
+      "sha256" : "b19038e1b18479b1bc569a81073e6a66e68bc7ed0778fd8f293967981b44da42"
+    },
+    {
+      "path" : "Desk/desk.iconset/icon_32x32.png",
+      "pixels" : 32,
+      "sha256" : "b19038e1b18479b1bc569a81073e6a66e68bc7ed0778fd8f293967981b44da42"
+    },
+    {
+      "path" : "Desk/desk.iconset/icon_32x32@2x.png",
+      "pixels" : 64,
+      "sha256" : "43efcc454b58475bf3f137984d1c1a582f94c11d1648d82e06b9e032d32b5083"
+    },
+    {
+      "path" : "Desk/desk.iconset/icon_128x128.png",
+      "pixels" : 128,
+      "sha256" : "11a38626039971d35f8cdf7b31af976fb5215e9de45499e73b7f44c66655c990"
+    },
+    {
+      "path" : "Desk/desk.iconset/icon_128x128@2x.png",
+      "pixels" : 256,
+      "sha256" : "beaf0bdfc6b3d5bae1f1f49bc60f68b713a8beed42e198521bd367b2a797b532"
+    },
+    {
+      "path" : "Desk/desk.iconset/icon_256x256.png",
+      "pixels" : 256,
+      "sha256" : "beaf0bdfc6b3d5bae1f1f49bc60f68b713a8beed42e198521bd367b2a797b532"
+    },
+    {
+      "path" : "Desk/desk.iconset/icon_256x256@2x.png",
+      "pixels" : 512,
+      "sha256" : "792d22cd84c56427bc67cb8b3eb81da723810f232156cd5e20e1ba1d2e09dc03"
+    },
+    {
+      "path" : "Desk/desk.iconset/icon_512x512.png",
+      "pixels" : 512,
+      "sha256" : "792d22cd84c56427bc67cb8b3eb81da723810f232156cd5e20e1ba1d2e09dc03"
+    },
+    {
+      "path" : "Desk/desk.iconset/icon_512x512@2x.png",
+      "pixels" : 1024,
+      "sha256" : "45c90dfa9732c001e7a75c570b28f29fcd8105242cc472fb378c0602a696912b"
+    },
+    {
+      "path" : "Desk/desk-panel.png",
+      "pixels" : 256,
+      "sha256" : "beaf0bdfc6b3d5bae1f1f49bc60f68b713a8beed42e198521bd367b2a797b532"
+    },
+    {
+      "path" : "Desk/desk-small.png",
+      "pixels" : 64,
+      "sha256" : "43efcc454b58475bf3f137984d1c1a582f94c11d1648d82e06b9e032d32b5083"
+    },
+    {
+      "path" : "Desk/desk-small-1x.png",
+      "pixels" : 32,
+      "sha256" : "b19038e1b18479b1bc569a81073e6a66e68bc7ed0778fd8f293967981b44da42"
+    },
+    {
+      "path" : "Desk/desk-menubar.png",
+      "pixels" : 36,
+      "sha256" : "17741e2ff328eaf7e7bcaedec4607959bc341fe7c147e4786abce8f63a314679"
+    },
+    {
+      "path" : "Desk/desk-menubar-1x.png",
+      "pixels" : 18,
+      "sha256" : "2afc600c1941cc7c76925910256872ccac910b0a09f25cfb4cd1a68f5919551d"
+    }
+  ]
+}

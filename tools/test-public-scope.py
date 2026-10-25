@@ -86,6 +86,48 @@ class PublicGateTests(unittest.TestCase):
         self.git("add", extra)
         self.assertNotEqual(self.check("--staged").returncode, 0)
 
+    def test_desk_brand_assets_have_an_exact_public_scope(self):
+        artwork = "Launcher/Artwork/AppIcons/Desk/"
+        resource = "Launcher/Resources/AppIcons/"
+        paths = [artwork + name for name in [
+            "app-master.svg", "app-small.svg", "menu-template-16.svg",
+            "menu-template-18.svg", "menu-template-20.svg", "desk-panel.png",
+            "desk-small.png", "desk-small-1x.png", "desk-menubar.png",
+            "desk-menubar-1x.png", "desk.iconset/icon_16x16.png",
+            "desk.iconset/icon_16x16@2x.png", "desk.iconset/icon_32x32.png",
+            "desk.iconset/icon_32x32@2x.png", "desk.iconset/icon_128x128.png",
+            "desk.iconset/icon_128x128@2x.png", "desk.iconset/icon_256x256.png",
+            "desk.iconset/icon_256x256@2x.png", "desk.iconset/icon_512x512.png",
+            "desk.iconset/icon_512x512@2x.png",
+        ]] + [resource + name for name in [
+            "desk.icns", "desk-small.png", "desk-small-1x.png",
+            "desk-menubar.png", "desk-menubar-1x.png",
+        ]] + ["Launcher/Artwork/AppIcons/provenance-desk.json"]
+        for path in paths:
+            target = self.repo / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / path, target)
+            self.git("add", path)
+        result = self.check("--staged")
+        self.assertEqual(result.returncode, 0, result.stdout.decode())
+
+        for extra in [
+            artwork + "private-preview.png", artwork + "original-02.svg",
+            artwork + "app-master-draft.svg", artwork + "menu-template-24.svg",
+            artwork + "desk.iconset/icon_64x64.png",
+            artwork + "desk.iconset/icon_16x32.png",
+            artwork + "desk.iconset/icon_16x16@3x.png",
+            artwork + "drafts/menu-template-18.svg", resource + "desk-panel.png",
+        ]:
+            with self.subTest(path=extra):
+                source = "app-master.svg" if extra.endswith(".svg") else "desk-small.png"
+                target = self.repo / extra
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / artwork / source, target)
+                self.git("add", extra)
+                self.assertNotEqual(self.check("--staged").returncode, 0)
+                self.git("rm", "--cached", "-q", extra)
+
     def test_only_reviewed_entitlement_template_is_public(self):
         path = "Launcher/Signing/Fangcun.entitlements"
         self.write(path, (ROOT / path).read_text())

@@ -383,11 +383,11 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
         window.submenu = windowMenu; main.addItem(window); NSApp.windowsMenu = windowMenu; NSApp.mainMenu = main
         statusItem = NSStatusBar.system.statusItem(withLength:NSStatusItem.variableLength)
         statusItem.button?.title = ""; statusItem.button?.toolTip = "方寸 · 启动器"
-        statusItem.button?.image = ApplicationIconController.menuBarImage(for: ApplicationIconController.shared.selection)
+        statusItem.button?.image = ApplicationIconController.shared.menuBarImage()
         statusItem.button?.setAccessibilityLabel("方寸菜单")
         statusIconObserver = NotificationCenter.default.addObserver(forName: ApplicationIconController.changedNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.statusItem?.button?.image = ApplicationIconController.menuBarImage(for: ApplicationIconController.shared.selection)
+                self?.statusItem?.button?.image = ApplicationIconController.shared.menuBarImage()
             }
         }
         let statusMenu = NSMenu()

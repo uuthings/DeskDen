@@ -112,7 +112,7 @@ struct WorkbenchRootView: View {
     private func chrome(expanded: Bool) -> some View {
         HStack(spacing: 12) {
             HStack(spacing: 8) {
-                WorkbenchBrandMark().frame(width: 25, height: 25)
+                WorkbenchBrandMark(pointSize: 25)
                 Text("方寸").font(.system(size: 12, weight: .medium))
                 Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")
                     .font(.system(size: 11)).foregroundStyle(palette.muted)

@@ -1,6 +1,8 @@
 # Public source scope
 
-Keep buildable native source, tests, required tools, current production resources, accepted icon PNG sources and their conversion tool, and useful user/developer documentation.
+Keep buildable native source, tests, required tools, current production resources, accepted icon SVG and PNG sources and their conversion tools, and useful user/developer documentation.
+
+The Desk icon suite has an exact file scope: `app-master.svg`, `app-small.svg`, the 16/18/20 menu templates, the named panel/small/menu PNGs and the ten standard `desk.iconset` PNG slots under `Launcher/Artwork/AppIcons/Desk/`; `provenance-desk.json` records the sources and derivation. Runtime resources are limited to `desk.icns`, `desk-small.png`, `desk-small-1x.png`, `desk-menubar.png` and `desk-menubar-1x.png`. This does not allow other SVGs, alternate icon sizes, design boards, comparison drafts or arbitrary files in the artwork directory.
 
 Historical design exploration, authorization or collaboration diaries, real account screenshots, old apps, test deliverables, build caches and machine configuration stay outside the public index. Ignoring them does not delete local files. Public builds and verification do not require private archives.
 
