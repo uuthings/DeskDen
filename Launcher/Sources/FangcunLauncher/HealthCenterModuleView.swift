@@ -129,9 +129,14 @@ struct HealthCenterView: View {
     private var pageHeader: some View {
         VStack(alignment: .leading, spacing: 0) {
             WBPageHeader(title: "体检中心", subtitle: "了解设备状态，让每次处理都有依据") {
-                Button { if let onOpenCleaning { onOpenCleaning() } else { model.showSpaceCleaning() } } label: { Label("清理空间", systemImage: "internaldrive.badge.checkmark") }
+                Button { if let onOpenCleaning { onOpenCleaning() } else { model.showSpaceCleaning() } } label: {
+                    HStack(alignment: .center, spacing: 6) {
+                        Image(systemName: "internaldrive.badge.checkmark").frame(width: 16, height: 16)
+                        Text("清理空间").fixedSize().accessibilityIdentifier("health-open-space-cleaning-title")
+                    }.frame(minHeight: 16, alignment: .center)
+                }
                     .buttonStyle(WBButtonStyle()).disabled(storage.isScanning || storage.isProcessing || applications.isProcessing)
-                    .accessibilityIdentifier("health-open-space-cleaning")
+                    .accessibilityElement(children: .contain).accessibilityIdentifier("health-open-space-cleaning")
             }
             if let message = model.assessmentNotice { notice(message, symbol: "clock.arrow.circlepath").padding(.bottom, 12) }
         }.background(GeometryReader { proxy in Color.clear.preference(key: HealthPageHeaderHeightKey.self, value: proxy.size.height).allowsHitTesting(false) })

@@ -237,9 +237,8 @@ struct SpaceCleaningModuleView: View {
     }
     private func scopeButton(_ title: String, icon: String, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) { Label(title, systemImage: icon).font(.system(size: 12)).padding(.horizontal, 12).frame(height: 28)
-            .background(RoundedRectangle(cornerRadius: 6).fill(selected ? palette.accent.opacity(0.18) : .clear))
             .contentShape(Rectangle()) }
-            .buttonStyle(ClickablePlainButtonStyle()).disabled(model.isBusy).accessibilityValue(selected ? "已选择" : "未选择")
+            .buttonStyle(WBSelectableButtonStyle(selected: selected, cornerRadius: 6)).disabled(model.isBusy).accessibilityValue(selected ? "已选择" : "未选择")
             .accessibilityIdentifier(icon == "globe" ? "space-cleaning-scope-global" : "space-cleaning-scope-custom")
     }
     private var scanning: some View {

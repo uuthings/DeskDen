@@ -216,45 +216,94 @@ struct WBProgress:View {
         }.frame(height:height)
     }
 }
-struct WBButtonStyle:ButtonStyle {
-    var primary=false
-    var destructive=false
-    var compact=false
+struct WBButtonStyle: ButtonStyle {
+    var primary = false
+    var destructive = false
+    var compact = false
     @Environment(\.workbenchScale) private var displayScale
     @Environment(\.isEnabled) private var enabled
     @Environment(\.workbenchPalette) private var palette
-    @State private var hovering=false
-    func makeBody(configuration:Configuration)->some View {
-        configuration.label.font(.system(size:(compact ? 11:12)*displayScale,weight:primary ? .medium : .regular))
-            .padding(.horizontal,(compact ? 8:11)*displayScale).frame(minHeight:(compact ? 28:32)*displayScale)
-            .foregroundStyle(primary ? palette.primaryText : destructive ? palette.critical : hovering ? palette.text : palette.secondary)
-            .background(RoundedRectangle(cornerRadius:8).fill(primary ? palette.primary.opacity(configuration.isPressed ? 0.78 : 1) : configuration.isPressed ? palette.accent.opacity(0.18) : hovering ? palette.soft : palette.control))
-            .overlay(RoundedRectangle(cornerRadius:8).strokeBorder(primary ? palette.primary.opacity(0.50) : palette.controlBorder,lineWidth:1))
-            .contentShape(RoundedRectangle(cornerRadius:8)).opacity(enabled ? 1:0.4)
-            .onHover {hovering=$0}.clickableCursor()
+    @State private var hovering = false
+    func makeBody(configuration: Configuration) -> some View {
+        let hovered = enabled && hovering
+        let pressed = enabled && configuration.isPressed
+        let tone = destructive ? palette.critical : palette.accent
+        let shape = RoundedRectangle(cornerRadius: 8)
+        return configuration.label
+            .font(.system(size: (compact ? 11 : 12) * displayScale, weight: primary ? .medium : .regular))
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, (compact ? 8 : 11) * displayScale)
+            .frame(minHeight: (compact ? 28 : 32) * displayScale, alignment: .center)
+            .foregroundStyle(primary ? palette.primaryText : destructive ? palette.critical : hovered ? palette.text : palette.secondary)
+            .background(shape.fill(primary ? palette.primary : palette.control))
+            .overlay(shape.fill(primary ? Color.black.opacity(pressed ? 0.22 : hovered ? 0.12 : 0) : tone.opacity(pressed ? 0.25 : hovered ? 0.15 : 0)).allowsHitTesting(false))
+            .overlay(shape.strokeBorder(primary ? (hovered || pressed ? palette.primaryText.opacity(0.35) : palette.primary.opacity(0.50)) : hovered || pressed ? tone.opacity(pressed ? 0.66 : 0.48) : palette.controlBorder, lineWidth: 1).allowsHitTesting(false))
+            .contentShape(shape).opacity(enabled ? 1 : 0.4)
+            .onHover { hovering = $0 }.clickableCursor()
     }
 }
-struct WBIconButtonStyle:ButtonStyle {
-    var size:CGFloat=26
+struct WBIconButtonStyle: ButtonStyle {
+    var size: CGFloat = 26
     @Environment(\.workbenchScale) private var displayScale
     @Environment(\.isEnabled) private var enabled
     @Environment(\.workbenchPalette) private var palette
-    @State private var hovering=false
-    func makeBody(configuration:Configuration)->some View {
-        configuration.label.font(.system(size:14*displayScale,weight:.regular)).frame(width:size*displayScale,height:size*displayScale)
-            .foregroundStyle(hovering ? palette.text:palette.secondary)
-            .background(RoundedRectangle(cornerRadius:7).fill(palette.accent.opacity(configuration.isPressed ? 0.16:hovering ? 0.09:0)))
-            .contentShape(RoundedRectangle(cornerRadius:7)).opacity(enabled ? 1:0.4).onHover{hovering=$0}.clickableCursor()
+    @State private var hovering = false
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.font(.system(size: 14 * displayScale, weight: .regular))
+            .frame(width: size * displayScale, height: size * displayScale, alignment: .center)
+            .foregroundStyle(enabled && hovering ? palette.text : palette.secondary)
+            .overlay(WBInteractionOverlay(tint: palette.accent, cornerRadius: 7, hovering: enabled && hovering, pressed: enabled && configuration.isPressed))
+            .contentShape(RoundedRectangle(cornerRadius: 7)).opacity(enabled ? 1 : 0.4)
+            .onHover { hovering = $0 }.clickableCursor()
     }
 }
-struct WBQuietButtonStyle:ButtonStyle {
+struct WBQuietButtonStyle: ButtonStyle {
     @Environment(\.workbenchScale) private var displayScale
     @Environment(\.isEnabled) private var enabled
     @Environment(\.workbenchPalette) private var palette
-    @State private var hovering=false
-    func makeBody(configuration:Configuration)->some View {
-        configuration.label.font(.system(size:11*displayScale)).foregroundStyle(hovering ? palette.text:palette.secondary)
-            .padding(.vertical,3*displayScale).contentShape(Rectangle()).opacity(enabled ? (configuration.isPressed ? 0.6:1):0.4).onHover{hovering=$0}.clickableCursor()
+    @State private var hovering = false
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.font(.system(size: 11 * displayScale))
+            .foregroundStyle(enabled && hovering ? palette.text : palette.secondary)
+            .multilineTextAlignment(.center).padding(.vertical, 3 * displayScale)
+            .overlay(WBInteractionOverlay(tint: palette.accent, cornerRadius: 6, hovering: enabled && hovering, pressed: enabled && configuration.isPressed))
+            .contentShape(Rectangle()).opacity(enabled ? 1 : 0.4)
+            .onHover { hovering = $0 }.clickableCursor()
+    }
+}
+/// For navigation and segmented choices. Geometry and label colors belong to
+/// the caller, while interaction remains consistent across every module.
+struct WBSelectableButtonStyle: ButtonStyle {
+    var selected = false
+    var cornerRadius: CGFloat = 8
+    var drawsSelection = true
+    var tint: Color? = nil
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.workbenchPalette) private var palette
+    @State private var hovering = false
+    func makeBody(configuration: Configuration) -> some View {
+        let tone = tint ?? palette.accent
+        return configuration.label
+            .background(RoundedRectangle(cornerRadius: cornerRadius).fill(selected && drawsSelection ? tone.opacity(0.16) : .clear))
+            .overlay(WBInteractionOverlay(tint: tone, cornerRadius: cornerRadius, hovering: enabled && hovering,
+                pressed: enabled && configuration.isPressed, selected: selected && drawsSelection))
+            .contentShape(RoundedRectangle(cornerRadius: cornerRadius)).opacity(enabled ? 1 : 0.4)
+            .onHover { hovering = $0 }.clickableCursor()
+    }
+}
+/// An overlay keeps custom label fills from hiding interaction feedback. It
+/// never changes padding, frame, hit testing or the caller's selected layout.
+private struct WBInteractionOverlay: View {
+    let tint: Color
+    let cornerRadius: CGFloat
+    let hovering: Bool
+    let pressed: Bool
+    var selected = false
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius)
+        shape.fill(tint.opacity(pressed ? 0.25 : hovering ? 0.15 : 0))
+            .overlay(shape.strokeBorder(tint.opacity(pressed ? 0.66 : hovering ? 0.44 : selected ? 0.30 : 0), lineWidth: 1))
+            .allowsHitTesting(false).accessibilityHidden(true)
     }
 }
 struct WBTextTabs<Selection:Hashable>:View {
@@ -488,7 +537,12 @@ extension View {
 }
 
 struct ClickablePlainButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.workbenchPalette) private var palette
+    @State private var hovering = false
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label.contentShape(Rectangle()).clickableCursor()
+        configuration.label.contentShape(Rectangle())
+            .overlay(WBInteractionOverlay(tint: palette.accent, cornerRadius: 8, hovering: enabled && hovering, pressed: enabled && configuration.isPressed))
+            .onHover { hovering = $0 }.clickableCursor()
     }
 }

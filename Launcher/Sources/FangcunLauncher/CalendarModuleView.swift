@@ -11,8 +11,16 @@ struct CalendarModuleView:View {
     @State private var width:CGFloat=864
     private var compact:Bool {width < 800}
     private var expanded:Bool {width >= 1100}
-    private var calendarHeight:CGFloat {expanded ? 680:compact ? 520:530}
-    private var sideWidth:CGFloat {expanded ? 320:compact ? 230:260}
+    private var horizontalWorkspace:Bool {width >= 760}
+    private var sideWidth:CGFloat {max(0, (width - 12) * 0.34)}
+    private var calendarWidth:CGFloat {horizontalWorkspace ? max(0, width - sideWidth - 12) : width}
+    private var dayWidth:CGFloat {max(0, (calendarWidth - 28 - 24) / 7)}
+    private var dayHeight:CGFloat {WorkbenchCalendarDayMetrics.height(forWidth: dayWidth)}
+    private var monthHeight:CGFloat {
+        let rows = max(1, model.monthDays.count / 7)
+        return 134 + CGFloat(rows) * dayHeight + CGFloat(rows - 1) * 4
+    }
+    private var calendarHeight:CGFloat {model.presentationMode == .month ? monthHeight : max(500, min(680, monthHeight))}
     var body:some View {
         VStack(alignment:.leading,spacing:0) {
             if model.showSources { CalendarSourcesPage(model:model,onBack:{model.showSources=false;if model.sourcesReturnToPrivacy {model.sourcesReturnToPrivacy=false;returnToSettingsPrivacy?()}}) }
@@ -28,8 +36,12 @@ struct CalendarModuleView:View {
                     }
                 }
                 if let error=model.storageError {storageWarning(error).padding(.bottom,12)}
-                if width < 660 {
-                    VStack(spacing:12) {monthCard.frame(height:520);HStack(alignment:.top,spacing:12){selectedCard;pendingCard}.frame(height:280)}
+                if !horizontalWorkspace {
+                    VStack(spacing:12) {
+                        monthCard.frame(height:calendarHeight)
+                        HStack(alignment:.top,spacing:12) {selectedCard;pendingCard}.frame(height:300)
+                            .accessibilityElement(children:.contain).accessibilityIdentifier("fc.calendar.sideColumn")
+                    }.accessibilityElement(children:.contain).accessibilityIdentifier("fc.calendar.workspace")
                 } else {
                     HStack(alignment:.top,spacing:12) {
                         monthCard.frame(maxWidth:.infinity).frame(height:calendarHeight)
@@ -37,7 +49,8 @@ struct CalendarModuleView:View {
                             selectedCard.frame(height:(calendarHeight-12)*1.1/2.1)
                             pendingCard.frame(maxHeight:.infinity)
                         }.frame(width:sideWidth,height:calendarHeight)
-                    }
+                            .accessibilityElement(children:.contain).accessibilityIdentifier("fc.calendar.sideColumn")
+                    }.accessibilityElement(children:.contain).accessibilityIdentifier("fc.calendar.workspace")
                 }
                 if let message=model.undoMessage {
                     HStack {Text(message);Spacer();Button("撤销"){Task {await model.undoLastChange()}}.buttonStyle(WBButtonStyle(compact:true)).disabled(model.isWorking)}
@@ -46,8 +59,13 @@ struct CalendarModuleView:View {
                 if let message=model.notificationMessage {Text(message).font(.system(size:11)).foregroundStyle(palette.warning).padding(.top,8)}
             }
         }.frame(maxWidth:.infinity,alignment:.leading).foregroundStyle(palette.text)
-            .background {GeometryReader {g in Color.clear.preference(key:CalendarWidthKey.self,value:g.size.width)}}
-            .onPreferenceChange(CalendarWidthKey.self){width=$0}
+            .background {
+                GeometryReader {geometry in
+                    Color.clear
+                        .onAppear {width=geometry.size.width}
+                        .onChange(of:geometry.size.width) {_,value in width=value}
+                }
+            }
             .accessibilityElement(children:.contain).accessibilityIdentifier(model.showSources ? "fc.page.calendar.sources":"fc.page.calendar")
     }
     private var zoneTitle:String {context?.zoneTitle.components(separatedBy:" · ").first ?? model.displayTimeZone.identifier}
@@ -87,11 +105,8 @@ struct CalendarModuleView:View {
     private var monthGrid:some View {
         VStack(spacing:0) {
             HStack(spacing:4) {ForEach(["一","二","三","四","五","六","日"],id:\.self){day in Text(day).font(.system(size:11)).foregroundStyle(palette.muted).frame(maxWidth:.infinity)}}.frame(height:24).padding(.bottom,5)
-            GeometryReader {g in
-                let rows=max(1,model.monthDays.count/7),height=max(0,(g.size.height-CGFloat(rows-1)*4)/CGFloat(rows))
-                LazyVGrid(columns:Array(repeating:GridItem(.flexible(minimum:0),spacing:4),count:7),spacing:4) {
-                    ForEach(model.monthDays,id:\.self){date in CalendarDayCell(model:model,date:date).frame(height:height)}
-                }
+            LazyVGrid(columns:Array(repeating:GridItem(.flexible(minimum:0),spacing:4),count:7),spacing:4) {
+                ForEach(model.monthDays,id:\.self){date in CalendarDayCell(model:model,date:date).frame(height:dayHeight)}
             }
             HStack(spacing:5) {
                 if WorkbenchChinaHolidays.includedYears.contains(model.displayCalendar.component(.year,from:model.displayedMonth)) {
@@ -143,8 +158,6 @@ struct CalendarModuleView:View {
     private func calendarEmpty(_ text:String)->some View {Text(text).font(.system(size:12)).foregroundStyle(palette.muted).frame(maxWidth:.infinity).padding(.vertical,20)}
 }
 
-private struct CalendarWidthKey:PreferenceKey {static let defaultValue:CGFloat=864;static func reduce(value:inout CGFloat,nextValue:()->CGFloat){value=nextValue()}}
-
 private struct CalendarSegment<Value:Hashable>:View {
     @Binding var selection:Value
     let items:[Value]
@@ -174,26 +187,13 @@ private struct CalendarSideCard<Content:View>:View {
 private struct CalendarDayCell:View {
     @ObservedObject var model:CalendarModel
     let date:Date
-    @State private var hovering=false
-    @Environment(\.workbenchPalette) private var palette
     var body:some View {
-        let calendar=model.displayCalendar,selected=calendar.isDate(date,inSameDayAs:model.selectedDay),today=calendar.isDate(date,inSameDayAs:Date())
+        let calendar=model.displayCalendar,selected=calendar.isDate(date,inSameDayAs:model.selectedDay)
         let outside = !calendar.isDate(date,equalTo:model.displayedMonth,toGranularity:.month),info=CalendarCivilDay(date:date,calendar:calendar)
         let entries=outside ? []:ReminderQueries.entries(reminders:model.reminders,events:model.visibleCalendarEvents,filter:.day,day:date,calendar:calendar)
-        Button {model.selectDay(date)} label:{
-            VStack(spacing:4) {
-                Text("\(calendar.component(.day,from:date))").font(.system(size:16,weight:today ? .semibold:.regular)).foregroundStyle(today ? palette.accent:palette.text).frame(height:24)
-                Text(info.label).font(.system(size:11)).foregroundStyle(info.color(palette)).lineLimit(1).frame(height:15)
-                HStack(spacing:3){ForEach(Array(entries.prefix(3).enumerated()),id:\.offset){_,entry in Circle().fill(entry.isSystemEvent ? palette.cool:palette.accent).frame(width:3,height:3)}}.frame(height:4)
-            }.frame(maxWidth:.infinity,maxHeight:.infinity).padding(.vertical,5).padding(.horizontal,2)
-                .background(selected ? palette.navSelected.opacity(0.65):hovering ? palette.soft:today ? palette.accent.opacity(0.04):.clear,in:RoundedRectangle(cornerRadius:10))
-                .overlay(RoundedRectangle(cornerRadius:10).strokeBorder(palette.accent.opacity(today ? 0.45:selected ? 0.30:0),lineWidth:1))
-                .overlay(alignment:.topTrailing){CalendarHolidayBadge(day:info).padding(4)}
-                .opacity(outside ? 0.35:1).contentShape(RoundedRectangle(cornerRadius:10)).clipped()
-        }.buttonStyle(ClickablePlainButtonStyle()).disabled(outside).onHover{hovering=$0}
-            .accessibilityLabel("\(calendarFormat(date,"M月d日",calendar:calendar))，\(info.namedLabel ?? info.label)，\(entries.count) 项安排")
-            .accessibilityAddTraits(selected ? [.isSelected]:[])
-            .accessibilityIdentifier("fc.calendar.day.\(calendarFormat(date,"yyyy-MM-dd",calendar:calendar))")
+        WorkbenchCalendarDayButton(date:date,calendar:calendar,selected:selected,outside:outside,eventMarkers:entries.map(\.isSystemEvent),
+            label:"\(calendarFormat(date,"M月d日",calendar:calendar))，\(info.namedLabel ?? info.label)，\(entries.count) 项安排",
+            identifier:"fc.calendar.day.\(calendarFormat(date,"yyyy-MM-dd",calendar:calendar))") {model.selectDay(date)}
     }
 }
 
@@ -215,7 +215,10 @@ private struct CalendarWeekGrid:View {
             Button {model.selectDay(date)} label:{
                 HStack(spacing:4){Text(calendarFormat(date,"EE d",calendar:model.displayCalendar)).font(.system(size:11,weight:.medium));CalendarHolidayBadge(day:info)}
                     .frame(maxWidth:.infinity).frame(height:30)
-            }.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel(calendarFormat(date,"M月d日",calendar:model.displayCalendar)+(info.namedLabel.map{"，"+$0} ?? ""))
+            }.buttonStyle(WorkbenchCalendarDayStyle(selected:model.displayCalendar.isDate(date,inSameDayAs:model.selectedDay),today:model.displayCalendar.isDateInToday(date)))
+                .accessibilityLabel(calendarFormat(date,"M月d日",calendar:model.displayCalendar)+(info.namedLabel.map{"，"+$0} ?? ""))
+                .accessibilityValue(model.displayCalendar.isDate(date,inSameDayAs:model.selectedDay) ? "已选择":"未选择")
+                .accessibilityIdentifier("fc.calendar.weekday."+calendarFormat(date,"yyyy-MM-dd",calendar:model.displayCalendar))
             ZStack(alignment:.top) {
                 VStack(spacing:0){ForEach(0..<6,id:\.self){_ in Rectangle().fill(palette.line).frame(height:1);Spacer(minLength:0)}}
                 ForEach(Array(entries.enumerated()),id:\.element.id){index,entry in
