@@ -7,7 +7,7 @@ struct WorkbenchApplicationIconSettings: View {
 
     var body: some View {
         WBCard(title: "应用图标", symbol: "square.on.square", spacing: 12) {
-            Text("一面水幕，映见方寸天地。选择后立即应用，下次启动时保留。")
+            Text("两枚简约标记。选择后同步应用于 Dock、窗口品牌与菜单栏，下次启动时保留。")
                 .font(.system(size: 11)).foregroundStyle(palette.muted)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(alignment: .top, spacing: 12) {

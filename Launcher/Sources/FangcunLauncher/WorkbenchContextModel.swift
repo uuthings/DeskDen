@@ -52,10 +52,16 @@ struct WorkbenchContextPreferences:Codable,Equatable {
     }
     var zoneTitle:String { Self.zoneTitle(dateContext.timeZoneIdentifier) }
     static func zoneTitle(_ id:String,at date:Date=Date()) -> String {
-        let cities=["America/New_York":"纽约","Asia/Shanghai":"上海","Europe/London":"伦敦","Asia/Tokyo":"东京","UTC":"世界协调时"]
-        let offset=TimeZone(identifier:id)?.secondsFromGMT(for:date) ?? 0
+        guard let zone=TimeZone(identifier:id) else {return "时区不可用"}
+        // The app currently presents Chinese copy. ICU's generic-location name
+        // localizes every IANA zone, not only a short hand-written city list.
+        let formatter=DateFormatter();formatter.locale=Locale(identifier:"zh_CN")
+        formatter.timeZone=zone;formatter.dateFormat="VVVV"
+        let primary=["America/New_York":"纽约","Asia/Shanghai":"上海","Europe/London":"伦敦","Asia/Tokyo":"东京","UTC":"世界协调时"]
+        let name=primary[id] ?? formatter.string(from:date)
+        let offset=zone.secondsFromGMT(for:date)
         let hours=abs(offset)/3600,minutes=abs(offset)%3600/60
-        return (cities[id] ?? id.replacingOccurrences(of:"_",with:" "))+" · UTC"+(offset >= 0 ? "+":"−")+String(hours)+(minutes == 0 ? "":String(format:":%02d",minutes))
+        return name+" · UTC"+(offset >= 0 ? "+":"−")+String(hours)+(minutes == 0 ? "":String(format:":%02d",minutes))
     }
     func time(_ date:Date,seconds:Bool=false) -> String {
         let formatter=DateFormatter();formatter.locale=Locale(identifier:"zh_CN");formatter.timeZone=dateContext.timeZone
@@ -213,12 +219,46 @@ private struct WorkbenchClockDialog:View {
     }
 }
 
+/// A small attributed GeoNames city index makes the initial picker useful and
+/// keeps common choices available while the optional online search is offline.
+/// It supplies locations only; no weather observation is synthesized.
+enum WorkbenchCityCatalog {
+    private struct Entry:Sendable {let city:WeatherCity;let aliases:[String]}
+    private static let entries:[Entry] = [
+        entry(1816670,"北京","北京市",39.9075,116.39723,"Asia/Shanghai",["beijing","peking","北京市"]),
+        entry(1796236,"上海","上海市",31.22222,121.45806,"Asia/Shanghai",["shanghai","上海市"]),
+        entry(1809858,"广州","广东省",23.11667,113.25,"Asia/Shanghai",["guangzhou","canton","广州市"]),
+        entry(1795565,"深圳","广东省",22.54554,114.0683,"Asia/Shanghai",["shenzhen","深圳市"]),
+        entry(1815286,"成都","四川省",30.66667,104.06667,"Asia/Shanghai",["chengdu","成都市"]),
+        entry(1808926,"杭州","浙江省",30.29365,120.16142,"Asia/Shanghai",["hangzhou","杭州市"]),
+        entry(5128581,"纽约","纽约州",40.71427,-74.00597,"America/New_York",["new york","newyork","nyc"],country:"美国"),
+        entry(2643743,"伦敦",nil,51.50853,-0.12574,"Europe/London",["london"],country:"英国"),
+        entry(1850147,"东京","东京都",35.6895,139.69171,"Asia/Tokyo",["tokyo"],country:"日本"),
+        entry(1880252,"新加坡",nil,1.28967,103.85007,"Asia/Singapore",["singapore"],country:"新加坡")
+    ]
+    private static func entry(_ id:Int,_ name:String,_ area:String?,_ latitude:Double,_ longitude:Double,_ zone:String,_ aliases:[String],country:String="中国") -> Entry {
+        Entry(city:.init(id:"open-meteo:\(id)",name:name,administrativeArea:area,country:country,latitude:latitude,longitude:longitude,timeZoneIdentifier:zone),aliases:aliases)
+    }
+    static func matches(_ query:String) -> [WeatherCity] {
+        let clean=query.trimmingCharacters(in:.whitespacesAndNewlines).folding(options:[.caseInsensitive,.diacriticInsensitive],locale:Locale(identifier:"zh_CN")).replacingOccurrences(of:" ",with:"")
+        guard !clean.isEmpty else {return entries.map(\.city)}
+        return entries.filter {entry in ([entry.city.name]+entry.aliases).contains {value in
+            value.folding(options:[.caseInsensitive,.diacriticInsensitive],locale:Locale(identifier:"zh_CN")).replacingOccurrences(of:" ",with:"").hasPrefix(clean)
+        }}.map(\.city)
+    }
+    static func providerQuery(_ query:String) -> String {
+        let clean=query.trimmingCharacters(in:.whitespacesAndNewlines)
+        if clean.count > 2 && (clean.hasSuffix("市") || clean.hasSuffix("县")) {return String(clean.dropLast())}
+        return clean
+    }
+}
+
 private struct WorkbenchWeatherDialog:View {
     @ObservedObject var model:WorkbenchContextModel
     @ObservedObject var close:WorkbenchDraftCloseCoordinator
     @State private var draft:WorkbenchWeatherDraft
     @State private var query=""
-    @State private var results:[WeatherCity]=[]
+    @State private var results:[WeatherCity]=WorkbenchCityCatalog.matches("")
     @State private var searching=false
     @State private var searched=false
     @State private var preview:WeatherPresentation?
@@ -229,70 +269,117 @@ private struct WorkbenchWeatherDialog:View {
     @Environment(\.workbenchPalette) private var palette
     init(model:WorkbenchContextModel,close:WorkbenchDraftCloseCoordinator,initialDraft:WorkbenchWeatherDraft?=nil) {self.model=model;self.close=close;_draft=State(initialValue:initialDraft ?? WorkbenchWeatherDraft(city:model.settings.city));_preview=State(initialValue:model.weather)}
     private var city:WeatherCity? {draft.city}
+    private var cleanQuery:String {query.trimmingCharacters(in:.whitespacesAndNewlines)}
     var body:some View {
         WorkbenchDialogFrame(title:"天气与城市",dismiss:requestDismiss) {
-            VStack(alignment:.leading,spacing:16) {
+            VStack(alignment:.leading,spacing:14) {
                 HStack(spacing:8) {
-                    TextField("搜索城市名称",text:$query).textFieldStyle(.plain).padding(.horizontal,10).frame(height:32).background(palette.soft,in:RoundedRectangle(cornerRadius:8)).overlay(RoundedRectangle(cornerRadius:8).strokeBorder(palette.line,lineWidth:1)).onSubmit(search)
-                    Button(action:search){if searching {ProgressView().controlSize(.small)} else {Text("搜索")}}.buttonStyle(WBButtonStyle()).disabled(searching || query.trimmingCharacters(in:.whitespacesAndNewlines).count<2)
+                    Image(systemName:"magnifyingglass").foregroundStyle(palette.muted)
+                    TextField("搜索城市、拼音或英文名称",text:$query).textFieldStyle(.plain).onSubmit {search(immediate:true)}
+                        .accessibilityIdentifier("context-city-search")
+                    if searching {ProgressView().controlSize(.small).accessibilityLabel("正在搜索城市")}
+                    else if !query.isEmpty {Button {query=""} label:{Image(systemName:"xmark.circle.fill")}.buttonStyle(WBIconButtonStyle(size:24)).accessibilityLabel("清除城市搜索")}
+                }.font(.system(size:12)).padding(.leading,10).padding(.trailing,4).frame(height:32)
+                    .background(palette.soft,in:RoundedRectangle(cornerRadius:8))
+                    .overlay(RoundedRectangle(cornerRadius:8).strokeBorder(palette.line,lineWidth:1))
+                VStack(alignment:.leading,spacing:7) {
+                    HStack {Text(cleanQuery.isEmpty ? "常用城市":"搜索结果");Spacer();Text(searching ? "正在查找…":"点击城市即可应用")}.font(.system(size:11)).foregroundStyle(palette.muted)
+                    ScrollView {
+                        LazyVStack(spacing:2) {
+                            ForEach(results) {item in
+                                Button {select(item)} label:{
+                                    HStack(spacing:10) {
+                                        Image(systemName:"mappin").foregroundStyle(palette.muted).frame(width:16)
+                                        VStack(alignment:.leading,spacing:3) {Text(item.name).font(.system(size:12));Text([item.administrativeArea,item.country].compactMap{$0}.joined(separator:" · ")).font(.system(size:10)).foregroundStyle(palette.muted)}
+                                        Spacer(minLength:6)
+                                        if item.id == city?.id {Image(systemName:"checkmark").foregroundStyle(palette.accent)}
+                                    }.padding(.horizontal,9).frame(maxWidth:.infinity,minHeight:42,alignment:.leading)
+                                        .background(item.id == city?.id ? palette.navSelected:.clear,in:RoundedRectangle(cornerRadius:7))
+                                }.buttonStyle(WBSelectableButtonStyle(selected:item.id == city?.id,cornerRadius:7,drawsSelection:false,showsBorder:false))
+                                    .accessibilityLabel("选择城市 "+item.displayName)
+                                    .accessibilityIdentifier("context-city-"+item.id)
+                            }
+                            if results.isEmpty {
+                                Text(searching ? "正在搜索城市…":cleanQuery.count < 2 ? "继续输入城市名称，也可使用拼音或英文。":"未找到匹配城市，请尝试去掉“市”或使用拼音、英文名称。")
+                                    .font(.system(size:11)).foregroundStyle(palette.muted).lineSpacing(4)
+                                    .frame(maxWidth:.infinity,minHeight:100)
+                            }
+                        }.background(WorkbenchOverlayScrollbars())
+                    }.frame(height:144).scrollBounceBehavior(.basedOnSize)
+                        .accessibilityIdentifier("context-city-results")
                 }
-                if !results.isEmpty {
-                    ScrollView {VStack(spacing:3){ForEach(results){item in Button{select(item)}label:{HStack{Text(item.displayName).multilineTextAlignment(.leading);Spacer();if item == city {Image(systemName:"checkmark")}}.padding(8).frame(maxWidth:.infinity,alignment:.leading).background(item == city ? palette.navSelected:.clear,in:RoundedRectangle(cornerRadius:7))}.buttonStyle(WBSelectableButtonStyle(selected: item == city, cornerRadius: 7, drawsSelection: false, showsBorder: false))}}.background(WorkbenchOverlayScrollbars())}.frame(maxHeight:120)
-                } else if searched && !searching {Text("未找到城市，请尝试完整名称或英文名称。").font(.system(size:11)).foregroundStyle(palette.muted)}
+                if let issue {Text(issue).font(.system(size:11)).foregroundStyle(palette.warning).lineSpacing(4)}
                 if let city {
-                    HStack {Text(city.displayName).lineLimit(2);Spacer();Button("刷新"){load(city,force:true)}.buttonStyle(WBButtonStyle(compact:true))}
+                    HStack {Text("当前城市 · "+city.displayName).font(.system(size:11)).foregroundStyle(palette.secondary).lineLimit(2);Spacer();Button("刷新"){load(city,force:true)}.buttonStyle(WBButtonStyle(compact:true))}
                     weatherPreview
-                } else {unavailable("选择城市后查看天气")}
-                if let issue {Text(issue).font(.system(size:11)).foregroundStyle(palette.warning)}
+                }
                 if let error=model.error {Text(error).font(.system(size:11)).foregroundStyle(palette.critical)}
-                VStack(alignment:.leading,spacing:5) {
-                    Text("城市单独设置，不改变日历时区。").foregroundStyle(palette.muted)
-                    Link("天气：Open-Meteo · 城市：GeoNames",destination:URL(string:"https://open-meteo.com/")!).foregroundStyle(palette.secondary)
-                }.font(.system(size:11))
+                HStack {Text("城市独立设置，不改变日历时区。");Spacer();Link("Open-Meteo · GeoNames",destination:URL(string:"https://open-meteo.com/")!)}.font(.system(size:10)).foregroundStyle(palette.muted)
             }
         } actions:{
-            if city != nil {Button("清除城市"){draft.city=nil;preview=nil;weatherTask?.cancel()}.buttonStyle(WBButtonStyle())}
-            Spacer();Button("取消",action:requestDismiss).buttonStyle(WBButtonStyle());Button("保存"){model.saveCity(city)}.buttonStyle(WBButtonStyle(primary:true))
+            if city != nil {Button("清除城市"){model.saveCity(nil)}.buttonStyle(WBButtonStyle())}
+            Spacer();Button("取消",action:requestDismiss).buttonStyle(WBButtonStyle())
+            if draft.hasChanges {Button("保存"){model.saveCity(city)}.buttonStyle(WBButtonStyle(primary:true))}
+            else {Button("完成",action:requestDismiss).buttonStyle(WBButtonStyle(primary:true))}
         }
         .onChange(of:close.closeRequests){_,_ in requestDismiss()}
         .workbenchModal(isPresented:$close.confirmingDiscard,onRequestDismiss:close.continueEditing) {
             WorkbenchDiscardConfirmation(continueEditing:close.continueEditing,discard:{close.discardChanges{model.showWeather=false}})
         }
         .onDisappear{searchTask?.cancel();weatherTask?.cancel()}
-        .onChange(of:query){_,_ in searchID=UUID();searchTask?.cancel();searching=false;results=[];searched=false;issue=nil}
+        .onChange(of:query){_,_ in search(immediate:false)}
         .onAppear{if let city,preview?.snapshot?.city != city {load(city)}}
         .accessibilityIdentifier("context-weather-dialog")
     }
     @ViewBuilder private var weatherPreview:some View {
         if let snapshot=preview?.snapshot,snapshot.city == city {
-            VStack(spacing:16) {
-                HStack(spacing:18) {
-                    Image(systemName:weatherSymbol(snapshot.weatherCode,isDay:snapshot.isDay)).font(.system(size:40,weight:.light)).foregroundStyle(palette.secondary)
-                    VStack(alignment:.leading,spacing:4) {Text(weatherTemperature(snapshot.temperatureCelsius)).font(.system(size:34));Text(snapshot.conditionDescription).font(.system(size:12)).foregroundStyle(palette.secondary)}
-                    Spacer()
-                    if let today=snapshot.dailyForecast?.first {VStack(alignment:.trailing,spacing:5){Text("最高 "+weatherTemperature(today.highCelsius));Text("最低 "+weatherTemperature(today.lowCelsius))}.font(.system(size:11)).foregroundStyle(palette.secondary)}
-                }.padding(.vertical,8)
-                if let days=snapshot.dailyForecast,!days.isEmpty {
-                    HStack {ForEach(Array(days.dropFirst().prefix(3))) {day in VStack(spacing:9){Text(String(day.dayKey.suffix(5))).font(.system(size:11));Image(systemName:weatherSymbol(day.weatherCode)).font(.system(size:20));Text(weatherTemperature(day.highCelsius)+" / "+weatherTemperature(day.lowCelsius)).font(.system(size:12))}.frame(maxWidth:.infinity)}}.foregroundStyle(palette.secondary)
-                }
-                Text((preview?.freshness == .stale ? "上次天气 · 已过期":"更新于 ")+snapshot.receivedAt.formatted(date:.omitted,time:.shortened)).font(.system(size:11)).foregroundStyle(palette.muted)
-            }
-        } else {unavailable(preview?.issue ?? "正在读取天气…")}
+            HStack(spacing:14) {
+                Image(systemName:weatherSymbol(snapshot.weatherCode,isDay:snapshot.isDay)).font(.system(size:30,weight:.light)).foregroundStyle(palette.secondary)
+                VStack(alignment:.leading,spacing:4) {Text(weatherTemperature(snapshot.temperatureCelsius)).font(.system(size:27));Text(snapshot.conditionDescription).font(.system(size:11)).foregroundStyle(palette.secondary)}
+                Spacer()
+                VStack(alignment:.trailing,spacing:5) {
+                    if let today=snapshot.dailyForecast?.first {Text("最高 "+weatherTemperature(today.highCelsius)+" · 最低 "+weatherTemperature(today.lowCelsius))}
+                    Text((preview?.freshness == .stale ? "上次天气 · 已过期":"更新于 ")+snapshot.receivedAt.formatted(date:.omitted,time:.shortened))
+                }.font(.system(size:10)).foregroundStyle(palette.muted)
+            }.padding(.vertical,8)
+        } else {Text(preview?.issue ?? "正在读取天气…").font(.system(size:11)).foregroundStyle(palette.muted).padding(.vertical,8)}
     }
-    private func unavailable(_ text:String)->some View {VStack(spacing:14){Image(systemName:"cloud").font(.system(size:36,weight:.light));Text(text);Text("日期、待办与其他模块照常显示。").font(.system(size:11))}.foregroundStyle(palette.secondary).frame(maxWidth:.infinity).padding(.vertical,22)}
-    private func search() {
-        searchTask?.cancel();let id=UUID();searchID=id;let text=query;searching=true;searched=true;issue=nil
+    private func search(immediate:Bool) {
+        searchTask?.cancel();let id=UUID();searchID=id
+        let text=cleanQuery;results=WorkbenchCityCatalog.matches(text);issue=nil;searched=false
+        guard text.count >= 2 else {searching=false;return}
+        guard text.count <= 100 else {searching=false;issue="城市名称最多输入 100 个字符。";return}
+        searching=true
         searchTask=Task {
-            do {let found=try await model.service.searchCities(query:text);guard !Task.isCancelled,searchID == id else {return};results=found}
-            catch {guard !Task.isCancelled,searchID == id else {return};issue=error.localizedDescription}
-            guard !Task.isCancelled,searchID == id else {return};searching=false
+            do {
+                if !immediate {try await Task.sleep(for:.milliseconds(400))}
+                try Task.checkCancellation()
+                let found:[WeatherCity]
+                do {found=try await model.service.searchCities(query:WorkbenchCityCatalog.providerQuery(text))}
+                catch WeatherServiceError.rateLimited {
+                    // Input can change while the previous request is in flight.
+                    // Keep the service's one-second limit, then retry only the
+                    // still-current query instead of showing an empty result.
+                    try await Task.sleep(for:.seconds(1))
+                    try Task.checkCancellation()
+                    found=try await model.service.searchCities(query:WorkbenchCityCatalog.providerQuery(text))
+                }
+                guard !Task.isCancelled,searchID == id else {return}
+                var seen=Set<String>()
+                results=(WorkbenchCityCatalog.matches(text)+found).filter {seen.insert($0.id).inserted}
+            } catch is CancellationError {return}
+            catch {
+                guard !Task.isCancelled,searchID == id else {return}
+                issue=results.isEmpty ? "在线城市搜索暂不可用，请稍后重试。" : "在线搜索暂不可用，仍可选择下列常用城市。"
+            }
+            guard !Task.isCancelled,searchID == id else {return};searching=false;searched=true
         }
     }
     private func requestDismiss() {close.resolveClose(hasChanges:draft.hasChanges){model.showWeather=false}}
-    private func select(_ value:WeatherCity) {draft.city=value;results=[];searched=false;load(value)}
+    private func select(_ value:WeatherCity) {if model.saveCity(value) {searchTask?.cancel();weatherTask?.cancel()}}
     private func load(_ value:WeatherCity,force:Bool=false) {
-        weatherTask?.cancel();preview=nil;issue=nil
-        weatherTask=Task {let loaded=await model.service.load(city:value,forceRefresh:force);guard !Task.isCancelled,city == value else {return};preview=loaded;issue=loaded.issue ?? loaded.persistenceIssue}
+        weatherTask?.cancel();preview=nil
+        weatherTask=Task {let loaded=await model.service.load(city:value,forceRefresh:force);guard !Task.isCancelled,city == value else {return};preview=loaded}
     }
 }
 

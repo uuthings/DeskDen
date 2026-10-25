@@ -3,24 +3,14 @@ import Combine
 import Foundation
 
 enum ApplicationIconChoice: String, CaseIterable, Identifiable {
-    case qingbiChenwu = "qingbi-chenwu"
-    case yuebaiYunhai = "yuebai-yunhai"
-    case nuanxiaXuanshan = "nuanxia-xuanshan"
-
+    case ink = "minimal-ink"
+    case frame = "minimal-frame"
     var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .qingbiChenwu: "青碧晨雾"
-        case .yuebaiYunhai: "月白云海"
-        case .nuanxiaXuanshan: "暖霞悬山"
-        }
-    }
-    var subtitle: String {
-        switch self {
-        case .qingbiChenwu: "晨光入山 · 清透青碧"
-        case .yuebaiYunhai: "月色照山 · 银蓝云海"
-        case .nuanxiaXuanshan: "暖霞映山 · 云间仙境"
-        }
+    var title: String { self == .ink ? "墨白" : "留白" }
+    var subtitle: String { self == .ink ? "字母 F · 深墨底" : "方寸折角 · 浅瓷底" }
+    static func restored(_ value: String?) -> Self {
+        if let value, let choice = Self(rawValue: value) { return choice }
+        return value == "yuebai-yunhai" || value == "nuanxia-xuanshan" ? .frame : .ink
     }
 }
 
@@ -28,6 +18,7 @@ enum ApplicationIconChoice: String, CaseIterable, Identifiable {
 /// The installation's Finder icon remains the default approved artwork.
 @MainActor final class ApplicationIconController: ObservableObject {
     static let shared = ApplicationIconController()
+    static let changedNotification = Notification.Name("Fangcun.applicationIcon.changed")
     static let preferenceKey = "Fangcun.applicationIcon"
     @Published private(set) var selection: ApplicationIconChoice
     @Published private(set) var error: String?
@@ -43,7 +34,7 @@ enum ApplicationIconChoice: String, CaseIterable, Identifiable {
         self.defaults = defaults
         self.loadImage = loadImage
         self.applyImage = applyImage
-        selection = defaults.string(forKey: Self.preferenceKey).flatMap(ApplicationIconChoice.init(rawValue:)) ?? .qingbiChenwu
+        selection = ApplicationIconChoice.restored(defaults.string(forKey: Self.preferenceKey))
     }
 
     func image(for choice: ApplicationIconChoice) -> NSImage? {
@@ -62,6 +53,7 @@ enum ApplicationIconChoice: String, CaseIterable, Identifiable {
         selection = choice
         error = nil
         applyImage(image)
+        NotificationCenter.default.post(name: Self.changedNotification, object: self)
         return true
     }
 
@@ -72,10 +64,17 @@ enum ApplicationIconChoice: String, CaseIterable, Identifiable {
             return false
         }
         applyImage(image)
+        NotificationCenter.default.post(name: Self.changedNotification, object: self)
         error = nil
         return true
     }
 
+    static func menuBarImage(for choice: ApplicationIconChoice) -> NSImage? {
+        guard let resource = Bundle.main.resourceURL?.appendingPathComponent("AppIcons")
+            .appendingPathComponent(choice.rawValue + "-menubar.png"), let image = NSImage(contentsOf: resource) else { return nil }
+        image.size = NSSize(width: 18, height: 18); image.isTemplate = true
+        return image
+    }
     static func bundleImage(_ choice: ApplicationIconChoice) -> NSImage? {
         guard let resource = Bundle.main.resourceURL?.appendingPathComponent("AppIcons", isDirectory: true)
             .appendingPathComponent(choice.rawValue + ".icns") else { return nil }

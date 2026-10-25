@@ -48,7 +48,7 @@ struct VaultRestorePreview:Identifiable {
     private var protectionProtected=false
     private var key:SymmetricKey?
     private var salt:Data?
-    private var openedPayloadVersion=2
+    private var openedPayloadVersion=3
     private var pendingEnvelope:VaultEnvelope?
     private var restoreData:Data?
     private var generation=0
@@ -248,7 +248,7 @@ struct VaultRestorePreview:Identifiable {
         saveTask?.cancel(); saveTask=nil
         guard let pendingEnvelope else { return true }
         do {
-            try store.write(pendingEnvelope); self.pendingEnvelope=nil; hasPendingSave=false;openedPayloadVersion=2
+            try store.write(pendingEnvelope); self.pendingEnvelope=nil; hasPendingSave=false;openedPayloadVersion=3
             isConfigured=true; saveStatus="所有更改已保存"; errorMessage=nil; return true
         } catch {
             hasPendingSave=true; saveStatus="尚未写入磁盘"
@@ -462,9 +462,13 @@ struct VaultBiometricSigningCapability:Equatable,Sendable {
         let applicationIdentifier=SecTaskCopyValueForEntitlement(task,"com.apple.application-identifier" as CFString,nil) as? String
         let teamIdentifier=SecTaskCopyValueForEntitlement(task,"com.apple.developer.team-identifier" as CFString,nil) as? String
         let groups=SecTaskCopyValueForEntitlement(task,"keychain-access-groups" as CFString,nil) as? [String]
+        if applicationIdentifier == nil || teamIdentifier == nil {
+            return Self(accessGroup:nil,unavailableReason:"当前构建缺少 Touch ID 的应用签名授权，无法使用受保护钥匙串。独立密码仍可正常使用。")
+        }
         let bundle=Bundle.main,profile=bundle.bundleURL.appendingPathComponent("Contents/embedded.provisionprofile")
         let attributes=try? FileManager.default.attributesOfItem(atPath:profile.path)
         let exists=attributes?[.type] as? FileAttributeType == .typeRegular && (attributes?[.size] as? NSNumber).map{(1...2_000_000).contains($0.intValue)} == true
+        guard exists else {return Self(accessGroup:nil,unavailableReason:"当前构建未包含 Touch ID 所需的应用授权文件。请使用具备完整签名授权的版本；独立密码仍可使用。")}
         var valid=false
         if let teamIdentifier,let identifier=bundle.bundleIdentifier,
            teamIdentifier.range(of:"^[A-Z0-9]{10}$",options:.regularExpression) != nil,
@@ -500,14 +504,24 @@ private enum VaultBiometricFailure:LocalizedError {
         account=SHA256.hash(data:Data(vaultURL.standardizedFileURL.path.utf8)).map{String(format:"%02x",$0)}.joined()
         self.signing=signing ?? .currentApp()
     }
-    private var hardwareAvailable:Bool {let context=LAContext();defer{context.invalidate()};return context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics,error:nil) && context.biometryType == .touchID}
+    private var hardwareUnavailableReason:String? {
+        let context=LAContext();defer{context.invalidate()}
+        var failure:NSError?
+        if context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics,error:&failure),context.biometryType == .touchID {return nil}
+        switch failure?.code {
+        case LAError.biometryNotEnrolled.rawValue:return "尚未设置 Touch ID。请在系统设置中添加指纹，然后重新检测。"
+        case LAError.biometryLockout.rawValue:return "Touch ID 已被系统暂时锁定。请先使用系统密码恢复，再重新检测。"
+        case LAError.passcodeNotSet.rawValue:return "系统登录密码尚未设置，暂时无法使用 Touch ID。"
+        default:return "这台 Mac 当前没有可用的 Touch ID。独立密码仍可正常使用。"
+        }
+    }
+    private var hardwareAvailable:Bool {hardwareUnavailableReason == nil}
     var available:Bool {signing.accessGroup != nil && keychainAuthorized && hardwareAvailable}
     var canRemove:Bool {signing.accessGroup != nil && keychainAuthorized}
     var unavailableReason:String? {
         if let failure=signing.unavailableReason ?? capabilityFailure {return failure}
         if !keychainAuthorized {return "当前构建尚未通过 Touch ID 安全授权检查。请继续使用私密空间密码。"}
-        if !hardwareAvailable {return "这台 Mac 尚未配置可用的 Touch ID。请继续使用私密空间密码。"}
-        return nil
+        return hardwareUnavailableReason
     }
     func refreshAvailability() async -> String? {
         guard let group=signing.accessGroup else {return signing.unavailableReason}

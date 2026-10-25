@@ -54,7 +54,7 @@ private struct VaultProtectionPage:View {
                         row("独立密码",model.isUnlocked ? "至少 8 个字符；不会保存明文密码":"先验证解锁，再继续修改密码",first:true){Button("修改密码",action:model.requestPasswordChange).buttonStyle(WBButtonStyle(compact:true)).disabled(!model.isConfigured || model.busy)}
                         row("Touch ID",model.biometricUnavailableReason ?? (model.biometricEnabled ? "仅此设备；变更指纹或密码后需重新开启":"先用独立密码解锁，再为此资料库开启")){
                             if model.biometricEnabled && model.biometricCanRemove {Button("停用"){Task{_ = await model.disableBiometrics()}}.buttonStyle(WBButtonStyle(compact:true)).disabled(model.busy)}
-                            else if !model.biometricAvailable {Text("暂不可用").foregroundStyle(palette.muted)}
+                            else if !model.biometricAvailable {VStack(alignment:.trailing,spacing:7){Text("暂不可用").foregroundStyle(palette.muted);Button("重新检测"){Task{await model.refreshBiometrics()}}.buttonStyle(WBButtonStyle(compact:true)).disabled(model.busy)}}
                             else {Button("开启 Touch ID"){Task{_ = await model.enableBiometrics()}}.buttonStyle(WBButtonStyle(compact:true)).disabled(!model.isUnlocked || model.busy || !model.canChangeProtectionPreferences)}
                         }
                         row("离开私密页时锁定","切换模块、收起工作台后生效"){Text("始终开启").foregroundStyle(palette.secondary)}
@@ -236,18 +236,37 @@ private struct VaultFormattingToolbar:View {
     @ObservedObject var controller:VaultEditorFormatting
     @Environment(\.workbenchPalette) private var palette
     var body:some View {
-        HStack(spacing:4){
-            WBSelect("字体",selection:Binding(get:{controller.family},set:controller.setFamily),options:[(.system,"系统"),(.serif,"宋体"),(.monospaced,"等宽")]).frame(width:85)
-            WBSelect("字号",selection:Binding(get:{controller.size},set:controller.setSize),options:[10.0,12,14,16,18,20,24,28].map{($0,"\(Int($0))")}).frame(width:66)
+        VStack(alignment:.leading,spacing:8) {
+            ViewThatFits(in:.horizontal) {
+                HStack(spacing:6){fontControls;formatControls;Spacer(minLength:0)}
+                VStack(alignment:.leading,spacing:8){HStack(spacing:6){fontControls;Spacer(minLength:0)};HStack(spacing:6){formatControls;Spacer(minLength:0)}}
+            }
+            HStack(spacing:8) {
+                Text("文字").font(.system(size:11)).foregroundStyle(palette.muted)
+                WBSelect("文字颜色",selection:Binding(get:{controller.textColor},set:controller.setTextColor),options:VaultTextColor.allCases.map{($0,VaultEditorFormatting.textColorTitle($0))}).frame(width:98)
+                Text("高亮").font(.system(size:11)).foregroundStyle(palette.muted).padding(.leading,4)
+                WBSelect("背景高亮",selection:Binding(get:{controller.highlightColor},set:controller.setHighlightColor),options:VaultHighlightColor.allCases.map{($0,VaultEditorFormatting.highlightTitle($0))}).frame(width:98)
+                Spacer(minLength:0)
+            }
+        }.padding(8).background(palette.soft,in:RoundedRectangle(cornerRadius:8)).overlay(RoundedRectangle(cornerRadius:8).strokeBorder(palette.line,lineWidth:1)).accessibilityIdentifier("fc.vault.editor.toolbar")
+    }
+    private var fontControls:some View {
+        Group {
+            WBSelect("字体",selection:Binding(get:{controller.family},set:controller.setFamily),options:VaultEditorFormatting.availableFamilies.map{($0,VaultEditorFormatting.familyTitle($0))}).frame(width:132)
+            WBSelect("字号",selection:Binding(get:{controller.size},set:controller.setSize),options:[10.0,12,14,16,18,20,22,24,26,28].map{($0,"\(Int($0))")}).frame(width:66)
+        }
+    }
+    private var formatControls:some View {
+        Group {
             formatButton("加粗",symbol:"bold",selected:controller.bold){controller.toggle(.boldFontMask)}
             formatButton("斜体",symbol:"italic",selected:controller.italic){controller.toggle(.italicFontMask)}
             formatButton("下划线",symbol:"underline",selected:controller.underline){controller.toggleUnderline()}
+            formatButton("删除线",symbol:"strikethrough",selected:controller.strikethrough){controller.toggleStrikethrough()}
             Rectangle().fill(palette.line).frame(width:1,height:17).padding(.horizontal,3)
             formatButton("清除格式",symbol:"textformat",selected:false){controller.clearFormatting()}
-            Spacer(minLength:0)
-        }.padding(6).background(palette.soft,in:RoundedRectangle(cornerRadius:8)).overlay(RoundedRectangle(cornerRadius:8).strokeBorder(palette.line,lineWidth:1)).accessibilityIdentifier("fc.vault.editor.toolbar")
+        }
     }
-    private func formatButton(_ title:String,symbol:String,selected:Bool,action:@escaping ()->Void)->some View {Button(action:action){Image(systemName:symbol).frame(width:16,height:16)}.buttonStyle(WBIconButtonStyle(size:28)).background(selected ? palette.navSelected:.clear,in:RoundedRectangle(cornerRadius:6)).help(title).accessibilityLabel(title).accessibilityValue(selected ? "已开启":"未开启")}
+    private func formatButton(_ title:String,symbol:String,selected:Bool,action:@escaping ()->Void)->some View {Button(action:action){Image(systemName:symbol).frame(width:16,height:16)}.buttonStyle(WBIconButtonStyle(size:28)).background(selected ? palette.navSelected:.clear,in:RoundedRectangle(cornerRadius:7)).help(title).accessibilityLabel(title).accessibilityValue(selected ? "已开启":"未开启")}
 }
 
 @MainActor final class VaultEditorFormatting:ObservableObject {
@@ -256,27 +275,48 @@ private struct VaultFormattingToolbar:View {
     @Published private(set) var bold=false
     @Published private(set) var italic=false
     @Published private(set) var underline=false
+    @Published private(set) var strikethrough=false
+    @Published private(set) var textColor:VaultTextColor = .automatic
+    @Published private(set) var highlightColor:VaultHighlightColor = .none
     weak var editor:NSTextView?
+    var automaticTextColor:NSColor = .textColor
     static let familyKey=NSAttributedString.Key("FangcunVaultFontFamily")
     static let boldKey=NSAttributedString.Key("FangcunVaultBold")
     static let italicKey=NSAttributedString.Key("FangcunVaultItalic")
+    static let textColorKey=NSAttributedString.Key("FangcunVaultTextColor")
+    static let highlightKey=NSAttributedString.Key("FangcunVaultHighlightColor")
+    static var availableFamilies:[VaultFontFamily] {VaultFontFamily.allCases.filter{family in family == .system || family == .monospaced || fontNames(family).contains{NSFont(name:$0,size:14) != nil}}}
+    static func familyTitle(_ family:VaultFontFamily)->String {
+        switch family {case .system:"系统字体";case .serif:"宋体";case .monospaced:"系统等宽";case .pingFang:"苹方";case .kaiti:"楷体";case .heiti:"黑体";case .helvetica:"Helvetica Neue";case .georgia:"Georgia";case .menlo:"Menlo"}
+    }
+    private static func fontNames(_ family:VaultFontFamily)->[String] {
+        switch family {case .system,.monospaced:[];case .serif:["Songti SC"];case .pingFang:["PingFang SC"];case .kaiti:["Kaiti SC","STKaiti"];case .heiti:["Heiti SC","STHeitiSC-Light"];case .helvetica:["Helvetica Neue"];case .georgia:["Georgia"];case .menlo:["Menlo"]}
+    }
+    static func textColorTitle(_ value:VaultTextColor)->String {switch value {case .automatic:"自动";case .red:"红色";case .orange:"橙色";case .green:"绿色";case .blue:"蓝色";case .purple:"紫色";case .gray:"灰色"}}
+    static func highlightTitle(_ value:VaultHighlightColor)->String {switch value {case .none:"无高亮";case .yellow:"黄色";case .green:"绿色";case .blue:"蓝色";case .pink:"粉色";case .purple:"紫色"}}
+    static func color(_ value:VaultTextColor,automatic:NSColor)->NSColor {
+        switch value {case .automatic:automatic;case .red:NSColor(srgbRed:0.85,green:0.22,blue:0.25,alpha:1);case .orange:NSColor(srgbRed:0.80,green:0.39,blue:0.10,alpha:1);case .green:NSColor(srgbRed:0.19,green:0.62,blue:0.37,alpha:1);case .blue:NSColor(srgbRed:0.25,green:0.52,blue:0.92,alpha:1);case .purple:NSColor(srgbRed:0.62,green:0.39,blue:0.83,alpha:1);case .gray:NSColor(srgbRed:0.55,green:0.57,blue:0.60,alpha:1)}
+    }
+    static func highlight(_ value:VaultHighlightColor)->NSColor? {
+        switch value {case .none:nil;case .yellow:NSColor(srgbRed:0.95,green:0.78,blue:0.22,alpha:0.35);case .green:NSColor(srgbRed:0.30,green:0.74,blue:0.47,alpha:0.3);case .blue:NSColor(srgbRed:0.30,green:0.59,blue:0.92,alpha:0.3);case .pink:NSColor(srgbRed:0.90,green:0.40,blue:0.58,alpha:0.3);case .purple:NSColor(srgbRed:0.65,green:0.44,blue:0.88,alpha:0.3)}
+    }
     private static func traits(_ attributes:[NSAttributedString.Key:Any])->(Bool,Bool) {let font=attributes[.font] as? NSFont ?? Self.font(family:.system,size:14);let traits=NSFontManager.shared.traits(of:font);return (attributes[boldKey] as? Bool ?? traits.contains(.boldFontMask),attributes[italicKey] as? Bool ?? traits.contains(.italicFontMask))}
     static func applyFont(to attributes:inout [NSAttributedString.Key:Any],family:VaultFontFamily,size:Double,bold:Bool,italic:Bool) {
         let font=font(family:family,size:size,bold:bold,italic:italic),traits=NSFontManager.shared.traits(of:font)
         attributes[.font]=font;attributes[familyKey]=family.rawValue;attributes[boldKey]=bold;attributes[italicKey]=italic
-        // CJK faces do not always have italic/bold variants. Preserve the user's
-        // semantic choice and synthesize only the unavailable visual trait.
         attributes[.obliqueness]=italic && !traits.contains(.italicFontMask) ? 0.16:0
         attributes[.strokeWidth]=bold && !traits.contains(.boldFontMask) ? -2.0:0
     }
     static func font(family:VaultFontFamily,size:Double,bold:Bool=false,italic:Bool=false)->NSFont {
-        let base:NSFont=switch family {case .system:NSFont.systemFont(ofSize:size);case .serif:NSFont(name:"Songti SC",size:size) ?? NSFont.systemFont(ofSize:size);case .monospaced:NSFont.monospacedSystemFont(ofSize:size,weight:.regular)}
+        let base:NSFont
+        if family == .monospaced {base=NSFont.monospacedSystemFont(ofSize:size,weight:.regular)}
+        else {base=fontNames(family).compactMap{NSFont(name:$0,size:size)}.first ?? NSFont.systemFont(ofSize:size)}
         var traits:NSFontTraitMask=[];if bold {traits.insert(.boldFontMask)};if italic {traits.insert(.italicFontMask)}
         return NSFontManager.shared.convert(base,toHaveTrait:traits)
     }
     static func paragraph()->NSParagraphStyle {let style=NSMutableParagraphStyle();style.lineSpacing=3;style.paragraphSpacing=5;return style}
     func attach(_ editor:NSTextView) {self.editor=editor;refresh()}
-    func detach() {editor=nil;family = .system;size=14;bold=false;italic=false;underline=false}
+    func detach() {editor=nil;family = .system;size=14;bold=false;italic=false;underline=false;strikethrough=false;textColor = .automatic;highlightColor = .none}
     func refresh() {
         guard let editor else {return}
         let range=editor.selectedRange(),attributes: [NSAttributedString.Key:Any]
@@ -284,23 +324,35 @@ private struct VaultFormattingToolbar:View {
         let font=attributes[.font] as? NSFont ?? Self.font(family:.system,size:14)
         family=(attributes[Self.familyKey] as? String).flatMap(VaultFontFamily.init(rawValue:)) ?? .system;size=Double(font.pointSize)
         let traits=Self.traits(attributes);bold=traits.0;italic=traits.1;underline=(attributes[.underlineStyle] as? Int ?? 0) != 0
+        strikethrough=(attributes[.strikethroughStyle] as? Int ?? 0) != 0
+        textColor=(attributes[Self.textColorKey] as? String).flatMap(VaultTextColor.init(rawValue:)) ?? .automatic
+        highlightColor=(attributes[Self.highlightKey] as? String).flatMap(VaultHighlightColor.init(rawValue:)) ?? .none
     }
-    func setFamily(_ family:VaultFontFamily) {mutate{attributes in let font=attributes[.font] as? NSFont ?? Self.font(family:.system,size:14),traits=Self.traits(attributes);Self.applyFont(to:&attributes,family:family,size:font.pointSize,bold:traits.0,italic:traits.1)}}
+    func setFamily(_ family:VaultFontFamily) {guard Self.availableFamilies.contains(family) else{return};mutate{attributes in let font=attributes[.font] as? NSFont ?? Self.font(family:.system,size:14),traits=Self.traits(attributes);Self.applyFont(to:&attributes,family:family,size:font.pointSize,bold:traits.0,italic:traits.1)}}
     func setSize(_ size:Double) {guard (10...28).contains(size) else{return};mutate{attributes in let family=(attributes[Self.familyKey] as? String).flatMap(VaultFontFamily.init(rawValue:)) ?? .system,traits=Self.traits(attributes);Self.applyFont(to:&attributes,family:family,size:size,bold:traits.0,italic:traits.1)}}
     func toggle(_ trait:NSFontTraitMask) {let turnOn=trait == .boldFontMask ? !bold:!italic;mutate{attributes in let font=attributes[.font] as? NSFont ?? Self.font(family:.system,size:14),family=(attributes[Self.familyKey] as? String).flatMap(VaultFontFamily.init(rawValue:)) ?? .system,traits=Self.traits(attributes);Self.applyFont(to:&attributes,family:family,size:font.pointSize,bold:trait == .boldFontMask ? turnOn:traits.0,italic:trait == .italicFontMask ? turnOn:traits.1)}}
     func toggleUnderline() {let next=underline ? 0:NSUnderlineStyle.single.rawValue;mutate{$0[.underlineStyle]=next}}
-    func clearFormatting() {mutate{attributes in Self.applyFont(to:&attributes,family:.system,size:14,bold:false,italic:false);attributes[.underlineStyle]=0;attributes[.paragraphStyle]=Self.paragraph()}}
+    func toggleStrikethrough() {let next=strikethrough ? 0:NSUnderlineStyle.single.rawValue;mutate{$0[.strikethroughStyle]=next}}
+    func setTextColor(_ value:VaultTextColor) {let automatic=automaticTextColor;mutate{$0[Self.textColorKey]=value.rawValue;$0[.foregroundColor]=Self.color(value,automatic:automatic)}}
+    func setHighlightColor(_ value:VaultHighlightColor) {mutate{$0[Self.highlightKey]=value.rawValue;$0[.backgroundColor]=Self.highlight(value)}}
+    func clearFormatting() {let automatic=automaticTextColor;mutate{attributes in Self.applyFont(to:&attributes,family:.system,size:14,bold:false,italic:false);attributes[.underlineStyle]=0;attributes[.strikethroughStyle]=0;attributes[Self.textColorKey]=VaultTextColor.automatic.rawValue;attributes[.foregroundColor]=automatic;attributes[Self.highlightKey]=VaultHighlightColor.none.rawValue;attributes[.backgroundColor]=nil;attributes[.paragraphStyle]=Self.paragraph()}}
     private func mutate(_ change:(inout [NSAttributedString.Key:Any])->Void) {
         guard let editor,editor.isEditable,let storage=editor.textStorage else{return}
         let range=editor.selectedRange()
         var nextTyping:[NSAttributedString.Key:Any]?
         if range.length == 0 {var attributes=editor.typingAttributes;change(&attributes);nextTyping=attributes}
-        else if editor.shouldChangeText(in:range,replacementString:nil) {
+        else {
+            editor.breakUndoCoalescing()
+            let undo=editor.undoManager
+            undo?.beginUndoGrouping()
+            defer {undo?.endUndoGrouping()}
+            guard editor.shouldChangeText(in:range,replacementString:nil) else {return}
             let previous=storage.attributedSubstring(from:range)
-            editor.undoManager?.registerUndo(withTarget:editor){target in Self.restore(previous,in:range,editor:target)}
+            undo?.registerUndo(withTarget:editor){target in Self.restore(previous,in:range,editor:target)}
             var replacements:[(NSRange,[NSAttributedString.Key:Any])]=[]
             storage.enumerateAttributes(in:range){attributes,range,_ in var next=attributes;change(&next);replacements.append((range,next))}
             storage.beginEditing();for (range,attributes) in replacements {storage.setAttributes(attributes,range:range)};storage.endEditing();editor.didChangeText()
+            undo?.setActionName("文本格式")
         }
         editor.window?.makeFirstResponder(editor);editor.setSelectedRange(range);if let nextTyping {editor.typingAttributes=nextTyping};refresh()
     }
@@ -310,13 +362,33 @@ private struct VaultFormattingToolbar:View {
         editor.undoManager?.registerUndo(withTarget:editor){restore(previous,in:range,editor:$0)}
         storage.replaceCharacters(in:range,with:text);editor.didChangeText()
     }
+    static func attributes(for run:VaultTextStyleRun,automatic:NSColor)->[NSAttributedString.Key:Any] {
+        var style:[NSAttributedString.Key:Any]=[.underlineStyle:run.underline ? NSUnderlineStyle.single.rawValue:0,.strikethroughStyle:run.strikethrough ? NSUnderlineStyle.single.rawValue:0,
+            textColorKey:run.textColor.rawValue,highlightKey:run.highlightColor.rawValue,.foregroundColor:color(run.textColor,automatic:automatic),.paragraphStyle:paragraph()]
+        style[.backgroundColor]=highlight(run.highlightColor)
+        applyFont(to:&style,family:run.family,size:run.size,bold:run.bold,italic:run.italic)
+        return style
+    }
+    static func updateAutomaticColor(in editor:NSTextView,color:NSColor) {
+        guard let storage=editor.textStorage else{return}
+        var ranges:[NSRange]=[]
+        storage.enumerateAttributes(in:NSRange(location:0,length:storage.length)){attributes,range,_ in
+            if ((attributes[textColorKey] as? String).flatMap(VaultTextColor.init(rawValue:)) ?? .automatic) == .automatic {ranges.append(range)}
+        }
+        for range in ranges {storage.addAttribute(.foregroundColor,value:color,range:range)}
+        let typing=(editor.typingAttributes[textColorKey] as? String).flatMap(VaultTextColor.init(rawValue:)) ?? .automatic
+        if typing == .automatic {editor.typingAttributes[.foregroundColor]=color}
+    }
     static func runs(_ text:NSAttributedString)->[VaultTextStyleRun] {
         var runs:[VaultTextStyleRun]=[]
         text.enumerateAttributes(in:NSRange(location:0,length:text.length)){attributes,range,_ in
             let font=attributes[.font] as? NSFont ?? Self.font(family:.system,size:14),traits=Self.traits(attributes)
             let family=(attributes[familyKey] as? String).flatMap(VaultFontFamily.init(rawValue:)) ?? .system
-            let next=VaultTextStyleRun(location:range.location,length:range.length,family:family,size:Double(font.pointSize),bold:traits.0,italic:traits.1,underline:(attributes[.underlineStyle] as? Int ?? 0) != 0)
-            if var last=runs.last,last.location+last.length == next.location,last.family == next.family,last.size == next.size,last.bold == next.bold,last.italic == next.italic,last.underline == next.underline {last.length += next.length;runs[runs.count-1]=last}else{runs.append(next)}
+            let next=VaultTextStyleRun(location:range.location,length:range.length,family:family,size:Double(font.pointSize),bold:traits.0,italic:traits.1,underline:(attributes[.underlineStyle] as? Int ?? 0) != 0,
+                strikethrough:(attributes[.strikethroughStyle] as? Int ?? 0) != 0,textColor:(attributes[textColorKey] as? String).flatMap(VaultTextColor.init(rawValue:)) ?? .automatic,
+                highlightColor:(attributes[highlightKey] as? String).flatMap(VaultHighlightColor.init(rawValue:)) ?? .none)
+            if var last=runs.last,last.location+last.length == next.location,last.family == next.family,last.size == next.size,last.bold == next.bold,last.italic == next.italic,last.underline == next.underline,
+               last.strikethrough == next.strikethrough,last.textColor == next.textColor,last.highlightColor == next.highlightColor {last.length += next.length;runs[runs.count-1]=last}else{runs.append(next)}
         }
         return runs
     }
@@ -347,14 +419,15 @@ private struct VaultPrivateTextEditor:NSViewRepresentable {
         if editor.string != document.body || VaultEditorFormatting.runs(editor.attributedString()) != (document.formatting ?? defaultRuns(document.body)) {
             let selection=editor.selectedRange();apply(document,to:editor);let location=min(selection.location,(document.body as NSString).length);editor.setSelectedRange(NSRange(location:location,length:0))
         }
-        if let storage=editor.textStorage {storage.addAttribute(.foregroundColor,value:palette.nsText,range:NSRange(location:0,length:storage.length))}
-        editor.typingAttributes[.foregroundColor]=palette.nsText;editor.insertionPointColor=palette.nsText;editor.isEditable = !model.busy && model.isUnlocked;formatting.attach(editor)
+        VaultEditorFormatting.updateAutomaticColor(in:editor,color:palette.nsText)
+        formatting.automaticTextColor=palette.nsText;editor.insertionPointColor=palette.nsText;editor.isEditable = !model.busy && model.isUnlocked;formatting.attach(editor)
     }
     private func defaultRuns(_ body:String)->[VaultTextStyleRun] {body.isEmpty ? []:[VaultTextStyleRun(location:0,length:(body as NSString).length)]}
     private func apply(_ document:PrivateDocument,to editor:NSTextView) {
         let attributes:[NSAttributedString.Key:Any]=[.font:VaultEditorFormatting.font(family:.system,size:14),.foregroundColor:palette.nsText,.paragraphStyle:VaultEditorFormatting.paragraph(),VaultEditorFormatting.familyKey:VaultFontFamily.system.rawValue]
         let text=NSMutableAttributedString(string:document.body,attributes:attributes)
-        for run in document.formatting ?? [] {var style:[NSAttributedString.Key:Any]=[.underlineStyle:run.underline ? NSUnderlineStyle.single.rawValue:0];VaultEditorFormatting.applyFont(to:&style,family:run.family,size:run.size,bold:run.bold,italic:run.italic);text.addAttributes(style,range:NSRange(location:run.location,length:run.length))}
+        for run in document.formatting ?? [] {text.addAttributes(VaultEditorFormatting.attributes(for:run,automatic:palette.nsText),range:NSRange(location:run.location,length:run.length))}
+        formatting.automaticTextColor=palette.nsText
         editor.textStorage?.setAttributedString(text);editor.typingAttributes=attributes
     }
     static func dismantleNSView(_ scroll:NSScrollView,coordinator:Coordinator) {if let editor=scroll.documentView as? NSTextView {VaultPlaintextPrivacy.clear(editor);editor.delegate=nil;if coordinator.formatting?.editor === editor {coordinator.formatting?.detach()}};coordinator.model?.removePlaintextClearer(id:coordinator.clearerID)}

@@ -15,7 +15,7 @@ struct WorkbenchShellMetrics {
         expanded = viewport.width >= 1350 && viewport.height >= 800
         compact = viewport.width < 1000
         chromeHeight = expanded ? 50 : 46
-        // Keep the existing shared scrollbar reservation inside both boundaries.
+        // Fixed reading margins are independent of scrollbar presence.
         contentGutter = (expanded ? 28 : compact ? 20 : 24) + 11
         sidebarWidth = expanded
             ? min(280, 216 + max(0, viewport.width - 1350) / 12).rounded()
@@ -85,10 +85,6 @@ struct WorkbenchRootView: View {
                 }.padding(1)
                     .disabled(model.modals.isPresented || model.confirmingQuit || model.quitting)
                     .accessibilityHidden(model.modals.isPresented || model.confirmingQuit)
-                if model.brandMenuPresented {
-                    Color.clear.contentShape(Rectangle()).onTapGesture { model.brandMenuPresented = false }
-                    WorkbenchBrandMenu(model: model, dismiss: { model.brandMenuPresented = false }).offset(x: 14, y: chromeHeight - 2)
-                }
                 WorkbenchModalHost(coordinator:model.modals)
                 WorkbenchContextDialogs(model:model.context)
                 CalendarDialogs(model:model.calendar,context:model.context)
@@ -115,13 +111,13 @@ struct WorkbenchRootView: View {
     }
     private func chrome(expanded: Bool) -> some View {
         HStack(spacing: 12) {
-            Button { model.brandMenuPresented.toggle() } label: {
-                HStack(spacing: 8) {
-                    WorkbenchBrandMark().frame(width: 25, height: 25)
-                    Text("方寸").font(.system(size: 12, weight: .medium))
-                    Image(systemName: "chevron.down").font(.system(size: 10)).foregroundStyle(palette.secondary)
-                }.padding(.leading, 4).padding(.trailing, 8).frame(height: 32)
-            }.buttonStyle(WorkbenchChromeButtonStyle()).accessibilityLabel("方寸菜单").accessibilityIdentifier("window-brand-trigger")
+            HStack(spacing: 8) {
+                WorkbenchBrandMark().frame(width: 25, height: 25)
+                Text("方寸").font(.system(size: 12, weight: .medium))
+                Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")
+                    .font(.system(size: 11)).foregroundStyle(palette.muted)
+            }.padding(.leading, 4).frame(height: 32)
+                .accessibilityElement(children: .combine).accessibilityIdentifier("window-brand")
             Spacer(minLength: 12)
             if model.isTopEntryPresentation {
                 Button { model.keepInOrdinaryWindow?() } label: { Label("留在窗口", systemImage: "macwindow") }
@@ -200,7 +196,6 @@ struct WorkbenchRootView: View {
                         .accessibilityIdentifier("settings-navigation-"+tab.rawValue)
                 }
                 Spacer(minLength:24)
-                Text("方寸").font(.system(size:11)).foregroundStyle(palette.muted).padding(.horizontal,12)
             } else {
                 ForEach([WorkbenchRoute.overview,.device,.health,.cleaning,.calendar,.ai,.network,.vault],id:\.self) {route in navigation(route,expanded:expanded)}
                 navigation(.cards,expanded:expanded)

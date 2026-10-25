@@ -44,6 +44,23 @@ import LauncherCore
         drafts.budget.enabled = true; drafts.budget.limit = "20"; drafts.budget.period = .month
         drafts.budget.usesAnchor = true
         let calendar = drafts.budget.calendar
+        let januaryEnd = calendar.date(from: DateComponents(year: 2026, month: 1, day: 31, hour: 12))!
+        let february = NetworkBudgetDateSelection.replacing(.month, with: 2, in: januaryEnd, calendar: calendar)
+        check(DeviceBudgetDate(february, calendar: calendar) == .init(year: 2026, month: 2, day: 28),
+              "budget month dropdown clamps January 31 to February's last real day instead of overflowing to March")
+        let leapDay = calendar.date(from: DateComponents(year: 2024, month: 2, day: 29, hour: 12))!
+        check(DeviceBudgetDate(NetworkBudgetDateSelection.replacing(.year, with: 2025, in: leapDay, calendar: calendar), calendar: calendar) == .init(year: 2025, month: 2, day: 28),
+              "budget year dropdown clamps a leap day while preserving the ledger calendar timezone")
+        let selectedDay = NetworkBudgetDateSelection.replacing(.day, with: 15, in: januaryEnd, calendar: calendar)
+        check(DeviceBudgetDate(selectedDay, calendar: calendar) == .init(year: 2026, month: 1, day: 15),
+              "budget day dropdown changes the chosen civil day without replacing its year or month")
+        let canvas = CGSize(width: 420, height: 154), tooltip = CGSize(width: 218, height: 112)
+        let tallTip = NetworkTrafficTooltipPlacement.frame(anchor: CGRect(x: 8, y: 0, width: 20, height: 130), canvas: canvas, size: tooltip)
+        let middleTip = NetworkTrafficTooltipPlacement.frame(anchor: CGRect(x: 390, y: 60, width: 20, height: 70), canvas: canvas, size: tooltip)
+        check(CGRect(origin: .zero, size: canvas).contains(tallTip) && CGRect(origin: .zero, size: canvas).contains(middleTip) && tallTip.minX == 0 && middleTip.maxX == canvas.width,
+              "network hover details stay inside the chart at both edge columns")
+        check(tallTip.minY != middleTip.minY,
+              "network hover details use each column's painted height rather than one shared tallest-column anchor")
         drafts.budget.anchor = calendar.date(from: DateComponents(year: 2026, month: 10, day: 15))!
         await drafts.saveBudget(model)
         check(model.budget.cycleAnchor == .init(year: 2026, month: 10, day: 15), "billing anchor date saves without conversion into the machine's current timezone")
@@ -126,6 +143,8 @@ import LauncherCore
         drafts.budget = savedDraft
         let budgetControl = await checkBudgetControl(model: model, drafts: drafts)
         count += budgetControl.count; failures += budgetControl.failures
+        let networkHover = await checkNetworkHover()
+        count += networkHover.count; failures += networkHover.failures
         print("Device monitoring form checks: \(count - failures)/\(count) passed")
         return failures
     }
@@ -140,7 +159,11 @@ import LauncherCore
         }
         drafts.restoreBudget(model)
         let saved = model.budget
-        let host = NSHostingView(rootView: DeviceBudgetDialog(model: model, drafts: drafts, dismiss: {}).preferredColorScheme(.dark).nativeCheckAccessibility())
+        let host = NSHostingView(rootView: DeviceBudgetDialog(model: model, drafts: drafts, dismiss: {})
+            .background(WorkbenchMaterialSurface(kind: .panel, radius: 14))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .workbenchThemeEnvironment(theme: .qingbiMist, opacity: 0.70, backgroundMotion: false)
+            .preferredColorScheme(.dark).nativeCheckAccessibility())
         let window = NativeUIFixtureWindow(contentRect: NSRect(x: 260, y: 160, width: 470, height: 670), styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.contentView = host
         defer { window.close(); drafts.restoreBudget(model) }
@@ -153,6 +176,10 @@ import LauncherCore
         if !ready { describeBudgetHost(host, window: window) }
         let controls = budgetSwitches(in: host)
         check(controls.count == 1, "the actual production budget dialog mounts exactly one typed native NSSwitch")
+        if ProcessInfo.processInfo.environment["FANGCUN_HOVER_VISUAL_DIR"] != nil {
+            check(captureNetworkEvidence(host, name: "network-budget-date-selectors"),
+                  "the production budget dialog exports its actual year/month/day dropdown layout")
+        }
         if controls.count == 1, let control = controls.first, control.window === window {
             let rect = window.convertToScreen(control.convert(control.bounds, to: nil))
             let root = window.convertToScreen(host.convert(host.bounds, to: nil))
@@ -185,6 +212,156 @@ import LauncherCore
             check(false, "the actual budget dialog exposes its native enabled switch after mounting")
         }
         return (count, failures)
+    }
+
+    /// Real production chart plus a disposable measured ledger. The pointer
+    /// enters the painted bottoms of two unequal bars; no click or action
+    /// closure can open the details and accidentally satisfy this regression.
+    private static func checkNetworkHover() async -> (count: Int, failures: Int) {
+        #if DEBUG
+        var count = 0, failures = 0
+        func check(_ value: Bool, _ message: String) {
+            count += 1; if !value { failures += 1 }
+            print("\(value ? "PASS" : "FAIL") \(message)")
+        }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("fangcun-network-hover-\(UUID().uuidString)")
+        let notifications = FormCheckNotifications()
+        let model = DeviceStatusModel(dataDirectory: directory, notifications: notifications)
+        let pointerBefore = CGEvent(source: nil)?.location
+        let keyBefore = NSApp.keyWindow, mainBefore = NSApp.mainWindow
+        let visible = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let window = NativeUIFixtureWindow(contentRect: NSRect(x: visible.midX - 492, y: visible.midY - 380, width: 984, height: 760),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.acceptsMouseMovedEvents = true
+        defer {
+            model.stop(); window.orderOut(nil); window.contentView = nil; window.close()
+            if let mainBefore, mainBefore.isVisible { mainBefore.makeMain() }
+            if let keyBefore, keyBefore.isVisible { keyBefore.makeKey() }
+            if let pointerBefore { postNetworkPointer(pointerBefore) }
+            try? FileManager.default.removeItem(at: directory)
+        }
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let first = calendar.date(from: DateComponents(year: 2026, month: 10, day: 21, hour: 12))!
+        var accumulator = DeviceTrafficAccumulator(ledger: .init(now: first, timeZone: calendar.timeZone))
+        var received: UInt64 = 100, sent: UInt64 = 100
+        let totals: [UInt64] = [50_000_000, 200_000_000, 20_000_000, 80_000_000]
+        for (index, total) in totals.enumerated() {
+            let start = calendar.date(byAdding: .day, value: index, to: first)!
+            accumulator.breakContinuity()
+            accumulator.ingest(wifi: ["synthetic-network": .init(received: received, sent: sent)], ethernet: [:], at: start, maximumGap: 6)
+            received += total * 3 / 4; sent += total / 4
+            accumulator.ingest(wifi: ["synthetic-network": .init(received: received, sent: sent)], ethernet: [:], at: start.addingTimeInterval(2), maximumGap: 6)
+        }
+        let observed = calendar.date(byAdding: .day, value: 3, to: first)!.addingTimeInterval(2)
+        var snapshot = DeviceSnapshot(); snapshot.sampledAt = observed
+        await model.evaluateMonitoringForChecks(snapshot: snapshot, ledger: accumulator.ledger, at: observed)
+        let originalSummary = model.trafficSummary
+        let highDate = calendar.startOfDay(for: calendar.date(byAdding: .day, value: 1, to: first)!)
+        let lowDate = calendar.startOfDay(for: calendar.date(byAdding: .day, value: 2, to: first)!)
+        let highID = "fc.network.day-bar." + String(Int(highDate.timeIntervalSince1970))
+        let lowID = "fc.network.day-bar." + String(Int(lowDate.timeIntervalSince1970))
+        let host = NSHostingView(rootView: NetworkMonitorView(model: model)
+            .workbenchThemeEnvironment(theme: .qingbiMist, opacity: 0.70, backgroundMotion: false)
+            .preferredColorScheme(.dark).nativeCheckAccessibility())
+        window.contentView = host
+        let mounted = await NativeUIFixtureWindow.prepare(window: window) {
+            networkFrame(highID, in: host) != nil && networkFrame(lowID, in: host) != nil
+        }
+        check(mounted && model.trafficSummary.dailyUsage.contains { $0.totalBytes == 200_000_000 } &&
+              model.trafficSummary.dailyUsage.contains { $0.totalBytes == 20_000_000 },
+              "production network chart mounts distinct high and low measured columns in its isolated native host")
+        guard mounted, let high = networkFrame(highID, in: host), let low = networkFrame(lowID, in: host) else { return (count, failures) }
+        let primaryTop = NSScreen.screens.first?.frame.maxY ?? 0
+        func move(_ screen: NSPoint) async {
+            postNetworkPointer(CGPoint(x: screen.x, y: primaryTop - screen.y))
+            try? await Task.sleep(for: .milliseconds(160)); host.layoutSubtreeIfNeeded(); window.displayIfNeeded()
+        }
+        func waitForTip(_ date: Date) async -> NSRect? {
+            let formatter = DateFormatter(); formatter.locale = Locale(identifier: "zh_CN"); formatter.timeZone = calendar.timeZone; formatter.dateFormat = "M 月 d 日"
+            let dateText = formatter.string(from: date)
+            let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+            repeat {
+                host.layoutSubtreeIfNeeded(); window.displayIfNeeded()
+                let hasDate = networkObjects(host).contains { object in
+                    ["accessibilityLabel", "accessibilityValue"].contains { field in networkString(field, from: object) == dateText }
+                }
+                if hasDate, let frame = networkFrame("fc.network.day-tooltip", in: host) { return frame }
+                try? await Task.sleep(for: .milliseconds(25))
+            } while ContinuousClock.now < deadline
+            return nil
+        }
+        await move(NSPoint(x: window.frame.minX + 8, y: window.frame.minY + 8))
+        check(networkFrame("fc.network.day-tooltip", in: host) == nil,
+              "network chart starts without any selected or visible hover tooltip")
+        await move(NSPoint(x: high.midX, y: high.minY + 4))
+        let highTip = await waitForTip(highDate)
+        check(highTip != nil, "OS hover alone opens the high column's dated traffic details without a mouse click")
+        if ProcessInfo.processInfo.environment["FANGCUN_HOVER_VISUAL_DIR"] != nil {
+            check(captureNetworkEvidence(host, name: "network-hover-high"), "high-column native hover exports its actual chart screenshot")
+        }
+        await move(NSPoint(x: low.midX, y: low.minY + 4))
+        let lowTip = await waitForTip(lowDate)
+        check(lowTip != nil, "moving the OS pointer to the low column replaces the tooltip with that day's details without a click")
+        let hostBounds = window.convertToScreen(host.convert(host.bounds, to: nil))
+        let barBounds = networkObjects(host).compactMap { object -> NSRect? in
+            guard let identifier = networkString("accessibilityIdentifier", from: object),
+                  identifier.hasPrefix("fc.network.day-bar.") else { return nil }
+            return networkObjectFrame(object)
+        }.reduce(NSRect.null) { $0.union($1) }
+        // A full bar target excludes the day-label line beneath it. Its actual
+        // plot bounds plus that short label line are the chart canvas.
+        let chartBounds = NSRect(x: barBounds.minX, y: barBounds.minY - 24, width: barBounds.width, height: barBounds.height + 24)
+        check(highTip.flatMap { h in lowTip.map { l in
+            abs(h.minY - l.minY) > 8 && hostBounds.contains(h) && hostBounds.contains(l) &&
+                chartBounds.insetBy(dx: -1, dy: -1).contains(h) && chartBounds.insetBy(dx: -1, dy: -1).contains(l)
+        } } == true, "actual high and low hover panels follow different painted heights and remain inside chart and window bounds")
+        print("DETAIL network real hover highBar=\(high) lowBar=\(low) highTip=\(String(describing: highTip)) lowTip=\(String(describing: lowTip)) chart=\(chartBounds)")
+        if ProcessInfo.processInfo.environment["FANGCUN_HOVER_VISUAL_DIR"] != nil {
+            check(captureNetworkEvidence(host, name: "network-hover-low"), "low-column native hover exports its actual chart screenshot")
+        }
+        check(!model.isSampling && model.trafficSummary == originalSummary && notifications.requests == 0,
+              "native chart hover neither starts sensors nor changes measured totals or requests permissions")
+        return (count, failures)
+        #else
+        return (0, 0)
+        #endif
+    }
+
+    private static func postNetworkPointer(_ point: CGPoint) {
+        CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+    }
+    private static func networkObjects(_ root: NSObject) -> [NSObject] {
+        var result: [NSObject] = [], pending = [root], visited = Set<ObjectIdentifier>()
+        while let object = pending.popLast(), visited.count < 8192 {
+            guard visited.insert(ObjectIdentifier(object)).inserted else { continue }; result.append(object)
+            if let view = object as? NSView { pending.append(contentsOf: view.subviews) }
+            if object.responds(to: NSSelectorFromString("accessibilityChildren")), let children = object.value(forKey: "accessibilityChildren") as? [NSObject] { pending += children }
+        }
+        return result
+    }
+    private static func networkString(_ key: String, from object: NSObject) -> String? {
+        guard object.responds(to: NSSelectorFromString(key)) else { return nil }
+        let value = object.value(forKey: key)
+        return (value as? String) ?? (value as? NSAttributedString)?.string
+    }
+    private static func networkObjectFrame(_ object: NSObject) -> NSRect? {
+        guard object.responds(to: NSSelectorFromString("accessibilityFrame")), let value = object.value(forKey: "accessibilityFrame") as? NSValue else { return nil }
+        let frame = value.rectValue
+        return frame.width > 0 && frame.height > 0 && frame.width.isFinite && frame.height.isFinite ? frame : nil
+    }
+    private static func networkFrame(_ id: String, in host: NSView) -> NSRect? {
+        networkObjects(host).filter { networkString("accessibilityIdentifier", from: $0) == id }.compactMap(networkObjectFrame).max { $0.width * $0.height < $1.width * $1.height }
+    }
+    private static func captureNetworkEvidence(_ host: NSView, name: String) -> Bool {
+        guard let path = ProcessInfo.processInfo.environment["FANGCUN_HOVER_VISUAL_DIR"],
+              let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return false }
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        guard let data = bitmap.representation(using: .png, properties: [:]), data.count > 1000 else { return false }
+        do {
+            let output = URL(fileURLWithPath: path, isDirectory: true)
+            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+            try data.write(to: output.appendingPathComponent(name + ".png")); return true
+        } catch { print("DETAIL network native screenshot failed: \(error.localizedDescription)"); return false }
     }
 
     private static func describeBudgetHost(_ root: NSView, window: NSWindow) {

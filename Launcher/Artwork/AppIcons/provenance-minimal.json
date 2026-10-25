@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "method": "Original geometric vector marks rendered reproducibly by scripts/prepare-app-icons.swift; historical mountain artwork and its provenance are retained separately.",
+  "artwork": [
+    {
+      "id": "minimal-ink",
+      "source": "Minimal/minimal-ink.png",
+      "sourceSHA256": "1446a41dba43d4e10a6c27b1a90b800e2bd2c6db33b0a8d4eaacca878073eeae",
+      "productionResource": "Resources/AppIcons/minimal-ink.icns",
+      "productionSHA256": "5be81fcb242f7809075e362a0de432ddfb8009439c05f4bdf359e328ce7a9126",
+      "menuBarResource": "Resources/AppIcons/minimal-ink-menubar.png",
+      "menuBarSHA256": "c44ecad9f1656a3c49aef36d0044473484bf3dc876516ec3a146329f58afffbf",
+      "sourceDimensions": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "id": "minimal-frame",
+      "source": "Minimal/minimal-frame.png",
+      "sourceSHA256": "b4999385daa3dc2d2b035e3f7f4d2a27a17afc32b459c57ed32940c3d7f1d95a",
+      "productionResource": "Resources/AppIcons/minimal-frame.icns",
+      "productionSHA256": "db12cfb362640f3380696b8d4361df326e4f83adf28f9e391f6d16c5a1cbed3c",
+      "menuBarResource": "Resources/AppIcons/minimal-frame-menubar.png",
+      "menuBarSHA256": "1654a003f294d60d646f3e8477d8e9a555eeed295b5cc9c98c9228de7d60b1ea",
+      "sourceDimensions": [
+        1024,
+        1024
+      ]
+    }
+  ]
+}

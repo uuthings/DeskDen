@@ -33,11 +33,20 @@ import SwiftUI
             var snapshot=ReminderSnapshot();snapshot.reminders=[on,off]
             snapshot.preferences.calendarConnected=true;snapshot.preferences.remindersConnected=true;snapshot.preferences.notificationsEnabled=true
             try ReminderStore(directory:directory).save(snapshot)
+            // Older versions saved only hiddenSources. New display switches
+            // must migrate that document without treating it as corrupt.
+            try Data(#"{"hiddenSources":["restored-hidden"]}"#.utf8).write(to:directory.appendingPathComponent("calendar-display.json"))
             let system=CalendarMigrationSystem(),notifier=CalendarMigrationNotifier()
             let near=Date().addingTimeInterval(2*86_400),far=ISO8601DateFormatter().date(from:"2032-06-15T12:00:00Z")!
             system.values=[CalendarEventItem(id:"near",title:"首页七天日程",start:near,end:near.addingTimeInterval(3600),calendarName:"个人",calendarID:"personal"),CalendarEventItem(id:"far",title:"远月日程",start:far,end:far.addingTimeInterval(3600),calendarName:"工作",calendarID:"work")]
             let model=CalendarModel(dataDirectory:directory,system:system,notifier:notifier)
             model.displayTimeZone=calendar.timeZone
+            check(model.holidaysEnabled && !model.isSourceVisible("restored-hidden"),
+                  "legacy source-only preferences retain hidden calendars and default the new holiday switch on")
+            model.setHolidaysEnabled(false)
+            let hiddenHoliday=CalendarCivilDay(date:calendar.date(from:DateComponents(year:2026,month:10,day:1,hour:12))!,calendar:calendar,showsHolidays:model.holidaysEnabled)
+            check(!model.holidaysEnabled && hiddenHoliday.holidayKind == nil && hiddenHoliday.badge == nil,
+                  "disabling official mainland holidays removes rest/work badges from the shared civil-day presentation")
             await model.refresh();await settle()
             check(model.overviewEvents.map(\.id) == ["near"],"calendar overview queries its independent upcoming seven days")
             model.displayedMonth=far;model.selectedDay=far
@@ -47,7 +56,9 @@ import SwiftUI
             model.setSourceVisible("personal",false)
             check(model.overviewEvents.isEmpty && model.overviewEventValues.map(\.id) == ["near"],"source filtering hides displayed events while retaining their source data")
             let reloaded=CalendarModel(dataDirectory:directory,system:system,notifier:CalendarMigrationNotifier())
-            check(!reloaded.isSourceVisible("personal"),"calendar source visibility survives an independent reload")
+            check(!reloaded.isSourceVisible("personal") && !reloaded.holidaysEnabled,"calendar source visibility and disabled holiday display survive an independent reload")
+            model.setHolidaysEnabled(true)
+            check(model.holidaysEnabled && !model.isSourceVisible("personal"),"enabling holiday display preserves independent system calendar visibility choices")
             model.setSourceVisible("personal",true)
             check(model.overviewEvents.map(\.id) == ["near"],"restoring source visibility restores the same read-only events")
 
@@ -79,6 +90,16 @@ import SwiftUI
             model.resumeOwnNotificationsAfterCancelledQuit();await settle()
             check(notifier.pending.map(\.title) == ["允许通知"],"cancelled quit restores the same filtered notification plan")
 
+            let systemValuesBeforeDisconnect=system.values
+            await model.disconnect(reminders:false)
+            check(!model.preferences.calendarConnected && model.events.isEmpty && model.todayEvents.isEmpty && model.overviewEventValues.isEmpty && model.calendarSources.isEmpty && system.values == systemValuesBeforeDisconnect,
+                  "disconnecting calendar immediately clears every displayed cache without deleting system events or revoking access")
+            await model.connect(reminders:false)
+            check(model.preferences.calendarConnected && !model.overviewEventValues.isEmpty,
+                  "the calendar source can reconnect and load the same real adapter data")
+            await model.disconnect(reminders:true)
+            check(!model.preferences.remindersConnected && model.systemReminders.isEmpty && model.localReminders.count == 2,
+                  "disconnecting system reminders leaves local reminders intact and hides system caches")
             model.displayedMonth=far;model.changeMonth(1)
             check(model.displayCalendar.component(.month,from:model.selectedDay) == 7 && model.displayCalendar.component(.day,from:model.selectedDay) == 1,"month navigation selects a valid first day in the new month")
             let editorChecks=await checkEditorErrors(directory:directory.appendingPathComponent("editor-errors"))

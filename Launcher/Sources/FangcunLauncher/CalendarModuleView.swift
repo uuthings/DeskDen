@@ -109,7 +109,7 @@ struct CalendarModuleView:View {
                 ForEach(model.monthDays,id:\.self){date in CalendarDayCell(model:model,date:date).frame(height:dayHeight)}
             }
             HStack(spacing:5) {
-                if WorkbenchChinaHolidays.includedYears.contains(model.displayCalendar.component(.year,from:model.displayedMonth)) {
+                if !model.holidaysEnabled {Text("节假日标记已关闭")} else if WorkbenchChinaHolidays.includedYears.contains(model.displayCalendar.component(.year,from:model.displayedMonth)) {
                     Text("休").foregroundStyle(palette.success).padding(.horizontal,3).background(palette.success.opacity(0.08),in:RoundedRectangle(cornerRadius:3))
                     Text("放假");Text("班").foregroundStyle(palette.critical).padding(.horizontal,3).background(palette.critical.opacity(0.08),in:RoundedRectangle(cornerRadius:3));Text("调休上班")
                 } else {Text("此年未载入调休数据")}
@@ -137,7 +137,7 @@ struct CalendarModuleView:View {
     }
     private var selectedCard:some View {
         CalendarSideCard(title:calendarFormat(model.selectedDay,"M 月 d 日",calendar:model.displayCalendar),symbol:"calendar") {
-            let civilDay=CalendarCivilDay(date:model.selectedDay,calendar:model.displayCalendar)
+            let civilDay=CalendarCivilDay(date:model.selectedDay,calendar:model.displayCalendar,showsHolidays:model.holidaysEnabled)
             if let text=civilDay.namedLabel {
                 Text(text).font(.system(size:11)).foregroundStyle(civilDay.color(palette)).padding(.horizontal,7).padding(.vertical,5).frame(maxWidth:.infinity,alignment:.leading).background(civilDay.holidayKind == nil ? palette.soft:civilDay.color(palette).opacity(0.08),in:RoundedRectangle(cornerRadius:6)).padding(.bottom,4)
             }
@@ -189,9 +189,9 @@ private struct CalendarDayCell:View {
     let date:Date
     var body:some View {
         let calendar=model.displayCalendar,selected=calendar.isDate(date,inSameDayAs:model.selectedDay)
-        let outside = !calendar.isDate(date,equalTo:model.displayedMonth,toGranularity:.month),info=CalendarCivilDay(date:date,calendar:calendar)
+        let outside = !calendar.isDate(date,equalTo:model.displayedMonth,toGranularity:.month),info=CalendarCivilDay(date:date,calendar:calendar,showsHolidays:model.holidaysEnabled)
         let entries=outside ? []:ReminderQueries.entries(reminders:model.reminders,events:model.visibleCalendarEvents,filter:.day,day:date,calendar:calendar)
-        WorkbenchCalendarDayButton(date:date,calendar:calendar,selected:selected,outside:outside,eventMarkers:entries.map(\.isSystemEvent),
+        WorkbenchCalendarDayButton(date:date,calendar:calendar,selected:selected,outside:outside,showsHolidays:model.holidaysEnabled,eventMarkers:entries.map(\.isSystemEvent),
             label:"\(calendarFormat(date,"M月d日",calendar:calendar))，\(info.namedLabel ?? info.label)，\(entries.count) 项安排",
             identifier:"fc.calendar.day.\(calendarFormat(date,"yyyy-MM-dd",calendar:calendar))") {model.selectDay(date)}
     }
@@ -210,7 +210,7 @@ private struct CalendarWeekGrid:View {
     }
     private func weekDay(_ date:Date)->some View {
         let entries=ReminderQueries.entries(reminders:model.reminders,events:model.visibleCalendarEvents,filter:.day,day:date,calendar:model.displayCalendar)
-        let info=CalendarCivilDay(date:date,calendar:model.displayCalendar)
+        let info=CalendarCivilDay(date:date,calendar:model.displayCalendar,showsHolidays:model.holidaysEnabled)
         return VStack(spacing:0) {
             Button {model.selectDay(date)} label:{
                 HStack(spacing:4){Text(calendarFormat(date,"EE d",calendar:model.displayCalendar)).font(.system(size:11,weight:.medium));CalendarHolidayBadge(day:info)}
@@ -476,7 +476,11 @@ private struct CalendarSourcesPage:View {
             WBPageHeader(title:"日历来源",subtitle:"按来源管理日程、提醒与授权状态")
             VStack(spacing:12) {
                 WBCard(title:"中国大陆节假日",symbol:"calendar") {
-                    sourceRow("2026 放假与调休","国务院办公厅公布的年度安排"){status("已载入")}
+                    sourceRow("放假与调休","关闭后隐藏官方放假、休息与补班标记") {
+                        Toggle("显示中国大陆节假日",isOn:Binding(get:{model.holidaysEnabled},set:{model.setHolidaysEnabled($0)}))
+                            .labelsHidden().toggleStyle(.switch).controlSize(.small).tint(palette.accent).clickableCursor()
+                            .accessibilityIdentifier("calendar-source-holidays")
+                    }
                     sourceRow("传统节日与农历","节日与调休分别标记，不把节日都视为放假"){status("独立显示")}
                     sourceRow("地区与日期","按中国大陆民用日期标注，不随显示时区偏移",last:true){status("中国大陆")}
                 }
@@ -500,12 +504,15 @@ private struct CalendarSourcesPage:View {
     }
     private func systemSource(reminders:Bool)->some View {
         let access=reminders ? model.remindersAccess:model.calendarAccess
-        let connected=(reminders ? model.preferences.remindersConnected:model.preferences.calendarConnected) && access == .granted
+        let connected=reminders ? model.preferences.remindersConnected:model.preferences.calendarConnected
         return sourceRow(reminders ? "系统提醒事项":"系统日历",reminders ? "接入后可在可写列表中创建与完成提醒":"读取日程，保留原日历的来源与只读状态",last:reminders) {
             HStack(spacing:8) {
                 if access == .denied || access == .restricted {Button("隐私设置"){model.openPrivacySettings(reminders:reminders)}.buttonStyle(WBButtonStyle(compact:true))}
-                Text(connected ? (reminders ? "已连接":"已连接 · 只读"):access == .denied ? "已拒绝":access == .restricted ? "受限":"未接入").font(.system(size:11)).foregroundStyle(connected ? palette.success:palette.muted)
-                Button(connected ? "断开":"连接"){Task {if connected {await model.disconnect(reminders:reminders)}else{await model.connect(reminders:reminders)}}}.buttonStyle(WBButtonStyle(compact:true)).disabled(model.isWorking || access == .restricted)
+                Text(connected && access == .granted ? (reminders ? "已连接":"已连接 · 只读"):connected ? "权限已关闭":access == .denied ? "未连接 · 未授权":access == .restricted ? "受限":"未连接").font(.system(size:11)).foregroundStyle(connected && access == .granted ? palette.success:palette.muted)
+                Toggle(reminders ? "连接系统提醒事项":"连接系统日历",isOn:Binding(get:{connected},set:{enabled in Task {if enabled {await model.connect(reminders:reminders)}else{await model.disconnect(reminders:reminders)}}}))
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small).tint(palette.accent).clickableCursor()
+                    .disabled(model.isWorking || (access == .restricted && !connected))
+                    .accessibilityIdentifier(reminders ? "calendar-source-system-reminders":"calendar-source-system-events")
             }
         }
     }
@@ -544,7 +551,7 @@ struct CalendarCivilDay {
     func color(_ palette:ThemePalette)->Color {
         switch holidayKind {case .holiday:palette.success;case .workingDay:palette.critical;case nil:palette.muted}
     }
-    init(date:Date,calendar:Calendar) {
+    init(date:Date,calendar:Calendar,showsHolidays:Bool=true) {
         let c=calendar.dateComponents([.year,.month,.day],from:date)
         var china=Calendar(identifier:.gregorian);china.timeZone=TimeZone(identifier:"Asia/Shanghai")!
         let noon=china.date(from:DateComponents(year:c.year,month:c.month,day:c.day,hour:12)) ?? date
@@ -554,7 +561,7 @@ struct CalendarCivilDay {
         if let lunar,!lunar.isLeapMonth {
             festival=["1-1":"春节","1-15":"元宵节","5-5":"端午节","7-7":"七夕","8-15":"中秋节","9-9":"重阳节","12-8":"腊八节"]["\(lunar.month)-\(lunar.day)"]
         }
-        if let value,case .recorded(let holiday)=value.holiday {
+        if showsHolidays,let value,case .recorded(let holiday)=value.holiday {
             label=holiday.kind == .workingDay ? "调休上班":holiday.name
             namedLabel=holiday.name+(holiday.kind == .workingDay ? "":" · 放假")
             badge=holiday.kind == .holiday ? "休":"班";holidayKind=holiday.kind

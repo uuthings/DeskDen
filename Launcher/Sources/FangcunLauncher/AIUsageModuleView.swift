@@ -366,7 +366,7 @@ struct AIUsageModuleView: View {
                 AIQuotaDailyHeatmap(days: history.days, title: "尚无额度读数", calendar: calendar,
                     identifier: provider.rawValue + ".empty", empty: true)
             } else {
-                LazyVGrid(columns: history.series.count == 1 ? [GridItem(.flexible())] : [GridItem(.adaptive(minimum: 300), spacing: 28)], spacing: 20) {
+                VStack(alignment: .leading, spacing: 20) {
                     ForEach(history.series) { series in
                         AIQuotaDailyHeatmap(days: series.days, title: series.title, calendar: calendar,
                             identifier: provider.rawValue + "." + String(series.durationMinutes))
@@ -374,7 +374,8 @@ struct AIUsageModuleView: View {
                 }
             }
             AIQuotaHeatmapLegend().padding(.top, 16)
-        }.accessibilityElement(children: .contain).accessibilityIdentifier("fc.ai.detail.dailyHistory")
+        }.aiQuotaMeasuredRegion("fc.ai.history." + provider.rawValue + ".section")
+            .accessibilityElement(children: .contain).accessibilityIdentifier("fc.ai.detail.dailyHistory")
     }
     private func providerTokenCard(_ provider: AIProvider) -> some View {
         let records = model.filteredRecords(provider: provider, period: model.selectedPeriod)
@@ -564,8 +565,8 @@ struct AIProviderLogo: View {
     }
 }
 
-/// The calendar cells are fixed squares. Padding has no cell surface, a missing
-/// observation has a neutral outline, and a real 0% has the first accent shade.
+/// A left-aligned daily intensity strip, with no calendar grid or date numerals.
+/// Missing days retain a neutral surface; real observed zero gets the first tint.
 private struct AIQuotaDailyHeatmap: View {
     let days: [AIQuotaDailyCell]
     let title: String
@@ -574,57 +575,53 @@ private struct AIQuotaDailyHeatmap: View {
     var empty = false
     @Environment(\.workbenchPalette) private var palette
     @State private var hoveredDate: Date?
-    private let cellSize: CGFloat = 32
-    private let cellGap: CGFloat = 6
+    private let cellSize: CGFloat = 14
+    private let cellGap: CGFloat = 4
+    private var visibleDays: [AIQuotaDailyCell] { days.filter(\.isInRange) }
+    private var stripWidth: CGFloat { CGFloat(visibleDays.count) * cellSize + CGFloat(max(0, visibleDays.count - 1)) * cellGap }
     private var focusedDay: AIQuotaDailyCell? {
-        days.first { $0.date == hoveredDate } ?? days.last { $0.reading != nil } ?? days.last { $0.isInRange }
-    }
-    private var weekdays: [String] {
-        let names = calendar.veryShortStandaloneWeekdaySymbols
-        return (0..<7).map { names[($0 + calendar.firstWeekday - 1) % 7] }
+        visibleDays.first { $0.date == hoveredDate } ?? visibleDays.last { $0.reading != nil } ?? visibleDays.last
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
                 Text(title).aiText(12, weight: .medium, color: palette.text)
+                Text("\(visibleDays.filter { $0.reading != nil }.count) 天有读数").aiText(10, color: palette.muted)
                 Spacer(minLength: 0)
-                Text("\(days.filter { $0.reading != nil }.count) 天有读数").aiText(10, color: palette.muted)
             }
-            VStack(spacing: cellGap) {
-                HStack(spacing: cellGap) {
-                    ForEach(Array(weekdays.enumerated()), id: \.offset) { _, day in
-                        Text(day).font(.system(size: 10)).foregroundStyle(palette.muted).frame(width: cellSize, height: 16)
+            HStack(spacing: cellGap) {
+                ForEach(visibleDays) { day in
+                    RoundedRectangle(cornerRadius: 3).fill(fill(day))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 3).strokeBorder(
+                                hoveredDate == day.date ? palette.text : day.reading == nil ? palette.border : palette.accent.opacity(0.35),
+                                lineWidth: hoveredDate == day.date ? 1.5 : 1)
+                        }.frame(width: cellSize, height: cellSize)
+                        .aiQuotaMeasuredRegion("fc.ai.history." + identifier + ".cell." + String(Int(day.date.timeIntervalSince1970)))
+                        .help(description(day))
+                        .accessibilityElement(children: .ignore).accessibilityLabel(description(day))
+                        .accessibilityIdentifier("fc.ai.history." + identifier + ".day." + String(Int(day.date.timeIntervalSince1970)))
+                }
+            }.frame(width: stripWidth, height: cellSize, alignment: .leading)
+                .contentShape(Rectangle())
+                .onContinuousHover { phase in
+                    switch phase {
+                    case .active(let location):
+                        guard !visibleDays.isEmpty else { return }
+                        let index = min(visibleDays.count - 1, max(0, Int((location.x + cellGap / 2) / (cellSize + cellGap))))
+                        hoveredDate = visibleDays[index].date
+                    case .ended: hoveredDate = nil
                     }
-                }.accessibilityHidden(true)
-                LazyVGrid(columns: Array(repeating: GridItem(.fixed(cellSize), spacing: cellGap), count: 7), spacing: cellGap) {
-                    ForEach(days) { day in
-                        if day.isInRange {
-                            Text(String(calendar.component(.day, from: day.date)))
-                                .font(.system(size: 10, weight: .medium)).monospacedDigit()
-                                .foregroundStyle(day.reading == nil ? palette.muted : palette.text)
-                                .frame(width: cellSize, height: cellSize)
-                                .background(fill(day), in: RoundedRectangle(cornerRadius: 5))
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: 5).strokeBorder(
-                                        hoveredDate == day.date ? palette.accent : day.reading == nil ? palette.border : palette.accent.opacity(0.35),
-                                        lineWidth: hoveredDate == day.date ? 1.5 : 1)
-                                }
-                                .onHover { hoveredDate = $0 ? day.date : nil }
-                                .aiQuotaMeasuredRegion("fc.ai.history." + identifier + ".cell." + String(Int(day.date.timeIntervalSince1970)))
-                                .help(description(day))
-                                .accessibilityElement(children: .ignore).accessibilityLabel(description(day))
-                                .accessibilityIdentifier("fc.ai.history." + identifier + ".day." + String(Int(day.date.timeIntervalSince1970)))
-                        } else {
-                            Color.clear.frame(width: cellSize, height: cellSize).accessibilityHidden(true)
-                        }
-                    }
-                }.frame(width: cellSize * 7 + cellGap * 6)
-                    .aiQuotaMeasuredRegion("fc.ai.history." + identifier + ".grid")
-            }.frame(maxWidth: .infinity)
-            VStack(alignment: .leading, spacing: 3) {
+                }
+                .aiQuotaMeasuredRegion("fc.ai.history." + identifier + ".grid")
+            HStack {
+                if let first = visibleDays.first { Text(first.date.formatted(.dateTime.month(.twoDigits).day(.twoDigits))) }
+                Spacer(minLength: 0)
+                if let last = visibleDays.last { Text(last.date.formatted(.dateTime.month(.twoDigits).day(.twoDigits))) }
+            }.font(.system(size: 10)).foregroundStyle(palette.muted).frame(width: stripWidth)
+            HStack(spacing: 8) {
                 if empty {
-                    Text("连接来源并读取后，按天记录真实额度。").foregroundStyle(palette.muted)
-                    Text("空白日期尚无读数").foregroundStyle(palette.muted)
+                    Text("连接来源并读取后，按天记录真实额度。空白日期尚无读数。").foregroundStyle(palette.muted)
                 } else if let day = focusedDay {
                     Text(day.date.formatted(.dateTime.month().day()) + (day.reading.map {
                         " · 窗口已用 " + $0.window.usedPercent.formatted(.number.precision(.fractionLength(0...1))) + "%"
@@ -632,9 +629,10 @@ private struct AIQuotaDailyHeatmap: View {
                     Text(day.reading.map { $0.observedAt.formatted(date: .omitted, time: .shortened) + " · " + $0.source.title } ?? "未观测到额度，不能视为 0%。")
                         .foregroundStyle(palette.muted)
                 }
-            }.font(.system(size: 11)).lineLimit(1).frame(height: 34, alignment: .topLeading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }.accessibilityElement(children: .contain).accessibilityIdentifier("fc.ai.history." + identifier)
+                Spacer(minLength: 0)
+            }.font(.system(size: 11)).lineLimit(1).frame(height: 18, alignment: .leading)
+        }.frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .contain).accessibilityIdentifier("fc.ai.history." + identifier)
     }
     private func fill(_ day: AIQuotaDailyCell) -> Color {
         guard let reading = day.reading else { return palette.soft.opacity(0.45) }

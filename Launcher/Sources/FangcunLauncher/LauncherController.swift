@@ -25,6 +25,7 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
     var content = LauncherContentSurface()
     let horizontalNavigationGesture = HorizontalNavigationGesture()
     var statusItem: NSStatusItem!
+    private var statusIconObserver: NSObjectProtocol?
     var previousApp: NSRunningApplication?
     var eventMonitor: Any?
     /// An optional observer of the installed AppKit monitor, used by isolated
@@ -381,7 +382,14 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
 #endif
         window.submenu = windowMenu; main.addItem(window); NSApp.windowsMenu = windowMenu; NSApp.mainMenu = main
         statusItem = NSStatusBar.system.statusItem(withLength:NSStatusItem.variableLength)
-        statusItem.button?.title = "方寸"; statusItem.button?.toolTip = "方寸 · 启动器"
+        statusItem.button?.title = ""; statusItem.button?.toolTip = "方寸 · 启动器"
+        statusItem.button?.image = ApplicationIconController.menuBarImage(for: ApplicationIconController.shared.selection)
+        statusItem.button?.setAccessibilityLabel("方寸菜单")
+        statusIconObserver = NotificationCenter.default.addObserver(forName: ApplicationIconController.changedNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.statusItem?.button?.image = ApplicationIconController.menuBarImage(for: ApplicationIconController.shared.selection)
+            }
+        }
         let statusMenu = NSMenu()
         for (title,action) in [("打开工作台",#selector(workbenchFromMenu)),("打开启动器",#selector(showFromMenu)),("方寸设置…",#selector(allSettingsFromMenu)),("启动器设置…",#selector(settingsFromMenu)),("刷新应用列表",#selector(refreshFromMenu))] { statusMenu.addItem(withTitle:title,action:action,keyEquivalent:"").target = self }
         statusMenu.addItem(withTitle:"检查更新",action:#selector(checkForUpdatesFromMenu),keyEquivalent:"").target=self

@@ -74,6 +74,14 @@ extension View {
     /// settle helper: hidden-window and focus-loss checks must remain hidden or
     /// unfocused. The caller supplies a real production AX/layout predicate.
     static func prepare(window: NSWindow, until condition: @MainActor () -> Bool) async -> Bool {
+        // Explicit QA opt-in for desktops covered by an unrelated floating
+        // review window. Keep real occlusion, AX and pointer checks; never
+        // change the production window level during ordinary startup.
+        if NativeUIFixtureAccessibility.isRequested(),
+           ProcessInfo.processInfo.environment["FANGCUN_QA_FLOATING_HOSTS"] == "1",
+           window.level.rawValue < NSWindow.Level.modalPanel.rawValue {
+            window.level = .modalPanel
+        }
         // Only explicitly mounted QA hosts use regular activation and may
         // briefly appear in the Dock. Product startup and saved settings are
         // unchanged. An accessory test process did not reliably become active.

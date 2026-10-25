@@ -70,6 +70,22 @@ class PublicGateTests(unittest.TestCase):
         self.git("add", extra)
         self.assertNotEqual(self.check("--staged").returncode, 0)
 
+    def test_minimal_brand_assets_have_an_exact_public_scope(self):
+        for path in ["Launcher/Artwork/AppIcons/Minimal/minimal-ink.png",
+                     "Launcher/Artwork/AppIcons/Minimal/minimal-frame.png",
+                     "Launcher/Resources/AppIcons/minimal-ink.icns",
+                     "Launcher/Resources/AppIcons/minimal-frame-menubar.png",
+                     "Launcher/Artwork/AppIcons/provenance-minimal.json"]:
+            target = self.repo / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / path, target)
+            self.git("add", path)
+        self.assertEqual(self.check("--staged").returncode, 0)
+        extra = "Launcher/Artwork/AppIcons/Minimal/private-preview.png"
+        shutil.copyfile(ROOT / "Launcher/Artwork/AppIcons/Minimal/minimal-ink.png", self.repo / extra)
+        self.git("add", extra)
+        self.assertNotEqual(self.check("--staged").returncode, 0)
+
     def test_only_reviewed_entitlement_template_is_public(self):
         path = "Launcher/Signing/Fangcun.entitlements"
         self.write(path, (ROOT / path).read_text())

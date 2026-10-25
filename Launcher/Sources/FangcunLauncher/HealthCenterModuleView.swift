@@ -42,11 +42,11 @@ struct HealthScoreRingView: View {
                 .shadow(color: color(0x22435E, 0.13), radius: unit, x: 0, y: 2 * unit)
             Circle().stroke(palette.border, lineWidth: unit).frame(width: size * 0.66, height: size * 0.66)
             VStack(spacing: 0) {
-                Text(score.map(String.init) ?? "—").font(.system(size: size * 0.30, weight: .semibold))
-                    .tracking(-3).monospacedDigit().foregroundStyle(tone).frame(height: size * 0.336)
+                Text(score.map(String.init) ?? "—").font(.system(size: size * 0.25, weight: .semibold))
+                    .tracking(-1.5).monospacedDigit().foregroundStyle(tone).frame(height: size * 0.336)
                     .shadow(color: palette.raised, radius: 0, x: 0, y: 2)
-                Text(score == nil ? "数据未齐" : "设备评分 / 100").font(.system(size: 11))
-                    .foregroundStyle(palette.muted).padding(.top, 6)
+                Text(score == nil ? "数据未齐" : "设备评分").font(.system(size: max(9, size * 0.065)))
+                    .foregroundStyle(palette.muted).padding(.top, 5)
             }.offset(y: 2)
         }.frame(width: size, height: size)
             .accessibilityElement(children: .ignore)
@@ -192,9 +192,9 @@ struct HealthCenterView: View {
     private var startAction: some View {
         VStack(spacing: 9) {
             Button { model.startAssessment() } label: {
-                Label("开始体检", systemImage: "viewfinder").frame(minWidth: (overviewCompact ? 120 : 126) - 22)
+                HStack(spacing: 7) { Image(systemName: "viewfinder"); Text("开始体检") }.frame(width: (overviewCompact ? 120 : 126) - 22, alignment: .center)
             }.buttonStyle(WBButtonStyle(primary: true)).accessibilityIdentifier("health-start")
-            if !overviewNarrow { Text("检查状态，再决定是否处理").font(.system(size: overviewCompact ? 10 : 11)).foregroundStyle(palette.muted) }
+            if !overviewNarrow { Text("检查状态，再决定是否处理").font(.system(size: overviewCompact ? 10 : 11)).foregroundStyle(palette.muted).multilineTextAlignment(.center).frame(width: 150) }
         }
     }
     private var factorGrid: some View {

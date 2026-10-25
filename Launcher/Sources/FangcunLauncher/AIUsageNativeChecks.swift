@@ -197,17 +197,20 @@ import SwiftUI
         for series in history.series {
             let prefix = "fc.ai.history." + provider.rawValue + "." + String(series.durationMinutes)
             let grid = inspection.frame(prefix + ".grid")
-            let mounted = series.days.enumerated().compactMap { index, day -> (Int, AIQuotaDailyCell, NSRect)? in
+            let mounted = series.days.filter(\.isInRange).enumerated().compactMap { index, day -> (Int, AIQuotaDailyCell, NSRect)? in
                 guard day.isInRange, let frame = inspection.frame(dailyCellID(provider, duration: series.durationMinutes, day: day.date)) else { return nil }
                 return (index, day, frame)
             }
-            check(grid.map { abs($0.width - 260) < 0.5 } == true && mounted.count == 31 &&
-                  mounted.allSatisfy { abs($0.2.width - 32) < 0.5 && abs($0.2.height - 32) < 0.5 },
-                  "\(series.title) renders fixed 32 by 32 pt squares in a 260 pt seven-column grid")
+            check(grid.map { abs($0.width - 554) < 0.5 } == true && mounted.count == 31 &&
+                  mounted.allSatisfy { abs($0.2.width - 14) < 0.5 && abs($0.2.height - 14) < 0.5 },
+                  "\(series.title) renders fixed 14 by 14 pt squares in a left-aligned 31-day intensity strip")
             check(grid.map { bounds in mounted.allSatisfy { index, _, cell in
-                abs(cell.minX - bounds.minX - CGFloat(index % 7) * 38) < 0.5 &&
-                    abs(bounds.maxY - cell.maxY - CGFloat(index / 7) * 38) < 0.5
-            } } == true, "\(series.title) dates align with weekday columns and 6 pt gaps without stretching")
+                abs(cell.minX - bounds.minX - CGFloat(index) * 18) < 0.5 &&
+                    abs(bounds.maxY - cell.maxY) < 0.5
+            } } == true, "\(series.title) daily cells progress continuously left to right with 4 pt gaps and no calendar rows")
+            check(inspection.frame("fc.ai.history." + provider.rawValue + ".section").flatMap { section in
+                grid.map { abs($0.minX - section.minX - 14) < 0.5 }
+            } == true, "\(series.title) intensity strip starts at the shared card content inset instead of centering itself")
             check(series.days.filter { !$0.isInRange }.allSatisfy {
                 inspection.frame(dailyCellID(provider, duration: series.durationMinutes, day: $0.date)) == nil
             }, "\(series.title) week-alignment padding creates no false observed or missing day cells")
@@ -276,7 +279,7 @@ import SwiftUI
     }
     private static func dailyCellColor(_ screenRect: NSRect, host: NSView, window: NSWindow) -> NSColor? {
         // Interior corner, away from day text, border and rounded corners.
-        let patch = NSRect(x: screenRect.minX + 7, y: screenRect.maxY - 10, width: 3, height: 3)
+        let patch = NSRect(x: screenRect.minX + 5, y: screenRect.minY + 5, width: 3, height: 3)
         let local = host.convert(window.convertFromScreen(patch), from: nil)
         guard host.bounds.contains(local), let bitmap = host.bitmapImageRepForCachingDisplay(in: local) else { return nil }
         host.cacheDisplay(in: local, to: bitmap)
