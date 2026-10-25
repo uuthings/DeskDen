@@ -57,8 +57,8 @@ import LauncherCore
         let canvas = CGSize(width: 420, height: 154), tooltip = CGSize(width: 218, height: 112)
         let tallTip = NetworkTrafficTooltipPlacement.frame(anchor: CGRect(x: 8, y: 0, width: 20, height: 130), canvas: canvas, size: tooltip)
         let middleTip = NetworkTrafficTooltipPlacement.frame(anchor: CGRect(x: 390, y: 60, width: 20, height: 70), canvas: canvas, size: tooltip)
-        check(CGRect(origin: .zero, size: canvas).contains(tallTip) && CGRect(origin: .zero, size: canvas).contains(middleTip) && tallTip.minX == 0 && middleTip.maxX == canvas.width,
-              "network hover details stay inside the chart at both edge columns")
+        check(CGRect(origin: .zero, size: canvas).contains(tallTip) && CGRect(origin: .zero, size: canvas).contains(middleTip) && !tallTip.contains(CGPoint(x: 18, y: 0)) && !middleTip.contains(CGPoint(x: 400, y: 60)),
+              "network hover details stay inside the chart without obscuring either edge-column anchor")
         check(tallTip.minY != middleTip.minY,
               "network hover details use each column's painted height rather than one shared tallest-column anchor")
         drafts.budget.anchor = calendar.date(from: DateComponents(year: 2026, month: 10, day: 15))!

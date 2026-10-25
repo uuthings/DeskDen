@@ -289,7 +289,7 @@ private struct NetworkDailyBars: View {
                             HStack(spacing: 3) {
                                 Text("\(calendar.component(.day, from: date))").lineLimit(1).fixedSize(horizontal: true, vertical: false)
                                 if calendar.isDate(date, inSameDayAs: summary.measuredAt) { Circle().fill(palette.accent).frame(width: 4, height: 4) }
-                            }.font(.system(size: 11)).foregroundStyle(palette.muted)
+                            }.font(.system(size: 11, weight: activeDate == date ? .semibold : .regular)).foregroundStyle(activeDate == date ? palette.text : palette.muted)
                                 .fixedSize(horizontal: true, vertical: false)
                                 .accessibilityElement(children: .combine)
                                 .accessibilityIdentifier("fc.network.day-label." + NetworkLedgerDate.label(date, timeZone: summary.timeZoneIdentifier))
@@ -300,11 +300,11 @@ private struct NetworkDailyBars: View {
                     GeometryReader { geometry in
                         if let date = activeDate, let anchor = anchors[date] {
                             let bounds = geometry[anchor]
-                            let tipBounds = NetworkTrafficTooltipPlacement.frame(anchor: bounds, canvas: geometry.size,
-                                size: CGSize(width: 218, height: record(date) == nil ? 68 : 112))
-                            tip(date, day: record(date)).frame(width: tipBounds.width, height: tipBounds.height, alignment: .topLeading)
-                                .position(x: tipBounds.midX, y: tipBounds.midY).allowsHitTesting(false)
-                                .accessibilityIdentifier("fc.network.day-tooltip")
+                            WBChartCallout(anchor: bounds, canvas: geometry.size,
+                                size: CGSize(width: 218, height: record(date) == nil ? 68 : 112)) {
+                                tip(date, day: record(date))
+                                    .accessibilityIdentifier("fc.network.day-tooltip")
+                            }
                         }
                     }.allowsHitTesting(false)
                 }.onContinuousHover { phase in
@@ -330,8 +330,6 @@ private struct NetworkDailyBars: View {
                 DeviceFact(label: "合计", value: DeviceTrafficDisplay.adaptive(day.totalBytes))
             } else { Text("未采集，不代表零流量。").font(.system(size: 11)).foregroundStyle(palette.secondary) }
         }.padding(12).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(WorkbenchMaterialSurface(kind: .panel, radius: 8))
-            .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
             .foregroundStyle(palette.text)
     }
     /// Axis ticks need less precision than the actual totals and hover details.
@@ -353,11 +351,7 @@ private struct NetworkDailyBars: View {
 /// within the chart canvas. It never uses the tallest column as a shared anchor.
 enum NetworkTrafficTooltipPlacement {
     static func frame(anchor: CGRect, canvas: CGSize, size: CGSize) -> CGRect {
-        let width = min(size.width, max(0, canvas.width)), height = min(size.height, max(0, canvas.height))
-        let x = min(max(anchor.midX - width / 2, 0), max(0, canvas.width - width))
-        let proposedTop = anchor.minY >= height + 8 ? anchor.minY - height - 8 : anchor.minY + 8
-        let y = min(max(0, proposedTop), max(0, canvas.height - height))
-        return CGRect(x: x, y: y, width: width, height: height)
+        WBChartCalloutPlacement(anchor: anchor, canvas: canvas, size: size).frame
     }
 }
 
