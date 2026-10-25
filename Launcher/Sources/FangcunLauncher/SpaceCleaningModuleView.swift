@@ -89,6 +89,7 @@ struct SpaceCleaningModuleView: View {
             case .scanning: scanning
             case .results: SpaceCleaningResultsView(model: model)
             case .processing: processing
+            case .completed: SpaceCleaningCompletionView(model: model)
             case .history: SpaceCleaningHistoryView(model: model, onLegacyHistory: onLegacyHistory)
             }
         }
@@ -99,43 +100,30 @@ struct SpaceCleaningModuleView: View {
     private var displayedLocations: [URL] { editingScope ? model.draftDirectories : model.customDirectories }
     private func home(width: CGFloat, height: CGFloat) -> some View {
         let compact = height < 600
-        let targetHeight = min(610, max(365, height - 135))
+        let targetHeight = min(560, max(395, height - 135))
+        let heroHeight = compact ? 152.0 : min(246, max(184, (targetHeight - 40) * 0.48))
         return SpaceCleaningSurface(fillHeight: false) {
-            if let batch = model.currentBatch {
-                HStack(spacing: 12) {
-                    Image(systemName: batch.attentionCount > 0 ? "exclamationmark.circle" : "checkmark.circle")
-                        .foregroundStyle(batch.attentionCount > 0 ? palette.warning : palette.accent)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(batch.attentionCount > 0 ? "本次处理已结束 · \(batch.attentionCount) 项需要核对" : "本次处理已结束 · \(batch.items.count) 项")
-                            .font(.system(size: 12, weight: .medium))
-                        Text(batch.restorableCount > 0 ? "\(batch.restorableCount) 项可恢复 · 移入废纸篓的占用尚未释放" : "实际处理状态已保存至清理记录")
-                            .font(.system(size: 11)).foregroundStyle(palette.muted)
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                    if batch.restorableCount > 0 { Button("恢复本次") { model.requestRestore(batch.id) }.buttonStyle(WBQuietButtonStyle()) }
-                    Button("查看记录", action: model.showHistory).buttonStyle(WBButtonStyle())
-                }.padding(14).background(palette.soft).accessibilityIdentifier("space-cleaning-completion-receipt")
-            }
             VStack(alignment: .leading, spacing: compact ? 16 : 24) {
                 HStack(alignment: .center, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        if !compact || model.currentBatch == nil {
-                            Text("看清空间，自在整理").font(.system(size: 11)).foregroundStyle(palette.muted)
-                        }
-                        Text("让需要的留下。\n给空间留一点余地。")
-                            .font(.system(size: width < 700 ? 24 : 28, weight: .medium)).lineSpacing(5)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("看清空间，自在整理").font(.system(size: 11)).foregroundStyle(palette.muted)
+                            .padding(.bottom, compact ? 16 : 20)
+                        VStack(alignment: .leading, spacing: compact ? 10 : 14) {
+                            Text("让需要的留下。")
+                            Text("给空间留一点余地。")
+                        }.font(.system(size: width < 700 ? 24 : 28, weight: .medium))
                             .fixedSize(horizontal: true, vertical: true)
-                            .accessibilityIdentifier("space-cleaning-home-heading")
-                        if !compact || model.currentBatch == nil {
-                            Text("可重建缓存会为你选好，其余文件由你选择。")
-                                .font(.system(size: 12)).foregroundStyle(palette.muted).lineSpacing(5)
-                        }
+                            .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-home-heading")
+                        Text("可重建缓存会为你选好，其余文件由你选择。")
+                            .font(.system(size: 12)).foregroundStyle(palette.muted).lineSpacing(5)
+                            .padding(.top, compact ? 16 : 20)
                         if !editingScope && !model.items.isEmpty && !model.requiresRescan {
-                            Button("返回上次扫描结果") { model.screen = .results }.buttonStyle(WBQuietButtonStyle())
+                            Button("返回上次扫描结果") { model.screen = .results }.buttonStyle(WBQuietButtonStyle()).padding(.top, 12)
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-home-intro")
                     SpaceCleaningAperture(active: model.animationActive)
-                        .frame(width: width * 0.43, height: compact ? (model.currentBatch == nil ? 130 : 90) : min(280, max(190, targetHeight - 310)))
+                        .frame(width: width * 0.43, height: heroHeight)
                 }
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(spacing: 14) {
@@ -156,7 +144,7 @@ struct SpaceCleaningModuleView: View {
                             .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.line))
                     }
                     if displayedScope == .custom {
-                        selectedLocations(width: width - 28, maximumRows: height >= 600 && model.currentBatch == nil ? 2 : 1)
+                        selectedLocations(width: width - 28, maximumRows: height >= 600 ? 2 : 1)
                     } else {
                         globalLocations(compact: compact)
                     }
@@ -181,7 +169,7 @@ struct SpaceCleaningModuleView: View {
                         .disabled(model.isBusy || (displayedScope == .custom && displayedLocations.isEmpty))
                         .accessibilityIdentifier("space-cleaning-start")
                 }.accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-home-actions")
-            }.padding(compact ? 14 : 20).frame(minHeight: targetHeight - (model.currentBatch == nil ? 0 : 70))
+            }.padding(compact ? 14 : 20).frame(minHeight: targetHeight)
         }.fixedSize(horizontal: false, vertical: true)
             .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-home-surface")
     }
@@ -249,8 +237,10 @@ struct SpaceCleaningModuleView: View {
     }
     private func scopeButton(_ title: String, icon: String, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) { Label(title, systemImage: icon).font(.system(size: 12)).padding(.horizontal, 12).frame(height: 28)
-            .background(RoundedRectangle(cornerRadius: 6).fill(selected ? palette.accent.opacity(0.18) : .clear)) }
+            .background(RoundedRectangle(cornerRadius: 6).fill(selected ? palette.accent.opacity(0.18) : .clear))
+            .contentShape(Rectangle()) }
             .buttonStyle(ClickablePlainButtonStyle()).disabled(model.isBusy).accessibilityValue(selected ? "已选择" : "未选择")
+            .accessibilityIdentifier(icon == "globe" ? "space-cleaning-scope-global" : "space-cleaning-scope-custom")
     }
     private var scanning: some View {
         SpaceCleaningSurface {
@@ -303,7 +293,7 @@ struct SpaceCleaningModuleView: View {
                     Spacer()
                     Button("停止后续处理", action: model.cancelProcessing).buttonStyle(WBButtonStyle())
                 }
-                Text("每项操作前重新核对文件与保护状态，完成后返回清理首页或记录。")
+                Text("每项操作前重新核对文件与保护状态，完成后显示本次处理结果。")
                     .font(.system(size: 11)).foregroundStyle(palette.muted)
                 Spacer(minLength: 0)
             }.frame(maxWidth: 580).padding(30).frame(maxWidth: .infinity)

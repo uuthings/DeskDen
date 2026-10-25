@@ -9,7 +9,9 @@ import LauncherCore
         var count=0,failures=0
         func check(_ value:Bool,_ message:String){count += 1;if !value {failures += 1};print("\(value ? "PASS":"FAIL") \(message)")}
         let oldPolicy=NSApp.activationPolicy()
-        NSApp.setActivationPolicy(.accessory)
+        // The shared native host preparation owns activation. Switching a
+        // running regular app to accessory and immediately back can hide its
+        // nonactivating panel before AppKit finishes that policy transition.
         let directory=FileManager.default.temporaryDirectory.appendingPathComponent("fangcun-shortcut-responder-\(UUID().uuidString)")
         let owner=LauncherController(dataDirectory:directory)
         owner.configurePanel();owner.scanning=true
@@ -28,15 +30,16 @@ import LauncherCore
         do {
             try owner.store.save(owner.configuration)
             let original=try Data(contentsOf:owner.store.url)
-            window.orderFrontRegardless();window.makeKey()
-            _=await wait {window.isVisible && window.isKeyWindow}
-            _=await wait {descendants(host).compactMap{$0 as? NSButton}.contains{$0.accessibilityLabel() == "设置工作台快捷键"}}
+            _ = await NativeUIFixtureWindow.prepare(window: window) {
+                descendants(host).compactMap { $0 as? NSButton }.contains { $0.accessibilityLabel() == "设置工作台快捷键" }
+            }
             guard let trigger=descendants(host).compactMap({$0 as? NSButton}).first(where:{$0.accessibilityLabel() == "设置工作台快捷键"}) else {throw ShortcutResponderCheckError.missingTrigger}
             trigger.performClick(nil)
             _=await wait {descendants(host).contains{$0 is WorkbenchShortcutCaptureControl}}
             guard let capture=descendants(host).compactMap({$0 as? WorkbenchShortcutCaptureControl}).first,
                   let session=owner.workbenchShortcutRecorder else {throw ShortcutResponderCheckError.missingCapture}
             let initiallyFocused=await wait {window.firstResponder === capture}
+            print("DETAIL shortcut focus initial focused=\(initiallyFocused) enabled=\(capture.isEnabled) accepts=\(capture.acceptsFirstResponder) visible=\(window.isVisible) key=\(window.isKeyWindow) presented=\(session.isPresented) canCapture=\(session.canCapture(in:window)) currentResponder=\(window.firstResponder.map{String(describing:type(of:$0))} ?? "nil")")
             check(initiallyFocused && capture.isAccessibilityFocused() && capture.window === window && abs(capture.bounds.height-40)<0.5 && coordinator.top?.width == 470,
                   "mounted shortcut field acquires real keyboard and accessibility focus at its unchanged 40-point height")
             let presentationID=coordinator.top?.id

@@ -1,8 +1,10 @@
 import Foundation
 import LauncherCore
 
-enum CleaningScreen: Equatable { case start, scope, scanning, results, processing, history }
+enum CleaningScreen: Equatable { case start, scope, scanning, results, processing, completed, history }
 enum CleaningResultGroup: String, CaseIterable { case rebuildable, review, protected }
+enum CleaningSortKey: String, CaseIterable { case name, directory, type, modified, size }
+
 enum CleaningScopeChoice: String, CaseIterable, Codable { case global, custom }
 enum CleaningResultTab { case recommended, reviewable, protected }
 

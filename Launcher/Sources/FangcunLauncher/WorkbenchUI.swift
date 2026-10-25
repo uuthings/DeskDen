@@ -343,12 +343,27 @@ final class WorkbenchTrafficLights:NSView {
     static let shared = ButtonCursorPolicy()
     private(set) var preference: ButtonHoverCursor = .pointingHand
     private let views = NSHashTable<NSView>.weakObjects()
+    private weak var hoveredView: ClickableCursorView?
     var cursor: NSCursor { preference == .pointingHand ? .pointingHand : .arrow }
     func register(_ view: NSView) { views.add(view) }
     func apply(_ preference: ButtonHoverCursor) {
         guard self.preference != preference else { return }
         self.preference = preference
-        for view in views.allObjects { view.window?.invalidateCursorRects(for: view) }
+        for view in views.allObjects {
+            view.window?.invalidateCursorRects(for: view)
+        }
+        // Cursor-rectangle invalidation may rebuild a SwiftUI tracking area.
+        // Re-evaluate the actual location so a stationary pointer updates too.
+        let hovered = hoveredView.flatMap { $0.containsPointer ? $0 : nil }
+            ?? views.allObjects.compactMap { $0 as? ClickableCursorView }.first(where: \.containsPointer)
+        hovered?.refreshHoverCursor()
+    }
+    func beginHover(_ view: ClickableCursorView) { hoveredView = view }
+    func ownsHover(_ view: ClickableCursorView) -> Bool { hoveredView === view }
+    func endHover(_ view: ClickableCursorView) {
+        guard hoveredView === view else { return }
+        hoveredView = nil
+        if NSCursor.current === NSCursor.pointingHand { NSCursor.arrow.set() }
     }
 }
 
@@ -379,10 +394,73 @@ class ClickablePopUpButton: NSPopUpButton {
 }
 
 class ClickableCursorView: NSView {
-    var enabled = true { didSet { if oldValue != enabled { window?.invalidateCursorRects(for: self) } } }
+    private var hoverTracking: NSTrackingArea?
+    private var hovering = false
+    private var refreshTask: Task<Void, Never>?
+    var enabled = true {
+        didSet {
+            guard oldValue != enabled else { return }
+            window?.invalidateCursorRects(for: self)
+            updateTrackingAreas()
+            refreshHoverCursor()
+        }
+    }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow(); ButtonCursorPolicy.shared.register(self)
+        window?.invalidateCursorRects(for: self)
+        updateTrackingAreas()
+    }
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil { endHover() }
+        super.viewWillMove(toWindow: newWindow)
+    }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTracking { removeTrackingArea(hoverTracking) }
+        hoverTracking = nil
+        guard enabled else { return }
+        // SwiftUI's hosting view can install a later arrow cursor rectangle
+        // over a hit-transparent background. Native tracking receives the
+        // actual pointer event after that update while leaving clicks with
+        // the SwiftUI Button's full content shape.
+        let area = NSTrackingArea(rect: .zero,
+            options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited, .mouseMoved, .cursorUpdate],
+            owner: self, userInfo: nil)
+        addTrackingArea(area); hoverTracking = area
+    }
+    override func mouseEntered(with event: NSEvent) { hovering = true; refreshHoverCursor() }
+    override func mouseMoved(with event: NSEvent) { hovering = true; refreshHoverCursor() }
+    override func cursorUpdate(with event: NSEvent) { hovering = true; refreshHoverCursor() }
+    override func mouseExited(with event: NSEvent) { endHover() }
+    var containsPointer: Bool {
+        guard enabled, !isHiddenOrHasHiddenAncestor, let window, window.isVisible else { return false }
+        let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        return bounds.intersection(visibleRect).contains(point)
+    }
+    func refreshHoverCursor() {
+        guard containsPointer else { endHover(); return }
+        hovering = true
+        ButtonCursorPolicy.shared.beginHover(self)
+        ButtonCursorPolicy.shared.cursor.set()
+        refreshTask?.cancel()
+        refreshTask = Task { @MainActor [weak self] in
+            // A hover-driven SwiftUI redraw may rebuild its cursor rectangles
+            // after mouseEntered returns. Reassert once after that transaction,
+            // without polling or retaining a cursor beyond the hovered region.
+            try? await Task.sleep(for: .milliseconds(20))
+            guard !Task.isCancelled, let self, self.hovering, self.containsPointer,
+                  ButtonCursorPolicy.shared.ownsHover(self) else { return }
+            ButtonCursorPolicy.shared.cursor.set()
+        }
+    }
+    private func endHover() {
+        guard hovering else { return }
+        hovering = false
+        refreshTask?.cancel(); refreshTask = nil
+        // A delayed exit from an old/rebuilt region must not clear the cursor
+        // already installed by the button that the pointer entered next.
+        ButtonCursorPolicy.shared.endHover(self)
         window?.invalidateCursorRects(for: self)
     }
     override func resetCursorRects() {
@@ -409,8 +487,8 @@ extension View {
     func clickableCursor() -> some View { modifier(ClickableCursorModifier()) }
 }
 
-struct ClickablePlainButtonStyle: PrimitiveButtonStyle {
+struct ClickablePlainButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
-        PlainButtonStyle().makeBody(configuration: configuration).clickableCursor()
+        configuration.label.contentShape(Rectangle()).clickableCursor()
     }
 }
