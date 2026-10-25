@@ -9,11 +9,52 @@ final class WorkbenchTopEntryTests: XCTestCase {
         XCTAssertEqual(try store.load(), .init())
         XCTAssertTrue(try store.load().enabled)
         XCTAssertEqual(try store.load().mode, .summary)
+        XCTAssertEqual(try store.load().visibleSections, [.context, .agenda, .device, .ai])
         var preference = WorkbenchTopEntryPreferences()
         preference.mode = .workbench
         preference.enabled = false
         try store.save(preference)
         XCTAssertEqual(try store.load(), preference)
+    }
+    func testLegacyPreferencesGainSectionsWithoutChangingEntryChoice() throws {
+        let original = Data(#"{"schemaVersion":1,"enabled":false,"mode":"workbench"}"#.utf8)
+        let preference = try JSONDecoder().decode(WorkbenchTopEntryPreferences.self, from: original)
+        try preference.validate()
+        XCTAssertFalse(preference.enabled)
+        XCTAssertEqual(preference.mode, .workbench)
+        XCTAssertEqual(preference.visibleSections, [.context, .agenda, .device, .ai])
+    }
+    func testSectionChoicesAndAllHiddenRoundTrip() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = WorkbenchTopEntryStore(url: directory.appendingPathComponent("top-entry.json"))
+        var preference = WorkbenchTopEntryPreferences()
+        preference.visibleSections = [.agenda, .ai]
+        try store.save(preference)
+        XCTAssertEqual(try store.load(), preference)
+        preference.visibleSections = []
+        try store.save(preference)
+        XCTAssertEqual(try store.load().visibleSections, [])
+        let attributes = try FileManager.default.attributesOfItem(atPath: store.url.path)
+        XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+    }
+    func testInvalidSectionsCannotReplaceSavedPreferences() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = WorkbenchTopEntryStore(url: directory.appendingPathComponent("top-entry.json"))
+        try store.save(.init())
+        let original = try Data(contentsOf: store.url)
+        var duplicate = WorkbenchTopEntryPreferences()
+        duplicate.visibleSections = [.context, .context]
+        XCTAssertThrowsError(try store.save(duplicate))
+        XCTAssertEqual(try Data(contentsOf: store.url), original)
+        for invalid in [#"["context","context"]"#, #"["unknown"]"#, "null"] {
+            let data = Data("{\"schemaVersion\":1,\"enabled\":true,\"mode\":\"summary\",\"visibleSections\":\(invalid)}".utf8)
+            try data.write(to: store.url)
+            XCTAssertThrowsError(try store.load())
+            XCTAssertThrowsError(try store.save(.init()))
+            XCTAssertEqual(try Data(contentsOf: store.url), data)
+        }
     }
     func testCorruptPreferencesAreNeverOverwritten() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

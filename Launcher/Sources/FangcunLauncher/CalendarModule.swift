@@ -179,6 +179,8 @@ private struct CalendarDisplayPreferences:Codable {
     @Published private(set) var events:[CalendarEventItem] = []
     @Published private(set) var todayEvents:[CalendarEventItem] = []
     @Published private(set) var overviewEventValues:[CalendarEventItem] = []
+    @Published private(set) var overviewReadError:String?
+    @Published private(set) var remindersReadError:String?
     @Published private(set) var calendarSources:[CalendarSourceDescriptor] = []
     @Published private(set) var hiddenSources:Set<String> = []
     @Published private(set) var holidaysEnabled=true
@@ -228,6 +230,26 @@ private struct CalendarDisplayPreferences:Codable {
     private let notifier:any ReminderNotificationProviding
     private var service:ReminderService?
     private var refreshVersion=0
+    private struct MiniReadKey:Equatable {
+        let timeZone:String
+        let start:Date
+        let calendarConnected:Bool
+        let remindersConnected:Bool
+    }
+    private struct MiniReadResult:Sendable {
+        var events:[CalendarEventItem]?
+        var reminders:[ReminderItem]?
+        var eventError:String?
+        var reminderError:String?
+        var notificationAccess:CalendarAccess = .notDetermined
+    }
+    private struct MiniReadFlight {
+        let id:UUID
+        let key:MiniReadKey
+        let version:Int
+        let task:Task<MiniReadResult,Never>
+    }
+    private var miniReadFlight:MiniReadFlight?
     private var observer:NSObjectProtocol?
     private var activationObserver:NSObjectProtocol?
     private var dayObserver:NSObjectProtocol?
@@ -346,22 +368,82 @@ private struct CalendarDisplayPreferences:Codable {
             if let today=displayCalendar.dateInterval(of:.day,for:Date()) {
                 do { todayEvents=try system.events(in:today) } catch { errorMessage="今日系统日历读取失败：\(error.localizedDescription)" }
             }
-            do {overviewEventValues=try system.events(in:overviewInterval)} catch {errorMessage="首页七天日历读取失败：\(error.localizedDescription)"}
+            do {overviewEventValues=try system.events(in:overviewInterval);overviewReadError=nil}
+            catch {overviewReadError="日程读取失败";errorMessage="首页七天日历读取失败：\(error.localizedDescription)"}
             calendarSources=system.calendarSources()
             let known=Set(calendarSources.map(\.id))
             let inferred=Dictionary(grouping:events+todayEvents+overviewEventValues,by:{$0.calendarID ?? $0.calendarName})
             calendarSources += inferred.filter {!known.contains($0.key)}.map {CalendarSourceDescriptor(id:$0.key,title:$0.value.first?.calendarName ?? "系统日历")}.sorted {$0.title < $1.title}
-        } else {events=[];todayEvents=[];overviewEventValues=[];calendarSources=[]}
+        } else {events=[];todayEvents=[];overviewEventValues=[];calendarSources=[];overviewReadError=nil}
         if preferences.remindersConnected && remindersAccess == .granted {
             do {
                 let loaded=try await system.reminders()
                 guard version == refreshVersion else { return }
-                if preferences.remindersConnected && system.access(reminders:true) == .granted { systemReminders=loaded; writableCalendars=system.writableReminderCalendars() }
-            } catch { if version == refreshVersion { errorMessage="系统提醒事项读取失败：\(error.localizedDescription)" } }
-        } else { systemReminders=[]; writableCalendars=[] }
+                if preferences.remindersConnected && system.access(reminders:true) == .granted { systemReminders=loaded; writableCalendars=system.writableReminderCalendars();remindersReadError=nil }
+            } catch { if version == refreshVersion { remindersReadError="系统提醒读取失败";errorMessage="系统提醒事项读取失败：\(error.localizedDescription)" } }
+        } else { systemReminders=[]; writableCalendars=[];remindersReadError=nil }
         let access=await notifier.access()
         guard version == refreshVersion else { return }
         notificationAccess=access; isLoading=false; scheduleNotifications()
+    }
+    /// Mini reads only the existing seven-day overview and reminders. Hovering
+    /// never loads the month currently being browsed or changes the selected day.
+    func refreshMiniAgenda(timeZone:TimeZone) async {
+        var miniCalendar=Calendar(identifier:.gregorian);miniCalendar.timeZone=timeZone
+        while !Task.isCancelled {
+            let key=MiniReadKey(timeZone:timeZone.identifier,start:miniCalendar.startOfDay(for:Date()),
+                calendarConnected:preferences.calendarConnected,remindersConnected:preferences.remindersConnected)
+            let flight:MiniReadFlight
+            if let pending=miniReadFlight {flight=pending}
+            else {
+                refreshVersion += 1;isLoading=true
+                let interval=DateInterval(start:key.start,end:miniCalendar.date(byAdding:.day,value:7,to:key.start)!)
+                // EventKit's reminder continuation need not react to Task.cancel.
+                // Keep this read alive and occupying its slot until the native
+                // request actually completes. It never publishes model state.
+                let system=system,notifier=notifier
+                let task=Task { @MainActor in
+                    var result=MiniReadResult()
+                    if key.calendarConnected && system.access(reminders:false) == .granted {
+                        do {result.events=try system.events(in:interval)}
+                        catch {result.eventError="日程读取失败"}
+                    } else {result.events=[]}
+                    if key.remindersConnected && system.access(reminders:true) == .granted {
+                        do {result.reminders=try await system.reminders()}
+                        catch {result.reminderError="系统提醒读取失败"}
+                    } else {result.reminders=[]}
+                    result.notificationAccess=await notifier.access()
+                    return result
+                }
+                flight=MiniReadFlight(id:UUID(),key:key,version:refreshVersion,task:task)
+                miniReadFlight=flight
+            }
+            let result=await flight.task.value
+            if miniReadFlight?.id == flight.id {
+                miniReadFlight=nil
+                if flight.version == refreshVersion {isLoading=false}
+            }
+            guard !Task.isCancelled else {return}
+            // A different zone/connection waits for the old native request,
+            // then starts one fresh read. An intervening full refresh likewise
+            // prevents its older result from overwriting newer model state.
+            guard flight.key == key else {continue}
+            guard flight.version == refreshVersion,
+                  key.calendarConnected == preferences.calendarConnected,
+                  key.remindersConnected == preferences.remindersConnected else {return}
+            calendarAccess=system.access(reminders:false);remindersAccess=system.access(reminders:true)
+            if preferences.calendarConnected && calendarAccess == .granted {
+                if let events=result.events {overviewEventValues=events}
+                overviewReadError=result.eventError
+            } else {overviewEventValues=[];overviewReadError=nil}
+            if preferences.remindersConnected && remindersAccess == .granted {
+                if let reminders=result.reminders {systemReminders=reminders}
+                writableCalendars=system.writableReminderCalendars();remindersReadError=result.reminderError
+            } else {systemReminders=[];writableCalendars=[];remindersReadError=nil}
+            notificationAccess=result.notificationAccess
+            scheduleNotifications()
+            return
+        }
     }
     func connect(reminders:Bool) async {
         guard !isWorking else { return }; isWorking=true; defer { isWorking=false }

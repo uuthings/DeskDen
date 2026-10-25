@@ -72,6 +72,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     private var modalChanges:AnyCancellable?
     private var systemAppearanceObserver:NSKeyValueObservation?
     @Published private(set) var windowVisible=false
+    private(set) var miniContextVisible=false
     private let startServices:Bool
     private var quitPreparationTask:Task<Void,Never>?
     init(owner:LauncherController,calendar:CalendarModel?=nil,ai:AIUsageModel?=nil,device:DeviceStatusModel?=nil,health:HealthCenterModel?=nil,cleaning:SpaceCleaningModel?=nil,startServices:Bool=true) {
@@ -124,11 +125,17 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     }
     func launcher() { owner?.show() }
     func setWindowVisible(_ value:Bool) {windowVisible=value;updateSamplingVisibility()}
+    /// The transient Mini is an independent weather consumer. Closing it must
+    /// not stop a visible home/calendar page, or vice versa.
+    func setMiniContextVisible(_ value:Bool) {
+        guard miniContextVisible != value else {return}
+        miniContextVisible=value;updateSamplingVisibility()
+    }
     private func updateSamplingVisibility() {
         cleaning.windowVisible=windowVisible && route == .cleaning
         cleaning.reduceMotion=reduceMotion
         guard startServices else {return}
-        context.setVisible(windowVisible && [.overview,.calendar].contains(route))
+        context.setVisible(miniContextVisible || (windowVisible && [.overview,.calendar].contains(route)))
         device.setWindowVisible(windowVisible && [.overview,.device,.health,.cleaning,.network].contains(route))
         device.setWidgetsVisible(preferences.cards.contains(where:{$0.visible && $0.id == .device}) || (windowVisible && route == .cards))
     }
