@@ -35,6 +35,7 @@ enum WorkbenchResponsiveLayoutChecks {
             (.init(width: 1920, height: 1080), 1360, 264, 164, 126),
             (.init(width: 960, height: 720), 736, 160, 126, 120)
         ]
+        var calendarWidths: [(page: CGFloat, month: CGFloat, side: CGFloat)] = []
         for sample in sizes {
             let label = "\(Int(sample.window.width))×\(Int(sample.window.height))"
             window.setContentSize(sample.window)
@@ -102,10 +103,41 @@ enum WorkbenchResponsiveLayoutChecks {
                   "mounted home schedule and reminder scroll viewports keep their frozen independent height in \(label)")
             if sample.page > 1200 {
                 let agenda = frame("fc.home.agenda", in: host)
-                check(agenda.map { abs($0.height - 367) < 1 } == true,
-                      "mounted large home agenda keeps the complete 367 pt card instead of the old 352 pt card")
+                check(agenda.flatMap { card in
+                    frame("fc.home.calendar.strip", in: host).map { strip in card.contains(strip) &&
+                        events.map { card.contains($0) } == true && reminders.map { card.contains($0) } == true }
+                } == true, "large home agenda fits the shared date tiles and both independent lists without clipping")
                 print("DETAIL responsive home \(label) agenda=\(String(describing: agenda)) events=\(String(describing: events)) reminders=\(String(describing: reminders))")
             }
+
+            let day = model.calendar.displayCalendar.dateComponents([.year, .month, .day], from: Date())
+            let dayKey = String(format: "%04d-%02d-%02d", day.year ?? 0, day.month ?? 0, day.day ?? 0)
+            let homeDay = frame("fc.home.calendar.day." + dayKey, in: host)
+            model.calendar.goToToday(); model.calendar.presentationMode = .month
+            model.navigate(.calendar)
+            _ = await wait(window) {
+                guard let month = frame("fc.calendar.monthCard", in: host), let side = frame("fc.calendar.sideColumn", in: host),
+                      frame("fc.calendar.day." + dayKey, in: host) != nil else { return false }
+                if sample.page < 760 { return abs(month.width - sample.page) < 2 && abs(side.width - sample.page) < 2 && side.maxY < month.minY }
+                return abs(month.width + side.width + 12 - sample.page) < 3 && (0.31...0.37).contains(side.width / (sample.page - 12))
+            }
+            let month = frame("fc.calendar.monthCard", in: host), side = frame("fc.calendar.sideColumn", in: host)
+            let monthDay = frame("fc.calendar.day." + dayKey, in: host)
+            check(homeDay.flatMap { home in monthDay.map { month in
+                home.height >= 54 && month.height >= 54 &&
+                (1.0...1.7).contains(home.width / home.height) && (1.0...1.7).contains(month.width / month.height) &&
+                abs(home.width / home.height - month.width / month.height) < 0.30
+            } } == true, "home and main calendar date cells retain comparable readable proportions in \(label)")
+            if sample.page >= 760, let month, let side {
+                calendarWidths.append((sample.page, month.width, side.width))
+                check(abs(month.width + side.width + 12 - sample.page) < 3 &&
+                      (0.31...0.37).contains(side.width / (sample.page - 12)),
+                      "calendar and agenda share the available width in \(label)")
+            } else {
+                check(month.flatMap { top in side.map { bottom in abs(top.width - bottom.width) < 2 && bottom.maxY <= top.minY - 10 } } == true,
+                      "compact calendar reflows both side cards below its month without squeezing the date grid")
+            }
+            print("DETAIL calendar proportions \(label) month=\(String(describing: month)) side=\(String(describing: side)) homeDay=\(String(describing: homeDay)) monthDay=\(String(describing: monthDay))")
 
             model.navigate(.network)
             _ = await wait(window) { !frames(prefix: "fc.network.day-label.", in: host).isEmpty }
@@ -113,6 +145,10 @@ enum WorkbenchResponsiveLayoutChecks {
             check(!dates.isEmpty && dates.allSatisfy { $0.width > 0 && $0.height <= 16 },
                   "mounted network day labels, including the current day marker, remain a single line in \(label)")
         }
+        if let regular = calendarWidths.first(where: { $0.page == 864 }), let large = calendarWidths.first(where: { $0.page == 1360 }) {
+            check(large.side > regular.side + 140 && large.month > regular.month + 280,
+                  "enlarging the workbench grows both calendar and agenda columns rather than freezing the agenda width")
+        } else { check(false, "calendar width verification covers both normal and large windows") }
         let scrolling = await checkFullPageScrolling(model: model, window: window, host: host)
         count += scrolling.count; failures += scrolling.failures
         check(WorkbenchShellMetrics(viewport: .init(width: 3840, height: 2160)).sidebarWidth == 280,

@@ -4,6 +4,7 @@ import LauncherCore
 struct SpaceCleaningResultsView: View {
     @ObservedObject var model: SpaceCleaningModel
     @Environment(\.workbenchPalette) private var palette
+    @Environment(\.workbenchScale) private var displayScale
     private let columnGap: CGFloat = 12
     private let typeWidth: CGFloat = 86
     private let dateWidth: CGFloat = 110
@@ -229,15 +230,18 @@ struct SpaceCleaningResultsView: View {
             .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-selection-footer")
     }
     private var selectionActions: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 16) {
-                selectionSummary.fixedSize(horizontal: true, vertical: false)
-                Spacer(minLength: 0)
-                methodActions.fixedSize(horizontal: true, vertical: false)
-            }
-            VStack(alignment: .leading, spacing: 12) {
-                selectionSummary.frame(maxWidth: .infinity, alignment: .leading)
-                methodActions
+        Group {
+            if availableWidth >= 800 {
+                HStack(spacing: 16) {
+                    selectionSummary.fixedSize(horizontal: true, vertical: false)
+                    Spacer(minLength: 0)
+                    methodActions.fixedSize(horizontal: true, vertical: false)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 12) {
+                    selectionSummary.frame(maxWidth: .infinity, alignment: .leading)
+                    methodActions
+                }
             }
         }.padding(14)
     }
@@ -247,7 +251,7 @@ struct SpaceCleaningResultsView: View {
             rememberMethodToggle
             Spacer(minLength: 0)
             cleanupButton
-        }
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-method-actions")
     }
     private var selectionSummary: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -285,11 +289,9 @@ struct SpaceCleaningResultsView: View {
                 Image(systemName: icon).font(.system(size: 12))
                 Text(title).font(.system(size: 11, weight: selected ? .medium : .regular))
             }.foregroundStyle(selected ? color : palette.secondary)
-                .padding(.horizontal, 10).frame(height: 28)
-                .background(RoundedRectangle(cornerRadius: 6).fill(selected ? color.opacity(0.16) : .clear))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(selected ? color.opacity(0.45) : .clear))
+                .padding(.horizontal, 10).frame(width: 106, height: 28)
                 .contentShape(RoundedRectangle(cornerRadius: 6))
-        }.buttonStyle(ClickablePlainButtonStyle())
+        }.buttonStyle(WBSelectableButtonStyle(selected: selected, cornerRadius: 6, tint: color))
             .accessibilityValue(selected ? "已选择" : "未选择")
             .accessibilityIdentifier(method == .trash ? "space-cleaning-method-trash" : "space-cleaning-method-permanent")
     }
@@ -300,8 +302,13 @@ struct SpaceCleaningResultsView: View {
             .accessibilityIdentifier("space-cleaning-remember-method")
     }
     private var cleanupButton: some View {
-        Button(action: model.requestCleanup) {
+        // Reserve the longest caption at the current result-count capacity.
+        // Selection changes and switching deletion methods keep the whole
+        // action group anchored, including its method and remember controls.
+        let labelWidth = max(110, CGFloat(String(max(1, model.items.count)).count) * 8 + 70) * displayScale
+        return Button(action: model.requestCleanup) {
             Text(model.method == .trash ? "清理 \(model.selectedCount) 项" : "永久删除 \(model.selectedCount) 项")
+                .monospacedDigit().lineLimit(1).frame(width: labelWidth, alignment: .center)
         }.buttonStyle(WBButtonStyle(primary: model.method == .trash, destructive: model.method == .permanent))
             .fixedSize().disabled(!model.canProcess).accessibilityIdentifier("space-cleaning-cleanup")
     }

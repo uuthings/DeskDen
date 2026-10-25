@@ -75,7 +75,7 @@ struct WorkbenchOverview:View {
                 Label("设备状态",systemImage:"heart.text.square").font(.system(size:11)).foregroundStyle(palette.secondary)
                 Text(health.score == nil ? "了解状态，再从容安排":health.summary).font(.system(size:expanded ? 25:compact ? 18:20,weight:.semibold)).lineSpacing(4).padding(.top,11).padding(.bottom,8)
                 Text(health.assessmentDescription).font(.system(size:expanded ? 13:compact ? 11:12)).foregroundStyle(palette.secondary).lineSpacing(5).fixedSize(horizontal:false,vertical:true)
-                Button(action:openHealth){Label("前往体检中心",systemImage:"heart.text.square")}.buttonStyle(WBButtonStyle(primary:true)).padding(.top,expanded ? 20:14)
+                Button(action:openHealth){Label("前往体检中心",systemImage:"heart.text.square")}.buttonStyle(WBButtonStyle(primary:true)).accessibilityIdentifier("home-open-health").padding(.top,expanded ? 20:14)
                 Text(health.latestReport == nil ? "根据本机有效读数评估":health.coverageText).font(.system(size:11)).foregroundStyle(palette.muted).padding(.top,8)
             }.frame(maxWidth:.infinity,alignment:.leading)
         }.padding(14).frame(minHeight:expanded ? 310:compact ? 288:269).frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.center)
@@ -137,19 +137,30 @@ struct WorkbenchOverview:View {
             .accessibilityElement(children:.contain).accessibilityIdentifier("fc.home.agenda")
     }
     private var weekStrip:some View {
-        HStack(spacing:6) {ForEach(0..<7,id:\.self){offset in
-            let date=displayCalendar.date(byAdding:.day,value:offset,to:displayCalendar.startOfDay(for:Date())) ?? Date()
-            let selected=displayCalendar.isDate(date,inSameDayAs:day)
-            let civilDay=CalendarCivilDay(date:date,calendar:displayCalendar)
-            let count=calendar.overviewEvents.filter{$0.occurs(on:date,calendar:displayCalendar)}.count+calendar.reminders.filter{!$0.isCompleted && ReminderQueries.occurs(reminder:$0,on:date,calendar:displayCalendar)}.count
-            Button{selectedDay=date}label:{
-                VStack(spacing:4){
-                    Text(offset == 0 ? "今天":"周"+["日","一","二","三","四","五","六"][displayCalendar.component(.weekday,from:date)-1]).font(.system(size:11)).frame(height:13)
-                    HStack(spacing:3){Text(String(displayCalendar.component(.day,from:date))).font(.system(size:18,weight:.medium)).foregroundStyle(palette.text);CalendarHolidayBadge(day:civilDay)}.frame(height:22)
-                    HStack(spacing:3){ForEach(0..<min(3,count),id:\.self){_ in Circle().fill(palette.accent).frame(width:3,height:3)}}.frame(height:5)
-                }.frame(maxWidth:.infinity).frame(height:expanded ? 76:66).background(selected ? palette.navSelected:.clear,in:RoundedRectangle(cornerRadius:9)).overlay(RoundedRectangle(cornerRadius:9).strokeBorder(selected ? palette.accent.opacity(0.25):offset == 0 ? palette.accent.opacity(0.35):.clear,lineWidth:1)).foregroundStyle(selected ? palette.accent:palette.secondary).contentShape(Rectangle())
-            }.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel("查看\(displayCalendar.component(.month,from:date))月\(displayCalendar.component(.day,from:date))日安排"+(civilDay.namedLabel.map{"，"+$0} ?? "")).accessibilityAddTraits(selected ? .isSelected:[])
-        }}
+        let stripWidth = min(WorkbenchCalendarDayMetrics.maximumHomeWidth, max(0, availableWidth - 28))
+        let cellWidth = max(0, (stripWidth - 36) / 7)
+        let cellHeight = WorkbenchCalendarDayMetrics.height(forWidth:cellWidth)
+        return VStack(spacing:5) {
+            HStack(spacing:6) {ForEach(0..<7,id:\.self){offset in
+                let date=displayCalendar.date(byAdding:.day,value:offset,to:displayCalendar.startOfDay(for:Date())) ?? Date()
+                Text(offset == 0 ? "今天":"周"+["日","一","二","三","四","五","六"][displayCalendar.component(.weekday,from:date)-1])
+                    .font(.system(size:11)).foregroundStyle(palette.muted).frame(maxWidth:.infinity).frame(height:18)
+            }}
+            HStack(spacing:6) {ForEach(0..<7,id:\.self){offset in
+                let date=displayCalendar.date(byAdding:.day,value:offset,to:displayCalendar.startOfDay(for:Date())) ?? Date()
+                let selected=displayCalendar.isDate(date,inSameDayAs:day)
+                let civilDay=CalendarCivilDay(date:date,calendar:displayCalendar)
+                let eventCount=calendar.overviewEvents.filter{$0.occurs(on:date,calendar:displayCalendar)}.count
+                let reminderCount=calendar.reminders.filter{!$0.isCompleted && ReminderQueries.occurs(reminder:$0,on:date,calendar:displayCalendar)}.count
+                let dateKey=String(format:"%04d-%02d-%02d",displayCalendar.component(.year,from:date),displayCalendar.component(.month,from:date),displayCalendar.component(.day,from:date))
+                WorkbenchCalendarDayButton(date:date,calendar:displayCalendar,selected:selected,
+                    eventMarkers:Array(repeating:true,count:min(3,eventCount))+Array(repeating:false,count:min(3,reminderCount)),
+                    label:"查看\(displayCalendar.component(.month,from:date))月\(displayCalendar.component(.day,from:date))日安排"+(civilDay.namedLabel.map{"，"+$0} ?? ""),
+                    identifier:"fc.home.calendar.day."+dateKey) {selectedDay=date}
+                    .frame(height:cellHeight)
+            }}
+        }.frame(maxWidth:stripWidth).frame(maxWidth:.infinity)
+            .accessibilityElement(children:.contain).accessibilityIdentifier("fc.home.calendar.strip")
     }
     private func planColumn(title:String,subtitle:String,items:[CalendarAgendaEntry],empty:String)->some View {
         VStack(spacing:3) {

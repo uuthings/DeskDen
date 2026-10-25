@@ -124,7 +124,7 @@ import LauncherCore
         let previousKeyWindow = NSApp.keyWindow
         let previousMainWindow = NSApp.mainWindow
         let originalPoint = CGEvent(source: nil)?.location
-        let window = NativeUIFixtureWindow(contentRect: NSRect(x: 260, y: 180, width: 420, height: 400),
+        let window = NativeUIFixtureWindow(contentRect: NSRect(x: 260, y: 180, width: 460, height: 560),
             styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.acceptsMouseMovedEvents = true
         let state = PointerInteractionState()
@@ -138,17 +138,24 @@ import LauncherCore
             if let previousKeyWindow, previousKeyWindow.isVisible { previousKeyWindow.makeKey() }
         }
         let mounted = await NativeUIFixtureWindow.prepare(window: window) {
-            descendants(host).filter { $0 is ClickableCursorView }.count == 5
+            descendants(host).filter { $0 is ClickableCursorView }.count == 8
         }
-        guard mounted else { return [(false, "real pointer regression host mounts all five shared button styles")] }
-        var checks = [(true, "real pointer regression host mounts all five shared button styles")]
+        guard mounted else { return [(false, "real pointer regression host mounts all shared action and selection button styles")] }
+        var checks = [(true, "real pointer regression host mounts all shared action and selection button styles")]
         ButtonCursorPolicy.shared.apply(.pointingHand)
-        let regions = descendants(host).compactMap { $0 as? ClickableCursorView }.sorted {
-            $0.convert($0.bounds, to: nil).midY > $1.convert($1.bounds, to: nil).midY
-        }
-        let names = ["plain", "regular", "quiet", "icon", "disabled"]
-        for (name, region) in zip(names, regions) {
+        let names = ["plain", "regular", "primary", "destructive", "quiet", "icon", "selected", "disabled"]
+        for (index, name) in names.enumerated() {
+            await movePointer(to: NSPoint(x: 12, y: 12), in: window)
+            host.layoutSubtreeIfNeeded()
+            let normalRegions = descendants(host).compactMap { $0 as? ClickableCursorView }.sorted {
+                $0.convert($0.bounds, to: nil).midY > $1.convert($1.bounds, to: nil).midY
+            }
+            guard normalRegions.indices.contains(index) else {
+                checks.append((false, "\(name) remains mounted before hover")); continue
+            }
+            let region = normalRegions[index]
             let rect = region.convert(region.bounds, to: nil)
+            let normalBackground = backgroundSnapshot(region, in: host)
             // The left padding is visually part of every fixture Button,
             // while its centered glyphs sit well away from this position.
             let point = NSPoint(x: rect.minX + 3, y: rect.midY)
@@ -162,7 +169,20 @@ import LauncherCore
             let live = descendants(host).compactMap { $0 as? ClickableCursorView }.sorted {
                 $0.convert($0.bounds, to: nil).midY > $1.convert($1.bounds, to: nil).midY
             }
-            let liveRect = live[names.firstIndex(of: name)!].convert(live[names.firstIndex(of: name)!].bounds, to: nil)
+            guard live.indices.contains(index) else {
+                checks.append((false, "\(name) remains mounted during hover")); continue
+            }
+            let liveRegion = live[index]
+            let liveRect = liveRegion.convert(liveRegion.bounds, to: nil)
+            let hoveredBackground = backgroundSnapshot(liveRegion, in: host)
+            let backgroundDifference = backgroundDifference(normalBackground, hoveredBackground)
+            checks.append((backgroundDifference.map { name == "disabled" ? $0 < 0.5 : $0 >= 1.5 } == true,
+                           name == "disabled" ? "disabled button background does not react to hover" : "OS hover over \(name) changes its rendered background outside the glyphs"))
+            checks.append((abs(liveRect.width - rect.width) < 0.5 && abs(liveRect.height - rect.height) < 0.5 &&
+                           abs(liveRect.minX - rect.minX) < 0.5 && abs(liveRect.minY - rect.minY) < 0.5,
+                           "\(name) hover preserves the control's frame and neighbors"))
+            print("DETAIL pointer hover background name=\(name) meanByteDifference=\(backgroundDifference ?? -1)")
+            captureHoverEvidence(host, name: name)
             let clickPoint = NSPoint(x: liveRect.minX + 3, y: liveRect.midY)
             let before = state.presses[name, default: 0]
             if let down = pointerEvent(.leftMouseDown, point: clickPoint, window: window),
@@ -177,7 +197,9 @@ import LauncherCore
             checks.append((state.presses[name, default: 0] == before + (name == "disabled" ? 0 : 1),
                            "native click on \(name) button padding \(name == "disabled" ? "does not trigger disabled action" : "triggers exactly once")"))
         }
-        if let region = regions.first {
+        if let region = descendants(host).compactMap({ $0 as? ClickableCursorView }).max(by: {
+            $0.convert($0.bounds, to: nil).midY < $1.convert($1.bounds, to: nil).midY
+        }) {
             let rect = region.convert(region.bounds, to: nil)
             await movePointer(to: NSPoint(x: rect.midX, y: rect.midY), in: window)
             ButtonCursorPolicy.shared.apply(.arrow)
@@ -192,6 +214,45 @@ import LauncherCore
         if let originalPoint { postPointer(at: originalPoint) }
         try? await Task.sleep(for: .milliseconds(100))
         return checks
+    }
+    private struct BackgroundSnapshot {
+        let bytes: [UInt8]
+        let width: Int
+        let height: Int
+        let rowBytes: Int
+        let samples: Int
+    }
+    /// The narrow strip sits in button padding, away from every fixture label.
+    /// A changed text color alone therefore cannot pass the hover assertion.
+    private static func backgroundSnapshot(_ region: NSView, in host: NSView) -> BackgroundSnapshot? {
+        let rect = region.convert(region.bounds, to: host)
+        let strip = NSRect(x: rect.minX + 3, y: rect.minY + 4, width: min(5, max(1, rect.width / 10)), height: max(1, rect.height - 8)).intersection(host.bounds)
+        guard !strip.isEmpty, let bitmap = host.bitmapImageRepForCachingDisplay(in: strip) else { return nil }
+        host.cacheDisplay(in: strip, to: bitmap)
+        guard bitmap.bitsPerSample == 8, let data = bitmap.bitmapData else { return nil }
+        return BackgroundSnapshot(bytes: Array(UnsafeBufferPointer(start: data, count: bitmap.bytesPerRow * bitmap.pixelsHigh)),
+            width: bitmap.pixelsWide, height: bitmap.pixelsHigh, rowBytes: bitmap.bytesPerRow, samples: bitmap.samplesPerPixel)
+    }
+    private static func backgroundDifference(_ before: BackgroundSnapshot?, _ after: BackgroundSnapshot?) -> Double? {
+        guard let before, let after, before.width == after.width, before.height == after.height,
+              before.rowBytes == after.rowBytes, before.samples == after.samples else { return nil }
+        var difference = 0, count = 0
+        for y in 0..<before.height {
+            for x in 0..<(before.width * before.samples) {
+                let index = y * before.rowBytes + x
+                difference += abs(Int(before.bytes[index]) - Int(after.bytes[index])); count += 1
+            }
+        }
+        return count > 0 ? Double(difference) / Double(count) : nil
+    }
+    private static func captureHoverEvidence(_ host: NSView, name: String) {
+        guard let path = ProcessInfo.processInfo.environment["FANGCUN_HOVER_VISUAL_DIR"],
+              let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        guard let data = bitmap.representation(using: .png, properties: [:]) else { return }
+        let output = URL(fileURLWithPath: path, isDirectory: true)
+        try? FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        try? data.write(to: output.appendingPathComponent("shared-hover-" + name + ".png"))
     }
     private static func systemCursorMatches(_ expected: NSCursor) -> Bool {
         guard let actual = NSCursor.currentSystem else { return false }
@@ -421,9 +482,13 @@ private struct PointerInteractionRoot: View {
                 Text("Plain").frame(width: 180, height: 36).background(Color.blue.opacity(0.25))
             }.buttonStyle(ClickablePlainButtonStyle())
             Button { state.press("regular") } label: { Text("Regular").frame(width: 180) }.buttonStyle(WBButtonStyle())
+            Button { state.press("primary") } label: { Text("Primary").frame(width: 180) }.buttonStyle(WBButtonStyle(primary: true))
+            Button { state.press("destructive") } label: { Text("Destructive").frame(width: 180) }.buttonStyle(WBButtonStyle(destructive: true))
             Button { state.press("quiet") } label: { Text("Quiet").frame(width: 180, height: 30) }.buttonStyle(WBQuietButtonStyle())
             Button { state.press("icon") } label: { Image(systemName: "plus") }.buttonStyle(WBIconButtonStyle(size: 36))
+            Button { state.press("selected") } label: { Text("Selected").frame(width: 180, height: 32) }.buttonStyle(WBSelectableButtonStyle(selected: true))
             Button { state.press("disabled") } label: { Text("Disabled").frame(width: 180) }.buttonStyle(WBButtonStyle()).disabled(true)
         }.frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.black.opacity(0.8))
+            .workbenchThemeEnvironment(theme: .qingbiMist, opacity: 0.70, backgroundMotion: false)
     }
 }

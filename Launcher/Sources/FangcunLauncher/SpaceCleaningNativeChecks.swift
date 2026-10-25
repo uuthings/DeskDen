@@ -68,6 +68,44 @@ import LauncherCore
             check(exists("navigation-cleaning", in: host) && exists("window-brand-trigger", in: host) && exists("workbench-sidebar", in: host),
                   "cleaning retains the real brand, navigation and window shell")
 
+            for id in ["navigation-device", "navigation-cleaning", "space-cleaning-scope-global", "space-cleaning-scope-custom"] {
+                check(try await hoverBackground(id, host: host, window: window, output: output),
+                      "\(id) changes its visible background on hover without moving its hit area")
+            }
+            app.navigate(.overview)
+            _ = await settle(window) { exists("home-open-health", in: host) }
+            check(try await hoverBackground("home-open-health", host: host, window: window, output: output),
+                  "home's primary health action has visible hover feedback")
+            try capture(host: host, name: "home-window", output: output)
+            app.navigate(.calendar); calendar.goToToday()
+            let day = calendar.displayCalendar.dateComponents([.year, .month, .day], from: Date())
+            let dateKey = String(format: "%04d-%02d-%02d", day.year ?? 0, day.month ?? 0, day.day ?? 0)
+            _ = await settle(window) { exists("fc.calendar.day." + dateKey, in: host) }
+            check(try await hoverBackground("fc.calendar.day." + dateKey, host: host, window: window, output: output),
+                  "calendar's selected day retains distinct hover feedback")
+            for (name, size) in [("window", NSSize(width: 1120, height: 758)), ("large", NSSize(width: 1728, height: 978))] {
+                window.setContentSize(size)
+                _ = await settle(window) { host.bounds.size == size }
+                try capture(host: host, name: "calendar-" + name, output: output)
+                app.navigate(.overview)
+                _ = await settle(window) { exists("fc.home.calendar.strip", in: host) }
+                try capture(host: host, name: "home-" + name, output: output)
+                app.navigate(.calendar)
+                _ = await settle(window) { exists("fc.calendar.workspace", in: host) }
+            }
+            window.setContentSize(NSSize(width: 1120, height: 758))
+            app.navigate(.health)
+            _ = await settle(window) { exists("health-start", in: host) }
+            for id in ["health-start", "health-open-space-cleaning"] {
+                check(try await hoverBackground(id, host: host, window: window, output: output),
+                      "\(id) shows a themed hover background")
+            }
+            if let title = frame("health-open-space-cleaning-title", in: host), let button = frame("health-open-space-cleaning", in: host) {
+                check(abs(title.midY - button.midY) < 2, "health header cleanup text is vertically centered in its button")
+            }
+            app.navigate(.cleaning)
+            _ = await settle(window) { exists("space-cleaning-start", in: host) }
+
             check(clickBackground("space-cleaning-scope-custom", in: host), "custom scope has a native pointer target in its trailing background padding")
             _ = await settle(window) { cleaning.screen == .scope && cleaning.draftScope == .custom }
             check(cleaning.screen == .scope && cleaning.draftScope == .custom,
@@ -186,9 +224,37 @@ import LauncherCore
                 window.setContentSize(size)
                 _ = await settle(window) { exists("space-cleaning-remember-method", in: host) }
                 for result in footerLayoutChecks(in: host) { check(result.0, "\(name) recommended results " + result.1) }
+                let fixedIDs = ["space-cleaning-method-trash", "space-cleaning-method-permanent", "space-cleaning-remember-method", "space-cleaning-cleanup"]
+                let originalFrames = fixedIDs.map { frame($0, in: host) }
+                cleaning.chooseMethod(.permanent)
+                _ = await settle(window) { accessibilityValue("space-cleaning-method-permanent", in: host) == "已选择" }
+                check(fixedIDs.enumerated().allSatisfy { index, id in
+                    originalFrames[index].flatMap { before in frame(id, in: host).map { after in
+                        abs(before.minX - after.minX) < 1 && abs(before.minY - after.minY) < 1 && abs(before.width - after.width) < 1
+                    } } == true
+                }, "\(name) switching deletion method keeps every footer control anchored at the same width and position")
+                cleaning.chooseMethod(.trash)
+                _ = await settle(window) { accessibilityValue("space-cleaning-method-trash", in: host) == "已选择" }
+                let savedSelection = cleaning.selectedIDs
+                for selection in [Set<UUID>(), Set(cleaning.items.filter(\.isSelectable).map(\.id))] {
+                    cleaning.selectedIDs = selection
+                    _ = await settle(window) { enabled("space-cleaning-cleanup", in: host) == !selection.isEmpty }
+                    check(fixedIDs.enumerated().allSatisfy { index, id in
+                        originalFrames[index].flatMap { before in frame(id, in: host).map { after in
+                            abs(before.minX - after.minX) < 1 && abs(before.minY - after.minY) < 1 && abs(before.width - after.width) < 1
+                        } } == true
+                    }, "\(name) selecting \(selection.count) files preserves the action group's width and position")
+                }
+                cleaning.selectedIDs = savedSelection
+                _ = await settle(window) { enabled("space-cleaning-cleanup", in: host) == true }
                 try capture(host: host, name: "results-" + name, output: output)
             }
             window.setContentSize(NSSize(width: 1120, height: 758))
+            _ = await settle(window) { host.bounds.width == 1120 }
+            for id in ["space-cleaning-method-trash", "space-cleaning-method-permanent"] {
+                check(try await hoverBackground(id, host: host, window: window, output: output),
+                      "\(id) has visible hover feedback in the mounted results footer")
+            }
             cleaning.showResults(.protected)
             _ = await settle(window) { cleaning.visibleItems.contains(where: \.needsPurposeConfirmation) }
             guard let testPackage = cleaning.visibleItems.first(where: \.needsPurposeConfirmation),
@@ -431,6 +497,42 @@ import LauncherCore
             try? await Task.sleep(for: .milliseconds(20))
         } while ContinuousClock.now < deadline
         return predicate()
+    }
+    /// Compare an empty padding strip from the production view before/after
+    /// an OS-delivered mouse move. Text color changes alone cannot pass this.
+    private static func hoverBackground(_ identifier: String, host: NSView, window: NSWindow, output: URL) async throws -> Bool {
+        guard let rect = frame(identifier, in: host), rect.width >= 16, rect.height >= 16 else { return false }
+        let original = CGEvent(source: nil)?.location
+        let ignored = window.ignoresMouseEvents
+        window.ignoresMouseEvents = false; window.acceptsMouseMovedEvents = true
+        func post(_ point: NSPoint) {
+            let top = NSScreen.screens.first?.frame.maxY ?? 0
+            CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: CGPoint(x: point.x, y: top - point.y), mouseButton: .left)?.post(tap: .cghidEventTap)
+        }
+        func paddingBytes() -> [UInt8]? {
+            let screen = NSRect(x: rect.minX + 3, y: rect.midY - 4, width: 5, height: 8)
+            let local = host.convert(window.convertFromScreen(screen), from: nil)
+            host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+            guard let bitmap = host.bitmapImageRepForCachingDisplay(in: local), let data = bitmap.bitmapData else { return nil }
+            host.cacheDisplay(in: local, to: bitmap)
+            return Array(UnsafeBufferPointer(start: data, count: bitmap.bytesPerRow * bitmap.pixelsHigh))
+        }
+        defer {
+            if let original { CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: original, mouseButton: .left)?.post(tap: .cghidEventTap) }
+            window.ignoresMouseEvents = ignored
+        }
+        post(NSPoint(x: window.frame.minX + 4, y: window.frame.maxY - 4))
+        try? await Task.sleep(for: .milliseconds(140))
+        let before = paddingBytes()
+        post(NSPoint(x: rect.midX, y: rect.midY))
+        try? await Task.sleep(for: .milliseconds(180))
+        let after = paddingBytes(), afterFrame = frame(identifier, in: host)
+        try capture(host: host, name: "hover-" + identifier, output: output)
+        post(NSPoint(x: window.frame.minX + 4, y: window.frame.maxY - 4))
+        try? await Task.sleep(for: .milliseconds(60))
+        guard let before, let after, before.count == after.count else { return false }
+        let changed = zip(before, after).filter { abs(Int($0) - Int($1)) > 2 }.count
+        return changed >= 12 && afterFrame == rect
     }
     /// Dispatch a real mouse press in the control's trailing padding. Never
     /// invoke the action closure or accessibility press as a hit-test substitute.
