@@ -176,8 +176,14 @@ import LauncherCore
             let liveRect = liveRegion.convert(liveRegion.bounds, to: nil)
             let hoveredBackground = backgroundSnapshot(liveRegion, in: host)
             let backgroundDifference = backgroundDifference(normalBackground, hoveredBackground)
-            checks.append((backgroundDifference.map { name == "disabled" ? $0 < 0.5 : $0 >= 1.5 } == true,
-                           name == "disabled" ? "disabled button background does not react to hover" : "OS hover over \(name) changes its rendered background outside the glyphs"))
+            // Readouts and custom-drawn controls use the plain pointer policy;
+            // quiet text actions react through text/underline, without a box.
+            // Bounded actions and selection surfaces have their own fill.
+            let hasHoverSurface = !["plain", "quiet", "disabled"].contains(name)
+            checks.append((backgroundDifference.map { hasHoverSurface ? $0 >= 1.5 : $0 < 0.5 } == true,
+                           hasHoverSurface
+                            ? "OS hover over \(name) changes its rendered background outside the glyphs"
+                            : "OS hover over \(name) preserves its background without adding a generic box"))
             checks.append((abs(liveRect.width - rect.width) < 0.5 && abs(liveRect.height - rect.height) < 0.5 &&
                            abs(liveRect.minX - rect.minX) < 0.5 && abs(liveRect.minY - rect.minY) < 0.5,
                            "\(name) hover preserves the control's frame and neighbors"))

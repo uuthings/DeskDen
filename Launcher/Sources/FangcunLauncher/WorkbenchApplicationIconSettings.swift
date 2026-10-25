@@ -32,7 +32,7 @@ struct WorkbenchApplicationIconSettings: View {
                         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(controller.selection == choice ? palette.accent.opacity(0.65) : palette.line, lineWidth: 1))
                         .contentShape(RoundedRectangle(cornerRadius: 9))
                     }
-                    .buttonStyle(ClickablePlainButtonStyle())
+                    .buttonStyle(WBSelectableButtonStyle(selected: controller.selection == choice, cornerRadius: 9, drawsSelection: false, showsBorder: false))
                     .accessibilityLabel(choice.title)
                     .accessibilityValue(controller.selection == choice ? "当前应用图标" : "未选中")
                     .accessibilityHint("将方寸图标更换为" + choice.title)

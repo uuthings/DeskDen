@@ -108,7 +108,7 @@ struct DeviceProcessExplorerView: View {
                 Text(grouped ? "\(groups.count) 组" : "\(processCount) 项").monospacedDigit().foregroundStyle(palette.muted).fixedSize()
             }.font(.system(size: 11)).padding(.horizontal, 8).frame(height: 36)
                 .background(filter == value ? palette.soft : Color.clear, in: RoundedRectangle(cornerRadius: 6))
-        }.buttonStyle(ClickablePlainButtonStyle()).foregroundStyle(filter == value ? palette.text : palette.secondary)
+        }.buttonStyle(WBSelectableButtonStyle(selected: filter == value, cornerRadius: 6, drawsSelection: false, showsBorder: false)).foregroundStyle(filter == value ? palette.text : palette.secondary)
             .accessibilityLabel("\(title)，\(grouped ? "\(groups.count) 组，包含" : "")\(processCount) 个进程，\(subtitle)")
             .accessibilityValue(filter == value ? "已选择" : "").accessibilityIdentifier("process-filter-\(value.rawValue)").help(subtitle)
     }
@@ -125,7 +125,7 @@ struct DeviceProcessExplorerView: View {
                 HStack(spacing: 7) {
                     Image(systemName: "magnifyingglass").foregroundStyle(palette.muted)
                     TextField(memoryFocused ? "搜索应用或 PID" : "搜索名称或 PID", text: $query).textFieldStyle(.plain).onExitCommand { if query.isEmpty { leave() } else { query = "" } }.accessibilityIdentifier("process-search")
-                    if !query.isEmpty { Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel("清除进程搜索") }
+                    if !query.isEmpty { Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(WBIconButtonStyle(size: 28)).accessibilityLabel("清除进程搜索") }
                 }.font(.system(size: 12)).padding(.horizontal, 10).frame(minWidth: 120, maxWidth: .infinity).frame(height: 32).background(WorkbenchMaterialSurface(kind: .control, radius: 8))
                 Button { grouped.toggle() } label: { Label(memoryFocused ? (grouped ? "按应用聚合" : "逐个进程") : (grouped ? "按应用" : "全部展开"), systemImage: grouped ? "square.3.layers.3d" : "list.bullet") }.buttonStyle(WBButtonStyle(compact: true)).accessibilityLabel("按应用聚合").accessibilityIdentifier("process-group-toggle")
                 WBSelect("排序", selection: sortSelection, options: memoryFocused ? [(.memory, "内存占用"), (.name, "名称")] : [(.cpu, "CPU 占用"), (.memory, "内存占用"), (.name, "名称"), (.pid, "PID")]).frame(width: 108)
@@ -167,7 +167,7 @@ struct DeviceProcessExplorerView: View {
                 HStack(alignment: .top, spacing: 6) {
                     Text(actionMessage).font(.system(size: 11)).foregroundStyle(actionFailed ? palette.warning : palette.secondary).lineLimit(3)
                     Spacer(minLength: 0)
-                    Button { self.actionMessage = nil } label: { Image(systemName: "xmark") }.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel("关闭操作结果")
+                    Button { self.actionMessage = nil } label: { Image(systemName: "xmark") }.buttonStyle(WBIconButtonStyle(size: 28)).accessibilityLabel("关闭操作结果")
                 }.padding(12)
             }
         }.padding(memoryFocused ? EdgeInsets(top: 14, leading: 14, bottom: 10, trailing: 14) : EdgeInsets()).frame(maxWidth: .infinity, maxHeight: .infinity).background(DeviceCardSurface()).foregroundStyle(palette.text)
@@ -193,7 +193,7 @@ struct DeviceProcessExplorerView: View {
                         Text("\(group.processes.count)").font(.system(size: 10)).foregroundStyle(palette.muted)
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-            }.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel("\(group.name)，\(group.processes.count) 个进程，展开或收起")
+            }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 5, showsBorder: false)).accessibilityLabel("\(group.name)，\(group.processes.count) 个进程，展开或收起")
             measurements(cpu: group.cpuPercent, memory: group.residentBytes, pid: memoryFocused ? group.processes.first(where: \.isApplicationMain).map { String($0.pid) } ?? "—" : "—")
             actionMenu(name: group.name, members: group.processes, wholeApplication: true)
         }.font(.system(size: 11, weight: .medium)).monospacedDigit().padding(.horizontal, memoryFocused ? 10 : 13).frame(height: memoryFocused ? 50 : 38)
@@ -212,7 +212,7 @@ struct DeviceProcessExplorerView: View {
                         }
                     } else { Text(process.name).lineLimit(1).truncationMode(.tail) }
                 }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-            }.buttonStyle(ClickablePlainButtonStyle()).help("\(process.name) · 点击查看采样详情")
+            }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 5, showsBorder: false)).help("\(process.name) · 点击查看采样详情")
             measurements(cpu: process.cpuPercent, memory: process.residentBytes, pid: String(process.pid))
             actionMenu(name: process.name, members: [process], wholeApplication: false)
         }.font(.system(size: 11)).monospacedDigit().padding(.horizontal, memoryFocused ? 10 : 13).frame(height: memoryFocused ? 50 : 38)
@@ -276,7 +276,7 @@ struct DeviceProcessExplorerView: View {
                 Text(title)
 
             }
-        }.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel("按\(title)排序")
+        }.buttonStyle(WBTextActionButtonStyle()).accessibilityLabel("按\(title)排序")
             .accessibilityValue(sort == value ? (ascending ? "升序" : "降序") : "")
     }
 }

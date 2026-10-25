@@ -76,6 +76,20 @@ import LauncherCore
             _ = await settle(window) { exists("home-open-health", in: host) }
             check(try await hoverBackground("home-open-health", host: host, window: window, output: output),
                   "home's primary health action has visible hover feedback")
+            for id in ["home-storage-readout", "home-memory-readout"] {
+                check(try await hoverBackground(id, host: host, window: window, output: output, expectedChange: false),
+                      "\(id) retains its unboxed readout surface on actual OS hover")
+            }
+            check(try await hoverBackground("home-device-detail", host: host, window: window, output: output),
+                  "home device detail arrow uses the bounded shared icon hover surface")
+            app.navigate(.ai)
+            _ = await settle(window) { exists("fc.ai.provider.codex", in: host) }
+            for id in ["fc.ai.provider.codex", "fc.ai.provider.claude"] {
+                check(try await hoverBackground(id, host: host, window: window, output: output, expectedChange: false),
+                      "\(id) does not gain a second hover border or card background")
+            }
+            app.navigate(.overview)
+            _ = await settle(window) { exists("home-open-health", in: host) }
             try capture(host: host, name: "home-window", output: output)
             app.navigate(.calendar); calendar.goToToday()
             let day = calendar.displayCalendar.dateComponents([.year, .month, .day], from: Date())
@@ -100,11 +114,19 @@ import LauncherCore
                 check(try await hoverBackground(id, host: host, window: window, output: output),
                       "\(id) shows a themed hover background")
             }
-            if let title = frame("health-open-space-cleaning-title", in: host), let button = frame("health-open-space-cleaning", in: host) {
-                check(abs(title.midY - button.midY) < 2, "health header cleanup text is vertically centered in its button")
-            }
+            check(NSImage(systemSymbolName: "internaldrive", accessibilityDescription: nil) != nil,
+                  "health cleanup icon exists in the running system symbol set")
+            check(healthCleanupGlyphsAligned(host: host, window: window),
+                  "health cleanup button paints its icon and title centered together with a normal gap")
             app.navigate(.cleaning)
             _ = await settle(window) { exists("space-cleaning-start", in: host) }
+            cleaning.editScope(custom: true)
+            _ = await settle(window) { exists("space-cleaning-cancel-scope", in: host) }
+            check(frame("space-cleaning-cancel-scope", in: host).map { abs($0.height - 32) < 1 } == true,
+                  "inline scope Cancel has a full 32-point secondary action target")
+            check(try await hoverBackground("space-cleaning-cancel-scope", host: host, window: window, output: output),
+                  "scope Cancel hovers as a regular action rather than a tiny box around the text")
+            cleaning.cancelScope()
 
             check(clickBackground("space-cleaning-scope-custom", in: host), "custom scope has a native pointer target in its trailing background padding")
             _ = await settle(window) { cleaning.screen == .scope && cleaning.draftScope == .custom }
@@ -498,9 +520,35 @@ import LauncherCore
         } while ContinuousClock.now < deadline
         return predicate()
     }
+    /// A SwiftUI Button exposes a combined AX action, not its decorative image
+    /// and Text separately. Verify the actual rendered icon/title ink instead
+    /// of silently skipping geometry assertions for unavailable AX children.
+    private static func healthCleanupGlyphsAligned(host: NSView, window: NSWindow) -> Bool {
+        guard let screen = frame("health-open-space-cleaning", in: host), screen.width < 160,
+              abs(screen.height - 32) < 1 else { return false }
+        let rect = host.convert(window.convertFromScreen(screen), from: nil)
+        guard let bitmap = host.bitmapImageRepForCachingDisplay(in: rect) else { return false }
+        host.cacheDisplay(in: rect, to: bitmap)
+        let sx = CGFloat(bitmap.pixelsWide) / rect.width, sy = CGFloat(bitmap.pixelsHigh) / rect.height
+        var minX = CGFloat.greatestFiniteMagnitude, maxX: CGFloat = 0
+        var minY = CGFloat.greatestFiniteMagnitude, maxY: CGFloat = 0
+        var iconPixels = 0, textPixels = 0
+        for y in Int(4 * sy)..<Int((rect.height - 4) * sy) {
+            for x in Int(4 * sx)..<Int((rect.width - 4) * sx) {
+                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                      color.redComponent > 0.65, color.greenComponent > 0.70, color.blueComponent > 0.65 else { continue }
+                let px = CGFloat(x) / sx, py = CGFloat(y) / sy
+                minX = min(minX, px); maxX = max(maxX, px); minY = min(minY, py); maxY = max(maxY, py)
+                if px < 30 { iconPixels += 1 } else { textPixels += 1 }
+            }
+        }
+        print("DETAIL health cleanup painted content button=\(screen) ink=\(minX),\(minY)—\(maxX),\(maxY) iconPixels=\(iconPixels) textPixels=\(textPixels)")
+        return iconPixels > 12 && textPixels > 40 && abs((minX + maxX) / 2 - rect.width / 2) < 2.5 &&
+            abs((minY + maxY) / 2 - rect.height / 2) < 2.5
+    }
     /// Compare an empty padding strip from the production view before/after
     /// an OS-delivered mouse move. Text color changes alone cannot pass this.
-    private static func hoverBackground(_ identifier: String, host: NSView, window: NSWindow, output: URL) async throws -> Bool {
+    private static func hoverBackground(_ identifier: String, host: NSView, window: NSWindow, output: URL, expectedChange: Bool = true) async throws -> Bool {
         guard let rect = frame(identifier, in: host), rect.width >= 16, rect.height >= 16 else { return false }
         let original = CGEvent(source: nil)?.location
         let ignored = window.ignoresMouseEvents
@@ -532,7 +580,8 @@ import LauncherCore
         try? await Task.sleep(for: .milliseconds(60))
         guard let before, let after, before.count == after.count else { return false }
         let changed = zip(before, after).filter { abs(Int($0) - Int($1)) > 2 }.count
-        return changed >= 12 && afterFrame == rect
+        print("DETAIL production hover \(identifier) changedBytes=\(changed) expectsSurface=\(expectedChange) stable=\(afterFrame == rect)")
+        return (expectedChange ? changed >= 12 : changed < 12) && afterFrame == rect
     }
     /// Dispatch a real mouse press in the control's trailing padding. Never
     /// invoke the action closure or accessibility press as a hit-test substitute.

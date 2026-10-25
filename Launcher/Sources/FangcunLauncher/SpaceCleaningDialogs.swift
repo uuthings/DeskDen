@@ -140,7 +140,7 @@ struct SpaceCleaningChoiceRow: View {
                     Text(subtitle).font(.system(size: 11)).foregroundStyle(palette.muted).lineSpacing(3)
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }.padding(.vertical, 13).contentShape(Rectangle())
-        }.buttonStyle(ClickablePlainButtonStyle()).disabled(disabled).opacity(disabled ? 0.45 : 1)
+        }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 6, drawsSelection: false, showsBorder: false)).disabled(disabled).opacity(disabled ? 0.45 : 1)
             .accessibilityElement(children: .ignore).accessibilityLabel(title + "，" + subtitle)
             .accessibilityValue(selected ? "已选择" : "未选择")
             .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)

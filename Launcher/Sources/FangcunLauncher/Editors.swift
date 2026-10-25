@@ -268,10 +268,20 @@ extension LauncherController {
 }
 
 final class ClosurePopup: ClickablePopUpButton {
+    private var hovered = false
+    private var tracking: NSTrackingArea?
     override var isFlipped:Bool { true }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
+        addTrackingArea(area); tracking = area
+    }
+    override func mouseEntered(with event: NSEvent) { hovered = true; needsDisplay = true }
+    override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true }
     override func draw(_ dirtyRect:NSRect) {
         let path = NSBezierPath(roundedRect:bounds.insetBy(dx:0.5,dy:0.5),xRadius:7,yRadius:7)
-        NSColor.white.withAlphaComponent(0.045).setFill(); path.fill()
+        NSColor.white.withAlphaComponent(isEnabled && isHighlighted ? 0.12 : isEnabled && hovered ? 0.08 : 0.045).setFill(); path.fill()
         NSColor.white.withAlphaComponent(window?.firstResponder === self ? 0.5 : 0.16).setStroke(); path.stroke()
         drawText(titleOfSelectedItem ?? "",in:NSRect(x:10,y:(bounds.height-17)/2,width:bounds.width-35,height:20),size:12,color:Palette.text)
         drawSymbol("chevron.down",in:NSRect(x:bounds.width-24,y:(bounds.height-12)/2,width:12,height:12))

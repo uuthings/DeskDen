@@ -124,6 +124,20 @@ final class WBPopUpButton: ClickablePopUpButton {
     var workbenchTheme: LauncherTheme = .arWorld
     var interfaceOpacity: Double = 0.70
     var interfaceLight = false
+    private var hovering = false
+    private var hoverArea: NSTrackingArea?
+    override var isEnabled: Bool {
+        didSet { if !isEnabled { hovering = false }; needsDisplay = true }
+    }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(rect: .zero, options: [.activeInKeyWindow, .inVisibleRect, .mouseEnteredAndExited], owner: self, userInfo: nil)
+        addTrackingArea(area); hoverArea = area
+    }
+    override func mouseEntered(with event: NSEvent) { hovering = isEnabled; needsDisplay = true }
+    override func mouseExited(with event: NSEvent) { hovering = false; needsDisplay = true }
+    override func highlight(_ flag: Bool) { super.highlight(flag); needsDisplay = true }
     override var isFlipped: Bool { true }
     // The stock popup cell adds optical alignment insets around its small bezel.
     // Our custom surface already occupies the full shared 32-point control frame.
@@ -135,8 +149,11 @@ final class WBPopUpButton: ClickablePopUpButton {
         let rect = bounds.insetBy(dx: 0.5, dy: 0.5)
         let path = NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8)
         let palette = ThemePalette(theme: workbenchTheme, opacity: interfaceOpacity, light: interfaceLight)
-        (isHighlighted ? palette.nsAccent.withAlphaComponent(0.18) : NSColor(palette.control)).setFill(); path.fill()
-        NSColor(palette.controlBorder).setStroke(); path.lineWidth = 1; path.stroke()
+        NSColor(palette.control).setFill(); path.fill()
+        let active = isEnabled && hovering, pressed = isEnabled && isHighlighted
+        if active || pressed { palette.nsAccent.withAlphaComponent(pressed ? 0.25 : 0.15).setFill(); path.fill() }
+        (active || pressed ? palette.nsAccent.withAlphaComponent(pressed ? 0.66 : 0.48) : NSColor(palette.controlBorder)).setStroke()
+        path.lineWidth = 1; path.stroke()
         let color = palette.nsText.withAlphaComponent(isEnabled ? 1 : 0.4)
         drawText(titleOfSelectedItem ?? "", in: NSRect(x: 10, y: (bounds.height - 16) / 2, width: bounds.width - 34, height: 16), size: 12, color: color)
         drawSymbol("chevron.down", in: NSRect(x: bounds.width - 20, y: (bounds.height - 10) / 2, width: 10, height: 10), color: color.withAlphaComponent(isEnabled ? 0.7 : 0.35))
@@ -252,11 +269,13 @@ struct WBIconButtonStyle: ButtonStyle {
         configuration.label.font(.system(size: 14 * displayScale, weight: .regular))
             .frame(width: size * displayScale, height: size * displayScale, alignment: .center)
             .foregroundStyle(enabled && hovering ? palette.text : palette.secondary)
-            .overlay(WBInteractionOverlay(tint: palette.accent, cornerRadius: 7, hovering: enabled && hovering, pressed: enabled && configuration.isPressed))
+            .overlay(WBIconFeedbackSurface(hovering: enabled && hovering, pressed: enabled && configuration.isPressed))
             .contentShape(RoundedRectangle(cornerRadius: 7)).opacity(enabled ? 1 : 0.4)
             .onHover { hovering = $0 }.clickableCursor()
     }
 }
+/// Tertiary text actions use a color/underline cue, never a tight box around
+/// their glyphs. Form-level Cancel actions use the regular secondary style.
 struct WBQuietButtonStyle: ButtonStyle {
     @Environment(\.workbenchScale) private var displayScale
     @Environment(\.isEnabled) private var enabled
@@ -264,11 +283,34 @@ struct WBQuietButtonStyle: ButtonStyle {
     @State private var hovering = false
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.font(.system(size: 11 * displayScale))
-            .foregroundStyle(enabled && hovering ? palette.text : palette.secondary)
-            .multilineTextAlignment(.center).padding(.vertical, 3 * displayScale)
-            .overlay(WBInteractionOverlay(tint: palette.accent, cornerRadius: 6, hovering: enabled && hovering, pressed: enabled && configuration.isPressed))
-            .contentShape(Rectangle()).opacity(enabled ? 1 : 0.4)
+            .foregroundStyle(enabled && hovering ? palette.accent : palette.secondary)
+            .padding(.vertical, 3 * displayScale)
+            .overlay(alignment: .bottom) { Rectangle().fill(enabled && hovering ? palette.accent.opacity(0.55) : .clear).frame(height: 1).allowsHitTesting(false) }
+            .contentShape(Rectangle()).opacity(enabled ? (configuration.isPressed ? 0.65 : 1) : 0.4)
             .onHover { hovering = $0 }.clickableCursor()
+    }
+}
+/// Explicit opt-in for links, text tabs and sortable headings. Keep the
+/// caller's dimensions/font and do not paint a new button/card-shaped border.
+struct WBTextActionButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.workbenchPalette) private var palette
+    @State private var hovering = false
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .overlay(alignment: .bottom) { Rectangle().fill(enabled && hovering ? palette.accent.opacity(0.55) : .clear).frame(height: 1).allowsHitTesting(false) }
+            .contentShape(Rectangle()).opacity(enabled ? (configuration.isPressed ? 0.65 : 1) : 0.4)
+            .onHover { hovering = $0 }.clickableCursor()
+    }
+}
+/// The visual surface shared by actual detail icon buttons and a detail icon
+/// inside an already-clickable card. This view does not receive mouse events.
+struct WBIconFeedbackSurface: View {
+    var hovering: Bool
+    var pressed = false
+    @Environment(\.workbenchPalette) private var palette
+    var body: some View {
+        WBInteractionOverlay(tint: palette.accent, cornerRadius: 7, hovering: hovering, pressed: pressed)
     }
 }
 /// For navigation and segmented choices. Geometry and label colors belong to
@@ -278,6 +320,7 @@ struct WBSelectableButtonStyle: ButtonStyle {
     var cornerRadius: CGFloat = 8
     var drawsSelection = true
     var tint: Color? = nil
+    var showsBorder = true
     @Environment(\.isEnabled) private var enabled
     @Environment(\.workbenchPalette) private var palette
     @State private var hovering = false
@@ -286,7 +329,7 @@ struct WBSelectableButtonStyle: ButtonStyle {
         return configuration.label
             .background(RoundedRectangle(cornerRadius: cornerRadius).fill(selected && drawsSelection ? tone.opacity(0.16) : .clear))
             .overlay(WBInteractionOverlay(tint: tone, cornerRadius: cornerRadius, hovering: enabled && hovering,
-                pressed: enabled && configuration.isPressed, selected: selected && drawsSelection))
+                pressed: enabled && configuration.isPressed, selected: selected && drawsSelection, showsBorder: showsBorder))
             .contentShape(RoundedRectangle(cornerRadius: cornerRadius)).opacity(enabled ? 1 : 0.4)
             .onHover { hovering = $0 }.clickableCursor()
     }
@@ -299,10 +342,11 @@ private struct WBInteractionOverlay: View {
     let hovering: Bool
     let pressed: Bool
     var selected = false
+    var showsBorder = true
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius)
         shape.fill(tint.opacity(pressed ? 0.25 : hovering ? 0.15 : 0))
-            .overlay(shape.strokeBorder(tint.opacity(pressed ? 0.66 : hovering ? 0.44 : selected ? 0.30 : 0), lineWidth: 1))
+            .overlay(shape.strokeBorder(tint.opacity(showsBorder ? (pressed ? 0.66 : hovering ? 0.44 : selected ? 0.30 : 0) : 0), lineWidth: 1))
             .allowsHitTesting(false).accessibilityHidden(true)
     }
 }
@@ -319,7 +363,7 @@ struct WBTextTabs<Selection:Hashable>:View {
                         Text(title(item)).font(.system(size:12)).foregroundStyle(selection==item ? palette.text:palette.muted)
                         Capsule().fill(selection==item ? palette.accent:.clear).frame(height:2)
                     }.fixedSize(horizontal:true,vertical:false).padding(.top,3)
-                }.buttonStyle(ClickablePlainButtonStyle()).accessibilityValue(selection==item ? "已选择":"")
+                }.buttonStyle(WBTextActionButtonStyle()).accessibilityValue(selection==item ? "已选择":"")
             }
         }
     }
@@ -536,13 +580,10 @@ extension View {
     func clickableCursor() -> some View { modifier(ClickableCursorModifier()) }
 }
 
+/// Cursor and full-label hit shape only. Readouts and already-painted card
+/// bodies must not acquire an arbitrary rounded hover surface from this style.
 struct ClickablePlainButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var enabled
-    @Environment(\.workbenchPalette) private var palette
-    @State private var hovering = false
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label.contentShape(Rectangle())
-            .overlay(WBInteractionOverlay(tint: palette.accent, cornerRadius: 8, hovering: enabled && hovering, pressed: enabled && configuration.isPressed))
-            .onHover { hovering = $0 }.clickableCursor()
+        configuration.label.contentShape(Rectangle()).clickableCursor()
     }
 }

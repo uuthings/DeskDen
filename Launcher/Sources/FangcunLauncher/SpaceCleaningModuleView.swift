@@ -27,7 +27,7 @@ struct SpaceCleaningModuleView: View {
                         Text("上次扫描 · " + SpaceCleaningFormat.date(date))
                     }
                     Spacer(minLength: 4)
-                    Button("覆盖范围与保留规则") { model.dialog = .rules }.buttonStyle(ClickablePlainButtonStyle())
+                    Button("覆盖范围与保留规则") { model.dialog = .rules }.buttonStyle(WBTextActionButtonStyle())
                         .disabled(model.isBusy).accessibilityIdentifier("space-cleaning-rules-link")
                 }.font(.system(size: 11)).foregroundStyle(palette.secondary).padding(.top, compactHome ? 12 : 16)
                 if let message = model.message {
@@ -35,7 +35,7 @@ struct SpaceCleaningModuleView: View {
                         Image(systemName: "info.circle")
                         Text(message).lineLimit(3).frame(maxWidth: .infinity, alignment: .leading)
                         Button { model.message = nil } label: { Image(systemName: "xmark") }
-                            .buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel("关闭提示")
+                            .buttonStyle(WBIconButtonStyle(size: 24)).accessibilityLabel("关闭提示")
                     }.font(.system(size: 11)).foregroundStyle(palette.secondary).padding(.top, 10)
                         .accessibilityIdentifier("space-cleaning-message")
                 }
@@ -156,7 +156,7 @@ struct SpaceCleaningModuleView: View {
                         .font(.system(size: 11)).foregroundStyle(palette.muted)
                     Spacer(minLength: 4)
                     if editingScope {
-                        Button("取消", action: model.cancelScope).buttonStyle(WBQuietButtonStyle())
+                        Button("取消", action: model.cancelScope).buttonStyle(WBButtonStyle()).accessibilityIdentifier("space-cleaning-cancel-scope")
                         Button("保存范围", action: model.applyScope).buttonStyle(WBButtonStyle())
                             .disabled(displayedScope == .custom && displayedLocations.isEmpty)
                             .accessibilityIdentifier("space-cleaning-apply-scope")
