@@ -11,12 +11,27 @@ let application = NSApplication.shared
         FileHandle.standardError.write(Data("Unable to query the native UI check process accessibility bridge\n".utf8)); exit(2)
     }
 }
-if !CommandLine.arguments.contains("--context-model-check"), !CommandLine.arguments.contains("--appearance-check"), !CommandLine.arguments.contains("--shortcut-responder-check"), !CommandLine.arguments.contains("--pointer-check"), !CommandLine.arguments.contains("--space-cleaning-system-trash-check"), !CommandLine.arguments.contains("--space-cleaning-model-check"), !CommandLine.arguments.contains("--space-cleaning-check"), !CommandLine.arguments.contains("--self-check"), !CommandLine.arguments.contains("--device-check"), !CommandLine.arguments.contains("--form-check"), !CommandLine.arguments.contains("--vault-signing-check"), let identifier = Bundle.main.bundleIdentifier,
+if !CommandLine.arguments.contains("--mini-data-check"), !CommandLine.arguments.contains("--mini-appearance-check"), !CommandLine.arguments.contains("--context-model-check"), !CommandLine.arguments.contains("--appearance-check"), !CommandLine.arguments.contains("--shortcut-responder-check"), !CommandLine.arguments.contains("--pointer-check"), !CommandLine.arguments.contains("--space-cleaning-system-trash-check"), !CommandLine.arguments.contains("--space-cleaning-model-check"), !CommandLine.arguments.contains("--space-cleaning-check"), !CommandLine.arguments.contains("--self-check"), !CommandLine.arguments.contains("--device-check"), !CommandLine.arguments.contains("--form-check"), !CommandLine.arguments.contains("--vault-signing-check"), let identifier = Bundle.main.bundleIdentifier,
    NSRunningApplication.runningApplications(withBundleIdentifier:identifier).contains(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) {
     DistributedNotificationCenter.default().postNotificationName(Notification.Name(CommandLine.arguments.contains("--launcher") ? "local.fangcun.launcher.show":"local.fangcun.workbench.show"),object:nil,userInfo:nil,deliverImmediately:true)
     exit(0)
 }
-if CommandLine.arguments.contains("--context-model-check") {
+if CommandLine.arguments.contains("--mini-data-check") {
+    application.setActivationPolicy(.prohibited)
+    Task {
+        let result = await WorkbenchMiniDataChecks.run()
+        exit(result.count > 0 && result.failures == 0 ? 0 : 1)
+    }
+    application.run()
+} else if CommandLine.arguments.contains("--mini-appearance-check") {
+    application.setActivationPolicy(.accessory)
+    Task {
+        let result = await WorkbenchMiniAppearanceChecks.run()
+        print("Mini appearance checks: \(result.count) checks, \(result.failures) failures")
+        exit(result.count > 0 && result.failures == 0 ? 0 : 1)
+    }
+    application.run()
+} else if CommandLine.arguments.contains("--context-model-check") {
     application.setActivationPolicy(.prohibited)
     Task {
         let result = await WorkbenchContextChecks.run()

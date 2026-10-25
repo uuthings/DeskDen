@@ -39,6 +39,10 @@ struct WorkbenchTopEntryInput {
     private var summaryVisible = false
     private var summaryOutsideAt: TimeInterval?
     private var animationID = UUID()
+    private var miniOpenedAt = Date()
+    private var miniAgendaTask: Task<Void, Never>?
+    private var miniAgendaVisible = false
+    private var miniDeviceVisible = false
 #if DEBUG
     private var previewID = UUID()
     private var previewUntil: TimeInterval = 0
@@ -202,10 +206,21 @@ struct WorkbenchTopEntryInput {
     func setMode(_ mode: WorkbenchTopEntryMode) {
         var value = preferences; value.mode = mode; save(value)
     }
-    private func save(_ value: WorkbenchTopEntryPreferences) {
+    func setMiniSection(_ section: WorkbenchMiniSection, visible: Bool) {
+        var value = preferences
+        let selected = Set(value.visibleSections).subtracting([section]).union(visible ? [section] : [])
+        value.visibleSections = WorkbenchMiniSection.allCases.filter { selected.contains($0) }
+        save(value, dismiss: false)
+    }
+    func restoreMiniSections() {
+        var value = preferences; value.visibleSections = WorkbenchMiniSection.allCases
+        save(value, dismiss: false)
+    }
+    private func save(_ value: WorkbenchTopEntryPreferences, dismiss: Bool = true) {
         do {
             try store.save(value); preferences = value; error = nil
-            gate.reset(); dismissSummary(animated: true)
+            if dismiss { gate.reset(); dismissSummary(animated: true) }
+            else { updateMiniConsumers() }
         } catch { self.error = error.localizedDescription }
     }
     private func refreshScreens() {
@@ -331,12 +346,11 @@ struct WorkbenchTopEntryInput {
         panel.collectionBehavior = [.canJoinAllSpaces, .canJoinAllApplications, .fullScreenAuxiliary, .ignoresCycle]
         panel.setAccessibilityLabel("方寸灵动岛")
         panel.appearance = NSAppearance(named: Palette.isLight ? .aqua : .darkAqua)
-        if islandScreen !== screen || islandSurface == nil {
-            let notchWidth: CGFloat
-            if let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea, right.minX > left.maxX {
-                notchWidth = right.minX - left.maxX
-            } else { notchWidth = 180 }
-            let size = CGSize(width: min(600, screen.frame.width - 32), height: max(8, screen.safeAreaInsets.top) + 176)
+        let notchWidth = hardwareNotchWidth(on: screen)
+        let size = WorkbenchMiniLayout.size(sectionCount: preferences.visibleSections.count,
+                                            screenWidth: screen.frame.width, safeTop: screen.safeAreaInsets.top,
+                                            notchWidth: notchWidth)
+        if islandScreen !== screen || islandSurface?.expandedSize != size {
             let surface = WorkbenchNotchSurface(size: size, notchWidth: notchWidth, safeTop: screen.safeAreaInsets.top)
             islandSurface = surface; islandScreen = screen; panel.contentView = surface
             panel.setFrame(CGRect(x: screen.frame.midX - size.width / 2, y: screen.frame.maxY - size.height,
@@ -361,109 +375,71 @@ struct WorkbenchTopEntryInput {
         refreshAppearance()
         if !panel.isVisible { islandSurface?.setPhase(.closed, animated: false) }
         animationID = UUID(); summaryVisible = true; summaryOutsideAt = nil
-        let host = NSHostingView(rootView: WorkbenchTopSummaryView(model: model, device: model.device, openedAt: Date(), open: { [weak self] in
-            guard let self else { return }
-            // A deliberate mini-card action always opens the workbench home.
-            self.owner?.workbenchController?.model.navigate(.overview)
-            self.owner?.showWorkbenchFromTopEntry(originFrame: self.islandPresentationFrame)
-        }).nativeCheckAccessibility())
-        islandSurface?.setContent(host)
-        model.device.setQuickSummaryVisible(true); model.device.refresh()
+        miniOpenedAt = Date()
+        mountMini(model: model, on: screen)
+        updateMiniConsumers()
         panel.alphaValue = 1; panel.ignoresMouseEvents = !islandContains(input().location)
         panel.orderFrontRegardless(); panel.makeKey()
         islandSurface?.setPhase(.expanded, animated: true)
+    }
+    private func hardwareNotchWidth(on screen: NSScreen) -> CGFloat {
+        if let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea, right.minX > left.maxX {
+            return right.minX - left.maxX
+        }
+        return 0
+    }
+    private func mountMini(model: WorkbenchAppModel, on screen: NSScreen) {
+        let host = NSHostingView(rootView: WorkbenchMiniView(model: model, controller: self, openedAt: miniOpenedAt,
+            safeTop: screen.safeAreaInsets.top, notchWidth: hardwareNotchWidth(on: screen), open: { [weak self] in
+                guard let self else { return }
+                self.owner?.workbenchController?.model.navigate(.overview)
+                self.owner?.showWorkbenchFromTopEntry(originFrame: self.islandPresentationFrame)
+            }, finishConfiguration: { [weak self] in self?.resizeMiniAfterConfiguration() }).nativeCheckAccessibility())
+        islandSurface?.setContent(host)
+    }
+    private func resizeMiniAfterConfiguration() {
+        guard summaryVisible, let screen = islandScreen, let model = owner?.workbenchController?.model else { return }
+        _ = prepareIsland(on: screen)
+        mountMini(model: model, on: screen)
+        islandSurface?.setPhase(.expanded, animated: false)
+    }
+    private func updateMiniConsumers() {
+        guard let model = owner?.workbenchController?.model else { return }
+        let deviceVisible = summaryVisible && preferences.visibleSections.contains(.device)
+        model.device.setQuickSummaryVisible(deviceVisible)
+        if deviceVisible && !miniDeviceVisible { model.device.refresh() }
+        miniDeviceVisible = deviceVisible
+        model.setMiniContextVisible(summaryVisible && preferences.visibleSections.contains(.context))
+        let agendaVisible = summaryVisible && preferences.visibleSections.contains(.agenda)
+        guard agendaVisible != miniAgendaVisible else { return }
+        miniAgendaVisible = agendaVisible
+        miniAgendaTask?.cancel(); miniAgendaTask = nil
+        if agendaVisible {
+            miniAgendaTask = Task { [weak model] in
+                guard let model, !Task.isCancelled else { return }
+                await model.calendar.refreshMiniAgenda(timeZone: model.context.dateContext.timeZone)
+            }
+        }
     }
     private func collapseIsland(animated: Bool) {
         guard let panel = summaryPanel else { return }
         let token = UUID(); animationID = token
         panel.ignoresMouseEvents = true
         islandSurface?.setPhase(.closed, animated: animated)
-        guard animated, panel.isVisible else { panel.orderOut(nil); panel.alphaValue = 1; return }
+        guard animated, panel.isVisible else {
+            panel.orderOut(nil); panel.alphaValue = 1; islandSurface?.clearContent(); return
+        }
         let delay = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0.1 : 0.33
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak panel] in
             guard self?.animationID == token else { return }
             panel?.orderOut(nil); panel?.alphaValue = 1
+            self?.islandSurface?.clearContent()
         }
     }
     func dismissSummary(animated: Bool = true) {
         summaryVisible = false; summaryOutsideAt = nil
-        owner?.workbenchController?.model.device.setQuickSummaryVisible(false)
+        updateMiniConsumers()
         collapseIsland(animated: animated)
-    }
-}
-
-private struct WorkbenchTopSummaryView: View {
-    @ObservedObject var model: WorkbenchAppModel
-    @ObservedObject var device: DeviceStatusModel
-    let openedAt: Date
-    let open: () -> Void
-    private var snapshot: DeviceSnapshot { device.snapshot }
-    private var fresh: Bool { snapshot.performanceSampledAt.map { $0 >= openedAt } ?? false }
-    private var palette: ThemePalette { ThemePalette(theme: model.theme, opacity: model.opacity, light: model.light) }
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                WorkbenchBrandMark(pointSize: 27)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("方寸").font(.system(size: 12, weight: .semibold))
-                    Text("本机速览").font(.system(size: 10)).foregroundStyle(palette.secondary)
-                }
-                Spacer()
-                Button(action: open) {
-                    HStack(spacing: 6) { Text("展开工作台"); Image(systemName: "arrow.up.right").font(.system(size: 12, weight: .regular)) }
-                        .font(.system(size: 11, weight: .medium)).padding(.horizontal, 10).frame(height: 28)
-                        .background(palette.navSelected, in: RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(palette.line, lineWidth: 1))
-                }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 8, drawsSelection: false, showsBorder: false)).keyboardShortcut(.return, modifiers: []).accessibilityLabel("展开完整工作台")
-                    .accessibilityIdentifier("mini-open-workbench")
-            }.frame(height: 30)
-            HStack(alignment: .top, spacing: 8) {
-                metric("CPU 使用率", symbol: "cpu", value: DeviceFormat.percent(fresh ? snapshot.cpuPercent : nil),
-                       note: fresh ? "全部算力 100%" : "等待读取", identifier: "mini-metric-cpu")
-                metric("统一内存", symbol: "memorychip", value: DeviceFormat.bytes(fresh ? snapshot.memory?.used : nil),
-                       note: fresh ? "共 " + DeviceFormat.bytes(snapshot.memory?.total) : "等待读取", identifier: "mini-metric-memory")
-                metric("CPU 温度", symbol: "thermometer.medium", value: DeviceFormat.temperature(fresh ? snapshot.cpuTemperature : nil),
-                       note: "GPU " + DeviceFormat.temperature(fresh ? snapshot.gpuTemperature : nil), identifier: "mini-metric-temperature")
-            }
-            HStack(spacing: 14) {
-                Label(DeviceFormat.rate(fresh ? snapshot.network.downloadBytesPerSecond : nil), systemImage: "arrow.down")
-                Label(DeviceFormat.rate(fresh ? snapshot.network.uploadBytesPerSecond : nil), systemImage: "arrow.up")
-                Spacer(minLength: 0)
-                if let battery = snapshot.battery, fresh {
-                    HStack(spacing: 6) {
-                        DeviceBatteryGlyph(fraction: battery.percent / 100).frame(width: 23, height: 11)
-                        Text("\(Int(battery.percent.rounded()))%")
-                        if battery.isCharging { Image(systemName: "bolt.fill").foregroundStyle(palette.success); Text("正在充电") }
-                    }
-                } else { Text(fresh ? "电量不可用" : "正在读取本机数据") }
-            }.font(.system(size: 11)).monospacedDigit().foregroundStyle(palette.secondary).frame(height: 22)
-        }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .foregroundStyle(palette.text)
-            .workbenchThemeEnvironment(theme: model.theme, opacity: model.opacity, backgroundMotion: false, appearance: model.appearance)
-            .environment(\.colorScheme, model.light ? .light : .dark)
-    }
-    private func metric(_ title: String, symbol: String, value: String, note: String, identifier: String) -> some View {
-        let parts = readingParts(value)
-        return VStack(alignment: .leading, spacing: 3) {
-            Label(title, systemImage: symbol).font(.system(size: 11)).foregroundStyle(palette.secondary).frame(height: 14)
-            HStack(alignment: .firstTextBaseline, spacing: 2) {
-                Text(parts.value).font(.system(size: 22, weight: .regular))
-                Text(parts.unit).font(.system(size: 11)).foregroundStyle(palette.secondary)
-            }.monospacedDigit().lineLimit(1).minimumScaleFactor(0.85).frame(height: 26)
-            Text(note).font(.system(size: 10)).monospacedDigit().foregroundStyle(palette.secondary)
-                .lineLimit(1).minimumScaleFactor(0.85).frame(height: 12)
-        }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).padding(.vertical, 7)
-            .background(palette.soft, in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(palette.line, lineWidth: 1).allowsHitTesting(false))
-            .accessibilityElement(children: .combine).accessibilityIdentifier(identifier)
-    }
-    private func readingParts(_ value: String) -> (value: String, unit: String) {
-        if value.hasSuffix("%") { return (String(value.dropLast()), "%") }
-        if let degree = value.firstIndex(of: "°") {
-            return (String(value[..<degree]).trimmingCharacters(in: .whitespaces), String(value[degree...]))
-        }
-        let parts = value.split(maxSplits: 1, whereSeparator: { $0.isWhitespace })
-        return (parts.first.map(String.init) ?? "—", parts.count > 1 ? " " + String(parts[1]) : "")
     }
 }
 
@@ -483,6 +459,18 @@ struct WorkbenchTopEntrySettingsRow: View {
                     .frame(width: 160).disabled(!controller.preferences.enabled)
                 Toggle("开启顶部感知入口", isOn: Binding(get: { controller.preferences.enabled }, set: controller.setEnabled))
                     .labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.small)
+            }
+            if controller.preferences.mode == .summary {
+                HStack(spacing: 18) {
+                    ForEach(WorkbenchMiniSection.allCases) { section in
+                        Toggle(section.title, isOn: Binding(get: { controller.preferences.visibleSections.contains(section) },
+                            set: { controller.setMiniSection(section, visible: $0) }))
+                            .font(.system(size: 11)).toggleStyle(.checkbox).clickableCursor()
+                    }
+                    Spacer(minLength: 0)
+                    Button("恢复默认", action: controller.restoreMiniSections).font(.system(size: 11)).buttonStyle(.plain).clickableCursor()
+                }.disabled(!controller.preferences.enabled)
+                Text("默认显示全部四项；城市、时区和温度单位沿用首页设置。").font(.system(size: 11)).foregroundStyle(WorkbenchStyle.secondary)
             }
             if let error = controller.error { Text(error).font(.system(size: 11)).foregroundStyle(WorkbenchStyle.warning) }
         }.padding(.vertical, 17)

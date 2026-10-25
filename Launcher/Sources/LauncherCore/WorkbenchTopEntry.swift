@@ -4,13 +4,37 @@ public enum WorkbenchTopEntryMode: String, Codable, CaseIterable, Sendable {
     case workbench, summary
 }
 
+public enum WorkbenchMiniSection: String, Codable, CaseIterable, Hashable, Identifiable, Sendable {
+    case context, agenda, device, ai
+    public var id: String { rawValue }
+}
+
 public struct WorkbenchTopEntryPreferences: Codable, Equatable, Sendable {
     public var schemaVersion = 1
     public var enabled = true
     public var mode: WorkbenchTopEntryMode = .summary
+    public var visibleSections = WorkbenchMiniSection.allCases
     public init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, enabled, mode, visibleSections
+    }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try values.decode(Int.self, forKey: .schemaVersion)
+        enabled = try values.decode(Bool.self, forKey: .enabled)
+        mode = try values.decode(WorkbenchTopEntryMode.self, forKey: .mode)
+        // This additive field keeps existing enabled/mode choices intact. An
+        // explicit empty array means every section is hidden, not missing setup.
+        visibleSections = values.contains(.visibleSections)
+            ? try values.decode([WorkbenchMiniSection].self, forKey: .visibleSections)
+            : WorkbenchMiniSection.allCases
+    }
     public func validate() throws {
         guard schemaVersion == 1 else { throw LauncherError.storage("顶部入口设置版本无法读取，原文件已保留。") }
+        guard Set(visibleSections).count == visibleSections.count else {
+            throw LauncherError.storage("迷你信息显示设置包含重复项目，原文件已保留。")
+        }
     }
 }
 

@@ -244,7 +244,10 @@ import LauncherCore
             check(anticipationWindow != nil && controller.isQuickSummaryVisible
                   && expandedTarget.map { abs($0.maxY - screen.frame.maxY) <= 1 } == true,
                   "intent confirmation targets the complete mini card directly at the screen top")
-            check((expandedTarget?.width ?? 0) == min(600, screen.frame.width - 32)
+            let notchWidth = screen.auxiliaryTopRightArea.flatMap { right in screen.auxiliaryTopLeftArea.map { right.minX - $0.maxX } } ?? 0
+            let miniSize = WorkbenchMiniLayout.size(sectionCount: 4, screenWidth: screen.frame.width,
+                                                    safeTop: screen.safeAreaInsets.top, notchWidth: notchWidth)
+            check((expandedTarget?.width ?? 0) == miniSize.width && expandedTarget?.height == miniSize.height
                   && (controller.islandContentTopInset ?? -1) >= screen.safeAreaInsets.top,
                   "direct mini information has the intended width and reserves the physical camera area")
             if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
