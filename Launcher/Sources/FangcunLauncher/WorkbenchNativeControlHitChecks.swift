@@ -3,10 +3,10 @@ import Combine
 import SwiftUI
 import LauncherCore
 
-/// A diagnostic matrix, not a declaration that any particular AppKit/SwiftUI
-/// hit-test result is correct. Only control mounting and finite geometry count
-/// as assertions. No menu is opened, pointer event posted, shortcut registered,
-/// application activated, preference loaded, or user file touched.
+/// Shared-control regressions plus the existing AppKit diagnostic matrix.
+/// Pointer checks briefly move the cursor inside an isolated owned window and
+/// restore its original position. Clicks are delivered only to that window;
+/// no real preferences, user files, shortcuts or application actions are used.
 @MainActor enum WorkbenchNativeControlHitChecks {
     static func run() async -> (count: Int, failures: Int) {
         var count = 0, failures = 0
@@ -15,6 +15,7 @@ import LauncherCore
             print("\(value ? "PASS" : "FAIL") \(message)")
         }
         for result in await cursorChecks() { check(result.0, result.1) }
+        for result in await pointerInteractionChecks() { check(result.0, result.1) }
         let activeBefore = NSApp.isActive
         let keyBefore = NSApp.keyWindow.map(ObjectIdentifier.init)
         var scenarios: [NativeControlHitScenario] = []
@@ -114,6 +115,100 @@ import LauncherCore
         checks.append((regions.allSatisfy{$0.bounds.width>0 && $0.bounds.height>0 && $0.hitTest(.zero)==nil},"cursor regions have real bounds and never intercept clicks or text input"))
         window.orderOut(nil);window.contentView=nil;window.close()
         return checks
+    }
+
+    /// Uses the OS-delivered pointer and reads back the visible system cursor,
+    /// rather than treating registration of a cursor rectangle as proof.
+    static func pointerInteractionChecks() async -> [(Bool, String)] {
+        let previous = ButtonCursorPolicy.shared.preference
+        let previousKeyWindow = NSApp.keyWindow
+        let previousMainWindow = NSApp.mainWindow
+        let originalPoint = CGEvent(source: nil)?.location
+        let window = NativeUIFixtureWindow(contentRect: NSRect(x: 260, y: 180, width: 420, height: 400),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.acceptsMouseMovedEvents = true
+        let state = PointerInteractionState()
+        let host = NSHostingView(rootView: PointerInteractionRoot(state: state).nativeCheckAccessibility())
+        window.contentView = host
+        defer {
+            ButtonCursorPolicy.shared.apply(previous)
+            if let originalPoint { postPointer(at: originalPoint) }
+            window.orderOut(nil); window.contentView = nil; window.close()
+            if let previousMainWindow, previousMainWindow.isVisible { previousMainWindow.makeMain() }
+            if let previousKeyWindow, previousKeyWindow.isVisible { previousKeyWindow.makeKey() }
+        }
+        let mounted = await NativeUIFixtureWindow.prepare(window: window) {
+            descendants(host).filter { $0 is ClickableCursorView }.count == 5
+        }
+        guard mounted else { return [(false, "real pointer regression host mounts all five shared button styles")] }
+        var checks = [(true, "real pointer regression host mounts all five shared button styles")]
+        ButtonCursorPolicy.shared.apply(.pointingHand)
+        let regions = descendants(host).compactMap { $0 as? ClickableCursorView }.sorted {
+            $0.convert($0.bounds, to: nil).midY > $1.convert($1.bounds, to: nil).midY
+        }
+        let names = ["plain", "regular", "quiet", "icon", "disabled"]
+        for (name, region) in zip(names, regions) {
+            let rect = region.convert(region.bounds, to: nil)
+            // The left padding is visually part of every fixture Button,
+            // while its centered glyphs sit well away from this position.
+            let point = NSPoint(x: rect.minX + 3, y: rect.midY)
+            await movePointer(to: point, in: window)
+            if name == "disabled" {
+                checks.append((!systemCursorMatches(.pointingHand), "disabled buttons retain a non-hand system cursor"))
+            } else {
+                checks.append((systemCursorMatches(.pointingHand), "OS pointer over \(name) button padding displays the pointing hand"))
+            }
+            host.layoutSubtreeIfNeeded()
+            let live = descendants(host).compactMap { $0 as? ClickableCursorView }.sorted {
+                $0.convert($0.bounds, to: nil).midY > $1.convert($1.bounds, to: nil).midY
+            }
+            let liveRect = live[names.firstIndex(of: name)!].convert(live[names.firstIndex(of: name)!].bounds, to: nil)
+            let clickPoint = NSPoint(x: liveRect.minX + 3, y: liveRect.midY)
+            let before = state.presses[name, default: 0]
+            if let down = pointerEvent(.leftMouseDown, point: clickPoint, window: window),
+               let up = pointerEvent(.leftMouseUp, point: clickPoint, window: window) {
+                NSApp.postEvent(up, atStart: false); NSApp.sendEvent(down)
+            }
+            for _ in 0..<15 {
+                if state.presses[name, default: 0] != before { break }
+                try? await Task.sleep(for: .milliseconds(15))
+            }
+            print("DETAIL pointer native press name=\(name) before=\(before) after=\(state.presses[name, default: 0]) rect=\(liveRect) point=\(clickPoint)")
+            checks.append((state.presses[name, default: 0] == before + (name == "disabled" ? 0 : 1),
+                           "native click on \(name) button padding \(name == "disabled" ? "does not trigger disabled action" : "triggers exactly once")"))
+        }
+        if let region = regions.first {
+            let rect = region.convert(region.bounds, to: nil)
+            await movePointer(to: NSPoint(x: rect.midX, y: rect.midY), in: window)
+            ButtonCursorPolicy.shared.apply(.arrow)
+            try? await Task.sleep(for: .milliseconds(70))
+            checks.append((systemCursorMatches(.arrow), "saved arrow preference changes the visible cursor without requiring pointer movement"))
+            ButtonCursorPolicy.shared.apply(.pointingHand)
+            try? await Task.sleep(for: .milliseconds(70))
+            checks.append((systemCursorMatches(.pointingHand), "restoring default hand updates the visible hovered button immediately"))
+        }
+        await movePointer(to: NSPoint(x: 12, y: 12), in: window)
+        checks.append((!systemCursorMatches(.pointingHand), "leaving a button clears the hand instead of retaining a stale cursor"))
+        if let originalPoint { postPointer(at: originalPoint) }
+        try? await Task.sleep(for: .milliseconds(100))
+        return checks
+    }
+    private static func systemCursorMatches(_ expected: NSCursor) -> Bool {
+        guard let actual = NSCursor.currentSystem else { return false }
+        return actual.hotSpot == expected.hotSpot && actual.image.tiffRepresentation == expected.image.tiffRepresentation
+    }
+    private static func pointerEvent(_ type: NSEvent.EventType, point: NSPoint, window: NSWindow) -> NSEvent? {
+        NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)
+    }
+    private static func postPointer(at point: CGPoint) {
+        CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+    }
+    private static func movePointer(to point: NSPoint, in window: NSWindow) async {
+        let screenPoint = window.convertPoint(toScreen: point)
+        let primaryTop = NSScreen.screens.first?.frame.maxY ?? 0
+        postPointer(at: CGPoint(x: screenPoint.x, y: primaryTop - screenPoint.y))
+        try? await Task.sleep(for: .milliseconds(120))
     }
 
     private static func mountedControls(in root: NSView) async -> (slider: NSSlider?, popup: WBPopUpButton?) {
@@ -312,4 +407,23 @@ private final class NativeControlHitSliderView: NSSlider {
     var recordedRects:[NSRect]=[]
     override var visibleRect:NSRect { NSRect(x:-40,y:-40,width:200,height:160) }
     override func addCursorRect(_ rect:NSRect,cursor:NSCursor) { recordedRects.append(rect) }
+}
+
+@MainActor private final class PointerInteractionState: ObservableObject {
+    var presses: [String: Int] = [:]
+    func press(_ name: String) { presses[name, default: 0] += 1 }
+}
+private struct PointerInteractionRoot: View {
+    let state: PointerInteractionState
+    var body: some View {
+        VStack(spacing: 16) {
+            Button { state.press("plain") } label: {
+                Text("Plain").frame(width: 180, height: 36).background(Color.blue.opacity(0.25))
+            }.buttonStyle(ClickablePlainButtonStyle())
+            Button { state.press("regular") } label: { Text("Regular").frame(width: 180) }.buttonStyle(WBButtonStyle())
+            Button { state.press("quiet") } label: { Text("Quiet").frame(width: 180, height: 30) }.buttonStyle(WBQuietButtonStyle())
+            Button { state.press("icon") } label: { Image(systemName: "plus") }.buttonStyle(WBIconButtonStyle(size: 36))
+            Button { state.press("disabled") } label: { Text("Disabled").frame(width: 180) }.buttonStyle(WBButtonStyle()).disabled(true)
+        }.frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.black.opacity(0.8))
+    }
 }

@@ -42,6 +42,8 @@ import Quartz
     @Published var resultTab: CleaningResultTab = .recommended
     @Published private(set) var recommendedIDs = Set<UUID>()
     @Published private(set) var automaticallySelectedIDs = Set<UUID>()
+    @Published var sortKey: CleaningSortKey = .size
+    @Published var sortAscending = false
     @Published var searchText = ""
     @Published var onlySelected = false
     @Published var resultScrollID: UUID?
@@ -122,7 +124,31 @@ import Quartz
         }
         return source.filter {
             searchText.isEmpty || $0.name.localizedStandardContains(searchText) || $0.url.path.localizedStandardContains(searchText)
+        }.sorted(by: resultPrecedes)
+    }
+    func sortResults(by key: CleaningSortKey) {
+        guard !isBusy, dialog != .confirm else { return }
+        if sortKey == key { sortAscending.toggle() }
+        else { sortKey = key; sortAscending = ![.modified, .size].contains(key) }
+        resultScrollID = nil
+    }
+    private func resultPrecedes(_ lhs: CleaningItemDisplay, _ rhs: CleaningItemDisplay) -> Bool {
+        let comparison: ComparisonResult
+        switch sortKey {
+        case .name: comparison = lhs.name.localizedStandardCompare(rhs.name)
+        case .directory: comparison = lhs.url.deletingLastPathComponent().path.localizedStandardCompare(rhs.url.deletingLastPathComponent().path)
+        case .type: comparison = lhs.typeTitle.localizedStandardCompare(rhs.typeTitle)
+        case .modified: comparison = lhs.modifiedDate == rhs.modifiedDate ? .orderedSame : lhs.modifiedDate < rhs.modifiedDate ? .orderedAscending : .orderedDescending
+        case .size: comparison = lhs.bytes == rhs.bytes ? .orderedSame : lhs.bytes < rhs.bytes ? .orderedAscending : .orderedDescending
         }
+        if comparison != .orderedSame { return comparison == (sortAscending ? .orderedAscending : .orderedDescending) }
+        // Equal primary values retain an ascending identity order even when
+        // reversing the column, preventing selection and review rows jumping.
+        let leftPath = lhs.url.standardizedFileURL.path, rightPath = rhs.url.standardizedFileURL.path
+        let pathComparison = leftPath.localizedStandardCompare(rightPath)
+        if pathComparison != .orderedSame { return pathComparison == .orderedAscending }
+        if leftPath != rightPath { return leftPath < rightPath }
+        return lhs.id.uuidString < rhs.id.uuidString
     }
     func showResults(_ tab: CleaningResultTab) {
         resultTab = tab; onlySelected = false; detailID = nil; resultScrollID = nil
@@ -382,7 +408,7 @@ import Quartz
         guard selected.count == confirmedIDs.count else { return }
         let chosen: SpaceCleaningMethod = permanent ? .permanent : .trash
         if remember { savePreference(chosen) } else if hasSavedMethod { clearPreference() }
-        operationDestination = .start; closeDialog(); beginProcessing(count: selected.count)
+        operationDestination = .completed; closeDialog(); beginProcessing(count: selected.count)
         let operationID = UUID(); currentOperationID = operationID
         let token = cancellation, mover = mover, home = homeDirectory, declarations = declarations, runtime = runtime
         let persistence = SpaceCleaningPersistence(store: historyStore, cancellation: token)

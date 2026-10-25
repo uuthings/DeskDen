@@ -9,6 +9,7 @@ struct SpaceCleaningResultsView: View {
     private let dateWidth: CGFloat = 110
     private let sizeWidth: CGFloat = 80
     private var confirming: Bool { model.dialog == .confirm }
+    @State private var availableWidth: CGFloat = 864
 
     var body: some View {
         VStack(spacing: 12) {
@@ -35,7 +36,11 @@ struct SpaceCleaningResultsView: View {
                     .background(palette.soft)
             }.accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-results-surface")
             selectionFooter
-        }
+        }.background(GeometryReader { geometry in
+            Color.clear.onAppear { availableWidth = geometry.size.width }
+                .onChange(of: geometry.size.width) { _, width in availableWidth = width }
+                .allowsHitTesting(false)
+        })
     }
     private var summary: some View {
         HStack(alignment: .center, spacing: 24) {
@@ -62,8 +67,9 @@ struct SpaceCleaningResultsView: View {
                 if !model.searchText.isEmpty {
                     Button { model.searchText = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(ClickablePlainButtonStyle())
                 }
-            }.font(.system(size: 11)).padding(.horizontal, 10).frame(width: 156, height: 28)
+            }.font(.system(size: 11)).padding(.horizontal, 10).frame(width: min(260, max(196, availableWidth * 0.26)), height: 28)
                 .background(RoundedRectangle(cornerRadius: 8).fill(palette.soft)).overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.line))
+                .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-search")
         }.padding(.horizontal, 14)
     }
     private func tab(_ title: String, count: Int, value: CleaningResultTab) -> some View {
@@ -86,12 +92,33 @@ struct SpaceCleaningResultsView: View {
             SpaceCleaningSelectionControl(selected: all, mixed: mixed, label: "选择当前显示的可处理项目", action: model.toggleVisibleSelection)
                 .disabled(ids.isEmpty || model.isBusy || model.requiresRescan || confirming)
                 .accessibilityIdentifier("space-cleaning-select-visible")
-            Text("名称 / 所在目录").frame(maxWidth: .infinity, alignment: .leading)
-            Text("类型").frame(width: typeWidth, alignment: .leading)
-            Text("修改日期").frame(width: dateWidth, alignment: .leading)
-            Text("大小").frame(width: sizeWidth, alignment: .trailing)
+            HStack(spacing: 14) {
+                sortHeader("名称", key: .name)
+                sortHeader("所在目录", key: .directory)
+                Spacer(minLength: 0)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            sortHeader("类型", key: .type).frame(width: typeWidth, alignment: .leading)
+            sortHeader("修改日期", key: .modified).frame(width: dateWidth, alignment: .leading)
+            sortHeader("大小", key: .size, trailing: true).frame(width: sizeWidth, alignment: .trailing)
         }.font(.system(size: 11)).foregroundStyle(palette.muted).padding(.horizontal, 14).frame(height: 34)
             .background(palette.soft).overlay(alignment: .top) { Rectangle().fill(palette.line).frame(height: 1) }
+    }
+    private func sortHeader(_ title: String, key: CleaningSortKey, trailing: Bool = false) -> some View {
+        let active = model.sortKey == key
+        return Button { model.sortResults(by: key) } label: {
+            HStack(spacing: 5) {
+                if trailing { Spacer(minLength: 0) }
+                Text(title).fontWeight(active ? .medium : .regular)
+                Image(systemName: active ? (model.sortAscending ? "chevron.up" : "chevron.down") : "arrow.up.arrow.down")
+                    .font(.system(size: 9, weight: .medium)).foregroundStyle(active ? palette.accent : palette.muted)
+                if !trailing { Spacer(minLength: 0) }
+            }.frame(minHeight: 34).contentShape(Rectangle())
+                .foregroundStyle(active ? palette.text : palette.muted)
+        }.buttonStyle(ClickablePlainButtonStyle()).disabled(model.isBusy || confirming)
+            .accessibilityLabel("按" + title + "排序")
+            .accessibilityValue(active ? (model.sortAscending ? "升序" : "降序") : "未排序")
+            .accessibilityIdentifier("space-cleaning-sort-" + key.rawValue)
+            .help("点击按" + title + "排序，再次点击切换升序或降序")
     }
     private func row(_ item: CleaningItemDisplay) -> some View {
         VStack(spacing: 0) {

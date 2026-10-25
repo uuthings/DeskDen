@@ -68,6 +68,16 @@ import LauncherCore
             check(exists("navigation-cleaning", in: host) && exists("window-brand-trigger", in: host) && exists("workbench-sidebar", in: host),
                   "cleaning retains the real brand, navigation and window shell")
 
+            check(clickBackground("space-cleaning-scope-custom", in: host), "custom scope has a native pointer target in its trailing background padding")
+            _ = await settle(window) { cleaning.screen == .scope && cleaning.draftScope == .custom }
+            check(cleaning.screen == .scope && cleaning.draftScope == .custom,
+                  "clicking custom scope background outside its icon and text opens inline editing")
+            check(clickBackground("space-cleaning-scope-global", in: host), "global scope has a native pointer target in its trailing background padding")
+            _ = await settle(window) { cleaning.draftScope == .global }
+            check(cleaning.screen == .scope && cleaning.draftScope == .global,
+                  "clicking global scope background outside its label changes the draft")
+            cleaning.cancelScope()
+
             let sizes: [(String, NSSize)] = [("window", .init(width: 1120, height: 758)), ("compact", .init(width: 900, height: 620)), ("large", .init(width: 1728, height: 978))]
             for (name, size) in sizes {
                 window.setContentSize(size)
@@ -152,6 +162,22 @@ import LauncherCore
             check(exists("space-cleaning-rescan", in: host) && exists("space-cleaning-edit-scope", in: host), "rescan and scope editing remain visible in the results header")
             check(enabled("space-cleaning-cleanup", in: host) == true,
                   "the default recommended selection exposes an enabled direct cleanup action")
+            check(frame("space-cleaning-search", in: host).map { $0.width >= 196 } == true,
+                  "results search has room for a longer name or directory")
+            let selectedBeforeSort = cleaning.selectedIDs
+            for key in CleaningSortKey.allCases {
+                let identifier = "space-cleaning-sort-" + key.rawValue
+                _ = await settle(window) { exists(identifier, in: host) }
+                check(exists(identifier, in: host) && clickBackground(identifier, in: host),
+                      "\(key.rawValue) result column exposes an active whole-header mouse target")
+                _ = await settle(window) { cleaning.sortKey == key }
+                let direction = cleaning.sortAscending
+                _ = clickBackground(identifier, in: host)
+                _ = await settle(window) { cleaning.sortAscending != direction }
+                check(cleaning.sortKey == key && cleaning.sortAscending != direction && cleaning.selectedIDs == selectedBeforeSort,
+                      "\(key.rawValue) header mouse clicks reverse ordering and preserve selected file identities")
+            }
+
             if let recommended = cleaning.recommendedItems.first {
                 check(selectionAligned(item: recommended.id, in: host),
                       "the visible-selection control and recommended row checkbox share the same column")
@@ -313,24 +339,54 @@ import LauncherCore
             check(cleaning.isBusy && cleaning.screen == .processing && cleaning.dialog == nil,
                   "the selected file enters its Trash transaction after one cleanup action")
             await cleaning.waitUntilIdle()
-            _ = await settle(window) { cleaning.screen == .start }
+            _ = await settle(window) { cleaning.screen == .completed }
             guard let batch = cleaning.currentBatch, let record = batch.items.first(where: \.canRestore) else { throw SpaceCleaningFixtureError.invalid("isolated Trash transaction produced no recoverable record") }
             check(!manager.fileExists(atPath: download.path) && record.resultURL.map { $0.path.hasPrefix(root.path + "/Trash/") } == true,
                   "real transaction moves only the selected fixture into the injected temporary Trash")
             check(manager.fileExists(atPath: otherDownload.path) && manager.fileExists(atPath: release.path),
                   "unselected download and protected release materials remain untouched")
-            _ = await settle(window) { exists("space-cleaning-completion-receipt", in: host) }
-            check(exists("space-cleaning-start", in: host) && exists("space-cleaning-completion-receipt", in: host), "cleanup returns to the home launch surface with a compact result receipt")
-            try capture(host: host, name: "home-after-cleaning", output: output)
-            window.setContentSize(NSSize(width: 900, height: 620))
-            _ = await settle(window) { exists("space-cleaning-start", in: host) }
-            for result in homeLayoutChecks(in: host) { check(result.0, "compact post-cleanup home " + result.1) }
-            try capture(host: host, name: "home-after-cleaning-compact", output: output)
+            for (name, size) in sizes {
+                window.setContentSize(size)
+                _ = await settle(window) { exists("space-cleaning-completed", in: host) }
+                check(cleaning.screen == .completed && !exists("space-cleaning-start", in: host) &&
+                      !exists("space-cleaning-home-surface", in: host),
+                      "\(name) cleanup opens a dedicated completion page rather than the scan home")
+                check(frame("space-cleaning-completed", in: host).flatMap { card in
+                    frame("space-cleaning-completed-home", in: host).map { card.contains($0) }
+                } == true && exists("space-cleaning-completed-summary", in: host),
+                      "\(name) completion shows actual counts and an in-card return-home button")
+                try capture(host: host, name: "completed-" + name, output: output)
+            }
+            check(clickBackground("space-cleaning-completed-home", in: host), "completion return-home button has a clickable background")
+            _ = await settle(window) { cleaning.screen == .start }
+            check(cleaning.screen == .start && !exists("space-cleaning-completion-receipt", in: host) &&
+                  !exists("space-cleaning-completed", in: host),
+                  "explicit return opens a fresh scan home without any processing receipt")
+            try capture(host: host, name: "home-after-return", output: output)
             window.setContentSize(NSSize(width: 1120, height: 758))
             cleaning.showHistory()
             await cleaning.waitUntilIdle()
-            _ = await settle(window) { exists("space-cleaning", in: host) }
-            try capture(host: host, name: "history-window", output: output)
+            _ = await settle(window) { exists("space-cleaning-history-expand-" + batch.id.uuidString, in: host) }
+            check(clickBackground("space-cleaning-history-expand-" + batch.id.uuidString, in: host),
+                  "history batch expansion responds across its summary background")
+            for (name, size) in sizes {
+                window.setContentSize(size)
+                _ = await settle(window) { exists("space-cleaning-history-restore-item-" + record.id.uuidString, in: host) }
+                let alignedIDs = ["space-cleaning-history-status-", "space-cleaning-history-restore-item-", "space-cleaning-history-reveal-"]
+                let alignedFrames = alignedIDs.compactMap { frame($0 + record.id.uuidString, in: host) }
+                check(alignedFrames.count == 3 && alignedFrames.allSatisfy { abs($0.midY - alignedFrames[0].midY) < 2 },
+                      "\(name) history status, restore and Finder controls share the same horizontal center")
+                check(frame("space-cleaning-history-purge-" + batch.id.uuidString, in: host).map { $0.width >= 120 && $0.height >= 28 } == true,
+                      "\(name) batch permanent deletion is a visible styled button")
+                try capture(host: host, name: "history-expanded-" + name, output: output)
+            }
+            check(clickBackground("space-cleaning-history-purge-" + batch.id.uuidString, in: host),
+                  "the batch purge button responds across its background")
+            _ = await settle(window) { cleaning.dialog == .purge(batch.id) }
+            check(cleaning.dialog == .purge(batch.id) && !cleaning.acknowledgement && record.resultURL.map { manager.fileExists(atPath: $0.path) } == true,
+                  "batch purge opens a fresh irreversible confirmation and has not deleted its fixture")
+            cleaning.closeDialog()
+            window.setContentSize(NSSize(width: 1120, height: 758))
             try Data("existing destination".utf8).write(to: download)
             cleaning.requestRestoreItem(record.id)
             _ = await settle(window) { exists("space-cleaning-restore-dialog", in: host) }
@@ -375,6 +431,20 @@ import LauncherCore
             try? await Task.sleep(for: .milliseconds(20))
         } while ContinuousClock.now < deadline
         return predicate()
+    }
+    /// Dispatch a real mouse press in the control's trailing padding. Never
+    /// invoke the action closure or accessibility press as a hit-test substitute.
+    private static func clickBackground(_ identifier: String, in host: NSView) -> Bool {
+        guard let rect = frame(identifier, in: host), let window = host.window else { return false }
+        let point = window.convertPoint(fromScreen: NSPoint(x: rect.maxX - 4, y: rect.midY))
+        func mouse(_ type: NSEvent.EventType) -> NSEvent? {
+            NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)
+        }
+        guard let down = mouse(.leftMouseDown), let up = mouse(.leftMouseUp) else { return false }
+        NSApp.postEvent(up, atStart: false)
+        NSApp.sendEvent(down)
+        return true
     }
     private static func objects(_ root: NSObject) -> [NSObject] {
         var pending = [root], result: [NSObject] = [], visited = Set<ObjectIdentifier>()

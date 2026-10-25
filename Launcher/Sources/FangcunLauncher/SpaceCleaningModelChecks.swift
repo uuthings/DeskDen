@@ -103,6 +103,61 @@ import LauncherCore
             check(try installerMover.moveCount == 1 && read(installerFixture.data).first?.state == .trashed,
                   "a manually selected installation image follows the same verified recoverable transaction")
 
+            let sortingFixture = try fixture(root.appendingPathComponent("sorting"), names: [])
+            let aFolder = sortingFixture.home.appendingPathComponent("A"), zFolder = sortingFixture.home.appendingPathComponent("Z")
+            for directory in [aFolder, zFolder] { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
+            let sortingFiles: [(URL, Int, TimeInterval)] = [
+                (aFolder.appendingPathComponent("alpha.txt"), 30, 3_000),
+                (aFolder.appendingPathComponent("same.data"), 20, 2_000),
+                (zFolder.appendingPathComponent("beta.data"), 40, 4_000),
+                (zFolder.appendingPathComponent("same.data"), 20, 2_000)
+            ]
+            for (url, size, date) in sortingFiles {
+                try Data(repeating: 0x41, count: size).write(to: url)
+                try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: date)], ofItemAtPath: url.path)
+            }
+            let sortingMover = SpaceCleaningCheckMover(root: sortingFixture.home, trash: sortingFixture.trash); movers.append(sortingMover)
+            let sortingModel = SpaceCleaningModel(dataDirectory: sortingFixture.data, homeDirectory: sortingFixture.home, mover: sortingMover); models.append(sortingModel)
+            sortingModel.editScope(custom: true); sortingModel.addDraftDirectories([aFolder, zFolder]); sortingModel.applyScope()
+            sortingModel.startScan(); await sortingModel.waitUntilIdle(); sortingModel.showResults(.reviewable)
+            guard let selectedSortItem = sortingModel.items.first(where: { $0.url == zFolder.appendingPathComponent("same.data") }) else { throw CheckError.missing }
+            sortingModel.toggleItem(selectedSortItem.id)
+            let sortingIDs = Set(sortingModel.items.map(\.id)), sortingSelection = sortingModel.selectedIDs
+            check(sortingIDs.count == 4 && sortingModel.sortKey == .size && !sortingModel.sortAscending,
+                  "fresh results use descending file size without changing the candidate identities")
+            func sortingPaths() -> [String] {
+                sortingModel.visibleItems.map { $0.url.path.replacingOccurrences(of: sortingFixture.home.path + "/", with: "") }
+            }
+            let sortingExpectations: [(CleaningSortKey, [String], [String])] = [
+                (.name, ["A/alpha.txt", "Z/beta.data", "A/same.data", "Z/same.data"], ["A/same.data", "Z/same.data", "Z/beta.data", "A/alpha.txt"]),
+                (.directory, ["A/alpha.txt", "A/same.data", "Z/beta.data", "Z/same.data"], ["Z/beta.data", "Z/same.data", "A/alpha.txt", "A/same.data"]),
+                (.type, ["A/same.data", "Z/beta.data", "Z/same.data", "A/alpha.txt"], ["A/alpha.txt", "A/same.data", "Z/beta.data", "Z/same.data"]),
+                (.modified, ["A/same.data", "Z/same.data", "A/alpha.txt", "Z/beta.data"], ["Z/beta.data", "A/alpha.txt", "A/same.data", "Z/same.data"]),
+                (.size, ["A/same.data", "Z/same.data", "A/alpha.txt", "Z/beta.data"], ["Z/beta.data", "A/alpha.txt", "A/same.data", "Z/same.data"])
+            ]
+            for (key, ascending, descending) in sortingExpectations {
+                sortingModel.sortResults(by: key)
+                check(sortingModel.sortKey == key && sortingModel.sortAscending == ![CleaningSortKey.modified, .size].contains(key),
+                      "choosing \(key.rawValue) uses its expected initial sort direction")
+                if !sortingModel.sortAscending { sortingModel.sortResults(by: key) }
+                check(sortingPaths() == ascending, "\(key.rawValue) ascending follows scanned metadata with stable equal-key paths")
+                sortingModel.sortResults(by: key)
+                check(!sortingModel.sortAscending && sortingPaths() == descending,
+                      "clicking \(key.rawValue) again reverses its primary order without shuffling equal-key files")
+            }
+            sortingModel.searchText = "alpha"
+            check(sortingPaths() == ["A/alpha.txt"] && sortingModel.selectedIDs == sortingSelection,
+                  "search filters sorted results while preserving selection of a hidden file")
+            sortingModel.toggleSelectedFilter()
+            check(sortingModel.visibleItems.map(\.id) == [selectedSortItem.id] && sortingModel.searchText.isEmpty && sortingModel.sortKey == .size,
+                  "viewing selected items preserves sorting and clears an unrelated search")
+            sortingModel.showResults(.protected)
+            check(sortingModel.visibleItems.isEmpty && sortingModel.selectedIDs == sortingSelection,
+                  "changing result tabs never clears a selected file from another category")
+            sortingModel.showResults(.reviewable)
+            check(sortingPaths() == sortingExpectations.last!.2 && Set(sortingModel.items.map(\.id)) == sortingIDs && sortingMover.moveCount == 0,
+                  "sorting and filtering are presentation-only and retain all original candidates without processing files")
+
             let preferenceFixture = try fixture(root.appendingPathComponent("method-preference"), names: [])
             let preferenceMover = SpaceCleaningCheckMover(root: preferenceFixture.home, trash: preferenceFixture.trash); movers.append(preferenceMover)
             let preferenceModel = SpaceCleaningModel(dataDirectory: preferenceFixture.data, homeDirectory: preferenceFixture.home, mover: preferenceMover); models.append(preferenceModel)
@@ -140,8 +195,11 @@ import LauncherCore
             let trashed = try read(first.data)
             check(trashed.count == 2 && trashed.allSatisfy { $0.state == .trashed && $0.canRestore } && mover.moveCount == 2,
                   "verified production moves persist exactly one recoverable receipt per selected item")
-            check(model.screen == .start && model.requiresRescan && model.selectedIDs.isEmpty,
-                  "processing consumes old scan selection and requires a fresh scan")
+            check(model.screen == .completed && model.requiresRescan && model.selectedIDs.isEmpty && model.currentBatch?.items.count == 2,
+                  "processing enters a dedicated completion state with actual receipts and consumes the stale scan selection")
+            model.goHome()
+            check(model.screen == .start && model.batches.count == 1 && model.currentBatch?.items.count == 2 && model.selectedIDs.isEmpty,
+                  "explicit return home preserves cleanup history without restarting a scan or restoring stale selection")
             guard let batch = model.batches.first, let conflicted = trashed.first else { throw CheckError.missing }
             try Data("new occupant".utf8).write(to: conflicted.originalURL)
             model.requestRestore(batch.id); model.executeRestore(batchID: batch.id, renameConflicts: false); await model.waitUntilIdle()
@@ -181,6 +239,8 @@ import LauncherCore
                   "choosing permanent deletion or remember preference never bypasses the irreversible-action acknowledgement")
             permanentModel.acknowledgement = true; permanentModel.executeConfirmed(permanent: true, remember: true); await permanentModel.waitUntilIdle()
             let permanentRecords = try read(permanent.data)
+            check(permanentModel.screen == .completed && permanentModel.currentBatch?.restorableCount == 0,
+                  "permanent deletion also presents completion without offering recoverable receipts")
             check(permanentRecords.count == 1 && permanentRecords.first?.state == .deleted && permanentMover.moveCount == 0,
                   "confirmed permanent deletion uses its own verified path and creates no recoverable Trash receipt")
             let remembered = SpaceCleaningModel(dataDirectory: permanent.data, homeDirectory: permanent.home, mover: permanentMover); models.append(remembered)
