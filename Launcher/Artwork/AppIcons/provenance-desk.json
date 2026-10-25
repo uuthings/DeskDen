@@ -5,19 +5,19 @@
     {
       "path" : "Resources/PanelLogo.png",
       "pixels" : 256,
-      "sha256" : "beaf0bdfc6b3d5bae1f1f49bc60f68b713a8beed42e198521bd367b2a797b532",
+      "sha256" : "e0d1605044b43879e6cfb0326edbd1c31f49cad8b05bd029166d91bdeb3a00db",
       "source" : "Desk/desk-panel.png"
     },
     {
       "path" : "Resources/AppIcons/desk-small.png",
       "pixels" : 64,
-      "sha256" : "43efcc454b58475bf3f137984d1c1a582f94c11d1648d82e06b9e032d32b5083",
+      "sha256" : "95959d08391d2e636089d05533900f3fb91c8b183991485116a4bbb2a9a20b41",
       "source" : "Desk/desk-small.png"
     },
     {
       "path" : "Resources/AppIcons/desk-small-1x.png",
       "pixels" : 32,
-      "sha256" : "b19038e1b18479b1bc569a81073e6a66e68bc7ed0778fd8f293967981b44da42",
+      "sha256" : "7cb65aa945894ac52113753611baa0bb45efc22888207c0821e16e8554de0be1",
       "source" : "Desk/desk-small-1x.png"
     },
     {
@@ -34,12 +34,12 @@
     },
     {
       "path" : "Resources/AppIcons/desk.icns",
-      "sha256" : "f5adc74f504e8cff1fec34f46ba200cfe98ab458610b6d00b71c7a1ac039c18f",
+      "sha256" : "5546cc3c552c071ec5f16cde5d7ab8444a31c5d41469bbf8511179b612e030ce",
       "source" : "Desk/desk.iconset"
     },
     {
       "path" : "Resources/AppIcon.icns",
-      "sha256" : "f5adc74f504e8cff1fec34f46ba200cfe98ab458610b6d00b71c7a1ac039c18f",
+      "sha256" : "5546cc3c552c071ec5f16cde5d7ab8444a31c5d41469bbf8511179b612e030ce",
       "source" : "Desk/desk.iconset"
     }
   ],
@@ -47,11 +47,11 @@
   "sources" : [
     {
       "path" : "Desk/app-master.svg",
-      "sha256" : "62c0a98b2c3218d727566ff56218146245b2b5fb0db0c037a86db920c7da75fa"
+      "sha256" : "504ff0fb2dbc5c831905186ec0b49e7e1740dcb377a4e9adcc67781dcefe80a2"
     },
     {
       "path" : "Desk/app-small.svg",
-      "sha256" : "31bdfdc450d06e732566600d59318eaad07dc4392d959ca3c6d758d3f353f6c7"
+      "sha256" : "8819c0d18c5bbce6dfc65e9cc015dcc8bb901f854d3889a5b4c577c3d2788e3a"
     },
     {
       "path" : "Desk/menu-template-16.svg",
@@ -68,67 +68,67 @@
     {
       "path" : "Desk/desk.iconset/icon_16x16.png",
       "pixels" : 16,
-      "sha256" : "5db4249470124b9d80b67a30a250ddd866ec70c9792885c6268b885439d735c6"
+      "sha256" : "f5135ba2941ddba6c3f65ea15237313348658de9c5532d90f47b7fb515e0a968"
     },
     {
       "path" : "Desk/desk.iconset/icon_16x16@2x.png",
       "pixels" : 32,
-      "sha256" : "b19038e1b18479b1bc569a81073e6a66e68bc7ed0778fd8f293967981b44da42"
+      "sha256" : "7cb65aa945894ac52113753611baa0bb45efc22888207c0821e16e8554de0be1"
     },
     {
       "path" : "Desk/desk.iconset/icon_32x32.png",
       "pixels" : 32,
-      "sha256" : "b19038e1b18479b1bc569a81073e6a66e68bc7ed0778fd8f293967981b44da42"
+      "sha256" : "7cb65aa945894ac52113753611baa0bb45efc22888207c0821e16e8554de0be1"
     },
     {
       "path" : "Desk/desk.iconset/icon_32x32@2x.png",
       "pixels" : 64,
-      "sha256" : "43efcc454b58475bf3f137984d1c1a582f94c11d1648d82e06b9e032d32b5083"
+      "sha256" : "95959d08391d2e636089d05533900f3fb91c8b183991485116a4bbb2a9a20b41"
     },
     {
       "path" : "Desk/desk.iconset/icon_128x128.png",
       "pixels" : 128,
-      "sha256" : "11a38626039971d35f8cdf7b31af976fb5215e9de45499e73b7f44c66655c990"
+      "sha256" : "2ecaa66f490342a8be40430e73c5d6c45f032f900f517b37e324e483cbade218"
     },
     {
       "path" : "Desk/desk.iconset/icon_128x128@2x.png",
       "pixels" : 256,
-      "sha256" : "beaf0bdfc6b3d5bae1f1f49bc60f68b713a8beed42e198521bd367b2a797b532"
+      "sha256" : "e0d1605044b43879e6cfb0326edbd1c31f49cad8b05bd029166d91bdeb3a00db"
     },
     {
       "path" : "Desk/desk.iconset/icon_256x256.png",
       "pixels" : 256,
-      "sha256" : "beaf0bdfc6b3d5bae1f1f49bc60f68b713a8beed42e198521bd367b2a797b532"
+      "sha256" : "e0d1605044b43879e6cfb0326edbd1c31f49cad8b05bd029166d91bdeb3a00db"
     },
     {
       "path" : "Desk/desk.iconset/icon_256x256@2x.png",
       "pixels" : 512,
-      "sha256" : "792d22cd84c56427bc67cb8b3eb81da723810f232156cd5e20e1ba1d2e09dc03"
+      "sha256" : "38abda7c14ccb7164b1c652ae26a43966032760090176e98f32fbddde5b64017"
     },
     {
       "path" : "Desk/desk.iconset/icon_512x512.png",
       "pixels" : 512,
-      "sha256" : "792d22cd84c56427bc67cb8b3eb81da723810f232156cd5e20e1ba1d2e09dc03"
+      "sha256" : "38abda7c14ccb7164b1c652ae26a43966032760090176e98f32fbddde5b64017"
     },
     {
       "path" : "Desk/desk.iconset/icon_512x512@2x.png",
       "pixels" : 1024,
-      "sha256" : "45c90dfa9732c001e7a75c570b28f29fcd8105242cc472fb378c0602a696912b"
+      "sha256" : "ad4a41299500fe749ab1bc5dd7432dc03697f5a7003000e7e5fc654188737247"
     },
     {
       "path" : "Desk/desk-panel.png",
       "pixels" : 256,
-      "sha256" : "beaf0bdfc6b3d5bae1f1f49bc60f68b713a8beed42e198521bd367b2a797b532"
+      "sha256" : "e0d1605044b43879e6cfb0326edbd1c31f49cad8b05bd029166d91bdeb3a00db"
     },
     {
       "path" : "Desk/desk-small.png",
       "pixels" : 64,
-      "sha256" : "43efcc454b58475bf3f137984d1c1a582f94c11d1648d82e06b9e032d32b5083"
+      "sha256" : "95959d08391d2e636089d05533900f3fb91c8b183991485116a4bbb2a9a20b41"
     },
     {
       "path" : "Desk/desk-small-1x.png",
       "pixels" : 32,
-      "sha256" : "b19038e1b18479b1bc569a81073e6a66e68bc7ed0778fd8f293967981b44da42"
+      "sha256" : "7cb65aa945894ac52113753611baa0bb45efc22888207c0821e16e8554de0be1"
     },
     {
       "path" : "Desk/desk-menubar.png",

@@ -1,8 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
-<title id="title">方寸 · 桌面小尺寸图标</title><desc id="description">与主图标相同的浅色底板和桌面轮廓，对小尺寸增加线宽并微调视觉大小。</desc>
-<defs><linearGradient id="surface" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#F7F3EC"/><stop offset="1" stop-color="#EEE8DE"/></linearGradient></defs>
+<title id="title">方寸 · 桌面小尺寸图标</title><desc id="description">与主图标相同的青蓝玻璃底板和桌面轮廓，对小尺寸增加线宽、微调视觉大小并收敛材质细节。</desc>
+<defs>
+<linearGradient id="surface" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#DCF8FC" stop-opacity=".94"/><stop offset=".48" stop-color="#B5DFE7" stop-opacity=".86"/><stop offset="1" stop-color="#78BBC9" stop-opacity=".9"/></linearGradient>
+<linearGradient id="rim" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#F4FEFF" stop-opacity=".85"/><stop offset=".5" stop-color="#E8FCFF" stop-opacity=".2"/><stop offset="1" stop-color="#C3F7FE" stop-opacity=".6"/></linearGradient>
+</defs>
 <rect x="80" y="80" width="864" height="864" rx="192" fill="url(#surface)"/>
-<g transform="translate(512 505) scale(1.06) translate(-512 -505)" fill="none" stroke="#49453F" stroke-linecap="round" stroke-linejoin="round" stroke-width="32">
+<rect x="86" y="86" width="852" height="852" rx="186" fill="none" stroke="url(#rim)" stroke-width="12"/>
+<g transform="translate(512 505) scale(1.06) translate(-512 -505)" fill="none" stroke="#264C58" stroke-linecap="round" stroke-linejoin="round" stroke-width="32">
 <rect x="324" y="320" width="376" height="216" rx="42"/>
 <path d="M282 606H742M330 606V690M694 606V690"/>
 </g></svg>
