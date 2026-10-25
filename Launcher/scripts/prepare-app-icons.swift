@@ -1,61 +1,83 @@
 #!/usr/bin/swift
 import AppKit
+import CryptoKit
 import Foundation
 
-// Reproducible geometric marks. No wallpaper fragments or generated textures.
+// Package the approved pixels without redrawing or resampling the artwork.
+// Editable SVG masters and optical-size raster sources are kept together.
 let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-let names = ["minimal-ink", "minimal-frame"]
 let manager = FileManager.default
-let originals = root.appendingPathComponent("Artwork/AppIcons/Minimal")
-try manager.createDirectory(at: originals, withIntermediateDirectories: true)
-let temporary = manager.temporaryDirectory.appendingPathComponent("fangcun-minimal-icons-" + UUID().uuidString)
-try manager.createDirectory(at: temporary, withIntermediateDirectories: true)
-defer { try? manager.removeItem(at: temporary) }
-func raster(size: Int, name: String, menu: Bool = false) -> Data {
-    let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
-    bitmap.size = NSSize(width: size, height: size)
-    NSGraphicsContext.saveGraphicsState(); NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
-    let scale = CGFloat(size) / 1024
-    let transform = AffineTransform(scale: scale); (transform as NSAffineTransform).concat()
-    NSColor.clear.setFill(); NSRect(x: 0, y: 0, width: 1024, height: 1024).fill(using: .copy)
-    let ink = NSColor(srgbRed: 0.12, green: 0.14, blue: 0.18, alpha: 1)
-    let paper = NSColor(srgbRed: 0.96, green: 0.96, blue: 0.95, alpha: 1)
-    if !menu {
-        (name == "minimal-ink" ? ink : paper).setFill()
-        NSBezierPath(roundedRect: NSRect(x: 64, y: 64, width: 896, height: 896), xRadius: 202, yRadius: 202).fill()
+let artwork = root.appendingPathComponent("Artwork/AppIcons")
+let sources = artwork.appendingPathComponent("Desk")
+let resources = root.appendingPathComponent("Resources")
+let iconDirectory = resources.appendingPathComponent("AppIcons")
+try manager.createDirectory(at: iconDirectory, withIntermediateDirectories: true)
+
+let slots: [(String, Int)] = [
+    ("16x16", 16), ("16x16@2x", 32), ("32x32", 32), ("32x32@2x", 64),
+    ("128x128", 128), ("128x128@2x", 256), ("256x256", 256),
+    ("256x256@2x", 512), ("512x512", 512), ("512x512@2x", 1024)
+]
+let copies: [(String, String, Int)] = [
+    ("desk-panel.png", "Resources/PanelLogo.png", 256),
+    ("desk-small.png", "Resources/AppIcons/desk-small.png", 64),
+    ("desk-small-1x.png", "Resources/AppIcons/desk-small-1x.png", 32),
+    ("desk-menubar.png", "Resources/AppIcons/desk-menubar.png", 36),
+    ("desk-menubar-1x.png", "Resources/AppIcons/desk-menubar-1x.png", 18)
+]
+
+func data(at url: URL) throws -> Data {
+    let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+    guard values.isRegularFile == true, values.isSymbolicLink != true else {
+        throw NSError(domain: "DeskIcon", code: 1, userInfo: [NSLocalizedDescriptionKey: "Expected a regular artwork file: " + url.lastPathComponent])
     }
-    let mark = NSBezierPath(); mark.lineCapStyle = .round; mark.lineJoinStyle = .round
-    mark.lineWidth = menu ? 74 : 58
-    (menu ? NSColor.black : name == "minimal-ink" ? paper : ink).setStroke()
-    if name == "minimal-ink" {
-        mark.move(to: NSPoint(x: 360, y: 300)); mark.line(to: NSPoint(x: 360, y: 716)); mark.line(to: NSPoint(x: 690, y: 716))
-        mark.move(to: NSPoint(x: 360, y: 516)); mark.line(to: NSPoint(x: 620, y: 516))
-    } else {
-        for (x, y, dx, dy) in [(322.0,322.0,138.0,138.0),(702,322,-138,138),(322,702,138,-138),(702,702,-138,-138)] {
-            mark.move(to: NSPoint(x: x, y: y + dy)); mark.line(to: NSPoint(x: x, y: y)); mark.line(to: NSPoint(x: x + dx, y: y))
-        }
-    }
-    if menu {
-        // Enlarge only the monochrome mark to use the menu bar's small canvas.
-        let magnify = AffineTransform(translationByX: -210, byY: -210)
-        mark.transform(using: magnify)
-        mark.transform(using: AffineTransform(scale: 1.7))
-    }
-    mark.stroke(); NSGraphicsContext.restoreGraphicsState()
-    return bitmap.representation(using: .png, properties: [:])!
+    return try Data(contentsOf: url)
 }
-let variants = [(16,"16x16"),(32,"16x16@2x"),(32,"32x32"),(64,"32x32@2x"),(128,"128x128"),(256,"128x128@2x"),(256,"256x256"),(512,"256x256@2x"),(512,"512x512"),(1024,"512x512@2x")]
-for name in names {
-    try raster(size: 1024, name: name).write(to: originals.appendingPathComponent(name + ".png"))
-    let iconset = temporary.appendingPathComponent(name + ".iconset")
-    try manager.createDirectory(at: iconset, withIntermediateDirectories: true)
-    for (size, suffix) in variants { try raster(size: size, name: name).write(to: iconset.appendingPathComponent("icon_" + suffix + ".png")) }
-    let output = root.appendingPathComponent("Resources/AppIcons/" + name + ".icns")
-    let process = Process(); process.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
-    process.arguments = ["-c", "icns", "-o", output.path, iconset.path]; try process.run(); process.waitUntilExit()
-    guard process.terminationStatus == 0 else { fatalError("iconutil failed") }
-    try raster(size: 72, name: name, menu: true).write(to: root.appendingPathComponent("Resources/AppIcons/" + name + "-menubar.png"))
-    print("Prepared " + name + ": ten icon representations and a monochrome menu-bar mark")
+func hash(_ bytes: Data) -> String { SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined() }
+func validatePNG(_ url: URL, pixels: Int) throws -> Data {
+    let bytes = try data(at: url)
+    guard let bitmap = NSBitmapImageRep(data: bytes), bitmap.pixelsWide == pixels,
+          bitmap.pixelsHigh == pixels, bitmap.hasAlpha else {
+        throw NSError(domain: "DeskIcon", code: 2, userInfo: [NSLocalizedDescriptionKey: "Invalid approved representation: " + url.lastPathComponent])
+    }
+    return bytes
 }
-try Data(contentsOf: root.appendingPathComponent("Resources/AppIcons/minimal-ink.icns")).write(to: root.appendingPathComponent("Resources/AppIcon.icns"), options: .atomic)
-try raster(size: 256, name: "minimal-ink").write(to: root.appendingPathComponent("Resources/PanelLogo.png"), options: .atomic)
+
+var sourceRecords: [[String: Any]] = []
+for name in ["app-master.svg", "app-small.svg", "menu-template-16.svg", "menu-template-18.svg", "menu-template-20.svg"] {
+    let bytes = try data(at: sources.appendingPathComponent(name))
+    sourceRecords.append(["path": "Desk/" + name, "sha256": hash(bytes)])
+}
+for (suffix, pixels) in slots {
+    let name = "desk.iconset/icon_" + suffix + ".png"
+    let bytes = try validatePNG(sources.appendingPathComponent(name), pixels: pixels)
+    sourceRecords.append(["path": "Desk/" + name, "sha256": hash(bytes), "pixels": pixels])
+}
+var productionRecords: [[String: Any]] = []
+for (source, destination, pixels) in copies {
+    let bytes = try validatePNG(sources.appendingPathComponent(source), pixels: pixels)
+    try bytes.write(to: root.appendingPathComponent(destination), options: .atomic)
+    sourceRecords.append(["path": "Desk/" + source, "sha256": hash(bytes), "pixels": pixels])
+    productionRecords.append(["path": destination, "source": "Desk/" + source, "sha256": hash(bytes), "pixels": pixels])
+}
+
+let output = iconDirectory.appendingPathComponent("desk.icns")
+let process = Process()
+process.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
+process.arguments = ["-c", "icns", "-o", output.path, sources.appendingPathComponent("desk.iconset").path]
+try process.run()
+process.waitUntilExit()
+guard process.terminationStatus == 0 else { fatalError("iconutil failed") }
+let icon = try data(at: output)
+try icon.write(to: resources.appendingPathComponent("AppIcon.icns"), options: .atomic)
+for destination in ["Resources/AppIcons/desk.icns", "Resources/AppIcon.icns"] {
+    productionRecords.append(["path": destination, "source": "Desk/desk.iconset", "sha256": hash(icon)])
+}
+let provenance: [String: Any] = [
+    "schema": 1, "id": "desk",
+    "method": "Approved desktop outline SVG masters with separately rasterized optical-size representations. Packaging copies approved pixels directly; iconutil combines the ten standard representations without resampling.",
+    "sources": sourceRecords, "production": productionRecords
+]
+try JSONSerialization.data(withJSONObject: provenance, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+    .write(to: artwork.appendingPathComponent("provenance-desk.json"), options: .atomic)
+print("Prepared desk: default bundle icon, ten ICNS representations, panel branding, and 1x/2x in-app and menu-bar artwork.")

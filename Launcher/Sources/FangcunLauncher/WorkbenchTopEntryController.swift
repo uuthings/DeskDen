@@ -403,8 +403,7 @@ private struct WorkbenchTopSummaryView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Image(nsImage: NSImage(named: NSImage.applicationIconName) ?? NSImage())
-                    .resizable().scaledToFit().frame(width: 27, height: 27).accessibilityHidden(true)
+                WorkbenchBrandMark(pointSize: 27)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("方寸").font(.system(size: 12, weight: .semibold))
                     Text("本机速览").font(.system(size: 10)).foregroundStyle(palette.secondary)

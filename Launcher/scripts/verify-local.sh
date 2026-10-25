@@ -17,7 +17,7 @@ from pathlib import Path
 import hashlib, json, sys
 root = Path.cwd()
 paths = [root / 'Package.swift', root / 'Signing/Fangcun.entitlements']
-for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('Resources', '*')]:
+for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('scripts', '*.swift'), ('Resources', '*')]:
     paths.extend(path for path in (root / directory).rglob(pattern) if path.is_file())
 paths.extend(path for path in [root / 'Package.resolved', root.parent / 'Fangcun.xcodeproj/project.pbxproj', root.parent / 'Fangcun.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', root.parent / 'updates/appcast.xml', root.parent / 'tools/prepare-update-feed.py', root.parent / 'tools/test-prepare-update-feed.py'] if path.is_file())
 paths.extend((root.parent / 'Fangcun.xcodeproj/xcshareddata/xcschemes').glob('*.xcscheme'))
@@ -56,7 +56,7 @@ import hashlib, json, os, re, sys
 verification = Path(sys.argv[1])
 source = Path.cwd()
 paths = [source / 'Package.swift', source / 'Signing/Fangcun.entitlements']
-for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('Resources', '*')]:
+for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('scripts', '*.swift'), ('Resources', '*')]:
     paths.extend(path for path in (source / directory).rglob(pattern) if path.is_file())
 paths.extend(path for path in [source / 'Package.resolved', source.parent / 'Fangcun.xcodeproj/project.pbxproj', source.parent / 'Fangcun.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', source.parent / 'updates/appcast.xml', source.parent / 'tools/prepare-update-feed.py', source.parent / 'tools/test-prepare-update-feed.py'] if path.is_file())
 paths.extend((source.parent / 'Fangcun.xcodeproj/xcshareddata/xcschemes').glob('*.xcscheme'))

@@ -20,7 +20,7 @@ import datetime, hashlib, json, plistlib, sys
 
 root = Path.cwd()
 evidence = Path(sys.argv[1])
-required = ['Info.plist', 'PanelLogo.png', 'AppIcon.icns', 'AppIcons/minimal-ink.icns', 'AppIcons/minimal-frame.icns', 'AppIcons/minimal-ink-menubar.png', 'AppIcons/minimal-frame-menubar.png', 'Workbench/ar-world.jpg',
+required = ['Info.plist', 'PanelLogo.png', 'AppIcon.icns', 'AppIcons/desk.icns', 'AppIcons/desk-small.png', 'AppIcons/desk-small-1x.png', 'AppIcons/desk-menubar.png', 'AppIcons/desk-menubar-1x.png', 'Workbench/ar-world.jpg',
             'Workbench/thunder-cabin.jpg', 'Workbench/qingbi-chenwu.jpg', 'Workbench/yuebai-yunhai.jpg',
             'Workbench/nuanxia-xuanshan.jpg', 'Workbench/claude.png', 'Workbench/chatgpt.png']
 for name in required:
@@ -35,7 +35,7 @@ if qa_keys.intersection(info):
 if info.get('CFBundleExecutable') != 'FangcunLauncher':
     raise SystemExit('Unexpected production executable name')
 paths = [root / 'Package.swift', root / 'Signing/Fangcun.entitlements']
-for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('Resources', '*')]:
+for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('scripts', '*.swift'), ('Resources', '*')]:
     paths.extend(path for path in (root / directory).rglob(pattern) if path.is_file())
 paths.extend(path for path in [root / 'Package.resolved', root.parent / 'Fangcun.xcodeproj/project.pbxproj', root.parent / 'Fangcun.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', root.parent / 'updates/appcast.xml', root.parent / 'tools/prepare-update-feed.py', root.parent / 'tools/test-prepare-update-feed.py'] if path.is_file())
 paths.extend((root.parent / 'Fangcun.xcodeproj/xcshareddata/xcschemes').glob('*.xcscheme'))
@@ -58,9 +58,8 @@ cp "$PWD/Resources/Info.plist" "$app_path/Contents/Info.plist"
 cp "$PWD/Resources/PanelLogo.png" "$app_path/Contents/Resources/PanelLogo.png"
 cp "$PWD/Resources/AppIcon.icns" "$app_path/Contents/Resources/AppIcon.icns"
 mkdir -p "$app_path/Contents/Resources/AppIcons"
-for icon_name in minimal-ink minimal-frame; do
-    cp "$PWD/Resources/AppIcons/$icon_name.icns" "$app_path/Contents/Resources/AppIcons/$icon_name.icns"
-    cp "$PWD/Resources/AppIcons/$icon_name-menubar.png" "$app_path/Contents/Resources/AppIcons/$icon_name-menubar.png"
+for icon_resource in desk.icns desk-small.png desk-small-1x.png desk-menubar.png desk-menubar-1x.png; do
+    cp "$PWD/Resources/AppIcons/$icon_resource" "$app_path/Contents/Resources/AppIcons/$icon_resource"
 done
 for resource_name in ar-world.jpg thunder-cabin.jpg qingbi-chenwu.jpg yuebai-yunhai.jpg nuanxia-xuanshan.jpg claude.png chatgpt.png; do
     cp "$PWD/Resources/Workbench/$resource_name" "$app_path/Contents/Resources/Workbench/$resource_name"
@@ -83,7 +82,7 @@ import hashlib, json, os, plistlib, sys
 root, app, evidence = Path.cwd(), Path(sys.argv[1]), Path(sys.argv[2])
 before = json.loads((evidence / 'source-inputs-before.json').read_text())
 paths = [root / 'Package.swift', root / 'Signing/Fangcun.entitlements']
-for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('Resources', '*')]:
+for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('scripts', '*.swift'), ('Resources', '*')]:
     paths.extend(path for path in (root / directory).rglob(pattern) if path.is_file())
 paths.extend(path for path in [root / 'Package.resolved', root.parent / 'Fangcun.xcodeproj/project.pbxproj', root.parent / 'Fangcun.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', root.parent / 'updates/appcast.xml', root.parent / 'tools/prepare-update-feed.py', root.parent / 'tools/test-prepare-update-feed.py'] if path.is_file())
 paths.extend((root.parent / 'Fangcun.xcodeproj/xcshareddata/xcschemes').glob('*.xcscheme'))
@@ -97,7 +96,7 @@ after = dict(before, files=files)
 (evidence / 'source-inputs-after.json').write_text(json.dumps(after, ensure_ascii=False, indent=2) + '\n')
 if before != after:
     raise SystemExit('Source inputs changed during the build; this candidate is not verified')
-resources = ['PanelLogo.png', 'AppIcon.icns', 'AppIcons/minimal-ink.icns', 'AppIcons/minimal-frame.icns', 'AppIcons/minimal-ink-menubar.png', 'AppIcons/minimal-frame-menubar.png', 'Workbench/ar-world.jpg', 'Workbench/thunder-cabin.jpg', 'Workbench/qingbi-chenwu.jpg', 'Workbench/yuebai-yunhai.jpg', 'Workbench/nuanxia-xuanshan.jpg', 'Workbench/claude.png', 'Workbench/chatgpt.png']
+resources = ['PanelLogo.png', 'AppIcon.icns', 'AppIcons/desk.icns', 'AppIcons/desk-small.png', 'AppIcons/desk-small-1x.png', 'AppIcons/desk-menubar.png', 'AppIcons/desk-menubar-1x.png', 'Workbench/ar-world.jpg', 'Workbench/thunder-cabin.jpg', 'Workbench/qingbi-chenwu.jpg', 'Workbench/yuebai-yunhai.jpg', 'Workbench/nuanxia-xuanshan.jpg', 'Workbench/claude.png', 'Workbench/chatgpt.png']
 expected = {'Contents/Info.plist': root / 'Resources/Info.plist'}
 expected.update({'Contents/Resources/' + name: root / 'Resources' / name for name in resources})
 for name, source in expected.items():

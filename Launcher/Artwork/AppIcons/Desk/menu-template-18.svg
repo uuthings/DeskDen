@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18" role="img" aria-labelledby="title desc">
+  <title id="title">方寸桌面菜单栏图标 18</title>
+  <desc id="desc">透明单色模板：空心工作窗口，下方桌面横线与左右独立短支撑；18 像素光学校正。</desc>
+  <g fill="none" stroke="#000000" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3.25" y="2.5" width="11.5" height="5.75" rx="1.25"/>
+    <path d="M2 11.25H16M3.25 11.25V15.25M14.75 11.25V15.25"/>
+  </g>
+</svg>

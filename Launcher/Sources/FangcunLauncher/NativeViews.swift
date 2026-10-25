@@ -333,7 +333,7 @@ final class LauncherBrandView: FlippedView {
     required init?(coder:NSCoder) { fatalError() }
     override func draw(_ dirtyRect:NSRect) {
         let controller = ApplicationIconController.shared
-        let logo = controller.image(for: controller.selection) ?? Bundle.main.image(forResource:"PanelLogo")
+        let logo = controller.brandImage(pointSize: 26)
         logo?.draw(in:NSRect(x:0,y:4,width:26,height:26),from:.zero,operation:.sourceOver,fraction:1,respectFlipped:true,hints:nil)
         let text=NSAttributedString(string:"方寸",attributes:[.font:NSFont.systemFont(ofSize:22,weight:.regular),.foregroundColor:Palette.text,.kern:2])
         text.draw(at:NSPoint(x:32,y:(bounds.height-text.size().height)/2))

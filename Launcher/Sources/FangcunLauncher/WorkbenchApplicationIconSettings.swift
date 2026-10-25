@@ -6,39 +6,30 @@ struct WorkbenchApplicationIconSettings: View {
     @Environment(\.workbenchPalette) private var palette
 
     var body: some View {
-        WBCard(title: "应用图标", symbol: "square.on.square", spacing: 12) {
-            Text("两枚简约标记。选择后同步应用于 Dock、窗口品牌与菜单栏，下次启动时保留。")
-                .font(.system(size: 11)).foregroundStyle(palette.muted)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack(alignment: .top, spacing: 12) {
-                ForEach(ApplicationIconChoice.allCases) { choice in
-                    Button { controller.select(choice) } label: {
-                        VStack(spacing: 7) {
-                            Group {
-                                if let image = controller.image(for: choice) {
-                                    Image(nsImage: image).resizable().interpolation(.high).scaledToFit()
-                                } else { Image(systemName: "square.on.square").resizable().scaledToFit().foregroundStyle(palette.muted) }
-                            }.frame(width: 76, height: 76).accessibilityHidden(true)
-                            Text(choice.title).font(.system(size: 12, weight: .medium)).foregroundStyle(palette.text)
-                            Text(choice.subtitle).font(.system(size: 11)).foregroundStyle(palette.muted)
-                            HStack(spacing: 4) {
-                                Image(systemName: controller.selection == choice ? "checkmark.circle.fill" : "circle")
-                                Text(controller.selection == choice ? "使用中" : "使用此图标")
-                            }.font(.system(size: 11)).foregroundStyle(controller.selection == choice ? palette.accent : palette.secondary)
-                        }
-                        .frame(maxWidth: .infinity).padding(.vertical, 14).padding(.horizontal, 8)
-                        .background(controller.selection == choice ? palette.accent.opacity(0.10) : palette.soft,
-                                    in: RoundedRectangle(cornerRadius: 9))
-                        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(controller.selection == choice ? palette.accent.opacity(0.65) : palette.line, lineWidth: 1))
-                        .contentShape(RoundedRectangle(cornerRadius: 9))
+        WBCard(title: "应用图标", symbol: "app", spacing: 12) {
+            HStack(spacing: 16) {
+                Group {
+                    if let image = controller.brandImage(pointSize: 76) {
+                        Image(nsImage: image).resizable().interpolation(.high).scaledToFit()
+                    } else {
+                        Image(systemName: "desktopcomputer").resizable().scaledToFit().foregroundStyle(palette.muted)
                     }
-                    .buttonStyle(WBSelectableButtonStyle(selected: controller.selection == choice, cornerRadius: 9, drawsSelection: false, showsBorder: false))
-                    .accessibilityLabel(choice.title)
-                    .accessibilityValue(controller.selection == choice ? "当前应用图标" : "未选中")
-                    .accessibilityHint("将方寸图标更换为" + choice.title)
-                    .accessibilityIdentifier("fc.settings.icon." + choice.rawValue)
+                }.frame(width: 76, height: 76).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack(spacing: 8) {
+                        Text(controller.selection.title).font(.system(size: 13, weight: .medium)).foregroundStyle(palette.text)
+                        Label("当前图标", systemImage: "checkmark.circle.fill")
+                            .font(.system(size: 11)).foregroundStyle(palette.secondary)
+                    }
+                    Text(controller.selection.subtitle).font(.system(size: 11)).foregroundStyle(palette.muted)
+                    Text("Dock、窗口与菜单栏使用同一套桌面标记。")
+                        .font(.system(size: 11)).foregroundStyle(palette.muted)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+                Spacer(minLength: 0)
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("fc.settings.icon.desk")
             if let error = controller.error {
                 Text(error).font(.system(size: 11)).foregroundStyle(WorkbenchStyle.warning)
                     .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("fc.settings.icon.error")
