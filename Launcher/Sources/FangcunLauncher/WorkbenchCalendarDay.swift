@@ -40,6 +40,7 @@ struct WorkbenchCalendarDayButton: View {
     let calendar: Calendar
     let selected: Bool
     var outside = false
+    var showsHolidays = true
     var eventMarkers: [Bool] = []
     let label: String
     let identifier: String
@@ -48,7 +49,7 @@ struct WorkbenchCalendarDayButton: View {
 
     var body: some View {
         let today = calendar.isDate(date, inSameDayAs: Date())
-        let info = CalendarCivilDay(date: date, calendar: calendar)
+        let info = CalendarCivilDay(date: date, calendar: calendar, showsHolidays: showsHolidays)
         Button(action: action) {
             VStack(spacing: 3) {
                 Text("\(calendar.component(.day, from: date))")

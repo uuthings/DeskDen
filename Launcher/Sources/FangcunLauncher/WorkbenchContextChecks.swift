@@ -46,6 +46,19 @@ import LauncherCore
                   WorkbenchContextModel.zoneTitle("America/New_York", at: Date(timeIntervalSince1970: 1_767_225_600)).contains("UTC−5"),
                   "clock zone title uses actual summer and winter UTC offsets")
 
+            let localizedZones=["America/Los_Angeles","America/Atikokan","Europe/Berlin","Asia/Calcutta","Australia/Adelaide","Pacific/Chatham"]
+            check(localizedZones.allSatisfy {id in
+                let name=WorkbenchContextModel.zoneTitle(id).components(separatedBy:" · ").first ?? ""
+                return !name.contains("/") && !name.contains("_") && name.range(of:"[\\p{Han}]",options:.regularExpression) != nil
+            }, "all display timezone choices use the app's Chinese localized location names instead of raw IANA identifiers")
+            let common=WorkbenchCityCatalog.matches("")
+            check(common.count >= 8 && common.allSatisfy {(try? $0.validated()) != nil} && Set(common.map(\.id)).count == common.count,
+                  "city picker starts with distinct validated real common locations without inventing weather")
+            check(WorkbenchCityCatalog.matches("北京").first?.id == WorkbenchCityCatalog.matches("bei").first?.id &&
+                  WorkbenchCityCatalog.matches("new york").first?.timeZoneIdentifier == "America/New_York" &&
+                  WorkbenchCityCatalog.providerQuery("北京市") == "北京" && WorkbenchCityCatalog.providerQuery("上海") == "上海",
+                  "common city selection supports Chinese and pinyin while provider search strips only optional administrative suffixes")
+
             model.showWeather = true
             check(model.saveCity(berlin) && !model.showWeather, "manual city save persists selection and closes the dialog")
             let loaded = await wait { !model.loadingWeather && model.weather?.snapshot?.city == berlin }

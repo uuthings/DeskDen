@@ -10,6 +10,10 @@ struct WorkbenchWindowIconControls: View {
     @Environment(\.workbenchPalette) private var palette
     var body: some View {
         HStack(spacing: 4) {
+            Button { model.requestQuit() } label: {
+                Image(systemName: "power").font(.system(size: 13)).frame(width: 32, height: 28)
+            }.buttonStyle(WorkbenchChromeButtonStyle(closing: true)).help("退出方寸")
+                .accessibilityLabel("退出方寸").accessibilityIdentifier("window-quit")
             chromeButton("最小化", symbol: "minus") { model.minimizeWindow?() }
             chromeButton(model.isFullScreen ? "返回窗口" : "全屏", symbol: model.isFullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right") { model.toggleFullScreen?() }
             chromeButton("关闭窗口", symbol: "xmark", closing: true) { model.closeWindow?() }

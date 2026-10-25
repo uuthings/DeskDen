@@ -149,11 +149,11 @@ struct WorkbenchOverview:View {
             HStack(spacing:6) {ForEach(0..<7,id:\.self){offset in
                 let date=displayCalendar.date(byAdding:.day,value:offset,to:displayCalendar.startOfDay(for:Date())) ?? Date()
                 let selected=displayCalendar.isDate(date,inSameDayAs:day)
-                let civilDay=CalendarCivilDay(date:date,calendar:displayCalendar)
+                let civilDay=CalendarCivilDay(date:date,calendar:displayCalendar,showsHolidays:calendar.holidaysEnabled)
                 let eventCount=calendar.overviewEvents.filter{$0.occurs(on:date,calendar:displayCalendar)}.count
                 let reminderCount=calendar.reminders.filter{!$0.isCompleted && ReminderQueries.occurs(reminder:$0,on:date,calendar:displayCalendar)}.count
                 let dateKey=String(format:"%04d-%02d-%02d",displayCalendar.component(.year,from:date),displayCalendar.component(.month,from:date),displayCalendar.component(.day,from:date))
-                WorkbenchCalendarDayButton(date:date,calendar:displayCalendar,selected:selected,
+                WorkbenchCalendarDayButton(date:date,calendar:displayCalendar,selected:selected,showsHolidays:calendar.holidaysEnabled,
                     eventMarkers:Array(repeating:true,count:min(3,eventCount))+Array(repeating:false,count:min(3,reminderCount)),
                     label:"查看\(displayCalendar.component(.month,from:date))月\(displayCalendar.component(.day,from:date))日安排"+(civilDay.namedLabel.map{"，"+$0} ?? ""),
                     identifier:"fc.home.calendar.day."+dateKey) {selectedDay=date}

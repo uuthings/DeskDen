@@ -163,6 +163,14 @@ struct CalendarReminderDraft:Identifiable,Equatable {
 enum CalendarPresentationMode:String,CaseIterable,Identifiable {case month,week,agenda;var id:String {rawValue};var title:String {switch self {case .month:"月";case .week:"周";case .agenda:"日程"}}}
 private struct CalendarDisplayPreferences:Codable {
     var hiddenSources:Set<String> = []
+    var holidaysEnabled=true
+    init(hiddenSources:Set<String> = [],holidaysEnabled:Bool=true) {self.hiddenSources=hiddenSources;self.holidaysEnabled=holidaysEnabled}
+    private enum CodingKeys:String,CodingKey {case hiddenSources,holidaysEnabled}
+    init(from decoder:Decoder) throws {
+        let values=try decoder.container(keyedBy:CodingKeys.self)
+        hiddenSources=try values.decodeIfPresent(Set<String>.self,forKey:.hiddenSources) ?? []
+        holidaysEnabled=try values.decodeIfPresent(Bool.self,forKey:.holidaysEnabled) ?? true
+    }
 }
 
 @MainActor final class CalendarModel:ObservableObject {
@@ -173,6 +181,7 @@ private struct CalendarDisplayPreferences:Codable {
     @Published private(set) var overviewEventValues:[CalendarEventItem] = []
     @Published private(set) var calendarSources:[CalendarSourceDescriptor] = []
     @Published private(set) var hiddenSources:Set<String> = []
+    @Published private(set) var holidaysEnabled=true
     @Published var presentationMode:CalendarPresentationMode = .month
     @Published var showReminderList=false
     @Published var reminderListSource="all"
@@ -236,7 +245,7 @@ private struct CalendarDisplayPreferences:Codable {
                 guard bytes.count <= 1_000_000 else {throw ReminderError.invalid("日历来源显示偏好过大。")}
                 let saved=try JSONDecoder().decode(CalendarDisplayPreferences.self,from:bytes)
                 guard saved.hiddenSources.count <= 5_000,saved.hiddenSources.allSatisfy({!$0.isEmpty && $0.count <= 1024}) else {throw ReminderError.invalid("日历来源显示偏好无效。")}
-                hiddenSources=saved.hiddenSources
+                hiddenSources=saved.hiddenSources;holidaysEnabled=saved.holidaysEnabled
             } catch {displayPreferencesError="日历显示偏好读取失败，原文件已保留。";errorMessage=displayPreferencesError}
         }
         do { service=try ReminderService(store:store,system:system); syncLocal() }
@@ -291,13 +300,20 @@ private struct CalendarDisplayPreferences:Codable {
     var monthCount:Int {monthEntries.count}
     func isSourceVisible(_ id:String)->Bool {!hiddenSources.contains(id)}
     func setSourceVisible(_ id:String,_ visible:Bool) {
-        guard displayPreferencesError == nil else {errorMessage=displayPreferencesError;return}
         var next=hiddenSources;if visible {next.remove(id)} else {next.insert(id)}
+        if saveDisplayPreferences(hidden:next,holidays:holidaysEnabled) {hiddenSources=next}
+    }
+    func setHolidaysEnabled(_ enabled:Bool) {
+        if saveDisplayPreferences(hidden:hiddenSources,holidays:enabled) {holidaysEnabled=enabled}
+    }
+    private func saveDisplayPreferences(hidden:Set<String>,holidays:Bool) -> Bool {
+        guard displayPreferencesError == nil else {errorMessage=displayPreferencesError;return false}
         do {
-            let data=try JSONEncoder().encode(CalendarDisplayPreferences(hiddenSources:next))
+            let data=try JSONEncoder().encode(CalendarDisplayPreferences(hiddenSources:hidden,holidaysEnabled:holidays))
             try FileManager.default.createDirectory(at:displayPreferencesURL.deletingLastPathComponent(),withIntermediateDirectories:true)
-            try data.write(to:displayPreferencesURL,options:.atomic);hiddenSources=next
-        } catch {errorMessage="无法保存日历显示偏好：\(error.localizedDescription)"}
+            try ProtectedAtomicFile.write(data,to:displayPreferencesURL)
+            return true
+        } catch {errorMessage="无法保存日历显示偏好：\(error.localizedDescription)";return false}
     }
     var connectedSourceCount:Int { (preferences.calendarConnected && calendarAccess == .granted ? 1:0)+(preferences.remindersConnected && remindersAccess == .granted ? 1:0) }
     var canRecoverBackup:Bool { (try? store.decode(Data(contentsOf:store.backupURL))) != nil }
@@ -361,7 +377,13 @@ private struct CalendarDisplayPreferences:Codable {
         guard !isWorking else { return }; isWorking=true; defer { isWorking=false }
         do {
             var next=preferences; if reminders { next.remindersConnected=false } else { next.calendarConnected=false }
-            try requireService().setPreferences(next); syncLocal(); await refresh()
+            try requireService().setPreferences(next); syncLocal()
+            // Invalidate an older asynchronous read before publishing the
+            // disconnected state. Existing system items are never deleted.
+            refreshVersion += 1
+            if reminders {systemReminders=[];writableCalendars=[];if selectedReminder?.origin == .system {selectedReminder=nil}}
+            else {events=[];todayEvents=[];overviewEventValues=[];calendarSources=[];selectedEvent=nil}
+            await refresh()
         } catch { errorMessage=error.localizedDescription }
     }
     func saveDraft(_ draft:CalendarReminderDraft) async -> Bool {

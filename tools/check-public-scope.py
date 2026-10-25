@@ -21,6 +21,7 @@ ALLOWED = [
     r"Launcher/Resources/(?:Info\.plist|AppIcon\.icns|PanelLogo\.png)",
     r"Launcher/Resources/Workbench/(?:(?:ar-world|thunder-cabin|qingbi-chenwu|yuebai-yunhai|nuanxia-xuanshan)\.jpg|(?:chatgpt|claude)\.png)",
     r"Launcher/Artwork/Workbench/(?:(?:qingbi-chenwu|yuebai-yunhai|nuanxia-xuanshan)\.png|README\.md|provenance\.json)",
+    r"Launcher/(?:Resources/AppIcons/minimal-(?:ink|frame)(?:\.icns|-menubar\.png)|Artwork/AppIcons/(?:Minimal/minimal-(?:ink|frame)\.png|provenance-minimal\.json))",
     r"Launcher/(?:Resources/AppIcons/(?:qingbi-chenwu|yuebai-yunhai|nuanxia-xuanshan)\.icns|Artwork/AppIcons/(?:(?:qingbi-chenwu|yuebai-yunhai|nuanxia-xuanshan)\.png|README\.md|provenance\.json))",
     r"docs/[a-z0-9-]+\.md",
     r"tools/[a-z0-9-]+\.(?:py|sh|json)",

@@ -38,8 +38,8 @@ import VaultV1Compatibility
             check(legacyDecoded.contents.version == 1,"new decoder records the source version until a real write")
             let upgraded=try LauncherCore.VaultCryptography.seal(contents:legacyDecoded.contents,key:legacyDecoded.key,salt:legacyDecoded.envelope.salt)
             let upgradedBytes=try LauncherCore.VaultCryptography.encoded(upgraded)
-            check(try LauncherCore.VaultCryptography.unlock(data:upgradedBytes,password:password).contents.version == 2,"even an ordinary successful seal of old content writes payload version2")
-            check(rejects{_ = try VaultV1Compatibility.VaultCryptography.unlock(data:upgradedBytes,password:password)},"actual released decoder rejects migrated version2 before any ordinary edit can strip new fields")
+            check(try LauncherCore.VaultCryptography.unlock(data:upgradedBytes,password:password).contents.version == 3,"even an ordinary successful seal of old content writes payload version3")
+            check(rejects{_ = try VaultV1Compatibility.VaultCryptography.unlock(data:upgradedBytes,password:password)},"actual released decoder rejects migrated version3 before any ordinary edit can strip new fields")
             check(await model.unlock(password:password),"legacy file can be reopened for an explicit edit")
             let blockedPrevious=oldStore.url.appendingPathExtension("previous")
             try FileManager.default.createDirectory(at:blockedPrevious,withIntermediateDirectories:true)
@@ -63,7 +63,7 @@ import VaultV1Compatibility
             let newBytes=try Data(contentsOf:oldStore.url)
             check(try Data(contentsOf:oldStore.url.appendingPathExtension("previous")) == precedingRevision,"later writes preserve every byte of their immediately preceding encrypted revision")
             let current=try LauncherCore.VaultCryptography.unlock(data:newBytes,password:password)
-            check(current.contents.version == 2 && current.contents.documents.first?.formatting?.first?.bold == true && current.contents.documents.first?.effectiveCategoryID == category.id,"version2 preserves rich formatting and custom category references")
+            check(current.contents.version == 3 && current.contents.documents.first?.formatting?.first?.bold == true && current.contents.documents.first?.effectiveCategoryID == category.id,"version3 preserves rich formatting and custom category references")
             check(rejects{_ = try VaultV1Compatibility.VaultCryptography.unlock(data:newBytes,password:password)},"actual old password unlock rejects the new rich payload")
             check(try Data(contentsOf:oldStore.url) == newBytes,"old decoder rejection leaves new encrypted data unchanged")
             model.changeIdleMinutes(10)
@@ -98,12 +98,66 @@ import VaultV1Compatibility
             try FileManager.default.removeItem(at:optInBlocked)
             check(await optInModel.enableBiometrics(),"explicit opt-in can migrate a read-only legacy vault once storage succeeds")
             let optedInPayload=try Data(contentsOf:optInStore.url)
-            check(try LauncherCore.VaultCryptography.unlock(data:optedInPayload,password:password).contents.version == 2 && rejects{_ = try VaultV1Compatibility.VaultCryptography.unlock(data:optedInPayload,password:password)},"biometric opt-in also fences the old payload writer before storing the protected key")
+            check(try LauncherCore.VaultCryptography.unlock(data:optedInPayload,password:password).contents.version == 3 && rejects{_ = try VaultV1Compatibility.VaultCryptography.unlock(data:optedInPayload,password:password)},"biometric opt-in also fences the old payload writer before storing the protected key")
             optInModel.lock(reason:"finished opt-in migration checks")
-            var futureContents=current.contents;futureContents.version=3
+            // Reconstruct the preceding v2 wire payload: its envelope/KDF are
+            // unchanged, while new style fields did not yet exist in the JSON.
+            var v2Object=try JSONSerialization.jsonObject(with:JSONEncoder().encode(current.contents)) as! [String:Any]
+            v2Object["version"]=2
+            var v2Documents=v2Object["documents"] as! [[String:Any]]
+            for index in v2Documents.indices {
+                if var runs=v2Documents[index]["formatting"] as? [[String:Any]] {
+                    for run in runs.indices {for key in ["strikethrough","textColor","highlightColor"] {runs[run].removeValue(forKey:key)}}
+                    v2Documents[index]["formatting"]=runs
+                }
+            }
+            v2Object["documents"]=v2Documents
+            let v2Plain=try JSONSerialization.data(withJSONObject:v2Object)
+            let v2Box=try AES.GCM.seal(v2Plain,using:current.key,authenticating:Data("fangcun-encrypted-vault:1:pbkdf2-sha256-310000".utf8))
+            let v2Envelope=LauncherCore.VaultEnvelope(rounds:LauncherCore.VaultCryptography.rounds,salt:current.envelope.salt,sealed:v2Box.combined!)
+            let v2Store=LauncherCore.VaultFileStore(url:directory.appendingPathComponent("legacy-v2/private.fangcunvault"))
+            try v2Store.write(v2Envelope);let v2Bytes=try v2Store.read()
+            let v2Model=VaultModel(dataDirectory:v2Store.url.deletingLastPathComponent(),protectedDataAvailable:{true},biometrics:FormatSyntheticBiometrics())
+            check(await v2Model.unlock(password:password),"version2 encrypted documents still unlock with their original password")
+            check(v2Model.documents.first?.formatting?.first?.textColor == .automatic && v2Model.documents.first?.formatting?.first?.highlightColor == LauncherCore.VaultHighlightColor.none,
+                  "version2 styles acquire safe color defaults without dropping their existing font traits")
+            v2Model.lock(reason:"read-only v2 compatibility check")
+            check(try v2Store.read() == v2Bytes,"read-only version2 unlock and lock preserve every original encrypted byte")
+            _=await v2Model.unlock(password:password)
+            let styledBody="Version3 color and strike 🔐"
+            let styledRun=LauncherCore.VaultTextStyleRun(location:0,length:styledBody.utf16.count,family:.georgia,size:26,bold:true,
+                strikethrough:true,textColor:.blue,highlightColor:.yellow)
+            v2Model.updateRichBody(styledBody,formatting:[styledRun])
+            check(v2Model.flush(),"explicit color editing of a version2 document commits its version3 migration")
+            let styledResult=try LauncherCore.VaultCryptography.unlock(data:v2Store.read(),password:password)
+            check(styledResult.contents.version == 3 && styledResult.contents.documents.first?.formatting == [styledRun],
+                  "version3 reload preserves expanded font, 26 pt, strike and both semantic colors")
+            check(try Data(contentsOf:v2Store.url.appendingPathExtension("previous")) == v2Bytes,
+                  "version2 migration retains its exact prior encrypted revision")
+            let styledPlain=try AES.GCM.open(AES.GCM.SealedBox(combined:styledResult.envelope.sealed),using:styledResult.key,
+                authenticating:Data("fangcun-encrypted-vault:1:pbkdf2-sha256-310000".utf8))
+            check(rejects{_ = try JSONDecoder().decode(FrozenV2PayloadVersionGate.self,from:styledPlain)},
+                  "the preceding version2 reader rejects the new payload before it could strip color fields")
+            let v3BackupURL=directory.appendingPathComponent("version3-export.fangcunvault")
+            check(v2Model.exportBackup(to:v3BackupURL),"version3 backup exports through the real model transaction")
+            let v3Backup=try Data(contentsOf:v3BackupURL)
+            let restoredV3=try LauncherCore.VaultCryptography.unlock(data:v3Backup,password:password)
+            check(restoredV3.contents.documents.first?.formatting == [styledRun],"encrypted exported bytes keep version3 semantic text styles")
+            let restoredModel=VaultModel(dataDirectory:directory.appendingPathComponent("restored-v3"),protectedDataAvailable:{true},biometrics:FormatSyntheticBiometrics())
+            let loadedV3=restoredModel.loadRestoreSource(v3BackupURL)
+            let verifiedV3=await restoredModel.verifyRestore(password:password)
+            check(loadedV3 && verifiedV3,"version3 encrypted import validates the actual backup before replacement")
+            let confirmedV3=restoredModel.confirmRestore()
+            let unlockedV3=await restoredModel.unlock(password:password)
+            check(confirmedV3 && unlockedV3 && restoredModel.documents.first?.formatting == [styledRun],
+                  "confirmed model restore and password unlock preserve colors, strike and expanded fonts")
+            check(try Data(contentsOf:v3BackupURL) == v3Backup,"restoring version3 never rewrites the exported backup")
+            restoredModel.lock(reason:"finished v3 restore checks")
+            v2Model.lock(reason:"finished v2 migration checks")
+            var futureContents=current.contents;futureContents.version=4
             check(rejects{_ = try JSONEncoder().encode(futureContents)} && rejects{_ = try LauncherCore.VaultCryptography.seal(contents:futureContents,key:current.key,salt:current.envelope.salt)},"unknown future payload cannot be encoded or silently downgraded by the current writer")
             var futureObject=try JSONSerialization.jsonObject(with:JSONEncoder().encode(current.contents)) as! [String:Any]
-            futureObject["version"]=3
+            futureObject["version"]=4
             let futurePlaintext=try JSONSerialization.data(withJSONObject:futureObject)
             let futureBox=try AES.GCM.seal(futurePlaintext,using:current.key,authenticating:Data("fangcun-encrypted-vault:1:pbkdf2-sha256-310000".utf8))
             let futureEnvelope=LauncherCore.VaultEnvelope(rounds:LauncherCore.VaultCryptography.rounds,salt:current.envelope.salt,sealed:futureBox.combined!)
@@ -138,4 +192,16 @@ import VaultV1Compatibility
     func remove() async throws {secret=nil;salt=nil}
     func removeSynchronously() throws {secret=nil;salt=nil}
     func cancel() {}
+}
+
+/// Exact pre-v3 payload version guard, retained to verify that old writers fail
+/// before adopting a payload whose additional semantic styles they cannot keep.
+private struct FrozenV2PayloadVersionGate:Decodable {
+    let version:Int
+    enum CodingKeys:String,CodingKey {case version}
+    init(from decoder:Decoder) throws {
+        let fields=try decoder.container(keyedBy:CodingKeys.self)
+        version=try fields.decode(Int.self,forKey:.version)
+        guard version == 1 || version == 2 else {throw LauncherCore.VaultFailure.invalidData}
+    }
 }

@@ -82,7 +82,7 @@ struct NetworkMonitorView: View {
                 HStack(spacing: expanded ? 30 : compact ? 16 : 22) {
                     speedReadings.frame(width: expanded ? 180 : compact ? 112 : 138)
                     DeviceHistoryChart(points: model.history, kind: .network, minutes: 5, networkScale: true).frame(minWidth: 220, minHeight: expanded ? 180 : 144)
-                    todayReadings.frame(width: expanded ? 172 : compact ? 124 : 136).padding(.leading, expanded ? 28 : compact ? 14 : 20)
+                    todayReadings.frame(width: expanded ? 224 : compact ? 162 : 182).padding(.leading, expanded ? 28 : compact ? 14 : 20)
                         .overlay(alignment: .leading) { palette.line.frame(width: 1) }
                 }
                 VStack(spacing: 14) {
@@ -227,10 +227,20 @@ struct NetworkRecordsDialog: View {
     }
 }
 
+private struct NetworkBarBoundsKey: PreferenceKey {
+    static let defaultValue: [Date: Anchor<CGRect>] = [:]
+    static func reduce(value: inout [Date: Anchor<CGRect>], nextValue: () -> [Date: Anchor<CGRect>]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, latest in latest })
+    }
+}
+
 private struct NetworkDailyBars: View {
     let summary: DeviceTrafficSummary
     @Environment(\.workbenchPalette) private var palette
     @State private var selectedDate: Date?
+    @State private var hoveredDate: Date?
+    @FocusState private var focusedDate: Date?
+    private var activeDate: Date? { hoveredDate ?? focusedDate ?? selectedDate }
     private var calendar: Calendar { var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: summary.timeZoneIdentifier) ?? .current; return c }
     private var dates: [Date] {
         let last = calendar.startOfDay(for: min(summary.measuredAt, summary.periodEnd.addingTimeInterval(-1)))
@@ -250,46 +260,79 @@ private struct NetworkDailyBars: View {
                 Spacer()
                 Text("0").lineLimit(1)
             }.font(.system(size: 11)).monospacedDigit().foregroundStyle(palette.muted).frame(width: axisWidth, alignment: .trailing).padding(.bottom, 23)
-            HStack(alignment: .bottom, spacing: 10) {
-                ForEach(dates, id: \.self) { date in
-                    let day = record(date)
-                    VStack(spacing: 7) {
-                        Button { selectedDate = date } label: {
-                            GeometryReader { geometry in
-                                VStack(spacing: 0) {
-                                    Spacer(minLength: 0)
-                                    if let day {
-                                        VStack(spacing: 0) {
-                                            palette.accent.opacity(0.76).frame(height: max(0, geometry.size.height * Double(day.received) / maximum))
-                                            palette.cool.frame(height: max(0, geometry.size.height * Double(day.sent) / maximum))
-                                            if day.totalBytes == 0 { palette.accent.frame(height: 2) }
-                                        }.frame(maxWidth: 36).clipShape(UnevenRoundedRectangle(topLeadingRadius: 4, topTrailingRadius: 4))
-                                    } else { Text("—").font(.system(size: 13)).foregroundStyle(palette.muted).frame(maxHeight: .infinity) }
-                                }.frame(maxWidth: .infinity, maxHeight: .infinity)
-                            }
-                        }.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel(detail(date, day: day)).help(detail(date, day: day))
-                            .popover(isPresented: Binding(get: { selectedDate == date }, set: { if !$0 { selectedDate = nil } })) {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text(NetworkLedgerDate.label(date, timeZone: summary.timeZoneIdentifier)).font(.system(size: 12, weight: .medium))
-                                    if let day {
-                                        DeviceFact(label: "下载", value: DeviceTrafficDisplay.adaptive(day.received))
-                                        DeviceFact(label: "上传", value: DeviceTrafficDisplay.adaptive(day.sent))
-                                        DeviceFact(label: "合计", value: DeviceTrafficDisplay.adaptive(day.totalBytes))
-                                    } else { Text("未采集，不代表零流量。").font(.system(size: 11)) }
-                                }.padding(14).frame(width: 250).workbenchSheetSurface()
-                            }
-                        HStack(spacing: 3) {
-                            Text("\(calendar.component(.day, from: date))").lineLimit(1).fixedSize(horizontal: true, vertical: false)
-                            if calendar.isDate(date, inSameDayAs: summary.measuredAt) { Circle().fill(palette.accent).frame(width: 4, height: 4) }
-                        }.font(.system(size: 11)).foregroundStyle(palette.muted)
-                            .fixedSize(horizontal: true, vertical: false)
-                            .accessibilityElement(children: .combine)
-                            .accessibilityIdentifier("fc.network.day-label." + NetworkLedgerDate.label(date, timeZone: summary.timeZoneIdentifier))
-                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-                if dates.isEmpty { Text(summary.hasStarted ? "此周期暂无采集记录" : "账期尚未开始").font(.system(size: 12)).foregroundStyle(palette.muted).frame(maxWidth: .infinity, maxHeight: .infinity) }
+            GeometryReader { plot in
+                HStack(alignment: .bottom, spacing: 10) {
+                    ForEach(dates, id: \.self) { date in
+                        let day = record(date)
+                        VStack(spacing: 7) {
+                            Button { selectedDate = selectedDate == date ? nil : date } label: {
+                                GeometryReader { geometry in
+                                    VStack(spacing: 0) {
+                                        Spacer(minLength: 0)
+                                        if let day {
+                                            VStack(spacing: 0) {
+                                                palette.accent.opacity(activeDate == date ? 1 : 0.76)
+                                                    .frame(height: max(0, geometry.size.height * Double(day.received) / maximum))
+                                                palette.cool.frame(height: max(0, geometry.size.height * Double(day.sent) / maximum))
+                                                if day.totalBytes == 0 { palette.accent.frame(height: 2) }
+                                            }.frame(maxWidth: 36).clipShape(UnevenRoundedRectangle(topLeadingRadius: 4, topTrailingRadius: 4))
+                                                .anchorPreference(key: NetworkBarBoundsKey.self, value: .bounds) { [date: $0] }
+                                        } else {
+                                            Text("—").font(.system(size: 13)).foregroundStyle(palette.muted).frame(height: 14)
+                                                .anchorPreference(key: NetworkBarBoundsKey.self, value: .bounds) { [date: $0] }
+                                        }
+                                    }.frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(Rectangle())
+                                }
+                            }.buttonStyle(ClickablePlainButtonStyle()).focused($focusedDate, equals: date)
+                                .accessibilityLabel(detail(date, day: day)).accessibilityValue(activeDate == date ? "正在显示明细" : "")
+                                .accessibilityIdentifier("fc.network.day-bar." + String(Int(date.timeIntervalSince1970)))
+                            HStack(spacing: 3) {
+                                Text("\(calendar.component(.day, from: date))").lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                                if calendar.isDate(date, inSameDayAs: summary.measuredAt) { Circle().fill(palette.accent).frame(width: 4, height: 4) }
+                            }.font(.system(size: 11)).foregroundStyle(palette.muted)
+                                .fixedSize(horizontal: true, vertical: false)
+                                .accessibilityElement(children: .combine)
+                                .accessibilityIdentifier("fc.network.day-label." + NetworkLedgerDate.label(date, timeZone: summary.timeZoneIdentifier))
+                        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                    if dates.isEmpty { Text(summary.hasStarted ? "此周期暂无采集记录" : "账期尚未开始").font(.system(size: 12)).foregroundStyle(palette.muted).frame(maxWidth: .infinity, maxHeight: .infinity) }
+                }.contentShape(Rectangle()).overlayPreferenceValue(NetworkBarBoundsKey.self) { anchors in
+                    GeometryReader { geometry in
+                        if let date = activeDate, let anchor = anchors[date] {
+                            let bounds = geometry[anchor]
+                            let tipBounds = NetworkTrafficTooltipPlacement.frame(anchor: bounds, canvas: geometry.size,
+                                size: CGSize(width: 218, height: record(date) == nil ? 68 : 112))
+                            tip(date, day: record(date)).frame(width: tipBounds.width, height: tipBounds.height, alignment: .topLeading)
+                                .position(x: tipBounds.midX, y: tipBounds.midY).allowsHitTesting(false)
+                                .accessibilityIdentifier("fc.network.day-tooltip")
+                        }
+                    }.allowsHitTesting(false)
+                }.onContinuousHover { phase in
+                    switch phase {
+                    case .active(let point):
+                        guard !dates.isEmpty, plot.size.width > 0 else { hoveredDate = nil; return }
+                        let columnWidth = max(1, (plot.size.width - CGFloat(dates.count - 1) * 10) / CGFloat(dates.count))
+                        let index = min(dates.count - 1, max(0, Int((point.x + 5) / (columnWidth + 10))))
+                        let date = dates[index]
+                        if hoveredDate != date { hoveredDate = date }
+                    case .ended: hoveredDate = nil
+                    }
+                }.onExitCommand { selectedDate = nil; focusedDate = nil }
             }
         }
+    }
+    private func tip(_ date: Date, day: DeviceTrafficDay?) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(NetworkLedgerDate.label(date, timeZone: summary.timeZoneIdentifier)).font(.system(size: 12, weight: .medium))
+            if let day {
+                DeviceFact(label: "下载", value: DeviceTrafficDisplay.adaptive(day.received))
+                DeviceFact(label: "上传", value: DeviceTrafficDisplay.adaptive(day.sent))
+                DeviceFact(label: "合计", value: DeviceTrafficDisplay.adaptive(day.totalBytes))
+            } else { Text("未采集，不代表零流量。").font(.system(size: 11)).foregroundStyle(palette.secondary) }
+        }.padding(12).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(WorkbenchMaterialSurface(kind: .panel, radius: 8))
+            .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
+            .foregroundStyle(palette.text)
     }
     /// Axis ticks need less precision than the actual totals and hover details.
     /// Decimal units stay consistent with the traffic ledger and budget.
@@ -306,6 +349,18 @@ private struct NetworkDailyBars: View {
         return day.map { "\(label) · 下载 \(DeviceTrafficDisplay.adaptive($0.received)) · 上传 \(DeviceTrafficDisplay.adaptive($0.sent)) · 合计 \(DeviceTrafficDisplay.adaptive($0.totalBytes))" } ?? "\(label) · 未采集，不代表零流量"
     }
 }
+/// Anchors to the selected column's real painted top, then keeps the tooltip
+/// within the chart canvas. It never uses the tallest column as a shared anchor.
+enum NetworkTrafficTooltipPlacement {
+    static func frame(anchor: CGRect, canvas: CGSize, size: CGSize) -> CGRect {
+        let width = min(size.width, max(0, canvas.width)), height = min(size.height, max(0, canvas.height))
+        let x = min(max(anchor.midX - width / 2, 0), max(0, canvas.width - width))
+        let proposedTop = anchor.minY >= height + 8 ? anchor.minY - height - 8 : anchor.minY + 8
+        let y = min(max(0, proposedTop), max(0, canvas.height - height))
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+}
+
 private enum NetworkLedgerDate {
     static func label(_ date: Date, timeZone: String) -> String {
         let formatter = DateFormatter(); formatter.locale = Locale(identifier: "zh_CN"); formatter.timeZone = TimeZone(identifier: timeZone) ?? .current; formatter.dateFormat = "M 月 d 日"; return formatter.string(from: date)
@@ -347,36 +402,53 @@ struct DeviceBudgetDialog: View {
     var body: some View {
         DeviceDialog(title: "流量预算", dismiss: close) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 18) {
                     HStack(spacing: 12) {
-                        Text("启用流量预算").font(.system(size: 12)).foregroundStyle(palette.text)
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("启用流量预算").font(.system(size: 12, weight: .medium)).foregroundStyle(palette.text)
+                            Text("按选定周期记录，接近额度时提醒").font(.system(size: 11)).foregroundStyle(palette.muted)
+                        }
                         Spacer(minLength: 12)
                         Toggle("启用流量预算", isOn: $drafts.budget.enabled)
                             .labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.mini).fixedSize().tint(palette.accent)
                             .disabled(drafts.savingBudget).accessibilityIdentifier("fc.network.budget.enabled")
-                    }.frame(maxWidth: .infinity, minHeight: 28)
+                    }.frame(maxWidth: .infinity, minHeight: 32)
                     Group {
-                    HStack(spacing: 12) {
-                        DeviceRuleField("统计周期") { WBSelect("统计周期", selection: $drafts.budget.period, options: DeviceBudgetPeriod.allCases.map { ($0, $0.title) }) }
-                        DeviceRuleNumberField(title: "额度", value: $drafts.budget.limit, unit: "GB", error: drafts.budgetErrors["limit"])
-                    }
-                    if drafts.budget.period.supportsAnchor {
-                        Toggle("自定义账期起点", isOn: $drafts.budget.usesAnchor).clickableCursor().font(.system(size: 12))
-                        if drafts.budget.usesAnchor { dateField("账期起算日", value: $drafts.budget.anchor) }
-                    } else if drafts.budget.period == .custom {
-                        HStack(spacing: 12) { dateField("开始日期", value: $drafts.budget.customStart); dateField("结束日期 · 包含当天", value: $drafts.budget.customEnd) }
-                    }
-                    HStack(spacing: 12) {
-                        DeviceRuleField("统计范围") { WBSelect("统计范围", selection: $drafts.budget.scope, options: DeviceTrafficScope.allCases.map { ($0, $0.title) }) }
-                        DeviceRuleNumberField(title: "接近额度时提醒", value: $drafts.budget.warning, unit: "%", error: drafts.budgetErrors["warning"])
-                    }
-                    if let error = drafts.budgetErrors["dates"] { Text(error).font(.system(size: 11)).foregroundStyle(palette.warning) }
-                    let preview = model.trafficPreview(drafts.budget.rule(from: model.budget))
-                    Label("当前账期：\(DeviceTrafficDisplay.period(preview, includeYear: true))\n记录时区：\(preview.timeZoneIdentifier)", systemImage: "calendar")
-                        .font(.system(size: 11)).foregroundStyle(palette.secondary).padding(10).frame(maxWidth: .infinity, alignment: .leading).background(palette.soft, in: RoundedRectangle(cornerRadius: 8))
-                    Toggle("系统通知", isOn: $drafts.budget.notifications).clickableCursor().font(.system(size: 12))
+                        VStack(alignment: .leading, spacing: 12) {
+                            sectionTitle("周期与额度")
+                            HStack(alignment: .top, spacing: 12) {
+                                DeviceRuleField("统计周期") { WBSelect("统计周期", selection: $drafts.budget.period, options: DeviceBudgetPeriod.allCases.map { ($0, $0.title) }) }
+                                DeviceRuleNumberField(title: "可用额度", value: $drafts.budget.limit, unit: "GB", error: drafts.budgetErrors["limit"])
+                            }
+                            if drafts.budget.period.supportsAnchor {
+                                Toggle("自定义账期起点", isOn: $drafts.budget.usesAnchor).clickableCursor().font(.system(size: 12))
+                                if drafts.budget.usesAnchor {
+                                    dateField("账期起算日", value: $drafts.budget.anchor)
+                                    Text("按该日期重复计算账期；月份天数不足时采用月末。").font(.system(size: 11)).foregroundStyle(palette.muted)
+                                }
+                            } else if drafts.budget.period == .custom {
+                                dateField("开始日期", value: $drafts.budget.customStart)
+                                dateField("结束日期 · 包含当天", value: $drafts.budget.customEnd)
+                            }
+                            if let error = drafts.budgetErrors["dates"] { Text(error).font(.system(size: 11)).foregroundStyle(palette.warning) }
+                        }
+                        VStack(alignment: .leading, spacing: 12) {
+                            sectionTitle("范围与提醒")
+                            HStack(alignment: .top, spacing: 12) {
+                                DeviceRuleField("统计范围") { WBSelect("统计范围", selection: $drafts.budget.scope, options: DeviceTrafficScope.allCases.map { ($0, $0.title) }) }
+                                DeviceRuleNumberField(title: "接近额度时提醒", value: $drafts.budget.warning, unit: "%", error: drafts.budgetErrors["warning"])
+                            }
+                            Toggle("发送系统通知", isOn: $drafts.budget.notifications).clickableCursor().font(.system(size: 12))
+                        }
+                        let preview = model.trafficPreview(drafts.budget.rule(from: model.budget))
+                        VStack(alignment: .leading, spacing: 7) {
+                            Text("当前账期").font(.system(size: 11)).foregroundStyle(palette.muted)
+                            Text(DeviceTrafficDisplay.period(preview, includeYear: true)).font(.system(size: 12, weight: .medium))
+                            Text("记录时区 · \(preview.timeZoneIdentifier)").font(.system(size: 11)).foregroundStyle(palette.muted)
+                        }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(palette.soft, in: RoundedRectangle(cornerRadius: 8))
                     }.disabled(!drafts.budget.enabled || drafts.savingBudget)
-                    Text("达到阈值时提醒，不会限速或断网。月份不足起算日期时取月末，下期恢复原日期。保存后再申请通知权限。")
+                    Text("预算仅提醒，不会限速或断网。保存后再申请通知权限，未采集的时段不补记流量。")
                         .font(.system(size: 11)).foregroundStyle(palette.muted).fixedSize(horizontal: false, vertical: true)
                     if drafts.budgetStatus != "已保存" { Text(drafts.budgetStatus).font(.system(size: 11)).foregroundStyle(palette.warning) }
                 }.background(WorkbenchOverlayScrollbars())
@@ -396,8 +468,48 @@ struct DeviceBudgetDialog: View {
             }
     }
     private func close() { guard !drafts.savingBudget else { return }; if drafts.budgetDirty { discard = true } else { dismiss() } }
+    private func sectionTitle(_ title: String) -> some View {
+        Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(palette.secondary)
+    }
     private func dateField(_ title: String, value: Binding<Date>) -> some View {
-        DeviceRuleField(title) { DatePicker(title, selection: value, displayedComponents: .date).labelsHidden().environment(\.calendar, drafts.budget.calendar).environment(\.timeZone, drafts.budget.calendar.timeZone).frame(maxWidth: .infinity, alignment: .leading) }
+        let calendar = drafts.budget.calendar
+        let year = calendar.component(.year, from: value.wrappedValue)
+        let currentYear = calendar.component(.year, from: Date())
+        let yearOptions = Array(Set(Array((currentYear - 30)...(currentYear + 30)) + [year])).sorted().map { ($0, "\($0) 年") }
+        let monthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: value.wrappedValue)) ?? value.wrappedValue
+        let days = calendar.range(of: .day, in: .month, for: monthStart) ?? 1..<29
+        return DeviceRuleField(title) {
+            HStack(spacing: 8) {
+                WBSelect(title + "年份", selection: datePart(.year, value: value), options: yearOptions)
+                WBSelect(title + "月份", selection: datePart(.month, value: value), options: (1...12).map { ($0, "\($0) 月") })
+                WBSelect(title + "日期", selection: datePart(.day, value: value), options: days.map { ($0, "\($0) 日") })
+            }.accessibilityElement(children: .contain).accessibilityIdentifier("fc.network.budget.date." + title)
+        }
+    }
+    private func datePart(_ component: Calendar.Component, value: Binding<Date>) -> Binding<Int> {
+        Binding(get: { drafts.budget.calendar.component(component, from: value.wrappedValue) }, set: { number in
+            value.wrappedValue = NetworkBudgetDateSelection.replacing(component, with: number, in: value.wrappedValue, calendar: drafts.budget.calendar)
+        })
+    }
+}
+
+/// Component selection preserves the ledger timezone and clamps invalid days
+/// on month/year changes, instead of silently overflowing into the next month.
+enum NetworkBudgetDateSelection {
+    static func replacing(_ component: Calendar.Component, with number: Int, in date: Date, calendar: Calendar) -> Date {
+        var parts = calendar.dateComponents([.year, .month, .day], from: date)
+        switch component {
+        case .year: parts.year = number
+        case .month: parts.month = number
+        case .day: parts.day = number
+        default: return date
+        }
+        guard let year = parts.year, let month = parts.month, (1...12).contains(month),
+              let first = calendar.date(from: DateComponents(year: year, month: month, day: 1, hour: 12)),
+              let range = calendar.range(of: .day, in: .month, for: first) else { return date }
+        parts.day = min(max(parts.day ?? 1, range.lowerBound), range.upperBound - 1)
+        parts.hour = 12
+        return calendar.date(from: parts) ?? date
     }
 }
 

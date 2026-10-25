@@ -16,16 +16,16 @@ import Foundation
         var images: [ApplicationIconChoice: NSImage] = [:]
         for choice in ApplicationIconChoice.allCases {
             let url = root.appendingPathComponent("Resources/AppIcons/" + choice.rawValue + ".icns")
-            let source = root.appendingPathComponent("Artwork/AppIcons/" + choice.rawValue + ".png")
+            let source = root.appendingPathComponent("Artwork/AppIcons/Minimal/" + choice.rawValue + ".png")
             let sourceBitmap = bitmap(at: source)
             let validSource = sourceBitmap.map { bitmap in
-                let sizeMatches = bitmap.pixelsWide == 1254 && bitmap.pixelsHigh == 1254
+                let sizeMatches = bitmap.pixelsWide == 1024 && bitmap.pixelsHigh == 1024
                 let clearExterior = bitmap.colorAt(x: 0, y: 0)?.alphaComponent == 0
-                let visibleInterior = (bitmap.colorAt(x: 627, y: 627)?.alphaComponent ?? 0) > 0.1
+                let visibleInterior = (bitmap.colorAt(x: 512, y: 512)?.alphaComponent ?? 0) > 0.1
                 return sizeMatches && bitmap.hasAlpha && clearExterior && visibleInterior
             } ?? false
             check(validSource,
-                  choice.title + " keeps the unchanged 1254-square PNG with genuinely transparent exterior and visible mountain content")
+                  choice.title + " has a reproducible 1024-square geometric PNG with transparent exterior")
             let representationTypes = iconRepresentationTypes(at: url)
             check(representationTypes == Set(["ic04", "ic05", "ic07", "ic08", "ic09", "ic10", "ic11", "ic12", "ic13", "ic14"]),
                   choice.title + " ICNS contains exactly the ten standard image representations")
@@ -49,33 +49,42 @@ import Foundation
             check(background.map { $0.pixelsWide >= 1000 && $0.pixelsHigh >= 500 && !$0.hasAlpha } == true,
                   "production theme background decodes as an opaque landscape: " + name)
         }
-        for choice in ApplicationIconChoice.allCases {
-            let source = bitmap(at: root.appendingPathComponent("Artwork/Workbench/" + choice.rawValue + ".png"))
-            let production = bitmap(at: root.appendingPathComponent("Resources/Workbench/" + choice.rawValue + ".jpg"))
+        for name in ["qingbi-chenwu", "yuebai-yunhai", "nuanxia-xuanshan"] {
+            let source = bitmap(at: root.appendingPathComponent("Artwork/Workbench/" + name + ".png"))
+            let production = bitmap(at: root.appendingPathComponent("Resources/Workbench/" + name + ".jpg"))
             let validSource = source.map { $0.pixelsWide == 1672 && $0.pixelsHigh == 941 && !$0.hasAlpha } ?? false
             let validProduction = production.map { $0.pixelsWide == 1672 && $0.pixelsHigh == 941 } ?? false
             check(validSource && validProduction,
-                  choice.title + " wallpaper preserves its actual 1672 by 941 source dimensions without enlargement or cropping")
+                  name + " wallpaper preserves its actual 1672 by 941 source dimensions without enlargement or cropping")
         }
         let defaultData = try? Data(contentsOf: root.appendingPathComponent("Resources/AppIcon.icns"))
-        let firstData = try? Data(contentsOf: root.appendingPathComponent("Resources/AppIcons/qingbi-chenwu.icns"))
-        check(defaultData != nil && defaultData == firstData, "bundle icon is exactly the approved default 青碧晨雾")
+        let firstData = try? Data(contentsOf: root.appendingPathComponent("Resources/AppIcons/minimal-ink.icns"))
+        check(defaultData != nil && defaultData == firstData, "bundle icon is exactly the approved default 墨白")
         var applied: [NSImage] = []
         let controller = ApplicationIconController(defaults: defaults, loadImage: { images[$0] }, applyImage: { applied.append($0) })
-        check(controller.selection == .qingbiChenwu && applied.isEmpty, "clean install chooses 青碧晨雾 without affecting an app during initialization")
-        check(controller.applyCurrentIcon() && applied.last === images[.qingbiChenwu], "normal startup applies the selected real icon to the injected app hook")
+        check(controller.selection == .ink && applied.isEmpty, "clean install chooses 墨白 without affecting an app during initialization")
+        check(controller.applyCurrentIcon() && applied.last === images[.ink], "normal startup applies the selected real icon to the injected app hook")
         for choice in ApplicationIconChoice.allCases {
             check(controller.select(choice) && controller.selection == choice && applied.last === images[choice], choice.title + " selection updates the running icon")
             let restored = ApplicationIconController(defaults: defaults, loadImage: { images[$0] }, applyImage: { applied.append($0) })
             check(restored.selection == choice && restored.applyCurrentIcon() && applied.last === images[choice], choice.title + " survives controller recreation and reapplies at startup")
         }
+        check(ApplicationIconChoice.allCases.count == 2, "exactly two minimal application icons are offered")
+        for old in ["qingbi-chenwu", "yuebai-yunhai", "nuanxia-xuanshan"] {
+            check(ApplicationIconChoice.allCases.contains(ApplicationIconChoice.restored(old)), "historical icon choice maps to an available minimal mark")
+        }
+        for choice in ApplicationIconChoice.allCases {
+            let menu = bitmap(at: root.appendingPathComponent("Resources/AppIcons/" + choice.rawValue + "-menubar.png"))
+            check(menu.map { $0.pixelsWide == 72 && $0.pixelsHigh == 72 && $0.hasAlpha && ($0.colorAt(x: 0, y: 0)?.alphaComponent ?? 1) == 0 } == true,
+                  "monochrome menu-bar mark has a transparent 72-square production resource")
+        }
         let before = defaults.string(forKey: ApplicationIconController.preferenceKey)
         let missing = ApplicationIconController(defaults: defaults, loadImage: { _ in nil }, applyImage: { _ in failures += 1 })
-        check(!missing.select(.qingbiChenwu) && missing.selection == .nuanxiaXuanshan && missing.error != nil && defaults.string(forKey: ApplicationIconController.preferenceKey) == before,
+        check(!missing.select(.ink) && missing.selection == .frame && missing.error != nil && defaults.string(forKey: ApplicationIconController.preferenceKey) == before,
               "missing artwork keeps the previous persisted selection and shows an error without applying an invalid icon")
         defaults.set("removed-legacy-icon", forKey: ApplicationIconController.preferenceKey)
         let fallback = ApplicationIconController(defaults: defaults, loadImage: { images[$0] }, applyImage: { _ in })
-        check(fallback.selection == .qingbiChenwu, "unsupported stored icon value safely falls back to the default")
+        check(fallback.selection == .ink, "unsupported stored icon value safely falls back to the default")
         print("Application icon checks: \(count) checks, \(failures) failures")
         exit(failures == 0 ? 0 : 1)
     }

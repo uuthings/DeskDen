@@ -123,4 +123,50 @@ final class VaultTests:XCTestCase {
         XCTAssertThrowsError(try store.restore(invalid))
         XCTAssertEqual(try store.read(),before)
     }
+    func testLegacyStyleRunsDecodeWithSafeNewDefaults() throws {
+        let legacy=Data("{\"location\":0,\"length\":4,\"family\":\"serif\",\"size\":22,\"bold\":true,\"italic\":false,\"underline\":true}".utf8)
+        let run=try JSONDecoder().decode(VaultTextStyleRun.self,from:legacy)
+        XCTAssertFalse(run.strikethrough);XCTAssertEqual(run.textColor,.automatic);XCTAssertEqual(run.highlightColor,.none)
+        XCTAssertEqual(run.size,22)
+    }
+    func testExpandedRichTextStylesSurviveAuthenticatedEncryption() throws {
+        for family in VaultFontFamily.allCases {
+            var document=PrivateDocument(body:"Font color 🔐")
+            let run=VaultTextStyleRun(location:0,length:document.body.utf16.count,family:family,size:26,bold:true,italic:true,underline:true,
+                                      strikethrough:true,textColor:.blue,highlightColor:.yellow)
+            document.formatting=[run]
+            let content=VaultContents(documents:[document])
+            let encrypted=try VaultCryptography.create(contents:content,password:password)
+            let result=try VaultCryptography.unlock(data:VaultCryptography.encoded(encrypted.envelope),password:password)
+            XCTAssertEqual(result.contents.version,3)
+            XCTAssertEqual(result.contents.documents.first?.formatting,[run])
+        }
+    }
+    func testPayloadTwoReadsWithoutMigrationButSubsequentEncodingFencesOldWriters() throws {
+        var document=PrivateDocument(body:"Legacy style")
+        document.formatting=[VaultTextStyleRun(location:0,length:document.body.utf16.count,family:.serif,size:20)]
+        var value=try XCTUnwrap(JSONSerialization.jsonObject(with:JSONEncoder().encode(VaultContents(documents:[document]))) as? [String:Any])
+        value["version"]=2
+        var documents=value["documents"] as! [[String:Any]]
+        var styles=documents[0]["formatting"] as! [[String:Any]]
+        for key in ["strikethrough","textColor","highlightColor"] {styles[0].removeValue(forKey:key)}
+        documents[0]["formatting"]=styles;value["documents"]=documents
+        let legacyBytes=try JSONSerialization.data(withJSONObject:value)
+        let decoded=try JSONDecoder().decode(VaultContents.self,from:legacyBytes)
+        XCTAssertEqual(decoded.version,2)
+        XCTAssertEqual(decoded.documents[0].formatting,document.formatting)
+        let written=try JSONDecoder().decode(VaultContents.self,from:JSONEncoder().encode(decoded))
+        XCTAssertEqual(written.version,3)
+        XCTAssertEqual(decoded.version,2)
+        XCTAssertEqual(try JSONSerialization.jsonObject(with:legacyBytes) as? NSDictionary,value as NSDictionary)
+    }
+    func testUnknownFontColorAndHighlightAreRejectedRatherThanDiscarded() throws {
+        let run=VaultTextStyleRun(location:0,length:4)
+        for key in ["family","textColor","highlightColor"] {
+            var value=try XCTUnwrap(JSONSerialization.jsonObject(with:JSONEncoder().encode(run)) as? [String:Any])
+            value[key]="unsupported-future-style"
+            XCTAssertThrowsError(try JSONDecoder().decode(VaultTextStyleRun.self,from:JSONSerialization.data(withJSONObject:value)))
+        }
+    }
+
 }

@@ -26,12 +26,40 @@ import LauncherCore
         check(VaultEditorFormatting.runs(editor.attributedString()).first?.size == 14,"native undo restores previous formatting")
         editor.undoManager?.redo()
         check(VaultEditorFormatting.runs(editor.attributedString()).first?.size == 20,"native redo restores the formatting command")
+        editor.setSelectedRange(NSRange(location:0,length:9));controller.refresh()
+        controller.setSize(22);check(controller.size == 22,"22 pt is a real native font size")
+        controller.setSize(26);check(controller.size == 26,"26 pt is a real native font size")
+        controller.toggleStrikethrough();controller.setTextColor(.blue);controller.setHighlightColor(.yellow)
+        let decorated=VaultEditorFormatting.runs(editor.attributedString()).first
+        check(decorated?.strikethrough == true && decorated?.textColor == .blue && decorated?.highlightColor == .yellow,
+              "strike, text color and highlight compose as semantic selected-text formatting")
+        check((editor.attributedString().attribute(.strikethroughStyle,at:0,effectiveRange:nil) as? Int) == NSUnderlineStyle.single.rawValue &&
+              editor.attributedString().attribute(.foregroundColor,at:0,effectiveRange:nil) as? NSColor == VaultEditorFormatting.color(.blue,automatic:.textColor) &&
+              editor.attributedString().attribute(.backgroundColor,at:0,effectiveRange:nil) as? NSColor == VaultEditorFormatting.highlight(.yellow),
+              "semantic colors and strike paint actual native attributes")
+        controller.setTextColor(.purple);editor.undoManager?.undo()
+        check(VaultEditorFormatting.runs(editor.attributedString()).first?.textColor == .blue,"color changes participate in native undo")
+        editor.undoManager?.redo()
+        check(VaultEditorFormatting.runs(editor.attributedString()).first?.textColor == .purple,"color changes participate in native redo")
+        VaultEditorFormatting.updateAutomaticColor(in:editor,color:.white)
+        check(editor.attributedString().attribute(.foregroundColor,at:0,effectiveRange:nil) as? NSColor == VaultEditorFormatting.color(.purple,automatic:.white),
+              "theme changes preserve explicitly colored text")
+        check(VaultEditorFormatting.availableFamilies.count >= 6 && Set(VaultEditorFormatting.availableFamilies).count == VaultEditorFormatting.availableFamilies.count,
+              "font choices contain several distinct actually installed families")
+        let preserved=VaultEditorFormatting.runs(editor.attributedString())
+        let restored=NSMutableAttributedString(string:editor.string)
+        for style in preserved {restored.addAttributes(VaultEditorFormatting.attributes(for:style,automatic:.white),range:NSRange(location:style.location,length:style.length))}
+        check(VaultEditorFormatting.runs(restored) == preserved,"persisted color and font runs reload without changing semantic ranges")
         editor.setSelectedRange(NSRange(location:0,length:9));controller.refresh();controller.clearFormatting()
         let cleared=VaultEditorFormatting.runs(editor.attributedString()).first
-        check(cleared?.family == .system && cleared?.size == 14 && cleared?.bold == false && cleared?.italic == false && cleared?.underline == false,"clear formatting restores the shared body style")
+        check(cleared?.family == .system && cleared?.size == 14 && cleared?.bold == false && cleared?.italic == false && cleared?.underline == false && cleared?.strikethrough == false && cleared?.textColor == .automatic && cleared?.highlightColor == VaultHighlightColor.none,"clear formatting restores the shared body style")
         editor.setSelectedRange(NSRange(location:3,length:0));controller.refresh();controller.toggle(.boldFontMask);controller.setSize(18)
         let typingFont=editor.typingAttributes[.font] as? NSFont
         check(controller.bold && typingFont?.pointSize == 18 && NSFontManager.shared.traits(of:typingFont!).contains(.boldFontMask),"empty selection applies formatting to the next typed characters")
+        controller.setTextColor(.red);controller.setHighlightColor(.blue);controller.toggleStrikethrough()
+        check(controller.textColor == .red && controller.highlightColor == .blue && controller.strikethrough &&
+              editor.typingAttributes[VaultEditorFormatting.textColorKey] as? String == VaultTextColor.red.rawValue,
+              "insertion-point colors and strike apply to future typing without altering existing text")
         check(editor.string == "Synthetic text\n中文 🔐","format commands never modify the underlying Unicode body")
         do {
             var document=PrivateDocument(title:"Synthetic editor",body:editor.string)
@@ -47,4 +75,9 @@ import LauncherCore
         exit(failures == 0 ? 0:1)
     }
 }
-@MainActor private final class IsolatedEditor:NSTextView {let history=UndoManager();override var undoManager:UndoManager? {history}}
+@MainActor private final class IsolatedEditor:NSTextView {
+    // These commands execute synchronously without a native mouse event loop.
+    // Explicit production command groups therefore define one undoable action.
+    let history:UndoManager = {let manager=UndoManager();manager.groupsByEvent=false;return manager}()
+    override var undoManager:UndoManager? {history}
+}

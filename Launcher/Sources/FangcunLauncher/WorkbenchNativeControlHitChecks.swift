@@ -219,6 +219,82 @@ import LauncherCore
         checks.append((!systemCursorMatches(.pointingHand), "leaving a button clears the hand instead of retaining a stale cursor"))
         if let originalPoint { postPointer(at: originalPoint) }
         try? await Task.sleep(for: .milliseconds(100))
+        checks += await anchoredChoiceChecks()
+        return checks
+    }
+    /// The production dropdown keeps NSPopUpButton's selected-value binding,
+    /// but presents an adjacent, non-overlapping list instead of a stock menu
+    /// centered on its current row. Events target only this disposable host.
+    private static func anchoredChoiceChecks() async -> [(Bool, String)] {
+        let previousKeyWindow = NSApp.keyWindow, previousMainWindow = NSApp.mainWindow
+        let previousPointer = CGEvent(source: nil)?.location
+        let visible = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let window = NativeUIFixtureWindow(contentRect: NSRect(x: visible.minX + 160, y: visible.midY, width: 320, height: 120),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let state = ChoiceInteractionState()
+        let host = NSHostingView(rootView: ChoiceInteractionRoot(state: state).nativeCheckAccessibility())
+        window.contentView = host
+        defer {
+            for child in window.childWindows ?? [] { child.orderOut(nil); child.close() }
+            window.orderOut(nil); window.contentView = nil; window.close()
+            if let previousMainWindow, previousMainWindow.isVisible { previousMainWindow.makeMain() }
+            if let previousKeyWindow, previousKeyWindow.isVisible { previousKeyWindow.makeKey() }
+            if let previousPointer { postPointer(at: previousPointer) }
+        }
+        let mounted = await NativeUIFixtureWindow.prepare(window: window) {
+            descendants(host).contains { ($0 as? WBPopUpButton)?.accessibilityLabel() == "Anchored choice diagnostic" }
+        }
+        var checks = [(mounted, "production anchored dropdown mounts in an isolated key-capable host")]
+        guard mounted, let popup = descendants(host).compactMap({ $0 as? WBPopUpButton }).first else { return checks }
+        func pause() async { try? await Task.sleep(for: .milliseconds(100)); host.layoutSubtreeIfNeeded() }
+        func currentPanel() -> NSWindow? { window.childWindows?.first { $0.isVisible && $0.frame == popup.choiceListFrame } }
+        func key(_ code: UInt16, characters: String, to target: NSWindow) {
+            guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: target.windowNumber, context: nil, characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code) else { return }
+            NSApp.sendEvent(event)
+        }
+        func clickPadding() {
+            let frame = popup.convert(popup.bounds, to: nil)
+            let point = NSPoint(x: frame.maxX - 3, y: frame.midY)
+            guard let down = pointerEvent(.leftMouseDown, point: point, window: window), let up = pointerEvent(.leftMouseUp, point: point, window: window) else { return }
+            NSApp.postEvent(up, atStart: false); NSApp.sendEvent(down)
+        }
+        clickPadding(); await pause()
+        let triggerBelow = window.convertToScreen(popup.convert(popup.bounds, to: nil))
+        checks.append((popup.choiceListFrame.map { $0.maxY <= triggerBelow.minY - 4 && !$0.intersects(triggerBelow) } == true,
+                       "dropdown background padding opens its list below the trigger without covering the selected value"))
+        if let panel = currentPanel() {
+            if let content = panel.contentView { captureHoverEvidence(content, name: "dropdown-below-list") }
+            key(125, characters: "\u{f701}", to: panel); key(36, characters: "\r", to: panel)
+        }
+        await pause()
+        checks.append((state.selection == 1 && popup.indexOfSelectedItem == 1 && popup.choiceListFrame == nil,
+                       "dropdown Down and Return choose the next row, update the real bound value and close the list"))
+        popup.performClick(nil); await pause()
+        if let panel = currentPanel() { key(126, characters: "\u{f700}", to: panel); key(53, characters: "\u{1b}", to: panel) }
+        await pause()
+        checks.append((state.selection == 1 && popup.choiceListFrame == nil,
+                       "dropdown Up navigation followed by Escape discards the tentative row without changing the bound value"))
+        popup.performClick(nil); await pause()
+        let outsidePoint = NSPoint(x: (window.contentView?.bounds.maxX ?? 320) - 6, y: 6)
+        if let down = pointerEvent(.leftMouseDown, point: outsidePoint, window: window), let up = pointerEvent(.leftMouseUp, point: outsidePoint, window: window) {
+            NSApp.postEvent(down, atStart: false); NSApp.postEvent(up, atStart: false)
+        }
+        await pause()
+        checks.append((state.selection == 1 && popup.choiceListFrame == nil,
+                       "clicking outside the dropdown dismisses its list without committing a different row"))
+        // A short host near the visible screen bottom leaves no room below.
+        window.setFrameOrigin(NSPoint(x: visible.minX + 160, y: visible.minY + 8)); window.makeKeyAndOrderFront(nil)
+        await pause(); clickPadding(); await pause()
+        let triggerAbove = window.convertToScreen(popup.convert(popup.bounds, to: nil))
+        checks.append((popup.choiceListFrame.map { $0.minY >= triggerAbove.maxY + 4 && !$0.intersects(triggerAbove) && visible.contains($0) } == true,
+                       "dropdown near the screen bottom opens upward within visible bounds and leaves the trigger uncovered"))
+        if let panel = currentPanel() {
+            if let content = panel.contentView { captureHoverEvidence(content, name: "dropdown-above-list") }
+            key(53, characters: "\u{1b}", to: panel)
+        }
+        await pause()
         return checks
     }
     private struct BackgroundSnapshot {
@@ -495,6 +571,21 @@ private struct PointerInteractionRoot: View {
             Button { state.press("selected") } label: { Text("Selected").frame(width: 180, height: 32) }.buttonStyle(WBSelectableButtonStyle(selected: true))
             Button { state.press("disabled") } label: { Text("Disabled").frame(width: 180) }.buttonStyle(WBButtonStyle()).disabled(true)
         }.frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.black.opacity(0.8))
+            .workbenchThemeEnvironment(theme: .qingbiMist, opacity: 0.70, backgroundMotion: false)
+    }
+}
+
+@MainActor private final class ChoiceInteractionState: ObservableObject {
+    @Published var selection = 0
+}
+private struct ChoiceInteractionRoot: View {
+    @ObservedObject var state: ChoiceInteractionState
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            WBSelect("Anchored choice diagnostic", selection: $state.selection,
+                options: [(0, "First choice"), (1, "Second choice"), (2, "Third choice")]).frame(width: 180, height: 32)
+            Spacer(minLength: 0)
+        }.padding(20).frame(width: 320, height: 120, alignment: .topLeading)
             .workbenchThemeEnvironment(theme: .qingbiMist, opacity: 0.70, backgroundMotion: false)
     }
 }

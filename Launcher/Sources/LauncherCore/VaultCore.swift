@@ -7,7 +7,15 @@ public enum PrivateDocumentCategory:String,Codable,CaseIterable,Sendable {case u
     public var title:String {switch self {case .unclassified:"未分类";case .work:"工作";case .personal:"个人"}}
 }
 /// Formatting is semantic data, never RTF/HTML or executable attachments.
-public enum VaultFontFamily:String,Codable,CaseIterable,Sendable,Hashable {case system,serif,monospaced}
+public enum VaultFontFamily:String,Codable,CaseIterable,Sendable,Hashable {
+    case system,serif,monospaced,pingFang,kaiti,heiti,helvetica,georgia,menlo
+}
+public enum VaultTextColor:String,Codable,CaseIterable,Sendable,Hashable {
+    case automatic,red,orange,green,blue,purple,gray
+}
+public enum VaultHighlightColor:String,Codable,CaseIterable,Sendable,Hashable {
+    case none,yellow,green,blue,pink,purple
+}
 public struct VaultTextStyleRun:Codable,Equatable,Sendable {
     public var location:Int
     public var length:Int
@@ -16,8 +24,23 @@ public struct VaultTextStyleRun:Codable,Equatable,Sendable {
     public var bold:Bool
     public var italic:Bool
     public var underline:Bool
-    public init(location:Int,length:Int,family:VaultFontFamily = .system,size:Double=14,bold:Bool=false,italic:Bool=false,underline:Bool=false) {
+    public var strikethrough:Bool
+    public var textColor:VaultTextColor
+    public var highlightColor:VaultHighlightColor
+    public init(location:Int,length:Int,family:VaultFontFamily = .system,size:Double=14,bold:Bool=false,italic:Bool=false,underline:Bool=false,
+                strikethrough:Bool=false,textColor:VaultTextColor = .automatic,highlightColor:VaultHighlightColor = .none) {
         self.location=location;self.length=length;self.family=family;self.size=size;self.bold=bold;self.italic=italic;self.underline=underline
+        self.strikethrough=strikethrough;self.textColor=textColor;self.highlightColor=highlightColor
+    }
+    private enum CodingKeys:String,CodingKey {case location,length,family,size,bold,italic,underline,strikethrough,textColor,highlightColor}
+    public init(from decoder:Decoder) throws {
+        let fields=try decoder.container(keyedBy:CodingKeys.self)
+        location=try fields.decode(Int.self,forKey:.location);length=try fields.decode(Int.self,forKey:.length)
+        family=try fields.decode(VaultFontFamily.self,forKey:.family);size=try fields.decode(Double.self,forKey:.size)
+        bold=try fields.decode(Bool.self,forKey:.bold);italic=try fields.decode(Bool.self,forKey:.italic);underline=try fields.decode(Bool.self,forKey:.underline)
+        strikethrough=try fields.decodeIfPresent(Bool.self,forKey:.strikethrough) ?? false
+        textColor=try fields.decodeIfPresent(VaultTextColor.self,forKey:.textColor) ?? .automatic
+        highlightColor=try fields.decodeIfPresent(VaultHighlightColor.self,forKey:.highlightColor) ?? .none
     }
 }
 public struct VaultCategory:Codable,Equatable,Identifiable,Sendable {
@@ -70,11 +93,11 @@ public struct VaultProtectionPreferences:Codable,Equatable,Sendable {
     public func validated() throws -> Self {guard schema == 1 || schema == 2,[1,5,10].contains(idleMinutes) else {throw VaultFailure.invalidData};return self}
 
 }
-/// Payload 2 protects category and formatting metadata from older writers.
-/// The authenticated envelope and KDF stay unchanged; released v1 readers reject
-/// this payload after decryption, before they can edit and strip its new fields.
+/// Payload 3 protects color, strike and expanded font metadata from v2 writers.
+/// Readers accept v1/v2 without rewriting. An actual save emits v3 so older
+/// readers reject it before editing away new style fields. Envelope/KDF stay put.
 public struct VaultContents:Codable,Equatable,Sendable {
-    public var version=2
+    public var version=3
     public var documents:[PrivateDocument]
     public var categories:[VaultCategory]
     public init(documents:[PrivateDocument]=[],categories:[VaultCategory]=VaultCategory.defaults) {self.documents=documents;self.categories=categories}
@@ -82,18 +105,18 @@ public struct VaultContents:Codable,Equatable,Sendable {
     public init(from decoder:Decoder) throws {
         let fields=try decoder.container(keyedBy:CodingKeys.self)
         version=try fields.decode(Int.self,forKey:.version)
-        guard version == 1 || version == 2 else {throw VaultFailure.invalidData}
+        guard (1...3).contains(version) else {throw VaultFailure.invalidData}
         documents=try fields.decode([PrivateDocument].self,forKey:.documents)
         categories=version == 1 ? try fields.decodeIfPresent([VaultCategory].self,forKey:.categories) ?? VaultCategory.defaults:try fields.decode([VaultCategory].self,forKey:.categories)
     }
     public func encode(to encoder:Encoder) throws {
         try validate();var fields=encoder.container(keyedBy:CodingKeys.self)
-        try fields.encode(2,forKey:.version);try fields.encode(documents,forKey:.documents);try fields.encode(categories,forKey:.categories)
+        try fields.encode(3,forKey:.version);try fields.encode(documents,forKey:.documents);try fields.encode(categories,forKey:.categories)
     }
-    public func upgradedForWriting() throws -> Self {try validate();var latest=self;latest.version=2;return latest}
+    public func upgradedForWriting() throws -> Self {try validate();var latest=self;latest.version=3;return latest}
     public func validate() throws {
         let ids=Set(categories.map(\.id))
-        guard (version==1 || version==2),documents.count<=5000,Set(documents.map(\.id)).count==documents.count,
+        guard (1...3).contains(version),documents.count<=5000,Set(documents.map(\.id)).count==documents.count,
               categories.count<=100,ids.count==categories.count,!ids.contains("unclassified"),
               categories.allSatisfy({!$0.id.isEmpty && $0.id.count<=80 && !$0.name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty && $0.name.count<=30}),
               Set(categories.map{$0.name.folding(options:[.caseInsensitive,.diacriticInsensitive,.widthInsensitive],locale:.current)}).count==categories.count,

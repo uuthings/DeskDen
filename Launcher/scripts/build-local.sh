@@ -20,7 +20,7 @@ import datetime, hashlib, json, plistlib, sys
 
 root = Path.cwd()
 evidence = Path(sys.argv[1])
-required = ['Info.plist', 'PanelLogo.png', 'AppIcon.icns', 'AppIcons/qingbi-chenwu.icns', 'AppIcons/yuebai-yunhai.icns', 'AppIcons/nuanxia-xuanshan.icns', 'Workbench/ar-world.jpg',
+required = ['Info.plist', 'PanelLogo.png', 'AppIcon.icns', 'AppIcons/minimal-ink.icns', 'AppIcons/minimal-frame.icns', 'AppIcons/minimal-ink-menubar.png', 'AppIcons/minimal-frame-menubar.png', 'Workbench/ar-world.jpg',
             'Workbench/thunder-cabin.jpg', 'Workbench/qingbi-chenwu.jpg', 'Workbench/yuebai-yunhai.jpg',
             'Workbench/nuanxia-xuanshan.jpg', 'Workbench/claude.png', 'Workbench/chatgpt.png']
 for name in required:
@@ -58,8 +58,9 @@ cp "$PWD/Resources/Info.plist" "$app_path/Contents/Info.plist"
 cp "$PWD/Resources/PanelLogo.png" "$app_path/Contents/Resources/PanelLogo.png"
 cp "$PWD/Resources/AppIcon.icns" "$app_path/Contents/Resources/AppIcon.icns"
 mkdir -p "$app_path/Contents/Resources/AppIcons"
-for icon_name in qingbi-chenwu yuebai-yunhai nuanxia-xuanshan; do
+for icon_name in minimal-ink minimal-frame; do
     cp "$PWD/Resources/AppIcons/$icon_name.icns" "$app_path/Contents/Resources/AppIcons/$icon_name.icns"
+    cp "$PWD/Resources/AppIcons/$icon_name-menubar.png" "$app_path/Contents/Resources/AppIcons/$icon_name-menubar.png"
 done
 for resource_name in ar-world.jpg thunder-cabin.jpg qingbi-chenwu.jpg yuebai-yunhai.jpg nuanxia-xuanshan.jpg claude.png chatgpt.png; do
     cp "$PWD/Resources/Workbench/$resource_name" "$app_path/Contents/Resources/Workbench/$resource_name"
@@ -96,7 +97,7 @@ after = dict(before, files=files)
 (evidence / 'source-inputs-after.json').write_text(json.dumps(after, ensure_ascii=False, indent=2) + '\n')
 if before != after:
     raise SystemExit('Source inputs changed during the build; this candidate is not verified')
-resources = ['PanelLogo.png', 'AppIcon.icns', 'AppIcons/qingbi-chenwu.icns', 'AppIcons/yuebai-yunhai.icns', 'AppIcons/nuanxia-xuanshan.icns', 'Workbench/ar-world.jpg', 'Workbench/thunder-cabin.jpg', 'Workbench/qingbi-chenwu.jpg', 'Workbench/yuebai-yunhai.jpg', 'Workbench/nuanxia-xuanshan.jpg', 'Workbench/claude.png', 'Workbench/chatgpt.png']
+resources = ['PanelLogo.png', 'AppIcon.icns', 'AppIcons/minimal-ink.icns', 'AppIcons/minimal-frame.icns', 'AppIcons/minimal-ink-menubar.png', 'AppIcons/minimal-frame-menubar.png', 'Workbench/ar-world.jpg', 'Workbench/thunder-cabin.jpg', 'Workbench/qingbi-chenwu.jpg', 'Workbench/yuebai-yunhai.jpg', 'Workbench/nuanxia-xuanshan.jpg', 'Workbench/claude.png', 'Workbench/chatgpt.png']
 expected = {'Contents/Info.plist': root / 'Resources/Info.plist'}
 expected.update({'Contents/Resources/' + name: root / 'Resources' / name for name in resources})
 for name, source in expected.items():

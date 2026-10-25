@@ -120,7 +120,23 @@ struct WBSelect<Value: Hashable>: NSViewRepresentable {
 
 /// AppKit equivalent for the embedded launcher settings; preserves the standard
 /// popup cell's keyboard and menu behavior instead of reimplementing selection.
-final class WBPopUpButton: ClickablePopUpButton {
+class WBPopUpButton: ClickablePopUpButton {
+    private var choicePanel: WBChoicePopup?
+    var choiceListFrame: NSRect? { choicePanel?.isVisible == true ? choicePanel?.frame : nil }
+    override func mouseDown(with event: NSEvent) { openChoiceList() }
+    override func performClick(_ sender: Any?) { openChoiceList() }
+    override func keyDown(with event: NSEvent) {
+        if [49, 36, 76, 125, 126].contains(event.keyCode) { openChoiceList() } else { super.keyDown(with: event) }
+    }
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil { choicePanel?.dismiss() }; super.viewWillMove(toWindow: newWindow)
+    }
+    fileprivate func choiceListDismissed() { choicePanel = nil; needsDisplay = true }
+    private func openChoiceList() {
+        guard isEnabled, !itemArray.isEmpty else { return }
+        if let choicePanel { choicePanel.dismiss(); return }
+        let panel = WBChoicePopup(anchor: self); choicePanel = panel; panel.present(); needsDisplay = true
+    }
     var workbenchTheme: LauncherTheme = .arWorld
     var interfaceOpacity: Double = 0.70
     var interfaceLight = false
@@ -585,5 +601,155 @@ extension View {
 struct ClickablePlainButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.contentShape(Rectangle()).clickableCursor()
+    }
+}
+
+
+/// A choice list opens outside the trigger, not with the selected row covering
+/// it. The same native host serves every WBSelect while retaining popup AX and
+/// model bindings. It never changes the document's width or scroll position.
+@MainActor private final class WBChoicePopup: NSPanel {
+    private weak var anchor: WBPopUpButton?
+    private let items: [NSMenuItem]
+    private let palette: ThemePalette
+    private let scroller = NSScrollView()
+    private let list = WBChoiceDocument()
+    private var rows: [WBChoiceRow] = []
+    private var current: Int
+    private var outsideMonitor: Any?
+    private var resignObserver: NSObjectProtocol?
+    private var dismissing = false
+    private var typed = ""
+    private var lastTyped: TimeInterval = 0
+
+    init(anchor: WBPopUpButton) {
+        self.anchor = anchor; items = anchor.itemArray
+        current = max(0, anchor.indexOfSelectedItem)
+        palette = ThemePalette(theme: anchor.workbenchTheme, opacity: anchor.interfaceOpacity, light: anchor.interfaceLight)
+        let width = min(440, max(anchor.bounds.width, (items.map { ($0.title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 12)]).width }.max() ?? 100) + 48))
+        let height = min(288, CGFloat(items.count) * 28 + 8)
+        super.init(contentRect: NSRect(x: 0, y: 0, width: width, height: height), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        isReleasedWhenClosed = false; isOpaque = false; backgroundColor = .clear; hasShadow = true
+        level = .popUpMenu; animationBehavior = .none; hidesOnDeactivate = true
+        let surface = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        surface.wantsLayer = true; surface.layer?.backgroundColor = NSColor(palette.overlay).cgColor
+        surface.layer?.cornerRadius = 10; surface.layer?.borderWidth = 1
+        surface.layer?.borderColor = NSColor(palette.line).cgColor
+        scroller.frame = surface.bounds.insetBy(dx: 4, dy: 4)
+        scroller.hasVerticalScroller = true; scroller.scrollerStyle = .overlay; scroller.autohidesScrollers = true
+        scroller.drawsBackground = false; scroller.borderType = .noBorder
+        list.frame = NSRect(x: 0, y: 0, width: width - 8, height: CGFloat(items.count) * 28)
+        for (index, item) in items.enumerated() {
+            let row = WBChoiceRow(frame: NSRect(x: 0, y: CGFloat(index) * 28, width: width - 8, height: 28),
+                                  title: item.title, selected: index == anchor.indexOfSelectedItem, palette: palette)
+            row.isEnabled = item.isEnabled
+            row.commit = { [weak self] in self?.choose(index) }
+            row.hover = { [weak self] in self?.setCurrent(index) }
+            list.addSubview(row); rows.append(row)
+        }
+        scroller.documentView = list; surface.addSubview(scroller); contentView = surface
+        setAccessibilityLabel(anchor.accessibilityLabel() ?? "选择选项")
+    }
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+    func present() {
+        guard let anchor, let parent = anchor.window else { return }
+        let trigger = parent.convertToScreen(anchor.convert(anchor.bounds, to: nil))
+        let visible = (parent.screen ?? NSScreen.main)?.visibleFrame ?? parent.frame
+        let below = trigger.minY - 5 - frame.height
+        let originY = below >= visible.minY + 6 ? below : min(visible.maxY - frame.height - 6, trigger.maxY + 5)
+        setFrameOrigin(NSPoint(x: min(max(visible.minX + 6, trigger.minX), visible.maxX - frame.width - 6), y: max(visible.minY + 6, originY)))
+        parent.addChildWindow(self, ordered: .above); makeKeyAndOrderFront(nil)
+        setCurrent(current)
+        if rows.indices.contains(current) { list.scrollToVisible(rows[current].frame) }
+        outsideMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel]) { [weak self] event in
+            MainActor.assumeIsolated {
+                if let self, event.window !== self { self.dismiss() }
+            }
+            return event
+        }
+        resignObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: self, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.dismiss() }
+        }
+    }
+    func dismiss() {
+        guard !dismissing else { return }; dismissing = true
+        if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor) }; outsideMonitor = nil
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }; resignObserver = nil
+        let wasKey = isKeyWindow
+        let parent = parent; parent?.removeChildWindow(self); orderOut(nil)
+        anchor?.choiceListDismissed()
+        if NSApp.isActive, wasKey { parent?.makeKey(); parent?.makeFirstResponder(anchor) }
+        close()
+    }
+    private func choose(_ index: Int) {
+        guard items.indices.contains(index), items[index].isEnabled, let anchor else { return }
+        dismiss()
+        anchor.selectItem(at: index)
+        for (i, item) in anchor.itemArray.enumerated() { item.state = i == index ? .on : .off }
+        anchor.setAccessibilityValue(anchor.titleOfSelectedItem ?? "")
+        anchor.sendAction(anchor.action, to: anchor.target); anchor.needsDisplay = true
+    }
+    private func setCurrent(_ value: Int) {
+        guard rows.indices.contains(value), rows[value].isEnabled else { return }
+        current = value
+        for (index, row) in rows.enumerated() { row.active = index == value }
+    }
+    private func move(_ direction: Int) {
+        guard !rows.isEmpty else { return }
+        for step in 1...rows.count {
+            let index = (current + direction * step + rows.count * 2) % rows.count
+            if rows[index].isEnabled { setCurrent(index); list.scrollToVisible(rows[index].frame); return }
+        }
+    }
+    override func keyDown(with event: NSEvent) {
+        switch event.keyCode {
+        case 53: dismiss()
+        case 125: move(1)
+        case 126: move(-1)
+        case 36, 76, 49: choose(current)
+        case 48: dismiss()
+        default:
+            guard let value = event.charactersIgnoringModifiers, !value.isEmpty else { return }
+            let now = ProcessInfo.processInfo.systemUptime
+            if now - lastTyped > 0.8 { typed = "" }; lastTyped = now; typed += value.lowercased()
+            if let index = items.indices.first(where: { items[$0].isEnabled && items[$0].title.lowercased().hasPrefix(typed) }) {
+                setCurrent(index); list.scrollToVisible(rows[index].frame)
+            }
+        }
+    }
+}
+@MainActor private final class WBChoiceDocument: NSView {
+    override var isFlipped: Bool { true }
+}
+@MainActor private final class WBChoiceRow: ClickableButton {
+    let palette: ThemePalette
+    let chosen: Bool
+    var active = false { didSet { needsDisplay = true } }
+    var commit: () -> Void = {}
+    var hover: () -> Void = {}
+    private var area: NSTrackingArea?
+    init(frame: NSRect, title: String, selected: Bool, palette: ThemePalette) {
+        self.palette = palette; chosen = selected
+        super.init(frame: frame); self.title = title; isBordered = false; target = self; action = #selector(pick)
+        setAccessibilityLabel(title); setAccessibilityValue(selected ? "已选择" : "未选择")
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override var isFlipped: Bool { true }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas(); if let area { removeTrackingArea(area) }
+        let new = NSTrackingArea(rect: .zero, options: [.inVisibleRect, .activeAlways, .mouseEnteredAndExited], owner: self)
+        area = new; addTrackingArea(new)
+    }
+    override func mouseEntered(with event: NSEvent) { if isEnabled { hover() } }
+    @objc private func pick() { commit() }
+    override func draw(_ dirtyRect: NSRect) {
+        if active || isHighlighted {
+            palette.nsAccent.withAlphaComponent(isHighlighted ? 0.22 : 0.12).setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 6, yRadius: 6).fill()
+        }
+        let textColor = (active ? palette.nsText : palette.nsSecondary).withAlphaComponent(isEnabled ? 1 : 0.4)
+        if chosen { drawSymbol("checkmark", in: NSRect(x: 7, y: 8, width: 12, height: 12), color: palette.nsAccent) }
+        drawText(title, in: NSRect(x: 28, y: 6, width: bounds.width - 36, height: 17), size: 12, color: textColor)
     }
 }

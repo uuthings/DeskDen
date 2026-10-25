@@ -65,7 +65,7 @@ import LauncherCore
             check(mounted, "space cleaning mounts inside the production workbench shell")
             check(cleaning.screen == .start && cleaning.items.isEmpty && cleaning.selectedCount == 0 && !cleaning.isBusy,
                   "opening cleaning does not scan, select or process files")
-            check(exists("navigation-cleaning", in: host) && exists("window-brand-trigger", in: host) && exists("workbench-sidebar", in: host),
+            check(exists("navigation-cleaning", in: host) && exists("window-brand", in: host) && exists("workbench-sidebar", in: host),
                   "cleaning retains the real brand, navigation and window shell")
 
             for id in ["navigation-device", "navigation-cleaning", "space-cleaning-scope-global", "space-cleaning-scope-custom"] {
@@ -76,6 +76,40 @@ import LauncherCore
             _ = await settle(window) { exists("home-open-health", in: host) }
             check(try await hoverBackground("home-open-health", host: host, window: window, output: output),
                   "home's primary health action has visible hover feedback")
+            let homeBoundaryIDs = ["fc.page.home", "fc.home.agenda", "fc.home.calendar.strip", "home-device-detail"]
+            let homeBoundaryFrames = homeBoundaryIDs.map { frame($0, in: host) }
+            let homePageScroll = objects(host).compactMap { $0 as? NSScrollView }.max { $0.bounds.width * $0.bounds.height < $1.bounds.width * $1.bounds.height }
+            check(homeBoundaryFrames.allSatisfy { $0 != nil } && homePageScroll != nil,
+                  "production home exposes its card boundaries and real page scroller before a city modal")
+            let originalClip = homePageScroll.map { $0.contentView.frame }, originalDocument = homePageScroll?.documentView?.frame
+            if let homePageScroll {
+                check(homePageScroll.scrollerStyle == .overlay && abs(homePageScroll.contentSize.width - homePageScroll.bounds.width) < 1,
+                      "home's real overlay scrollbar reserves no horizontal document width")
+                homePageScroll.scrollerStyle = .legacy
+                _ = await settle(window) { homePageScroll.scrollerStyle == .overlay }
+                check(homePageScroll.scrollerStyle == .overlay && originalClip.map { abs($0.width - homePageScroll.contentView.frame.width) < 1 } == true,
+                      "a system-style legacy scrollbar change is restored to overlay without changing the page clip width")
+            }
+            app.context.showWeather = true
+            _ = await settle(window) { exists("context-weather-dialog", in: host) && app.modals.isPresented }
+            check(exists("context-weather-dialog", in: host) && exists("context-city-search", in: host) && exists("context-city-results", in: host),
+                  "opening the production weather picker presents search and a city list in the shared modal")
+            // Background AX is intentionally hidden while a modal is active.
+            // Read actual mounted NSScrollView geometry rather than stale AX
+            // objects from the hidden cards to verify their available width.
+            check(homePageScroll.map { scroll in
+                originalClip.map { abs($0.minX - scroll.contentView.frame.minX) < 1 && abs($0.width - scroll.contentView.frame.width) < 1 } == true &&
+                    originalDocument.flatMap { before in scroll.documentView.map { after in abs(before.minX - after.frame.minX) < 1 && abs(before.width - after.frame.width) < 1 } } == true &&
+                    scroll.scrollerStyle == .overlay && abs(scroll.contentSize.width - scroll.bounds.width) < 1
+            } == true, "opening a city modal keeps the actual home document and clip edges fixed without reserving scrollbar space")
+            try capture(host: host, name: "home-city-modal-overlay", output: output)
+            app.modals.dismissTop()
+            _ = await settle(window) { !app.modals.isPresented && !app.context.showWeather && exists("fc.page.home", in: host) }
+            check(homeBoundaryIDs.enumerated().allSatisfy { index, id in
+                homeBoundaryFrames[index].flatMap { before in frame(id, in: host).map { after in
+                    abs(before.minX - after.minX) < 1 && abs(before.maxX - after.maxX) < 1 && abs(before.minY - after.minY) < 1
+                } } == true
+            }, "closing the city modal restores identical home card positions and left/right boundaries")
             for id in ["home-storage-readout", "home-memory-readout"] {
                 check(try await hoverBackground(id, host: host, window: window, output: output, expectedChange: false),
                       "\(id) retains its unboxed readout surface on actual OS hover")

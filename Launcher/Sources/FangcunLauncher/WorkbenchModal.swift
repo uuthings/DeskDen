@@ -156,34 +156,49 @@ extension View {
     }
 }
 
-/// Overlay scrollers keep the shared page frame stable even when macOS is set
-/// to always show scrollbars. The common 11 pt reading reserve belongs to the
-/// shell; nested platform scroll views must not subtract another 16 pt.
+/// Overlay scrollers never reserve document width. Keep the policy active
+/// across SwiftUI disabled/modal transitions and system scrollbar preferences.
 struct WorkbenchOverlayScrollbars: View {
-    var body:some View {
-        WorkbenchScrollbarConfigurationProbe().frame(width:0,height:0)
+    var body: some View {
+        WorkbenchScrollbarConfigurationProbe().frame(width: 0, height: 0)
             .allowsHitTesting(false).accessibilityHidden(true)
     }
 }
-
 private struct WorkbenchScrollbarConfigurationProbe: NSViewRepresentable {
     func makeNSView(context: Context) -> Probe { Probe() }
     func updateNSView(_ view: Probe, context: Context) { view.configure() }
     final class Probe: NSView {
-        override func hitTest(_ point:NSPoint)->NSView? {nil}
+        private weak var ownerScroll: NSScrollView?
+        private var styleObservation: NSKeyValueObservation?
+        private var scrollerObservation: NSKeyValueObservation?
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
         override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); configure() }
+        override func viewWillMove(toWindow newWindow: NSWindow?) {
+            if newWindow == nil { styleObservation = nil; scrollerObservation = nil; ownerScroll = nil }
+            super.viewWillMove(toWindow: newWindow)
+        }
         override func viewDidMoveToSuperview() { super.viewDidMoveToSuperview(); configure() }
         func configure() {
-            if let scroll = enclosingScrollView {
-                if scroll.scrollerStyle != .overlay { scroll.scrollerStyle = .overlay }
-                scroll.autohidesScrollers = true
-                scroll.drawsBackground = false
-            } else {
-                DispatchQueue.main.async { [weak self] in
-                    guard let scroll = self?.enclosingScrollView else { return }
-                    scroll.scrollerStyle = .overlay; scroll.autohidesScrollers = true; scroll.drawsBackground = false
+            guard let scroll = enclosingScrollView else {
+                DispatchQueue.main.async { [weak self] in self?.applyToEnclosingScroll() }
+                return
+            }
+            apply(scroll)
+        }
+        private func applyToEnclosingScroll() { if let scroll = enclosingScrollView { apply(scroll) } }
+        private func apply(_ scroll: NSScrollView) {
+            if ownerScroll !== scroll {
+                ownerScroll = scroll
+                styleObservation = scroll.observe(\.scrollerStyle, options: [.new]) { [weak self] _, _ in
+                    MainActor.assumeIsolated { self?.configure() }
+                }
+                scrollerObservation = scroll.observe(\.hasVerticalScroller, options: [.new]) { [weak self] _, _ in
+                    MainActor.assumeIsolated { self?.configure() }
                 }
             }
+            if scroll.scrollerStyle != .overlay { scroll.scrollerStyle = .overlay }
+            if !scroll.autohidesScrollers { scroll.autohidesScrollers = true }
+            scroll.drawsBackground = false
         }
     }
 }
