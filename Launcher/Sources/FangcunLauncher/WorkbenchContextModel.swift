@@ -3,20 +3,41 @@ import Combine
 import SwiftUI
 import LauncherCore
 
-struct WorkbenchContextPreferences:Codable,Equatable {
-    var schema=1
-    var timeZoneIdentifier:String?
-    var twelveHour=false
-    var city:WeatherCity?
+enum WorkbenchContextTimeZoneMode: String, Codable { case city, system, custom }
+
+struct WorkbenchContextPreferences: Codable, Equatable {
+    var schema = 2
+    var timeZoneIdentifier: String?
+    var timeZoneMode: WorkbenchContextTimeZoneMode = .city
+    var twelveHour = false
+    var city: WeatherCity?
+    var temperatureUnit: WeatherTemperatureUnit = .celsius
+    init() {}
+    private enum CodingKeys: String, CodingKey { case schema, timeZoneIdentifier, timeZoneMode, twelveHour, city, temperatureUnit }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        schema = try values.decode(Int.self, forKey: .schema)
+        timeZoneIdentifier = try values.decodeIfPresent(String.self, forKey: .timeZoneIdentifier)
+        twelveHour = try values.decode(Bool.self, forKey: .twelveHour)
+        city = try values.decodeIfPresent(WeatherCity.self, forKey: .city)
+        timeZoneMode = try values.decodeIfPresent(WorkbenchContextTimeZoneMode.self, forKey: .timeZoneMode) ?? (timeZoneIdentifier == nil ? .city : .custom)
+        temperatureUnit = try values.decodeIfPresent(WeatherTemperatureUnit.self, forKey: .temperatureUnit) ?? .celsius
+    }
+    var zoneSelection: String {
+        switch timeZoneMode { case .city: "city"; case .system: "system"; case .custom: timeZoneIdentifier ?? "system" }
+    }
     func validated() throws -> Self {
-        guard schema == 1 else {throw LauncherError.storage("日期与天气设置版本无法读取，原文件已保留。")}
-        if let timeZoneIdentifier {_ = try WorkbenchDateContext(timeZoneIdentifier:timeZoneIdentifier)}
-        _ = try city?.validated();return self
+        guard (1...2).contains(schema) else { throw LauncherError.storage("城市与时间设置版本无法读取，原文件已保留。") }
+        if let timeZoneIdentifier { _ = try WorkbenchDateContext(timeZoneIdentifier: timeZoneIdentifier) }
+        guard timeZoneMode != .custom || timeZoneIdentifier != nil else { throw LauncherError.storage("自定义时区缺少有效设置。") }
+        _ = try city?.validated()
+        var result = self; result.schema = 2
+        return result
     }
 }
 
-/// Display timezone and manually chosen weather city are independent. No device
-/// location, reminder due date, or notification timezone is changed here.
+/// The selected city's timezone is the default display clock. A system or
+/// custom override is explicit; reminder due dates and notification zones stay unchanged.
 @MainActor final class WorkbenchContextModel:ObservableObject {
     @Published private(set) var settings=WorkbenchContextPreferences()
     @Published private(set) var weather:WeatherPresentation?
@@ -48,7 +69,21 @@ struct WorkbenchContextPreferences:Codable,Equatable {
         }
     }
     var dateContext:WorkbenchDateContext {
-        (try? WorkbenchDateContext(timeZoneIdentifier:settings.timeZoneIdentifier ?? TimeZone.current.identifier)) ?? (try! WorkbenchDateContext(timeZoneIdentifier:"UTC"))
+        (try? WorkbenchDateContext(timeZoneIdentifier:effectiveTimeZoneIdentifier)) ?? (try! WorkbenchDateContext(timeZoneIdentifier:"UTC"))
+    }
+    var effectiveTimeZoneIdentifier: String {
+        switch settings.timeZoneMode {
+        case .city: settings.city?.timeZoneIdentifier ?? TimeZone.current.identifier
+        case .system: TimeZone.current.identifier
+        case .custom: settings.timeZoneIdentifier ?? TimeZone.current.identifier
+        }
+    }
+    var temperatureUnit: WeatherTemperatureUnit { settings.temperatureUnit }
+    func temperature(_ celsius: Double?) -> String { settings.temperatureUnit.formatted(celsius) }
+    var weatherStatusTitle: String {
+        if loadingWeather && weather?.snapshot == nil { return "正在读取天气" }
+        if let snapshot = weather?.snapshot { return snapshot.conditionDescription }
+        return settings.city == nil ? "选择城市查看天气" : "天气暂不可用"
     }
     var zoneTitle:String { Self.zoneTitle(dateContext.timeZoneIdentifier) }
     static func zoneTitle(_ id:String,at date:Date=Date()) -> String {
@@ -69,7 +104,7 @@ struct WorkbenchContextPreferences:Codable,Equatable {
         return formatter.string(from:date)
     }
     @discardableResult func saveClock(zone:String?,twelveHour:Bool) -> Bool {
-        var next=settings;next.timeZoneIdentifier=zone;next.twelveHour=twelveHour
+        var next=settings;next.timeZoneIdentifier=zone;next.timeZoneMode=zone == nil ? .system:.custom;next.twelveHour=twelveHour
         guard save(next) else {return false};showClock=false;return true
     }
     @discardableResult func saveCity(_ city:WeatherCity?) -> Bool {
@@ -77,13 +112,25 @@ struct WorkbenchContextPreferences:Codable,Equatable {
         guard save(next) else {return false}
         showWeather=false;refreshWeather();return true
     }
+    @discardableResult func saveContext(city: WeatherCity?, zone: String, twelveHour: Bool, temperatureUnit: WeatherTemperatureUnit) -> Bool {
+        let cityChanged = settings.city != city
+        var next = settings
+        next.city = city; next.twelveHour = twelveHour; next.temperatureUnit = temperatureUnit
+        next.timeZoneMode = zone == "city" ? .city : zone == "system" ? .system : .custom
+        next.timeZoneIdentifier = next.timeZoneMode == .custom ? zone : nil
+        guard save(next) else { return false }
+        closeSettings()
+        if cityChanged || weather == nil { refreshWeather() }
+        return true
+    }
+    func closeSettings() { showClock = false; showWeather = false }
     private func save(_ next:WorkbenchContextPreferences) -> Bool {
         guard !protected else {error="已有日期与天气设置无法读取，请先检查原文件；当前没有覆盖它。";return false}
         do {
-            _ = try next.validated()
+            let validated = try next.validated()
             try FileManager.default.createDirectory(at:url.deletingLastPathComponent(),withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
-            try ProtectedAtomicFile.write(JSONEncoder().encode(next),to:url)
-            settings=next;error=nil;return true
+            try ProtectedAtomicFile.write(JSONEncoder().encode(validated),to:url)
+            settings=validated;error=nil;return true
         } catch {self.error="设置未能保存：\(error.localizedDescription)";return false}
     }
     func refreshWeather(force:Bool=false) {
@@ -110,14 +157,17 @@ struct WorkbenchContextPreferences:Codable,Equatable {
     func stop() {refreshLoop?.cancel();request?.cancel();refreshLoop=nil;request=nil;visible=false;loadingWeather=false}
 }
 
-struct WorkbenchContextDialogs:View {
-    @ObservedObject var model:WorkbenchContextModel
-    @StateObject private var clockClose = WorkbenchDraftCloseCoordinator()
-    @StateObject private var weatherClose = WorkbenchDraftCloseCoordinator()
-    var body:some View {
-        Color.clear.frame(width:0,height:0)
-            .workbenchModal(isPresented:$model.showClock,onDismiss:clockClose.continueEditing,onRequestDismiss:clockClose.requestClose) {WorkbenchClockDialog(model:model,close:clockClose)}
-            .workbenchModal(isPresented:$model.showWeather,onDismiss:weatherClose.continueEditing,onRequestDismiss:weatherClose.requestClose) {WorkbenchWeatherDialog(model:model,close:weatherClose)}
+struct WorkbenchContextDialogs: View {
+    @ObservedObject var model: WorkbenchContextModel
+    @StateObject private var close = WorkbenchDraftCloseCoordinator()
+    private var isPresented: Binding<Bool> {
+        Binding(get: { model.showClock || model.showWeather }, set: { if !$0 { model.closeSettings() } })
+    }
+    var body: some View {
+        Color.clear.frame(width: 0, height: 0)
+            .workbenchModal(isPresented: isPresented, onDismiss: close.continueEditing, onRequestDismiss: close.requestClose) {
+                WorkbenchWeatherDialog(model: model, close: close)
+            }
     }
 }
 
@@ -141,7 +191,7 @@ struct WorkbenchClockDraft {
     private let savedZone: String
     private let savedTwelveHour: Bool
     init(settings: WorkbenchContextPreferences) {
-        zone = settings.timeZoneIdentifier ?? "system"; twelveHour = settings.twelveHour
+        zone = settings.zoneSelection; twelveHour = settings.twelveHour
         savedZone = zone; savedTwelveHour = twelveHour
     }
     var hasChanges: Bool { zone != savedZone || twelveHour != savedTwelveHour }
@@ -186,36 +236,34 @@ struct WorkbenchDialogFrame<Content:View,Actions:View>:View {
     }
 }
 
-private struct WorkbenchClockDialog:View {
-    @ObservedObject var model:WorkbenchContextModel
-    @ObservedObject var close:WorkbenchDraftCloseCoordinator
-    @State private var draft:WorkbenchClockDraft
-    @Environment(\.workbenchPalette) private var palette
-    init(model:WorkbenchContextModel,close:WorkbenchDraftCloseCoordinator,initialDraft:WorkbenchClockDraft?=nil) {
-        self.model=model;self.close=close;_draft=State(initialValue:initialDraft ?? WorkbenchClockDraft(settings:model.settings))
+private struct WorkbenchClockDialog: View {
+    @ObservedObject var model: WorkbenchContextModel
+    @ObservedObject var close: WorkbenchDraftCloseCoordinator
+    var initialDraft: WorkbenchClockDraft?
+    var body: some View { WorkbenchWeatherDialog(model: model, close: close, initialClockDraft: initialDraft) }
+}
+
+struct WorkbenchLocationDraft {
+    var city: WeatherCity?
+    var zone: String
+    var twelveHour: Bool
+    var temperatureUnit: WeatherTemperatureUnit
+    private let saved: WorkbenchContextPreferences
+    init(settings: WorkbenchContextPreferences) {
+        city = settings.city; zone = settings.zoneSelection; twelveHour = settings.twelveHour
+        temperatureUnit = settings.temperatureUnit; saved = settings
     }
-    var body:some View {
-        WorkbenchDialogFrame(title:"日期与时区",dismiss:requestDismiss) {
-            VStack(alignment:.leading,spacing:16) {
-                VStack(alignment:.leading,spacing:7) {
-                    Text("显示时区").foregroundStyle(palette.secondary)
-                    WBSelect("显示时区",selection:$draft.zone,options:options)
-                }
-                HStack {Text("时间格式").foregroundStyle(palette.secondary);Spacer();WBSelect("时间格式",selection:$draft.twelveHour,options:[(false,"24 小时"),(true,"12 小时")]).frame(width:174)}
-                Text("日期与世界时钟只在首页和日历显示，不占用设备状态页头。提醒的原始日期与通知时间保持各自的时区。").font(.system(size:11)).foregroundStyle(palette.muted).lineSpacing(4)
-                if let error=model.error {Text(error).font(.system(size:11)).foregroundStyle(palette.critical)}
-            }
-        } actions:{Spacer();Button("取消",action:requestDismiss).buttonStyle(WBButtonStyle());Button("保存"){model.saveClock(zone:draft.zone == "system" ? nil:draft.zone,twelveHour:draft.twelveHour)}.buttonStyle(WBButtonStyle(primary:true))}
-        .onChange(of:close.closeRequests){_,_ in requestDismiss()}
-        .workbenchModal(isPresented:$close.confirmingDiscard,onRequestDismiss:close.continueEditing) {
-            WorkbenchDiscardConfirmation(continueEditing:close.continueEditing,discard:{close.discardChanges{model.showClock=false}})
-        }
-        .accessibilityIdentifier("context-clock-dialog")
+    var hasChanges: Bool {
+        city != saved.city || zone != saved.zoneSelection || twelveHour != saved.twelveHour || temperatureUnit != saved.temperatureUnit
     }
-    private func requestDismiss() {close.resolveClose(hasChanges:draft.hasChanges){model.showClock=false}}
-    private var options:[(value:String,title:String)] {
-        let primary=["America/New_York","Asia/Shanghai","Europe/London","Asia/Tokyo","UTC"]
-        return [("system","跟随系统 · "+WorkbenchContextModel.zoneTitle(TimeZone.current.identifier))]+(primary+TimeZone.knownTimeZoneIdentifiers.filter{!primary.contains($0)}).map{($0,WorkbenchContextModel.zoneTitle($0))}
+    var effectiveTimeZoneIdentifier: String {
+        zone == "city" ? city?.timeZoneIdentifier ?? TimeZone.current.identifier : zone == "system" ? TimeZone.current.identifier : zone
+    }
+    func time(_ date: Date) -> String {
+        let formatter = DateFormatter(); formatter.locale = Locale(identifier: "zh_CN")
+        formatter.timeZone = TimeZone(identifier: effectiveTimeZoneIdentifier) ?? .current
+        formatter.dateFormat = twelveHour ? "a h:mm" : "HH:mm"
+        return formatter.string(from: date)
     }
 }
 
@@ -256,7 +304,7 @@ enum WorkbenchCityCatalog {
 struct WorkbenchWeatherDialog:View {
     @ObservedObject var model:WorkbenchContextModel
     @ObservedObject var close:WorkbenchDraftCloseCoordinator
-    @State private var draft:WorkbenchWeatherDraft
+    @State private var draft:WorkbenchLocationDraft
     @State private var query=""
     @State private var results:[WeatherCity]=WorkbenchCityCatalog.matches("")
     @State private var searching=false
@@ -266,13 +314,20 @@ struct WorkbenchWeatherDialog:View {
     @State private var searchTask:Task<Void,Never>?
     @State private var weatherTask:Task<Void,Never>?
     @State private var searchID=UUID()
+    @State private var customZones:[(value:String,title:String)]=[]
     @Environment(\.workbenchPalette) private var palette
-    init(model:WorkbenchContextModel,close:WorkbenchDraftCloseCoordinator,initialDraft:WorkbenchWeatherDraft?=nil) {self.model=model;self.close=close;_draft=State(initialValue:initialDraft ?? WorkbenchWeatherDraft(city:model.settings.city));_preview=State(initialValue:model.weather)}
+    init(model: WorkbenchContextModel, close: WorkbenchDraftCloseCoordinator, initialDraft: WorkbenchWeatherDraft? = nil, initialClockDraft: WorkbenchClockDraft? = nil) {
+        self.model = model; self.close = close
+        var draft = WorkbenchLocationDraft(settings: model.settings)
+        if let initialDraft { draft.city = initialDraft.city }
+        if let initialClockDraft { draft.zone = initialClockDraft.zone; draft.twelveHour = initialClockDraft.twelveHour }
+        _draft = State(initialValue: draft); _preview = State(initialValue: model.weather)
+    }
     private var city:WeatherCity? {draft.city}
     private var cleanQuery:String {query.trimmingCharacters(in:.whitespacesAndNewlines)}
     var body:some View {
-        WorkbenchDialogFrame(title:"天气与城市",dismiss:requestDismiss) {
-            VStack(alignment:.leading,spacing:14) {
+        WorkbenchDialogFrame(title:"城市、天气与时间",dismiss:requestDismiss) {
+            ScrollView { VStack(alignment:.leading,spacing:14) {
                 HStack(spacing:8) {
                     Image(systemName:"magnifyingglass").foregroundStyle(palette.muted)
                     TextField("搜索城市、拼音或英文名称",text:$query).textFieldStyle(.plain).onSubmit {search(immediate:true)}
@@ -283,13 +338,13 @@ struct WorkbenchWeatherDialog:View {
                     .background(palette.soft,in:RoundedRectangle(cornerRadius:8))
                     .overlay(RoundedRectangle(cornerRadius:8).strokeBorder(palette.line,lineWidth:1))
                 VStack(alignment:.leading,spacing:7) {
-                    HStack {Text(cleanQuery.isEmpty ? "常用城市":"搜索结果");Spacer();Text(searching ? "正在查找…":"点击城市即可应用")}.font(.system(size:11)).foregroundStyle(palette.muted)
+                    HStack {Text(cleanQuery.isEmpty ? "常用城市":"搜索结果");Spacer();Text(searching ? "正在查找…":"选择后保存")}.font(.system(size:11)).foregroundStyle(palette.muted)
                     ScrollView {
                         LazyVStack(spacing:2) {
                             ForEach(results) {item in
                                 Button {select(item)} label:{
                                     HStack(spacing:10) {
-                                        Image(systemName:"building.2.crop.circle").font(.system(size:22,weight:.light)).foregroundStyle(palette.secondary).frame(width:28,height:28)
+                                        Image(systemName:"globe").font(.system(size:22,weight:.light)).foregroundStyle(palette.secondary).frame(width:28,height:28)
                                         VStack(alignment:.leading,spacing:3) {Text(item.name).font(.system(size:12));Text([item.administrativeArea,item.country].compactMap{$0}.joined(separator:" · ")).font(.system(size:10)).foregroundStyle(palette.muted)}
                                         Spacer(minLength:6)
                                         if item.id == city?.id {Image(systemName:"checkmark").foregroundStyle(palette.accent)}
@@ -305,7 +360,7 @@ struct WorkbenchWeatherDialog:View {
                                     .frame(maxWidth:.infinity,minHeight:100)
                             }
                         }.padding(.trailing,12).background(WorkbenchOverlayScrollbars())
-                    }.frame(height:176).scrollBounceBehavior(.basedOnSize)
+                    }.frame(height:144).scrollBounceBehavior(.basedOnSize)
                         .accessibilityIdentifier("context-city-results")
                 }
                 if let issue {Text(issue).font(.system(size:11)).foregroundStyle(palette.warning).lineSpacing(4)}
@@ -313,33 +368,73 @@ struct WorkbenchWeatherDialog:View {
                     HStack {Text("当前城市 · "+city.displayName).font(.system(size:11)).foregroundStyle(palette.secondary).lineLimit(2);Spacer();Button("刷新"){load(city,force:true)}.buttonStyle(WBButtonStyle(compact:true))}
                     weatherPreview
                 }
+                Rectangle().fill(palette.line).frame(height:1)
+                timeAndUnits
                 if let error=model.error {Text(error).font(.system(size:11)).foregroundStyle(palette.critical)}
-                HStack {Text("城市独立设置，不改变日历时区。");Spacer();Link("Open-Meteo · GeoNames",destination:URL(string:"https://open-meteo.com/")!)}.font(.system(size:10)).foregroundStyle(palette.muted)
-            }
+                HStack {Text("天气按所选城市查询");Spacer();Link("Open-Meteo · GeoNames",destination:URL(string:"https://open-meteo.com/")!)}.font(.system(size:10)).foregroundStyle(palette.muted)
+            }.padding(.trailing,10).background(WorkbenchOverlayScrollbars()) }.frame(maxHeight:480).scrollBounceBehavior(.basedOnSize)
         } actions:{
-            if city != nil {Button("清除城市"){model.saveCity(nil)}.buttonStyle(WBButtonStyle())}
+            if city != nil {Button("清除城市"){draft.city=nil;preview=nil;weatherTask?.cancel()}.buttonStyle(WBButtonStyle())}
             Spacer();Button("取消",action:requestDismiss).buttonStyle(WBButtonStyle())
-            if draft.hasChanges {Button("保存"){model.saveCity(city)}.buttonStyle(WBButtonStyle(primary:true))}
-            else {Button("完成",action:requestDismiss).buttonStyle(WBButtonStyle(primary:true))}
+            Button("保存"){model.saveContext(city:city,zone:draft.zone,twelveHour:draft.twelveHour,temperatureUnit:draft.temperatureUnit)}.buttonStyle(WBButtonStyle(primary:true))
         }
         .onChange(of:close.closeRequests){_,_ in requestDismiss()}
         .workbenchModal(isPresented:$close.confirmingDiscard,onRequestDismiss:close.continueEditing) {
-            WorkbenchDiscardConfirmation(continueEditing:close.continueEditing,discard:{close.discardChanges{model.showWeather=false}})
+            WorkbenchDiscardConfirmation(continueEditing:close.continueEditing,discard:{close.discardChanges{model.closeSettings()}})
         }
         .onDisappear{searchTask?.cancel();weatherTask?.cancel()}
         .onChange(of:query){_,_ in search(immediate:false)}
-        .onAppear{if let city,preview?.snapshot?.city != city {load(city)}}
+        .onAppear{
+            if customZones.isEmpty {
+                let primary=["America/New_York","Asia/Shanghai","Europe/London","Asia/Tokyo","UTC"]
+                let date=Date()
+                customZones=(primary+TimeZone.knownTimeZoneIdentifiers.filter{!primary.contains($0)}).map{($0,WorkbenchContextModel.zoneTitle($0,at:date))}
+            }
+            if let city,preview?.snapshot?.city != city {load(city)}
+        }
         .accessibilityIdentifier("context-weather-dialog")
+    }
+    private var timeAndUnits: some View {
+        VStack(alignment:.leading,spacing:14) {
+            HStack {
+                Text("温度单位").foregroundStyle(palette.secondary)
+                Spacer()
+                WBSelect("温度单位",selection:$draft.temperatureUnit,options:WeatherTemperatureUnit.allCases.map{($0,$0.title)}).frame(width:174)
+                    .accessibilityIdentifier("context-temperature-unit")
+            }
+            VStack(alignment:.leading,spacing:7) {
+                Text("显示时区").foregroundStyle(palette.secondary)
+                WBSelect("显示时区",selection:$draft.zone,options:zoneOptions)
+                    .accessibilityIdentifier("context-timezone")
+                Text(zoneExplanation).font(.system(size:11)).foregroundStyle(palette.muted).fixedSize(horizontal:false,vertical:true)
+            }
+            HStack {
+                Text("时间格式").foregroundStyle(palette.secondary)
+                Spacer()
+                WBSelect("时间格式",selection:$draft.twelveHour,options:[(false,"24 小时"),(true,"12 小时")]).frame(width:174)
+            }
+            Text("首页与日历使用此显示时区；提醒的原始日期和通知时间保持不变。").font(.system(size:11)).foregroundStyle(palette.muted).fixedSize(horizontal:false,vertical:true)
+        }.font(.system(size:12))
+    }
+    private var zoneOptions: [(value:String,title:String)] {
+        let cityLabel=(city?.timeZoneIdentifier).map { "跟随城市 · "+WorkbenchContextModel.zoneTitle($0) } ?? "跟随城市 · 暂用系统时区"
+        return [("city",cityLabel),("system","跟随系统 · "+WorkbenchContextModel.zoneTitle(TimeZone.current.identifier))]+customZones
+    }
+    private var zoneExplanation: String {
+        if draft.zone == "city" {
+            return city?.timeZoneIdentifier == nil ? "尚未选择城市，当前使用系统时区；选择城市后自动关联，不会按时区猜测天气城市。" : "城市与时间已关联，更换城市时，首页和日历的显示时区一起更新。"
+        }
+        return "已单独指定显示时区；天气仍按所选城市查询，可切回“跟随城市”。"
     }
     @ViewBuilder private var weatherPreview:some View {
         if let snapshot=preview?.snapshot,snapshot.city == city {
             HStack(spacing:14) {
                 Image(systemName:weatherSymbol(snapshot.weatherCode,isDay:snapshot.isDay)).font(.system(size:30,weight:.light)).foregroundStyle(palette.secondary)
-                VStack(alignment:.leading,spacing:4) {Text(weatherTemperature(snapshot.temperatureCelsius)).font(.system(size:27));Text(snapshot.conditionDescription).font(.system(size:11)).foregroundStyle(palette.secondary)}
+                VStack(alignment:.leading,spacing:4) {Text(draft.temperatureUnit.formatted(snapshot.temperatureCelsius)).font(.system(size:27));Text(snapshot.conditionDescription).font(.system(size:11)).foregroundStyle(palette.secondary)}
                 Spacer()
                 VStack(alignment:.trailing,spacing:5) {
-                    if let today=snapshot.dailyForecast?.first {Text("最高 "+weatherTemperature(today.highCelsius)+" · 最低 "+weatherTemperature(today.lowCelsius))}
-                    Text((preview?.freshness == .stale ? "上次天气 · 已过期":"更新于 ")+snapshot.receivedAt.formatted(date:.omitted,time:.shortened))
+                    if let today=snapshot.dailyForecast?.first {Text("最高 "+draft.temperatureUnit.formatted(today.highCelsius)+" · 最低 "+draft.temperatureUnit.formatted(today.lowCelsius))}
+                    Text((preview?.freshness == .stale ? "上次天气 · 已过期":"更新于 ")+draft.time(snapshot.receivedAt))
                 }.font(.system(size:10)).foregroundStyle(palette.muted)
             }.padding(.vertical,8)
         } else {Text(preview?.issue ?? "正在读取天气…").font(.system(size:11)).foregroundStyle(palette.muted).padding(.vertical,8)}
@@ -375,8 +470,8 @@ struct WorkbenchWeatherDialog:View {
             guard !Task.isCancelled,searchID == id else {return};searching=false;searched=true
         }
     }
-    private func requestDismiss() {close.resolveClose(hasChanges:draft.hasChanges){model.showWeather=false}}
-    private func select(_ value:WeatherCity) {if model.saveCity(value) {searchTask?.cancel();weatherTask?.cancel()}}
+    private func requestDismiss() {close.resolveClose(hasChanges:draft.hasChanges){model.closeSettings()}}
+    private func select(_ value:WeatherCity) {draft.city=value;load(value)}
     private func load(_ value:WeatherCity,force:Bool=false) {
         weatherTask?.cancel();preview=nil
         weatherTask=Task {let loaded=await model.service.load(city:value,forceRefresh:force);guard !Task.isCancelled,city == value else {return};preview=loaded}
@@ -396,7 +491,7 @@ struct WorkbenchWeatherDialog:View {
 }
 #endif
 
-func weatherTemperature(_ value:Double?) -> String {value.map{String(format:"%.0f°",$0)} ?? "—"}
+func weatherTemperature(_ value:Double?,unit:WeatherTemperatureUnit = .celsius) -> String {unit.formatted(value)}
 func weatherSymbol(_ code:Int?,isDay:Bool?=true) -> String {
     guard let code else {return "cloud"}
     switch code {case 0,1:return isDay == false ? "moon.stars":"sun.max";case 2:return isDay == false ? "cloud.moon":"cloud.sun";case 3:return "cloud";case 45,48:return "cloud.fog";case 51...67,80...82:return "cloud.rain";case 71...77,85,86:return "cloud.snow";case 95...99:return "cloud.bolt.rain";default:return "cloud"}

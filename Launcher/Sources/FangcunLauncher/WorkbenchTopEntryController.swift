@@ -366,7 +366,7 @@ struct WorkbenchTopEntryInput {
             // A deliberate mini-card action always opens the workbench home.
             self.owner?.workbenchController?.model.navigate(.overview)
             self.owner?.showWorkbenchFromTopEntry(originFrame: self.islandPresentationFrame)
-        }, dismiss: { [weak self] in self?.handleContextChange() }).nativeCheckAccessibility())
+        }).nativeCheckAccessibility())
         islandSurface?.setContent(host)
         model.device.setQuickSummaryVisible(true); model.device.refresh()
         panel.alphaValue = 1; panel.ignoresMouseEvents = !islandContains(input().location)
@@ -397,7 +397,6 @@ private struct WorkbenchTopSummaryView: View {
     @ObservedObject var device: DeviceStatusModel
     let openedAt: Date
     let open: () -> Void
-    let dismiss: () -> Void
     private var snapshot: DeviceSnapshot { device.snapshot }
     private var fresh: Bool { snapshot.performanceSampledAt.map { $0 >= openedAt } ?? false }
     private var palette: ThemePalette { ThemePalette(theme: model.theme, opacity: model.opacity, light: model.light) }
@@ -418,9 +417,6 @@ private struct WorkbenchTopSummaryView: View {
                         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(palette.line, lineWidth: 1))
                 }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 8, drawsSelection: false, showsBorder: false)).keyboardShortcut(.return, modifiers: []).accessibilityLabel("展开完整工作台")
                     .accessibilityIdentifier("mini-open-workbench")
-                Button(action: dismiss) { Image(systemName: "xmark").font(.system(size: 10, weight: .medium)).frame(width: 24, height: 24) }
-                    .buttonStyle(WBIconButtonStyle(size: 24)).foregroundStyle(palette.secondary).accessibilityLabel("关闭快速信息")
-                    .accessibilityIdentifier("mini-close")
             }.frame(height: 30)
             HStack(alignment: .top, spacing: 8) {
                 metric("CPU 使用率", symbol: "cpu", value: DeviceFormat.percent(fresh ? snapshot.cpuPercent : nil),

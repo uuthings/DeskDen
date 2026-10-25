@@ -173,8 +173,8 @@ struct DeviceModuleView: View {
                     DeviceFact(label: "操作系统", value: ProcessInfo.processInfo.operatingSystemVersionString)
                     DeviceFact(label: "系统卷", value: s.disk?.name ?? "暂无读数")
                     DeviceFact(label: "文件系统", value: s.disk?.fileSystem ?? "暂无读数")
-                    DeviceFact(label: "总容量", value: DeviceFormat.bytes(s.disk?.total))
-                    DeviceFact(label: "可用容量", value: DeviceFormat.bytes(s.disk?.available))
+                    DeviceFact(label: "启动卷容量", value: DeviceFormat.storage(s.disk?.total))
+                    DeviceFact(label: "可用容量", value: DeviceFormat.storage(s.disk?.available))
                     DeviceFact(label: "运行时间", value: DeviceFormat.duration(s.uptime))
                 }
             }
@@ -303,21 +303,22 @@ struct DeviceModuleView: View {
             DeviceDetailColumns(minimumCardHeight: 218.0625) {
                 DeviceDetailCard(title: s.disk?.name ?? "启动磁盘", symbol: "internaldrive", identifier: "fc.device.detail.card.storage-usage") {
                     Text("已用空间").font(.system(size: 11)).foregroundStyle(palette.muted)
-                    DeviceReading(value: DeviceFormat.capacity(s.disk?.used), size: 36)
+                    DeviceReading(value: DeviceFormat.storage(s.disk?.used), size: 36)
                     DeviceUsageBar(value: s.disk?.percent, tone: DeviceAppearance.storage(s.disk?.percent, palette: palette))
-                    DeviceFact(label: "可用空间", value: DeviceFormat.capacity(s.disk?.available))
-                    DeviceFact(label: "总容量", value: DeviceFormat.capacity(s.disk?.total))
+                    DeviceFact(label: "可用空间", value: DeviceFormat.storage(s.disk?.available))
+                    DeviceFact(label: "启动卷容量", value: DeviceFormat.storage(s.disk?.total))
                     DeviceFact(label: "已用比例", value: DeviceFormat.percent(s.disk?.percent))
                 }
                 DeviceDetailCard(title: "卷信息", symbol: "externaldrive") {
                     DeviceFact(label: "文件系统", value: s.disk?.fileSystem ?? "暂无读数")
                     DeviceFact(label: "挂载位置", value: "/System/Volumes/Data")
-                    DeviceFact(label: "读取状态", value: s.disk == nil ? "暂无读数" : "可用")
+                    DeviceFact(label: "立即空闲", value: DeviceFormat.storage(s.disk?.immediatelyFree))
+                    DeviceFact(label: "系统可回收估算", value: DeviceFormat.storage(s.disk?.reclaimableEstimate))
                     DeviceFact(label: "实时磁盘速率", value: "↓ \(DeviceFormat.rate(s.disk?.readBytesPerSecond)) / ↑ \(DeviceFormat.rate(s.disk?.writeBytesPerSecond))")
                     ForEach(DeviceVolumes.current, id: \.path) { volume in DeviceFact(label: volume.name, value: "\(volume.format) · \(volume.role)") }
                 }
             }
-            DeviceRuleHelp(text: "容量来自系统可用与总容量。APFS 卷共享容器空间，未扫描文件分类时不推测应用或文稿占用。本页不会自动清理文件。", notice: true).accessibilityIdentifier("device-detail-storage-notice")
+            DeviceRuleHelp(text: "存储按十进制显示（1 GB = 10 亿字节），容量约 30 秒刷新。可用空间优先采用系统含按需可回收空间的估算；无法取得估算时显示立即空闲。已用与比例按同一口径计算。这里是启动卷可用容量，APFS 共享容器空间，不等于硬盘标称容量；可回收估算不代表方寸可删除这些文件。", notice: true).accessibilityIdentifier("device-detail-storage-notice")
         }
     }
     private var processesDetail: some View {
@@ -599,6 +600,7 @@ struct DeviceProcessIcon: View {
 }
 
 enum DeviceFormat {
+    static func storage(_ value: UInt64?) -> String { DeviceStorageCapacity.formatted(value) }
     static func capacity(_ value: UInt64?) -> String {
         guard let value else { return "—" }
         var number = Double(value), unit = 0

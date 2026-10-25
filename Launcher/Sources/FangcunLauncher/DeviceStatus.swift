@@ -20,6 +20,7 @@ struct DeviceDiskSnapshot: Sendable {
     var total: UInt64, used: UInt64, available: UInt64
     var readBytesPerSecond: Double?, writeBytesPerSecond: Double?
     var recordedRead: UInt64 = 0, recordedWrite: UInt64 = 0
+    var immediatelyFree: UInt64? = nil, reclaimableEstimate: UInt64? = nil
     var percent: Double { total > 0 ? Double(used) / Double(total) * 100 : 0 }
 }
 
@@ -473,6 +474,8 @@ private actor DeviceSampler {
     private var previousPerformanceDate: Date?
     private var previousDisk: (date: Date, counters: [UInt64: DeviceNetworkCounter])?
     private var diskRead: UInt64 = 0, diskWrite: UInt64 = 0
+    private var cachedDiskCapacity: DeviceStorageCapacity?
+    private var diskCapacityReadUptime: TimeInterval?
     private var token: UUID?
     private var pressure: DevicePressure = .unknown
     private let timebase: Double = {
@@ -706,11 +709,13 @@ private actor DeviceSampler {
     private func disk(now: Date, maximumGap: TimeInterval) -> DeviceDiskSnapshot? {
         // /System/Volumes/Data is the writable startup data volume on modern macOS.
         let url = URL(fileURLWithPath: "/System/Volumes/Data")
-        guard let values = try? url.resourceValues(forKeys: [.volumeTotalCapacityKey, .volumeAvailableCapacityKey, .volumeNameKey]),
-              let totalValue = values.volumeTotalCapacity, let freeValue = values.volumeAvailableCapacity else { return nil }
+        let uptime = ProcessInfo.processInfo.systemUptime
+        if diskCapacityReadUptime.map({ uptime < $0 || uptime - $0 >= 30 }) ?? true {
+            cachedDiskCapacity = DeviceStorageCapacity.read(at: url); diskCapacityReadUptime = uptime
+        }
+        guard let capacity = cachedDiskCapacity else { return nil }
         var fs = statfs(); let ok = statfs(url.path, &fs) == 0
         let fsName = ok ? withUnsafeBytes(of: fs.f_fstypename) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) } : "—"
-        let total = UInt64(max(0, totalValue)), available = min(total, UInt64(max(0, freeValue)))
         var reading: Double?, writing: Double?
         if let counters = diskCounters() {
             if let previousDisk, counters.keys.sorted() == previousDisk.counters.keys.sorted() {
@@ -726,9 +731,10 @@ private actor DeviceSampler {
             }
             previousDisk = (now, counters)
         } else { previousDisk = nil }
-        return .init(name: values.volumeName ?? "启动磁盘", fileSystem: fsName.uppercased(), total: total, used: total - available,
-                     available: available, readBytesPerSecond: reading, writeBytesPerSecond: writing,
-                     recordedRead: diskRead, recordedWrite: diskWrite)
+        return .init(name: capacity.volumeName ?? "启动卷", fileSystem: fsName.uppercased(), total: capacity.total, used: capacity.used,
+                     available: capacity.available, readBytesPerSecond: reading, writeBytesPerSecond: writing,
+                     recordedRead: diskRead, recordedWrite: diskWrite, immediatelyFree: capacity.immediatelyFree,
+                     reclaimableEstimate: capacity.reclaimableEstimate)
     }
 
     private func diskCounters() -> [UInt64: DeviceNetworkCounter]? {

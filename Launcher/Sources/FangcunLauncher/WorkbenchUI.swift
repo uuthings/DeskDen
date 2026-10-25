@@ -608,7 +608,7 @@ struct ClickablePlainButtonStyle: ButtonStyle {
 /// A choice list opens outside the trigger, not with the selected row covering
 /// it. The same native host serves every WBSelect while retaining popup AX and
 /// model bindings. It never changes the document's width or scroll position.
-@MainActor private final class WBChoicePopup: NSPanel {
+@MainActor final class WBChoicePopup: NSPanel {
     private weak var anchor: WBPopUpButton?
     private let items: [NSMenuItem]
     private let palette: ThemePalette
@@ -630,10 +630,11 @@ struct ClickablePlainButtonStyle: ButtonStyle {
         let height = min(288, CGFloat(items.count) * 28 + 8)
         super.init(contentRect: NSRect(x: 0, y: 0, width: width, height: height), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         isReleasedWhenClosed = false; isOpaque = false; backgroundColor = .clear; hasShadow = true
+        appearance = NSAppearance(named: anchor.interfaceLight ? .aqua : .darkAqua)
         level = .popUpMenu; animationBehavior = .none; hidesOnDeactivate = true
         let surface = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
         surface.wantsLayer = true
-        let material = NSHostingView(rootView: WorkbenchMaterialSurface(kind: .panel, radius: 10)
+        let material = NSHostingView(rootView: WorkbenchMaterialSurface(kind: .panel, radius: 10, behindWindow: true)
             .workbenchThemeEnvironment(theme: anchor.workbenchTheme, opacity: anchor.interfaceOpacity, appearance: anchor.interfaceLight ? .light : .dark))
         material.frame = surface.bounds; material.autoresizingMask = [.width, .height]
         surface.addSubview(material)

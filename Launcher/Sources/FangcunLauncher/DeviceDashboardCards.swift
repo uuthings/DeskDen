@@ -149,7 +149,7 @@ struct DeviceCardContent: View {
                     profileMetric("\(snapshot.physicalCPUCount) 核 CPU", coreComposition)
                         .help(coreExplanation)
                     profileMetric(DeviceFormat.capacity(snapshot.memory?.total), "统一内存")
-                    profileMetric(DeviceFormat.capacity(snapshot.disk?.total), "内置存储")
+                    profileMetric(DeviceFormat.storage(snapshot.disk?.total), "启动卷容量")
                     profileMetric(systemVersion, "操作系统")
                 }.frame(maxHeight: .infinity, alignment: .center)
             } else {
@@ -182,7 +182,7 @@ struct DeviceCardContent: View {
                 DeviceCompactFact(label: "统一内存", value: DeviceFormat.capacity(snapshot.memory?.total))
             }
             if includeSystem != false {
-                DeviceCompactFact(label: "内置存储", value: DeviceFormat.capacity(snapshot.disk?.total))
+                DeviceCompactFact(label: "启动卷容量", value: DeviceFormat.storage(snapshot.disk?.total))
                 DeviceCompactFact(label: "操作系统", value: systemVersion)
                 DeviceCompactFact(label: "显示器", value: NSScreen.main?.localizedName ?? "暂无读数")
             }
@@ -192,8 +192,9 @@ struct DeviceCardContent: View {
         snapshot.performanceCores.flatMap { p in snapshot.efficiencyCores.map { "\(p) 性能核 + \($0) 能效核" } } ?? "核心构成未提供"
     }
     private var coreExplanation: String { "性能核适合编译、渲染等繁重任务；能效核以较低功耗处理日常与后台任务。macOS 会自动分配，不需要手动切换。" }
-    private func capacityReading(label: String, value: UInt64?, total: UInt64?, percent: Double?, size: CGFloat = 28) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+    private func capacityReading(label: String, value: UInt64?, total: UInt64?, percent: Double?, size: CGFloat = 28, storage: Bool = false) -> some View {
+        let format = storage ? DeviceFormat.storage : DeviceFormat.capacity
+        return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Text(label).foregroundStyle(palette.secondary)
                 Spacer(minLength: 0)
@@ -201,8 +202,8 @@ struct DeviceCardContent: View {
             }.font(.system(size: 11)).lineLimit(1).frame(height: 16)
                 .accessibilityElement(children: .contain).accessibilityIdentifier("fc.device.capacity.\(card.id.rawValue).label")
             HStack(alignment: .firstTextBaseline, spacing: 3) {
-                DeviceReading(value: DeviceFormat.capacity(value), size: size)
-                Text("/ \(DeviceFormat.capacity(total))").font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(1)
+                DeviceReading(value: format(value), size: size)
+                Text("/ \(format(total))").font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(1)
             }.frame(height: 32, alignment: .leading)
                 .accessibilityElement(children: .contain).accessibilityIdentifier("fc.device.capacity.\(card.id.rawValue).value")
         }.frame(height: 52, alignment: .topLeading)
@@ -232,16 +233,16 @@ struct DeviceCardContent: View {
             if card.meter == .ring {
                 HStack(spacing: 10) {
                     DeviceUsageRing(value: snapshot.disk?.percent, tone: DeviceAppearance.storage(snapshot.disk?.percent, palette: palette)).frame(width: 36, height: 36)
-                    capacityReading(label: "可用空间", value: snapshot.disk?.available, total: snapshot.disk?.total, percent: snapshot.disk?.percent, size: size.width < 240 ? 22 : 28)
+                    capacityReading(label: "可用空间", value: snapshot.disk?.available, total: snapshot.disk?.total, percent: snapshot.disk?.percent, size: size.width < 240 ? 22 : 28, storage: true)
                 }.frame(height: 52)
                 Color.clear.frame(height: 5)
             } else {
-                capacityReading(label: "可用空间", value: snapshot.disk?.available, total: snapshot.disk?.total, percent: snapshot.disk?.percent)
+                capacityReading(label: "可用空间", value: snapshot.disk?.available, total: snapshot.disk?.total, percent: snapshot.disk?.percent, storage: true)
                 DeviceUsageBar(value: snapshot.disk?.percent, tone: DeviceAppearance.storage(snapshot.disk?.percent, palette: palette))
                     .accessibilityIdentifier("fc.device.capacity.storage.bar")
             }
             VStack(spacing: 6) {
-                DeviceCompactFact(label: "已用空间", value: DeviceFormat.capacity(snapshot.disk?.used)).accessibilityIdentifier("fc.device.capacity.storage.fact.0")
+                DeviceCompactFact(label: "已用空间", value: DeviceFormat.storage(snapshot.disk?.used)).accessibilityIdentifier("fc.device.capacity.storage.fact.0")
                 DeviceCompactFact(label: "宗卷名称", value: snapshot.disk?.name ?? "暂无读数").accessibilityIdentifier("fc.device.capacity.storage.fact.1")
                 DeviceCompactFact(label: "文件系统", value: snapshot.disk?.fileSystem ?? "暂无读数").accessibilityIdentifier("fc.device.capacity.storage.fact.2")
             }
@@ -549,7 +550,7 @@ struct DeviceHistoryChart: View {
     }
 }
 
-// Traffic budgets use decimal bytes. Memory and storage retain their existing binary units.
+// Traffic and storage use decimal bytes; memory retains its separate binary units.
 extension DeviceTrafficDisplay {
     static func adaptive(_ bytes: UInt64?) -> String {
         guard let bytes else { return "—" }

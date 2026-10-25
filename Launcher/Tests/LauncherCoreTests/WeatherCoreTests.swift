@@ -38,6 +38,17 @@ private actor WeatherFailingCache: WeatherCachePersisting {
 
 final class WeatherCoreTests: XCTestCase, @unchecked Sendable {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
+    func testTemperaturePreferenceConvertsOnlyPresentationAndPreservesMissingValues() {
+        XCTAssertEqual(WeatherTemperatureUnit.celsius.formatted(17.3), "17°C")
+        XCTAssertEqual(WeatherTemperatureUnit.fahrenheit.formatted(17.3), "63°F")
+        XCTAssertEqual(WeatherTemperatureUnit.fahrenheit.value(fromCelsius: 0), 32)
+        XCTAssertEqual(WeatherTemperatureUnit.fahrenheit.value(fromCelsius: -40), -40)
+        XCTAssertEqual(WeatherTemperatureUnit.celsius.formatted(-0.1), "0°C")
+        XCTAssertEqual(WeatherTemperatureUnit.celsius.formatted(nil), "—")
+        XCTAssertEqual(WeatherTemperatureUnit.fahrenheit.formatted(.nan), "—")
+        XCTAssertEqual(WeatherTemperatureUnit.fahrenheit.formatted(.infinity), "—")
+    }
+
     private var berlin: WeatherCity { .init(id: "open-meteo:2950159", name: "Berlin", administrativeArea: "Berlin", country: "Germany",
                                            latitude: 52.52437, longitude: 13.41053, timeZoneIdentifier: "Europe/Berlin") }
     func testGeocodingSearchUsesOnlyExplicitQueryAndRetainsDistinctCityIdentity() async throws {

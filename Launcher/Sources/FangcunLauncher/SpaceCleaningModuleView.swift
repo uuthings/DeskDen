@@ -47,7 +47,12 @@ struct SpaceCleaningModuleView: View {
     }
     private var subtitle: String {
         guard let total = model.diskTotal, let available = model.diskAvailable else { return "正在读取存储信息" }
-        return "\(model.diskVolumeName ?? "此 Mac") · \(SpaceCleaningFormat.bytes(available)) 可用 / \(SpaceCleaningFormat.bytes(total))"
+        return "\(model.diskVolumeName ?? "此 Mac") · \(DeviceStorageCapacity.formatted(available)) 可用 / \(DeviceStorageCapacity.formatted(total)) 卷容量"
+    }
+    private var capacityExplanation: String {
+        let free = DeviceStorageCapacity.formatted(model.diskImmediatelyFree)
+        let reclaimable = DeviceStorageCapacity.formatted(model.diskReclaimableEstimate)
+        return "当前用户目录所在卷，按十进制显示（1 GB = 10 亿字节）。立即空闲 \(free)，系统可回收估算 \(reclaimable)。可用空间优先包含系统按需可回收部分，缺少估算时使用立即空闲；不代表方寸可清理容量。"
     }
     private var header: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -71,7 +76,7 @@ struct SpaceCleaningModuleView: View {
                     Button(action: model.showHistory) { Label("清理记录", systemImage: "clock.arrow.circlepath") }
                         .buttonStyle(WBButtonStyle()).disabled(model.isBusy || model.screen == .scope)
                 }
-            }
+            }.help(capacityExplanation)
         }
     }
     @ViewBuilder private func content(width: CGFloat, height: CGFloat) -> some View {

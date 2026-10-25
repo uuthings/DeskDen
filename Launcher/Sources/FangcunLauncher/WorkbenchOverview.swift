@@ -36,32 +36,7 @@ struct WorkbenchOverview:View {
         .onChange(of:context.dateContext){_,_ in selectedDay=nil}
         .accessibilityElement(children:.contain).accessibilityIdentifier("fc.page.home")
     }
-    private var contextHeader:some View {
-        HStack(spacing:14) {
-            Button{context.showWeather=true}label:{
-                HStack(spacing:8) {
-                    Image(systemName:weatherSymbol(context.weather?.snapshot?.weatherCode,isDay:context.weather?.snapshot?.isDay)).font(.system(size:25,weight:.light))
-                    VStack(alignment:.leading,spacing:3) {
-                        Text(weatherTemperature(context.weather?.snapshot?.temperatureCelsius)).font(.system(size:16,weight:.medium))
-                        Text((context.settings.city?.name ?? "选择城市")+(context.weather?.freshness == .stale ? " · 已过期":"")).font(.system(size:11)).foregroundStyle(palette.muted)
-                    }
-                }.contentShape(Rectangle())
-            }.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel("查看天气与城市")
-            TimelineView(.periodic(from:.now,by:1)) {timeline in
-                Button{context.showClock=true}label:{
-                    HStack(spacing:compact ? 8:14) {
-                        Text(context.time(timeline.date,seconds:true)).font(.system(size:compact ? 25:30,weight:.regular)).monospacedDigit()
-                        VStack(alignment:.leading,spacing:3) {
-                            if let date=try? context.dateContext.display(at:timeline.date) {
-                                Text("\(displayCalendar.component(.month,from:timeline.date)) 月 \(displayCalendar.component(.day,from:timeline.date)) 日  "+date.weekdayText).font(.system(size:compact ? 11:12)).foregroundStyle(palette.secondary)
-                            }
-                            HStack(spacing:4){Text(WorkbenchContextModel.zoneTitle(context.dateContext.timeZoneIdentifier,at:timeline.date));Image(systemName:"chevron.down").font(.system(size:9))}.font(.system(size:11)).foregroundStyle(palette.muted)
-                        }
-                    }.padding(.leading,10).frame(minHeight:46).contentShape(Rectangle())
-                }.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel("日期时间与时区")
-            }
-        }
-    }
+    private var contextHeader:some View { WorkbenchHomeContextHeader(context:context,compact:compact) }
     private var healthCard:some View {
         HStack(spacing:expanded ? 32:24) {
             VStack(spacing:7) {
@@ -90,7 +65,7 @@ struct WorkbenchOverview:View {
                 else {HStack(alignment:.firstTextBaseline,spacing:9){Text(s.deviceName).font(.system(size:expanded ? 18:15,weight:.medium)).lineLimit(1);deviceIdentity(s)}}
             }.padding(.bottom,expanded ? 24:14).padding(.top,expanded ? 9:0)
             HStack(alignment:.top,spacing:compact ? 12:18) {
-                metric("存储可用",symbol:"internaldrive",used:s.disk?.available,total:s.disk?.total,percent:s.disk?.percent,note:s.disk.map{"已用 "+DeviceFormat.capacity($0.used)} ?? "等待有效采样",warning:(s.disk?.percent ?? 0)>=80,progressLabel:"存储已用比例"){openDevice(.storage)}
+                metric("存储可用",symbol:"internaldrive",used:s.disk?.available,total:s.disk?.total,percent:s.disk?.percent,note:s.disk.map{"已用 "+DeviceFormat.storage($0.used)} ?? "等待有效采样",warning:(s.disk?.percent ?? 0)>=80,progressLabel:"存储已用比例",storage:true){openDevice(.storage)}
                 metric("内存已用",symbol:"memorychip",used:s.memory?.used,total:s.memory?.total,percent:s.memory?.percent,note:s.memory.map{"压力"+pressureTitle($0.pressure)} ?? "等待有效采样",warning:s.memory?.pressure == .warning || s.memory?.pressure == .critical){openDevice(.memory)}
             }.frame(maxHeight:.infinity,alignment:.top)
             Rectangle().fill(palette.line).frame(height:1).padding(.top,expanded ? 22:15).padding(.bottom,expanded ? 16:12)
@@ -103,14 +78,14 @@ struct WorkbenchOverview:View {
     }
     private func deviceIdentity(_ s:DeviceSnapshot)->some View {Text(s.chipName+" · "+DeviceFormat.capacity(s.memory?.total)).font(.system(size:11)).foregroundStyle(palette.muted).lineLimit(1).minimumScaleFactor(0.8)}
     private var todayTraffic:String {let summary=device.trafficSummary(period:.day,scope:.all);return "今日已记录 "+(summary.coveredSeconds>0 ? DeviceTrafficDisplay.adaptive(summary.totalBytes):"—")}
-    private func metric(_ title:String,symbol:String,used:UInt64?,total:UInt64?,percent:Double?,note:String,warning:Bool,progressLabel:String="内存已用比例",action:@escaping()->Void)->some View {
+    private func metric(_ title:String,symbol:String,used:UInt64?,total:UInt64?,percent:Double?,note:String,warning:Bool,progressLabel:String="内存已用比例",storage:Bool=false,action:@escaping()->Void)->some View {
         Button(action:action) {VStack(alignment:.leading,spacing:0) {
             Label(title,systemImage:symbol).font(.system(size:11)).foregroundStyle(palette.secondary)
-            HStack(alignment:.firstTextBaseline,spacing:3){Text(used.map{String(format:"%.1f",Double($0)/1_073_741_824)} ?? "—").font(.system(size:expanded ? 30:compact ? 23:25,weight:.medium));Text("GB").font(.system(size:11)).foregroundStyle(palette.muted)}.monospacedDigit().padding(.top,7).padding(.bottom,3)
-            Text("共 "+DeviceFormat.capacity(total)).font(.system(size:11)).foregroundStyle(palette.muted)
+            HStack(alignment:.firstTextBaseline,spacing:3){Text(used.map{String(format:"%.1f",Double($0)/(storage ? 1_000_000_000:1_073_741_824))} ?? "—").font(.system(size:expanded ? 30:compact ? 23:25,weight:.medium));Text("GB").font(.system(size:11)).foregroundStyle(palette.muted)}.monospacedDigit().padding(.top,7).padding(.bottom,3)
+            Text("共 "+(storage ? DeviceFormat.storage(total):DeviceFormat.capacity(total))).font(.system(size:11)).foregroundStyle(palette.muted)
             WBProgress(value:(percent ?? 0)/100,color:warning ? palette.warning:nil).accessibilityLabel(progressLabel).padding(.top,8).padding(.bottom,6)
             Text(note).font(.system(size:11)).foregroundStyle(palette.secondary).lineLimit(1).minimumScaleFactor(0.8)
-        }.frame(maxWidth:.infinity,alignment:.leading).contentShape(Rectangle())}.buttonStyle(ClickablePlainButtonStyle()).accessibilityIdentifier(title == "存储可用" ? "home-storage-readout" : "home-memory-readout").accessibilityLabel(title+"，"+DeviceFormat.capacity(used)+"，"+note)
+        }.frame(maxWidth:.infinity,alignment:.leading).contentShape(Rectangle())}.buttonStyle(ClickablePlainButtonStyle()).accessibilityIdentifier(title == "存储可用" ? "home-storage-readout" : "home-memory-readout").accessibilityLabel(title+"，"+(storage ? DeviceFormat.storage(used):DeviceFormat.capacity(used))+"，"+note)
     }
     private var agenda:some View {
         VStack(alignment:.leading,spacing:0) {
@@ -191,5 +166,56 @@ struct WorkbenchOverview:View {
     }
     private func pressureTitle(_ pressure:DevicePressure)->String {
         switch pressure {case .normal:"正常";case .warning:"偏高";case .critical:"很高";case .unknown:"未知"}
+    }
+}
+
+/// The actual homepage context area is also mountable in isolated appearance checks.
+struct WorkbenchHomeContextHeader: View {
+    @ObservedObject var context: WorkbenchContextModel
+    var compact = false
+    @Environment(\.workbenchPalette) private var palette
+    private var displayCalendar: Calendar { context.dateContext.calendar }
+    var body:some View {
+        ViewThatFits(in:.horizontal) {
+            HStack(spacing:14) { weatherContextButton; clockContextButton }.fixedSize(horizontal:true,vertical:false)
+            VStack(alignment:.trailing,spacing:8) { weatherContextButton; clockContextButton }
+        }
+    }
+    private var weatherContextButton:some View {
+        Button{context.showWeather=true}label:{
+            HStack(spacing:10) {
+                Image(systemName:context.settings.city == nil ? "globe":weatherSymbol(context.weather?.snapshot?.weatherCode,isDay:context.weather?.snapshot?.isDay))
+                    .font(.system(size:compact ? 30:34,weight:.light)).foregroundStyle(palette.secondary)
+                VStack(alignment:.leading,spacing:4) {
+                    HStack(alignment:.firstTextBaseline,spacing:8) {
+                        Text(context.temperature(context.weather?.snapshot?.temperatureCelsius))
+                            .font(.system(size:compact ? 27:30,weight:.medium)).monospacedDigit()
+                            .accessibilityIdentifier("home-weather-temperature")
+                        Text(context.weatherStatusTitle).font(.system(size:12,weight:.medium)).foregroundStyle(palette.secondary)
+                            .lineLimit(1).accessibilityIdentifier("home-weather-condition")
+                    }
+                    HStack(spacing:4) {
+                        Text((context.settings.city?.name ?? "选择城市")+(context.weather?.freshness == .stale ? " · 上次天气已过期":""))
+                        Image(systemName:"chevron.down").font(.system(size:9))
+                    }.font(.system(size:11)).foregroundStyle(palette.muted)
+                }
+            }.frame(minHeight:52).contentShape(Rectangle())
+        }.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel("城市、天气与时间，"+context.weatherStatusTitle+"，"+context.temperature(context.weather?.snapshot?.temperatureCelsius))
+            .accessibilityIdentifier("home-weather-settings")
+    }
+    private var clockContextButton:some View {
+        TimelineView(.periodic(from:.now,by:1)) {timeline in
+            Button{context.showClock=true}label:{
+                HStack(spacing:compact ? 8:14) {
+                    Text(context.time(timeline.date,seconds:true)).font(.system(size:compact ? 25:30,weight:.regular)).monospacedDigit()
+                    VStack(alignment:.leading,spacing:3) {
+                        if let date=try? context.dateContext.display(at:timeline.date) {
+                            Text("\(displayCalendar.component(.month,from:timeline.date)) 月 \(displayCalendar.component(.day,from:timeline.date)) 日  "+date.weekdayText).font(.system(size:compact ? 11:12)).foregroundStyle(palette.secondary)
+                        }
+                        HStack(spacing:4){Text(WorkbenchContextModel.zoneTitle(context.dateContext.timeZoneIdentifier,at:timeline.date));Image(systemName:"chevron.down").font(.system(size:9))}.font(.system(size:11)).foregroundStyle(palette.muted)
+                    }
+                }.padding(.leading,10).frame(minHeight:46).contentShape(Rectangle())
+            }.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel("城市、天气与时间")
+        }
     }
 }

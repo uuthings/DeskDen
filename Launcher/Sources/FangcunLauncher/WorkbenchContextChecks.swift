@@ -64,7 +64,7 @@ import LauncherCore
             let loaded = await wait { !model.loadingWeather && model.weather?.snapshot?.city == berlin }
             check(loaded && model.weather?.isCurrent == true, "manual city receives an actual injected provider reading")
             check(model.dateContext.timeZoneIdentifier == "Asia/Shanghai" && model.settings.city?.timeZoneIdentifier == "Europe/Berlin",
-                  "weather city remains independent from the display time zone")
+                  "an explicit custom display zone remains independent when the weather city changes")
             let beforePreview = try Data(contentsOf: url), oldSettings = model.settings
             let preview = await model.service.load(city: tokyo)
             model.showWeather = true; model.showWeather = false
@@ -80,6 +80,66 @@ import LauncherCore
             check(cleared && model.weather?.snapshot == nil && model.dateContext.timeZoneIdentifier == "Asia/Shanghai",
                   "cleared city removes weather without changing the clock")
 
+            let linkedDirectory = root.appendingPathComponent("linked-city")
+            let linked = WorkbenchContextModel(dataDirectory: linkedDirectory, provider: provider)
+            defer { linked.stop() }
+            check(linked.settings.timeZoneMode == .city && linked.dateContext.timeZoneIdentifier == TimeZone.current.identifier && linked.settings.city == nil,
+                  "new context follows the selected city and uses system timezone until a real city is chosen")
+            linked.showClock = true; linked.showWeather = true
+            check(linked.saveContext(city: berlin, zone: "city", twelveHour: true, temperatureUnit: .fahrenheit) &&
+                  !linked.showClock && !linked.showWeather && linked.dateContext.timeZoneIdentifier == "Europe/Berlin" && linked.temperature(17) == "63°F",
+                  "unified save applies city timezone, hour format and explicit Fahrenheit presentation atomically")
+            let linkedLoaded = await wait { !linked.loadingWeather && linked.weather?.snapshot?.city == berlin }
+            check(linkedLoaded && linked.weather?.snapshot?.temperatureCelsius == 17 && linked.weatherStatusTitle == "局部多云",
+                  "weather presentation exposes the observed condition and leaves stored Celsius readings unchanged")
+            let unitDraft = WorkbenchLocationDraft(settings: linked.settings)
+            var changedDraft = unitDraft; changedDraft.temperatureUnit = .celsius
+            check(!unitDraft.hasChanges && changedDraft.hasChanges && linked.temperatureUnit == .fahrenheit,
+                  "temperature changes remain a protected unsaved draft until the combined form is saved")
+            var previewClock = unitDraft
+            previewClock.twelveHour = false
+            let previewInstant = Date(timeIntervalSince1970: 1_767_225_900)
+            check(previewClock.time(previewInstant) == "01:05", "weather update time follows the draft city timezone and 24-hour format before save")
+            previewClock.zone = "America/New_York"; previewClock.twelveHour = true
+            check(previewClock.time(previewInstant).contains("下午") && previewClock.time(previewInstant).contains("7:05"),
+                  "weather update time respects an unsaved custom timezone and 12-hour format")
+            previewClock.zone = "system"
+            check(previewClock.effectiveTimeZoneIdentifier == TimeZone.current.identifier,
+                  "weather preview explicitly follows system timezone when selected in the draft")
+            check(linked.saveCity(tokyo) && linked.dateContext.timeZoneIdentifier == "Asia/Tokyo",
+                  "changing city updates the default linked display timezone")
+            check(linked.saveContext(city: nil, zone: "city", twelveHour: false, temperatureUnit: .celsius) &&
+                  linked.settings.city == nil && linked.dateContext.timeZoneIdentifier == TimeZone.current.identifier,
+                  "clearing a linked city falls back to system without inventing another weather location")
+            var invalidCity = berlin; invalidCity.timeZoneIdentifier = "Invalid/Nowhere"
+            check(!linked.saveContext(city: invalidCity, zone: "city", twelveHour: false, temperatureUnit: .celsius) && linked.settings.city == nil,
+                  "a city without valid supplied timezone is rejected rather than assigned a guessed clock")
+            check(linked.saveContext(city: berlin, zone: "system", twelveHour: false, temperatureUnit: .celsius) &&
+                  linked.settings.timeZoneMode == .system && linked.dateContext.timeZoneIdentifier == TimeZone.current.identifier,
+                  "explicit system timezone remains available in the merged settings")
+            let linkedURL = linkedDirectory.appendingPathComponent("context.json")
+            let linkedBefore = try Data(contentsOf: linkedURL), linkedSettings = linked.settings
+            check(!linked.saveContext(city: tokyo, zone: "Invalid/Nowhere", twelveHour: true, temperatureUnit: .fahrenheit) &&
+                  linked.settings == linkedSettings && (try? Data(contentsOf: linkedURL)) == linkedBefore,
+                  "invalid combined settings preserve all saved city, clock and temperature fields")
+            let linkedReload = WorkbenchContextModel(dataDirectory: linkedDirectory, provider: provider)
+            check(linkedReload.settings == linkedSettings, "temperature and timezone-link preferences survive a separate model reload")
+            linkedReload.stop()
+            for (name, legacy, expectedMode) in [
+                ("legacy-explicit", #"{"schema":1,"twelveHour":true,"timeZoneIdentifier":"UTC"}"#, WorkbenchContextTimeZoneMode.custom),
+                ("legacy-default", #"{"schema":1,"twelveHour":false}"#, WorkbenchContextTimeZoneMode.city)
+            ] {
+                let legacyDirectory = root.appendingPathComponent(name)
+                try FileManager.default.createDirectory(at: legacyDirectory, withIntermediateDirectories: true)
+                let legacyURL = legacyDirectory.appendingPathComponent("context.json"), legacyData = Data(legacy.utf8)
+                try legacyData.write(to: legacyURL)
+                let migrated = WorkbenchContextModel(dataDirectory: legacyDirectory, provider: provider)
+                check(migrated.error == nil && migrated.settings.schema == 2 && migrated.settings.timeZoneMode == expectedMode &&
+                      migrated.temperatureUnit == .celsius && (try? Data(contentsOf: legacyURL)) == legacyData,
+                      "\(name) migrates in memory, preserves explicit timezone, defaults Celsius and leaves original bytes until save")
+                migrated.stop()
+            }
+
             // A failing destination preserves both in-memory settings and the last valid bytes.
             let oldDirectory = root.appendingPathComponent("preferences-backup")
             let beforeFailure = try Data(contentsOf: url), beforeSettings = model.settings
@@ -92,7 +152,7 @@ import LauncherCore
             try FileManager.default.removeItem(at: directory)
             try FileManager.default.moveItem(at: oldDirectory, to: directory)
 
-            for (name, data) in [("malformed", Data("{broken".utf8)), ("unsupported", Data(#"{"schema":2,"twelveHour":false}"#.utf8)),
+            for (name, data) in [("malformed", Data("{broken".utf8)), ("unsupported", Data(#"{"schema":3,"twelveHour":false}"#.utf8)),
                                  ("invalid-zone", Data(#"{"schema":1,"twelveHour":false,"timeZoneIdentifier":"Missing/Nowhere"}"#.utf8))] {
                 let badDirectory = root.appendingPathComponent(name), badURL = badDirectory.appendingPathComponent("context.json")
                 try FileManager.default.createDirectory(at: badDirectory, withIntermediateDirectories: true)

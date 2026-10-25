@@ -3,6 +3,24 @@ import Foundation
 import FoundationNetworking
 #endif
 
+/// Weather sources and caches retain Celsius; this preference changes display only.
+public enum WeatherTemperatureUnit: String, Codable, CaseIterable, Sendable {
+    case celsius, fahrenheit
+    public var symbol: String { self == .celsius ? "°C" : "°F" }
+    public var title: String { self == .celsius ? "摄氏度 · °C" : "华氏度 · °F" }
+    public func value(fromCelsius value: Double?) -> Double? {
+        guard let value, value.isFinite else { return nil }
+        let converted = self == .celsius ? value : value * 9 / 5 + 32
+        return converted.isFinite ? converted : nil
+    }
+    public func formatted(_ celsius: Double?) -> String {
+        guard let value = value(fromCelsius: celsius) else { return "—" }
+        // Avoid a negative zero for temperatures just below freezing.
+        let rounded = value.rounded()
+        return String(format: "%.0f", rounded == 0 ? 0 : rounded) + symbol
+    }
+}
+
 public struct WeatherCity: Identifiable, Codable, Equatable, Hashable, Sendable {
     public var id: String
     public var name: String
