@@ -101,9 +101,11 @@ struct SpaceCleaningModuleView: View {
     private func home(width: CGFloat, height: CGFloat) -> some View {
         let compact = height < 600
         let targetHeight = min(560, max(395, height - 135))
-        let heroHeight = compact ? 152.0 : min(246, max(184, (targetHeight - 40) * 0.48))
+        let heroHeight = model.scanMode == .largeFiles ? 120.0 : compact ? 152.0 : min(246, max(184, (targetHeight - 40) * 0.48))
         return SpaceCleaningSurface(fillHeight: false) {
-            VStack(alignment: .leading, spacing: compact ? 16 : 24) {
+            VStack(alignment: .leading, spacing: 16) {
+                ScrollView {
+                VStack(alignment: .leading, spacing: compact ? 16 : 24) {
                 HStack(alignment: .center, spacing: 16) {
                     VStack(alignment: .leading, spacing: 0) {
                         Text("看清空间，自在整理").font(.system(size: 11)).foregroundStyle(palette.muted)
@@ -114,7 +116,7 @@ struct SpaceCleaningModuleView: View {
                         }.font(.system(size: width < 700 ? 24 : 28, weight: .medium))
                             .fixedSize(horizontal: true, vertical: true)
                             .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-home-heading")
-                        Text("可重建缓存会为你选好，其余文件由你选择。")
+                        Text(model.scanMode == .largeFiles ? "按大小查找文件，核对用途后再选择。" : "可重建缓存会为你选好，其余文件由你选择。")
                             .font(.system(size: 12)).foregroundStyle(palette.muted).lineSpacing(5)
                             .padding(.top, compact ? 16 : 20)
                         if !editingScope && !model.items.isEmpty && !model.requiresRescan {
@@ -125,6 +127,8 @@ struct SpaceCleaningModuleView: View {
                     SpaceCleaningAperture(active: model.animationActive)
                         .frame(width: width * 0.43, height: heroHeight)
                 }
+                scanModeControls
+                if model.scanMode == .largeFiles { largeFileControls }
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(spacing: 14) {
                         VStack(alignment: .leading, spacing: 5) {
@@ -150,7 +154,8 @@ struct SpaceCleaningModuleView: View {
                     }
                 }.accessibilityElement(children: .contain)
                     .accessibilityIdentifier(editingScope ? "space-cleaning-scope-editor" : "space-cleaning-scope-options")
-                Spacer(minLength: 0)
+                }.padding(.trailing, 4)
+                }.scrollBounceBehavior(.basedOnSize).id(model.scanMode)
                 HStack(spacing: 10) {
                     Text(displayedScope == .global ? "未获权限的位置会在结果中说明" : "\(displayedLocations.count) 个位置 · 可在上方添加或移除")
                         .font(.system(size: 11)).foregroundStyle(palette.muted)
@@ -166,12 +171,65 @@ struct SpaceCleaningModuleView: View {
                         model.startScan()
                     } label: { Label("开始扫描", systemImage: "viewfinder") }
                         .buttonStyle(WBButtonStyle(primary: true))
-                        .disabled(model.isBusy || (displayedScope == .custom && displayedLocations.isEmpty))
+                        .disabled(model.isBusy || model.largeFileRangeError != nil || (displayedScope == .custom && displayedLocations.isEmpty))
                         .accessibilityIdentifier("space-cleaning-start")
                 }.accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-home-actions")
-            }.padding(compact ? 14 : 20).frame(minHeight: targetHeight)
-        }.fixedSize(horizontal: false, vertical: true)
+            }.padding(compact ? 14 : 20).frame(height: targetHeight)
+        }
             .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-home-surface")
+    }
+    private var scanModeControls: some View {
+        HStack(spacing: 12) {
+            Text("扫描方式").font(.system(size: 13, weight: .medium))
+            Spacer(minLength: 0)
+            HStack(spacing: 2) {
+                ForEach(SpaceCleaningScanMode.allCases, id: \.self) { mode in
+                    Button { model.selectScanMode(mode) } label: {
+                        Text(mode == .cleanup ? "普通清理" : "大文件").font(.system(size: 12)).padding(.horizontal, 16).frame(height: 28)
+                    }.buttonStyle(WBSelectableButtonStyle(selected: model.scanMode == mode, cornerRadius: 6))
+                        .accessibilityIdentifier("space-cleaning-mode-" + mode.rawValue)
+                        .accessibilityValue(model.scanMode == mode ? "已选择" : "未选择")
+                }
+            }.padding(2).background(RoundedRectangle(cornerRadius: 8).fill(palette.soft))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.line))
+        }.disabled(model.isBusy || editingScope)
+    }
+    private var largeFileControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                ForEach(["100", "500"], id: \.self) { value in
+                    Button("≥ " + value + " MB") { model.setLargeFilePreset(value, unit: .mb) }.buttonStyle(WBButtonStyle(compact: true))
+                }
+                Button("≥ 1 GB") { model.setLargeFilePreset("1", unit: .gb) }.buttonStyle(WBButtonStyle(compact: true))
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 8) {
+                Text("大小范围").font(.system(size: 11)).foregroundStyle(palette.secondary)
+                sizeField("最小大小", value: $model.minimumFileSize)
+                    .accessibilityIdentifier("space-cleaning-minimum-size")
+                Text("至").font(.system(size: 11)).foregroundStyle(palette.muted)
+                sizeField("不限", value: $model.maximumFileSize).accessibilityLabel("最大文件大小，留空表示不限")
+                    .accessibilityIdentifier("space-cleaning-maximum-size")
+                WBSelect("文件大小单位", selection: $model.fileSizeUnit,
+                         options: CleaningFileSizeUnit.allCases.map { (value: $0, title: $0.rawValue) })
+                    .frame(width: 76, height: 32)
+                Spacer(minLength: 0)
+            }.controlSize(.regular).frame(minHeight: 32)
+            Text(model.largeFileRangeError ?? "按文件大小筛选；开发环境不展开。大小与磁盘占用分别显示，文件较大不代表可以删除。")
+                .font(.system(size: 11)).foregroundStyle(model.largeFileRangeError == nil ? palette.muted : palette.warning)
+                .fixedSize(horizontal: false, vertical: true)
+        }.disabled(model.isBusy || editingScope)
+            .onChange(of: model.minimumFileSize) { _, _ in model.scanSettingsChanged() }
+            .onChange(of: model.maximumFileSize) { _, _ in model.scanSettingsChanged() }
+            .onChange(of: model.fileSizeUnit) { _, _ in model.scanSettingsChanged() }
+            .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-large-file-options")
+    }
+    private func sizeField(_ title: String, value: Binding<String>) -> some View {
+        TextField(title, text: value).textFieldStyle(.plain).font(.system(size: 12)).monospacedDigit()
+            .padding(.horizontal, 10).frame(width: 90, height: 32)
+            .background(WorkbenchMaterialSurface(kind: .control, radius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(palette.controlBorder, lineWidth: 1))
+            .accessibilityLabel(title)
     }
     private func globalLocations(compact: Bool) -> some View {
         let locations: [(String, String, String)] = [

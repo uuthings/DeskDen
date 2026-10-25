@@ -18,6 +18,85 @@ import LauncherCore
         do {
             try FileManager.default.createDirectory(at: rawRoot, withIntermediateDirectories: true)
             guard let root = SpaceCleaningScanner.canonicalURL(rawRoot) else { throw CheckError.missing }
+            let largeFixture = try fixture(root.appendingPathComponent("large-file-policy"), names: ["large.data", "small.data"])
+            try Data(repeating: 1, count: 200).write(to: largeFixture.home.appendingPathComponent("Downloads/large.data"))
+            let largeCache = largeFixture.home.appendingPathComponent(".npm/_cacache/large.cache")
+            let dependency = largeFixture.home.appendingPathComponent("Developer/Project/node_modules/library/index.js")
+            for url in [largeCache, dependency] {
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data(repeating: 1, count: 150).write(to: url)
+            }
+            let largeMover = SpaceCleaningCheckMover(root: largeFixture.home, trash: largeFixture.trash); movers.append(largeMover)
+            let largeModel = SpaceCleaningModel(dataDirectory: largeFixture.data, homeDirectory: largeFixture.home, mover: largeMover); models.append(largeModel)
+            largeModel.selectScanMode(.largeFiles)
+            largeModel.minimumFileSize = "0.0001"; largeModel.maximumFileSize = "0.0002"; largeModel.scanSettingsChanged()
+            largeModel.startScan(); await largeModel.waitUntilIdle()
+            check(largeModel.resultTab == .reviewable && largeModel.reviewableItems.count == 2 && largeModel.selectedIDs.isEmpty &&
+                  largeModel.automaticallySelectedIDs.isEmpty && largeModel.recommendedIDs.isEmpty && largeMover.moveCount == 0,
+                  "large-file mode filters early and never preselects even a recognized cache")
+            check(largeModel.visibleItems.map(\.bytes) == [200, 150] && largeModel.items.contains { $0.kind == .developmentEnvironment && !$0.isSelectable } &&
+                  !largeModel.items.contains { $0.url == dependency }, "large-file results sort by logical size and exclude protected dependency contents")
+            guard let protectedDirectory = largeModel.items.first(where: { $0.kind == .developmentEnvironment }) else { throw CheckError.missing }
+            let itemIDsBeforeMeasurement = largeModel.items.map(\.id)
+            largeModel.measureDirectorySize(protectedDirectory.id); await largeModel.waitUntilIdle()
+            check(largeModel.directorySizes[protectedDirectory.id]?.complete == true && largeModel.directorySizes[protectedDirectory.id]?.logicalBytes == 150 &&
+                  largeModel.items.map(\.id) == itemIDsBeforeMeasurement && largeModel.selectedIDs.isEmpty &&
+                  largeModel.items.first(where: { $0.id == protectedDirectory.id })?.isSelectable == false,
+                  "explicit directory size inquiry reports capacity without adding dependency files or removing protection")
+            largeModel.measureDirectorySize(protectedDirectory.id); largeModel.cancelDirectorySize(); await largeModel.waitUntilIdle()
+            check(largeModel.directorySizes[protectedDirectory.id]?.cancelled == true && largeModel.directorySizes[protectedDirectory.id]?.complete == false &&
+                  largeModel.measuringDirectoryID == nil && !largeModel.isBusy, "directory size inquiry can be cancelled without changing scan candidates")
+            largeModel.selectRecommended()
+            check(largeModel.selectedIDs.isEmpty, "recommendation action cannot preselect large-file results")
+            largeModel.toggleVisibleSelection()
+            check(largeModel.selectedItems.count == 2 && largeModel.selectedItems.allSatisfy { $0.sizeIsComplete }, "manual large-file selection excludes protected boundaries")
+            let largeReload = SpaceCleaningModel(dataDirectory: largeFixture.data, homeDirectory: largeFixture.home, mover: largeMover); models.append(largeReload)
+            check(largeReload.scanMode == .largeFiles && largeReload.minimumFileSize == "0.0001" && largeReload.maximumFileSize == "0.0002" &&
+                  largeReload.fileSizeUnit == .mb && largeReload.items.isEmpty && !largeReload.isBusy, "large-file range preferences restore without scanning")
+            largeReload.maximumFileSize = "0.00001"; largeReload.startScan()
+            check(largeReload.largeFileRangeError != nil && !largeReload.isBusy && largeReload.items.isEmpty, "reversed file-size ranges block scanning")
+            for invalid in ["0", "-1", "nan", "99999999999999999999999999"] {
+                largeReload.minimumFileSize = invalid
+                check(largeReload.largeFileRangeError != nil, "invalid or overflowing file-size input is rejected")
+            }
+            largeReload.setLargeFilePreset("1", unit: .gb)
+            check(largeReload.largeFileRangeError == nil && largeReload.maximumFileSize.isEmpty && largeReload.fileSizeUnit == .gb,
+                  "large-file preset resets the optional upper limit and selects its unit")
+            let sparseFixture = try fixture(root.appendingPathComponent("sparse-display"), names: [])
+            let sparseURL = sparseFixture.home.appendingPathComponent("Downloads/sparse.data")
+            try Data().write(to: sparseURL)
+            let sparseHandle = try FileHandle(forWritingTo: sparseURL)
+            try sparseHandle.truncate(atOffset: 1_048_576); try sparseHandle.close()
+            guard let sparseIdentity = SpaceCleaningScanner.captureIdentity(at: sparseURL) else { throw CheckError.missing }
+            let sparseMover = SpaceCleaningCheckMover(root: sparseFixture.home, trash: sparseFixture.trash); movers.append(sparseMover)
+            let sparseModel = SpaceCleaningModel(dataDirectory: sparseFixture.data, homeDirectory: sparseFixture.home, mover: sparseMover); models.append(sparseModel)
+            sparseModel.selectScanMode(.largeFiles); sparseModel.setLargeFilePreset("1", unit: .mb)
+            sparseModel.startScan(); await sparseModel.waitUntilIdle(); sparseModel.toggleVisibleSelection()
+            check(sparseModel.selectedBytes == 1_048_576 && sparseModel.selectedAllocatedBytes == sparseIdentity.allocatedBytes &&
+                  sparseModel.selectedAllocatedBytes < sparseModel.selectedBytes, "sparse-file selection distinguishes logical size from disk allocation")
+            sparseModel.requestCleanup(); await sparseModel.waitUntilIdle()
+            check(sparseModel.currentBatch?.bytes == 1_048_576 && sparseModel.currentBatch?.successfulAllocatedBytes == sparseIdentity.allocatedBytes &&
+                  sparseModel.currentBatch?.items.first?.state == .trashed, "sparse-file completion uses recorded disk allocation rather than logical length")
+            let sparseReload = SpaceCleaningModel(dataDirectory: sparseFixture.data, homeDirectory: sparseFixture.home, mover: sparseMover); models.append(sparseReload)
+            await sparseReload.waitUntilIdle()
+            check(sparseReload.batches.first?.allocatedBytes == sparseIdentity.allocatedBytes && sparseReload.batches.first?.items.first?.bytes == 1_048_576 &&
+                  sparseReload.batches.first?.items.first?.allocatedBytes == sparseIdentity.allocatedBytes, "sparse-file history preserves both size measures after reload")
+            let aliasFixture = try fixture(root.appendingPathComponent("scope-alias-policy"), names: [])
+            let shared = aliasFixture.home.appendingPathComponent("Downloads/library/subdirectory")
+            let alias = aliasFixture.home.appendingPathComponent("Developer/Project/node_modules")
+            try FileManager.default.createDirectory(at: shared, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: alias.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("protected through selected alias".utf8).write(to: shared.appendingPathComponent("keep.js"))
+            try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: aliasFixture.home.appendingPathComponent("Downloads"))
+            let aliasMover = SpaceCleaningCheckMover(root: aliasFixture.home, trash: aliasFixture.trash); movers.append(aliasMover)
+            let aliasModel = SpaceCleaningModel(dataDirectory: aliasFixture.data, homeDirectory: aliasFixture.home, mover: aliasMover); models.append(aliasModel)
+            aliasModel.editScope(custom: true); aliasModel.addDraftDirectories([alias.appendingPathComponent("library/subdirectory")]); aliasModel.applyScope()
+            aliasModel.startScan(); await aliasModel.waitUntilIdle()
+            check(aliasModel.items.isEmpty && !aliasModel.coverageIssues.isEmpty, "a selected dependency-link ancestor cannot expose its physical target as cleanup files")
+            let aliasReload = SpaceCleaningModel(dataDirectory: aliasFixture.data, homeDirectory: aliasFixture.home, mover: aliasMover); models.append(aliasReload)
+            aliasReload.startScan(); await aliasReload.waitUntilIdle()
+            check(aliasReload.scopeChoice == .custom && aliasReload.customDirectories.first?.path.contains("/node_modules/") == true &&
+                  aliasReload.items.isEmpty && !aliasReload.coverageIssues.isEmpty, "saved scope bookmarks preserve the original dependency boundary after reload")
             let scopeFixture = try fixture(root.appendingPathComponent("scope-policy"), names: ["manual.data", "installer.pkg"])
             let cacheFile = scopeFixture.home.appendingPathComponent("Library/Caches/pip/http-v2/cache")
             let testFile = scopeFixture.home.appendingPathComponent("Developer/Builds/OnlyTest.app/Contents/MacOS/OnlyTest")

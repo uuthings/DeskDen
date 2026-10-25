@@ -16,6 +16,71 @@ private struct SpaceCleaningFixtureMover: SpaceCleaningFileOperating {
 }
 
 final class SpaceCleaningTransactionTests: XCTestCase {
+    func testLegacyAggregateCandidateCannotDeleteNewDependencyWithEmptyCallerPolicy() throws {
+        try fixture(directory: true) { fixture in
+            let dependency = fixture.item.appendingPathComponent("Contents/nested/node_modules/library.js")
+            try FileManager.default.createDirectory(at: dependency.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("dependency".utf8).write(to: dependency)
+            let result = SpaceCleaningTransaction.execute(candidate: fixture.candidate, operationID: UUID(), method: .permanent,
+                permanentConfirmed: true, mover: fixture.mover, validatePolicy: { _ in nil }, persist: { _ in })
+            XCTAssertEqual(result.state, .skipped)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: dependency.path))
+        }
+    }
+
+    func testLegacyAggregateReceiptsProtectDescendantsAndRemainRestorable() throws {
+        for (app, relative) in [(false, "Contents/nested/node_modules/library.js"), (false, "Contents/nested/.git"),
+                                (false, "Contents/nested/custom-environment/pyvenv.cfg"), (true, "Contents/Resources/node_modules/library.js")] {
+            try fixture(directory: !app, app: app) { fixture in
+                let dependency = fixture.item.appendingPathComponent(relative)
+                try FileManager.default.createDirectory(at: dependency.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data("legacy dependency fixture".utf8).write(to: dependency)
+                let identity = try XCTUnwrap(SpaceCleaningScanner.captureIdentity(at: fixture.item))
+                let snapshot = try SpaceCleaningFilesystem.snapshot(fixture.item, expected: identity, allowRename: false, isCancelled: { false })
+                // Construct a schema-1 historical receipt with a real complete
+                // proof. Current cleanup rules are never disabled to create it.
+                var candidate = fixture.candidate
+                candidate.identity = identity; candidate.logicalBytes = snapshot.proof.logicalBytes
+                let destination = fixture.trash.appendingPathComponent(fixture.item.lastPathComponent)
+                try FileManager.default.moveItem(at: fixture.item, to: destination)
+                var record = SpaceCleaningRecord(operationID: UUID(), candidate: candidate, method: .trash)
+                record.proof = snapshot.proof; record.locationURL = destination; record.state = .trashed
+                _ = try record.validated()
+                let result = SpaceCleaningTransaction.purge(record: record, permanentConfirmed: true, persist: { _ in })
+                XCTAssertEqual(result.state, .trashed, relative)
+                XCTAssertTrue(result.canRestore)
+                XCTAssertTrue(FileManager.default.fileExists(atPath: destination.appendingPathComponent(relative).path))
+                let restored = SpaceCleaningTransaction.restore(record: result, conflict: .skip, persist: { _ in })
+                XCTAssertEqual(restored.state, .restored, restored.explanation)
+                XCTAssertTrue(FileManager.default.fileExists(atPath: dependency.path))
+            }
+        }
+    }
+
+    func testNewEnvironmentMarkerBlocksMutationEvenWithoutCallerPolicy() throws {
+        try fixture { fixture in
+            try Data("home = fixture".utf8).write(to: fixture.root.appendingPathComponent("pyvenv.cfg"))
+            let result = SpaceCleaningTransaction.execute(candidate: fixture.candidate, operationID: UUID(), method: .permanent,
+                permanentConfirmed: true, mover: fixture.mover, validatePolicy: { _ in nil }, persist: { _ in })
+            XCTAssertEqual(result.state, .skipped)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.item.path))
+        }
+    }
+
+    func testNewEnvironmentProtectionBlocksTrashPurgeButStillAllowsRestore() throws {
+        try fixture { fixture in
+            let moved = clean(fixture)
+            XCTAssertEqual(moved.state, .trashed)
+            try Data("home = fixture".utf8).write(to: fixture.root.appendingPathComponent("pyvenv.cfg"))
+            let purged = SpaceCleaningTransaction.purge(record: moved, permanentConfirmed: true, persist: { _ in })
+            XCTAssertEqual(purged.state, .trashed)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(moved.locationURL).path))
+            let restored = SpaceCleaningTransaction.restore(record: purged, conflict: .skip, persist: { _ in })
+            XCTAssertEqual(restored.state, .restored, restored.explanation)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.item.path))
+        }
+    }
+
     private struct Fixture {
         var home: URL
         var root: URL

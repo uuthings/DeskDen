@@ -125,7 +125,7 @@ struct NetworkMonitorView: View {
                 Label("周期流量", systemImage: "calendar").font(.system(size: 12, weight: .medium))
                 Text("\(model.budget.period.title) · \(DeviceTrafficDisplay.period(summary))").font(.system(size: 11)).foregroundStyle(palette.muted)
                 Spacer(minLength: 8)
-                Button { recordsOpen = true } label: { Label("每日明细", systemImage: "arrow.up.right") }.buttonStyle(WBButtonStyle(compact: true))
+                Button { recordsOpen = true } label: { Label("流量历史", systemImage: "arrow.up.right") }.buttonStyle(WBButtonStyle(compact: true))
                     .accessibilityIdentifier("fc.action.network.records")
             }.frame(minHeight: 32)
             ViewThatFits(in: .horizontal) {
@@ -181,7 +181,10 @@ struct NetworkMonitorView: View {
         }
     }
     private func legend(_ title: String, color: Color) -> some View { HStack(spacing: 5) { RoundedRectangle(cornerRadius: 2).fill(color).frame(width: 7, height: 7); Text(title) } }
-    private var coverageText: String { "已采集 \(summary.dailyUsage.filter { $0.coveredSeconds > 0 }.count) 天 · 有效 \(DeviceFormat.duration(summary.coveredSeconds))\(summary.isPartialPeriod ? " · 部分时段未采集" : "")" }
+    private var coverageText: String {
+        let note = summary.omitsPartialArchivedMonth ? " · 部分旧记录已按月汇总，无法拆分到所选日期" : summary.isPartialPeriod ? " · 部分时段未采集" : ""
+        return "有效采集 \(DeviceFormat.duration(summary.coveredSeconds))\(summary.includesMonthlyHistory ? " · 含较早月度汇总" : "")\(note)"
+    }
     private var resetText: String { !model.budget.enabled ? "预算未开启" : model.budget.period == .custom ? "单次周期 · 不重复" : "下次重置：\(NetworkLedgerDate.resetLabel(summary.periodEnd, timeZone: summary.timeZoneIdentifier))" }
     private var interfaceBinding: Binding<String> {
         Binding(get: { guard let ids = model.selectedInterfaceIDs else { return "automatic" }; return ids.count == 1 ? ids[0] : "custom" }, set: { if $0 == "custom" { interfaceSheet = .networkOptions } else { model.setSelectedInterfaces($0 == "automatic" ? nil : [$0]) } })
@@ -199,18 +202,29 @@ struct NetworkRecordsDialog: View {
     @ObservedObject var model: DeviceStatusModel
     let dismiss: () -> Void
     @Environment(\.workbenchPalette) private var palette
+    @State private var detail: String = "day"
     private var summary: DeviceTrafficSummary { model.trafficSummary }
-    private var coverageText: String { "已采集 \(summary.dailyUsage.filter { $0.coveredSeconds > 0 }.count) 天 · 有效 \(DeviceFormat.duration(summary.coveredSeconds))\(summary.isPartialPeriod ? " · 部分时段未采集" : "")" }
+    private var coverageText: String {
+        "有效采集 \(DeviceFormat.duration(summary.coveredSeconds))" +
+        (summary.includesMonthlyHistory ? " · 周期总计含较早月度汇总" : "") +
+        (summary.omitsPartialArchivedMonth ? " · 部分旧记录无法拆分到所选日期" : summary.isPartialPeriod ? " · 部分时段未采集" : "")
+    }
 
     var body: some View {
-        DeviceDialog(title: "每日流量明细", dismiss: dismiss) {
-            HStack { Text(DeviceTrafficDisplay.period(summary)); Spacer(); Text(model.budget.scope.title) }.font(.system(size: 11)).foregroundStyle(palette.muted)
+        DeviceDialog(title: "流量历史", dismiss: dismiss) {
+            HStack {
+                WBSelect("历史精度", selection: $detail, options: [("day", "每日明细"), ("month", "月度汇总"), ("year", "年度汇总")]).frame(width: 126)
+                    .accessibilityIdentifier("fc.network.history.granularity")
+                Spacer(); Text(detail == "day" ? DeviceTrafficDisplay.period(summary) : "全部已保留历史")
+                Text(model.budget.scope.title)
+            }.font(.system(size: 11)).foregroundStyle(palette.muted)
             HStack { Text("日期").frame(maxWidth: .infinity, alignment: .leading); Text("下载").frame(width: 86, alignment: .trailing); Text("上传").frame(width: 86, alignment: .trailing); Text("合计").frame(width: 86, alignment: .trailing) }.font(.system(size: 11)).foregroundStyle(palette.muted)
             ScrollView {
-                VStack(spacing: 0) {
+                LazyVStack(spacing: 0) {
+                    if detail == "day" {
                     ForEach(summary.dailyUsage.filter { $0.coveredSeconds > 0 }.reversed()) { day in
                         HStack {
-                            Text(NetworkLedgerDate.label(day.date, timeZone: summary.timeZoneIdentifier)).frame(maxWidth: .infinity, alignment: .leading)
+                            Text(NetworkLedgerDate.label(day.date, timeZone: summary.timeZoneIdentifier, includeYear: true)).frame(maxWidth: .infinity, alignment: .leading)
                             Text(DeviceTrafficDisplay.adaptive(day.received)).frame(width: 86, alignment: .trailing)
                                 .accessibilityIdentifier("network-records-received-" + String(Int(day.date.timeIntervalSince1970)))
                             Text(DeviceTrafficDisplay.adaptive(day.sent)).frame(width: 86, alignment: .trailing)
@@ -219,9 +233,26 @@ struct NetworkRecordsDialog: View {
                             .accessibilityElement(children: .contain)
                     }
                     if !summary.dailyUsage.contains(where: { $0.coveredSeconds > 0 }) { Text(summary.hasStarted ? "此周期暂无采集记录" : "账期尚未开始").font(.system(size: 12)).foregroundStyle(palette.muted).padding(.vertical, 24) }
+                    } else {
+                        let rows = model.trafficHistory(yearly: detail == "year")
+                        ForEach(rows) { row in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(row.id)
+                                    Text(row.isPartial ? "部分时段已记录" : "已采集时段").font(.system(size: 10)).foregroundStyle(palette.muted)
+                                }.frame(maxWidth: .infinity, alignment: .leading)
+                                Text(row.coveredSeconds > 0 ? DeviceTrafficDisplay.adaptive(row.received) : "—").frame(width: 86, alignment: .trailing)
+                                Text(row.coveredSeconds > 0 ? DeviceTrafficDisplay.adaptive(row.sent) : "—").frame(width: 86, alignment: .trailing)
+                                Text(row.coveredSeconds > 0 ? DeviceTrafficDisplay.adaptive(row.totalBytes) : "—").frame(width: 86, alignment: .trailing)
+                            }.font(.system(size: 12)).monospacedDigit().frame(minHeight: 44)
+                                .overlay(alignment: .bottom) { palette.line.frame(height: 1) }
+                        }
+                        if rows.isEmpty { Text("尚无汇总记录").font(.system(size: 12)).foregroundStyle(palette.muted).padding(.vertical, 24) }
+                    }
                 }.background(WorkbenchOverlayScrollbars())
             }.frame(maxHeight: 300)
-            Text("\(coverageText)。未列出的日期不代表零流量。记录时区：\(summary.timeZoneIdentifier)。").font(.system(size: 11)).foregroundStyle(palette.muted)
+            Text(detail == "day" ? "\(coverageText)。未列出的日期不代表零流量；较早日期可查看月度或年度汇总。记录时区：\(summary.timeZoneIdentifier)。" : "保留最近 400 个记录日，较早数据合并为最多 120 个月汇总；年度数据由现有日／月记录合计。旧版已经丢弃的记录无法恢复，未采集时段不补算。记录时区：\(summary.timeZoneIdentifier)。")
+                .font(.system(size: 11)).foregroundStyle(palette.muted)
                 .accessibilityIdentifier("network-records-coverage")
         } actions: { Button("完成", action: dismiss).buttonStyle(WBButtonStyle(primary: true)).keyboardShortcut(.defaultAction) }
     }
@@ -356,8 +387,8 @@ enum NetworkTrafficTooltipPlacement {
 }
 
 private enum NetworkLedgerDate {
-    static func label(_ date: Date, timeZone: String) -> String {
-        let formatter = DateFormatter(); formatter.locale = Locale(identifier: "zh_CN"); formatter.timeZone = TimeZone(identifier: timeZone) ?? .current; formatter.dateFormat = "M 月 d 日"; return formatter.string(from: date)
+    static func label(_ date: Date, timeZone: String, includeYear: Bool = false) -> String {
+        let formatter = DateFormatter(); formatter.locale = Locale(identifier: "zh_CN"); formatter.timeZone = TimeZone(identifier: timeZone) ?? .current; formatter.dateFormat = includeYear ? "yyyy/M/d" : "M 月 d 日"; return formatter.string(from: date)
     }
     static func resetLabel(_ date: Date, timeZone: String) -> String {
         let formatter = DateFormatter(); formatter.locale = Locale(identifier: "zh_CN"); formatter.timeZone = TimeZone(identifier: timeZone) ?? .current; formatter.dateFormat = "M 月 d 日 HH:mm"; return formatter.string(from: date)

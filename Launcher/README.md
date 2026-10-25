@@ -36,6 +36,10 @@ xcodebuild -project Fangcun.xcodeproj -scheme Fangcun \
 
 独立的「空间清理」导航提供全局／自定义扫描、默认勾选的可重建建议、直接清理、测试用途确认、废纸篓／永久删除与历史恢复。规则、事务边界和专项验证入口见 [空间清理](../docs/space-cleaning.md)。
 
+大文件模式支持大小上下限，默认零勾选；开发依赖与版本资料在两种模式中均受保护。纯后台清理模型回归可运行开发可执行文件的 `--space-cleaning-model-check`，使用临时夹具与注入的废纸篓，不创建窗口、不扫描个人目录。它不替代原生界面验收。
+
+网络与 AI 的近期明细、月度汇总、缓存和保存策略见 [历史记录与长期运行](../docs/history-storage.md)。
+
 ## 图标与窗口
 
 「设置 → 外观与材质」提供青碧晨雾、月白云海、暖霞悬山三款图标；默认青碧晨雾。已采用的源 PNG 位于 `Artwork/AppIcons/`，通过 `scripts/prepare-app-icons.swift` 生成生产 ICNS，转换来源和校验值保存在同目录元数据中。

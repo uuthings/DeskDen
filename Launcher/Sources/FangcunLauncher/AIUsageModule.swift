@@ -93,13 +93,17 @@ private struct AIUsageScanResult: Sendable {
     var sourceExists = false
     var fileCount = 0
     var skippedFiles = 0
+    var capacityLimited = false
     var error: String?
 }
 private actor AIUsageReader {
-    struct Cached { var size: Int; var modified: Date; var records: [AITokenRecord]; var snapshots: [AIQuotaSnapshot] }
-    private var cache: [String: Cached] = [:]
+    private var cache = AIUsageParseCache()
+    private var eligibleKeys = Set<String>()
     func scan(_ configurations: [AIUsageSourceConfiguration], now: Date, includeSessionFiles: Bool = true) -> [AIUsageScanResult] {
-        configurations.map { scan($0, now: now, includeSessionFiles: includeSessionFiles) }
+        eligibleKeys.removeAll(keepingCapacity: true)
+        let results = configurations.map { scan($0, now: now, includeSessionFiles: includeSessionFiles) }
+        cache.retain(keys: eligibleKeys, now: now)
+        return results
     }
     private func scan(_ config: AIUsageSourceConfiguration, now: Date, includeSessionFiles: Bool) -> AIUsageScanResult {
         var result = AIUsageScanResult(provider: config.provider)
@@ -118,6 +122,7 @@ private actor AIUsageReader {
             var candidates: [(URL, Date, Int)] = [], examined = 0
             if let enumerator = fm.enumerator(at: root, includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles, .skipsPackageDescendants]) {
                 for case let url as URL in enumerator {
+                    if Task.isCancelled { break }
                     examined += 1
                     if examined > 20_000 { result.skippedFiles += 1; break }
                     guard let info = try? url.resourceValues(forKeys: keys) else { continue }
@@ -129,15 +134,27 @@ private actor AIUsageReader {
             candidates.sort { $0.1 > $1.1 }
             var budget = 128 * 1_024 * 1_024
             for (url, modified, size) in candidates.prefix(400) {
+                if Task.isCancelled { break }
                 guard size > 0, size <= 64 * 1_024 * 1_024, size <= budget else { result.skippedFiles += 1; continue }
                 budget -= size
-                if let cached = cache[url.path], cached.size == size, cached.modified == modified {
-                    result.records += cached.records; result.snapshots += cached.snapshots; result.fileCount += 1; continue
-                }
+                let key = config.provider.rawValue + ":" + root.standardizedFileURL.path + ":" + url.path
+                eligibleKeys.insert(key)
                 do {
-                    let parsed = try parseFile(url, provider: config.provider, maximumBytes: size)
-                    cache[url.path] = .init(size: size, modified: modified, records: parsed.records, snapshots: parsed.snapshots)
+                    let parsed: AIUsageParsedFile
+                    if let cached = cache.value(for: key, size: size, modified: modified, now: now) { parsed = cached }
+                    else {
+                        parsed = try parseFile(url, provider: config.provider, maximumBytes: size, now: now)
+                        cache.insert(parsed, for: key, size: size, modified: modified, now: now)
+                    }
                     result.records += parsed.records; result.snapshots += parsed.snapshots; result.fileCount += 1
+                    result.capacityLimited = result.capacityLimited || parsed.capacityLimited
+                    if result.records.count > AITokenLedger.maximumRecords {
+                        result.records = AIUsageAggregation.deduplicate(result.records)
+                        if result.records.count > AITokenLedger.maximumRecords {
+                            result.records = Array(result.records.suffix(AITokenLedger.maximumRecords)); result.capacityLimited = true
+                        }
+                    }
+                    if result.snapshots.count > 8_000 { result.snapshots = Array(result.snapshots.sorted { $0.observedAt < $1.observedAt }.suffix(8_000)) }
                 } catch { result.skippedFiles += 1; result.error = "部分会话记录无法读取；已保留能够读取的计量数据。" }
             }
             result.skippedFiles += max(0, candidates.count - 400)
@@ -166,21 +183,40 @@ private actor AIUsageReader {
         if let manual = config.manualSnapshot { result.snapshots.append(manual) }
         return result
     }
-    private func parseFile(_ url: URL, provider: AIProvider, maximumBytes: Int) throws -> AIUsageLogParser {
+    private func parseFile(_ url: URL, provider: AIProvider, maximumBytes: Int, now: Date) throws -> AIUsageParsedFile {
         let file = try FileHandle(forReadingFrom: url); defer { try? file.close() }
         let sourceID = SHA256.hash(data: Data(url.lastPathComponent.utf8)).map { String(format: "%02x", $0) }.joined()
         var parser = AIUsageLogParser(), buffer = Data(), read = 0, skippingLongLine = false
+        var capacityLimited = false
+        let cutoff = now.addingTimeInterval(-Double(AITokenLedger.retentionDays) * 86_400)
         while read < maximumBytes, let data = try file.read(upToCount: min(65_536, maximumBytes - read)), !data.isEmpty {
+            try Task.checkCancellation()
             read += data.count; buffer.append(data)
             while let end = buffer.firstIndex(of: 10) {
                 let line = buffer.prefix(upTo: end)
-                if !skippingLongLine { parser.consume(Data(line), provider: provider, sourceID: sourceID) }
+                if !skippingLongLine {
+                    parser.consume(Data(line), provider: provider, sourceID: sourceID)
+                    // Keep the parser's cumulative-counter state, even when the
+                    // resulting old metering record is outside our retention window.
+                    if let last = parser.records.last, last.timestamp < cutoff || last.timestamp > now.addingTimeInterval(300) { parser.records.removeLast() }
+                    if let last = parser.snapshots.last, last.observedAt < cutoff || last.observedAt > now.addingTimeInterval(300) { parser.snapshots.removeLast() }
+                    if parser.records.count > AITokenLedger.maximumRecords + 256 {
+                        parser.records = AIUsageAggregation.deduplicate(parser.records)
+                        if parser.records.count > AITokenLedger.maximumRecords {
+                            parser.records = Array(parser.records.suffix(AITokenLedger.maximumRecords)); capacityLimited = true
+                        }
+                    }
+                    if parser.snapshots.count > 8_256 { parser.snapshots = Array(parser.snapshots.sorted { $0.observedAt < $1.observedAt }.suffix(8_000)) }
+                }
                 buffer.removeSubrange(...end); skippingLongLine = false
             }
             if buffer.count > 2_097_152 { buffer.removeAll(keepingCapacity: false); skippingLongLine = true }
         }
         // In-progress JSONL tails are deliberately ignored until a newline is written.
-        return parser
+        let records = AIUsageAggregation.deduplicate(parser.records)
+        return .init(records: Array(records.suffix(AITokenLedger.maximumRecords)),
+                     snapshots: Array(parser.snapshots.sorted { $0.observedAt < $1.observedAt }.suffix(8_000)),
+                     capacityLimited: capacityLimited || records.count > AITokenLedger.maximumRecords)
     }
     nonisolated static func validateQuotaFile(_ url: URL) throws {
         let forbidden = ["auth.json", "credentials.json", ".credentials.json", "settings.json", "config.json"]
@@ -205,6 +241,7 @@ final class AIUsageModel: ObservableObject {
     @Published private(set) var coverage: [AIProvider: AIUsageSourceCoverage] = [:]
     @Published private(set) var tokenHistoryCapacityLimited = false
     @Published private(set) var tokenHistoryMessage: String?
+    @Published private(set) var monthlyTokenHistory: [AITokenMonthSummary] = []
     @Published private(set) var alertConfiguration = AIQuotaAlertConfiguration()
     @Published private(set) var notificationPermission: AIQuotaNotificationPermission = .unknown
     @Published private(set) var destination: AIUsageDestination = .overview
@@ -227,6 +264,7 @@ final class AIUsageModel: ObservableObject {
     private let alertStore: AIQuotaAlertStore
     private let notifications: any AIQuotaNotificationProviding
     private var tokenLedger: AITokenLedger
+    private var historyStore: AIUsageHistoryStore?
     private var inFlightAlerts = Set<String>()
     private var navigationStack: [AIUsageDestination] = []
     private var returnsToSettingsPrivacy = false
@@ -242,6 +280,7 @@ final class AIUsageModel: ObservableObject {
     private var refreshTask: Task<Void, Never>?
     private var timer: Timer?
     private var generation = 0
+    private var preparingForQuit = false
     var todayTokens: Int64 { filteredRecords(period: .today).reduce(0) { $0 + $1.tokens.total } }
     var storageRecoveryInstructions: String { "原文件已保留，对应文件的写入已暂停。请先退出方寸，备份下列原文件，再修复文件或将损坏文件移出此目录，重新打开方寸。移走文件会重新建立该项数据，不会恢复旧记录。" }
     func revealDataDirectory() { NSWorkspace.shared.open(directory) }
@@ -274,7 +313,10 @@ final class AIUsageModel: ObservableObject {
             // A damaged opt-in configuration must not silently enable default sources.
             configurations = defaults.map { var item = $0; item.enabled = false; return item }
         }
-        if let history: [AIQuotaSnapshot] = loadStorage("quota-history.json", validate: { for snapshot in $0 { try snapshot.validate() } }) { quotaHistory = history }
+        if let history: [AIQuotaSnapshot] = loadStorage("quota-history.json", validate: {
+            guard $0.count <= 8_000 else { throw AIUsageError.invalid("额度历史超过容量上限。") }
+            for snapshot in $0 { try snapshot.validate() }
+        }) { quotaHistory = history }
         if let saved: [AITokenPrice] = loadStorage("model-prices.json", validate: { items in
             guard Set(items.map(\.id)).count == items.count else { throw AIUsageError.invalid("模型单价重复。") }
             for item in items { _ = try AITokenPrice(provider: item.provider, model: item.model, inputPerMillion: item.inputPerMillion, outputPerMillion: item.outputPerMillion, cacheReadPerMillion: item.cacheReadPerMillion, cacheWritePerMillion: item.cacheWritePerMillion) }
@@ -287,6 +329,9 @@ final class AIUsageModel: ObservableObject {
             do { alertConfiguration = try alertStore.load() }
             catch { protectStorageFile("quota-alerts.json") }
         }
+        historyStore = AIUsageHistoryStore(tokens: tokenStore, quotaURL: directory.appendingPathComponent("quota-history.json"),
+            ledger: tokenLedger, quotaHistory: quotaHistory, canWriteTokens: storageReadErrors["token-ledger.json"] == nil,
+            canWriteQuota: storageReadErrors["quota-history.json"] == nil)
         if !storageReadErrors.isEmpty { errorMessage = "AI 本机文件读取失败，原文件已保留并暂停对应写入。请在 AI 用量的数据源中查看恢复说明。" }
         providerSummaries = AIProvider.allCases.map { .init(provider: $0, state: .unavailable, snapshot: nil, detail: "正在检查本地计量来源。") }
         if startServices {
@@ -295,32 +340,23 @@ final class AIUsageModel: ObservableObject {
         }
     }
     func refresh() {
-        guard !isRefreshing else { return }
+        guard !isRefreshing, !preparingForQuit, let historyStore else { return }
         isRefreshing = true; generation += 1
         let currentGeneration = generation, configs = configurations, now = Date()
-        refreshTask = Task { [weak self, reader] in
+        refreshTask = Task { [weak self, reader, historyStore] in
             let results = await reader.scan(configs, now: now)
             guard let self, !Task.isCancelled, self.generation == currentGeneration else { return }
-            self.tokenHistoryMessage = nil
-            do {
-                var ledger = self.tokenLedger
-                try ledger.ingest(results.flatMap(\.records), at: now)
-                if self.storageReadErrors["token-ledger.json"] == nil {
-                    do { try self.tokenStore.save(ledger) }
-                    catch { self.tokenHistoryMessage = "已读取计量数据，但 Token 历史保存失败：" + error.localizedDescription }
-                }
-                self.tokenLedger = ledger; self.records = ledger.records; self.tokenHistoryCapacityLimited = ledger.capacityLimited
-            } catch { self.tokenHistoryMessage = "部分 Token 记录无效，保留上次有效历史：" + error.localizedDescription }
+            let update = await historyStore.update(records: results.flatMap(\.records), snapshots: results.flatMap(\.snapshots),
+                now: now, sourceCapacityLimited: results.contains { $0.capacityLimited })
+            guard !Task.isCancelled, self.generation == currentGeneration else { return }
+            self.tokenLedger = update.ledger; self.records = update.ledger.records; self.tokenHistoryCapacityLimited = update.ledger.capacityLimited
+            self.tokenHistoryMessage = update.tokenError; self.monthlyTokenHistory = update.monthlySummaries
+            self.quotaHistory = update.quotaHistory
+            if let error = update.quotaError { self.errorMessage = error }
             self.coverage = Dictionary(uniqueKeysWithValues: configs.map { config in
                 let result = results.first { $0.provider == config.provider }
                 return (config.provider, AIUsageSourceCoverage(provider: config.provider, scannedAt: now, enabled: config.enabled, sourceAvailable: result?.sourceExists ?? false, scannedFiles: result?.fileCount ?? 0, skippedFiles: result?.skippedFiles ?? 0, records: result?.records ?? []))
             })
-            func historyKey(_ snapshot: AIQuotaSnapshot) -> String {
-                snapshot.id + ":" + [snapshot.shortWindow, snapshot.weeklyWindow].compactMap { $0 }.map { AIQuotaWindowIdentity(provider: snapshot.provider, durationMinutes: $0.durationMinutes, resetsAt: $0.resetsAt).id }.joined(separator: "|")
-            }
-            var history = Dictionary(self.quotaHistory.map { (historyKey($0), $0) }, uniquingKeysWith: { _, newest in newest })
-            for result in results { for snapshot in result.snapshots { history[historyKey(snapshot)] = snapshot } }
-            self.quotaHistory = Array(history.values.filter { $0.observedAt >= now.addingTimeInterval(-31 * 86_400) }.sorted { $0.observedAt < $1.observedAt }.suffix(8_000))
             self.providerSummaries = configs.map { config in
                 if let error = self.storageReadErrors["sources.json"] { return .init(provider: config.provider, state: .error, snapshot: nil, detail: error) }
                 let result = results.first { $0.provider == config.provider }!
@@ -344,14 +380,18 @@ final class AIUsageModel: ObservableObject {
                 return .init(provider: config.provider, state: result.sourceExists ? .unavailable : .disconnected, snapshot: nil, detail: config.provider == .claude ? "本地会话仅提供 Token。请接入 Claude 官方状态栏额度快照，或手动记录 / 导入。" : "尚未找到额度字段。使用已登录的 Codex 完成一次请求后刷新，或选择会话目录。")
             }
             self.lastRefreshed = now
-            if self.storageReadErrors["quota-history.json"] == nil {
-                do { try self.write(JSONEncoder().encode(self.quotaHistory), to: "quota-history.json") }
-                catch { self.errorMessage = "读数已更新，但历史记录保存失败，请检查数据目录权限。" }
-            }
             await self.processAlerts(at: now)
             if self.generation == currentGeneration { self.isRefreshing = false }
         }
     }
+    func prepareForQuit() async throws {
+        preparingForQuit = true
+        refreshTask?.cancel()
+        if let refreshTask { await refreshTask.value }
+        refreshTask = nil; isRefreshing = false
+        try await historyStore?.flush()
+    }
+    func resumeAfterCancelledQuit() { preparingForQuit = false; refresh() }
     func estimate(_ records: [AITokenRecord]) -> (amount: Double, covered: Int, total: Int) {
         var amount = 0.0, covered = 0
         for record in records {
@@ -530,7 +570,9 @@ final class AIUsageModel: ObservableObject {
         connectionReturnDialog = dialog == .claudeConnect ? .claudeConnect : nil
         pendingConnection = candidate; connectionPreview = nil; connectionPreviewLoading = true; errorMessage = nil
         let generation = UUID(); connectionGeneration = generation; dialog = .connectionPreview
-        Task { [weak self, reader] in
+        Task { [weak self] in
+            // A pending, unconfirmed source has its own short-lived cache.
+            let reader = AIUsageReader()
             var previewCandidate = candidate; previewCandidate.manualSnapshot = nil
             if !quotaFile { previewCandidate.quotaPath = nil }
             let result = await reader.scan([previewCandidate], now: Date(), includeSessionFiles: !quotaFile).first
@@ -660,7 +702,12 @@ final class AIUsageModel: ObservableObject {
     private func loadStorage<T: Decodable>(_ name: String, validate: (T) throws -> Void) -> T? {
         guard storageReadErrors[name] == nil else { return nil }
         do {
-            let data = try Data(contentsOf: directory.appendingPathComponent(name))
+            let url = directory.appendingPathComponent(name)
+            let info = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            guard info.isRegularFile == true, info.isSymbolicLink != true else { throw AIUsageError.invalid("历史文件类型无效。") }
+            let handle = try FileHandle(forReadingFrom: url); defer { try? handle.close() }
+            let data = try handle.read(upToCount: 4_194_305) ?? Data()
+            guard data.count <= 4_194_304 else { throw AIUsageError.invalid("历史文件超过读取上限。") }
             let value = try JSONDecoder().decode(T.self, from: data)
             try validate(value)
             return value

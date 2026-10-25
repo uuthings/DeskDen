@@ -82,6 +82,9 @@ public enum SpaceCleaningTransaction {
         var record = SpaceCleaningRecord(operationID: operationID, candidate: candidate, method: method)
         guard !isCancelled() else { return finish(record, .cancelled, "已取消，未处理项目。", persist) }
         guard method != .permanent || permanentConfirmed else { return finish(record, .skipped, "永久删除尚未明确确认，未处理项目。", persist) }
+        guard SpaceCleaningDevelopmentPolicy.reason(at: candidate.url) == nil else {
+            return finish(record, .skipped, "开发环境或版本资料保持保护，未处理内部文件。", persist)
+        }
         guard candidate.canProcess, SpaceCleaningFilesystem.validateAncestors(candidate),
               SpaceCleaningFilesystem.capture(candidate.url) == candidate.identity else {
             return finish(record, .skipped, "项目受保护、未完整扫描，或文件与父目录身份已变化。", persist)
@@ -90,6 +93,7 @@ public enum SpaceCleaningTransaction {
         if let reason = validateActivity(candidate, candidate.url) { return finish(record, .skipped, reason, persist) }
         do {
             let selected = try SpaceCleaningFilesystem.snapshot(candidate.url, expected: candidate.identity, allowRename: false, isCancelled: isCancelled)
+            if let reason = SpaceCleaningDevelopmentPolicy.reason(in: selected) { return finish(record, .skipped, reason, persist) }
             guard !isCancelled(), SpaceCleaningFilesystem.validateAncestors(candidate),
                   SpaceCleaningFilesystem.capture(candidate.url) == candidate.identity else { throw SpaceCleaningFilesystem.Failure(message: "内容核验后项目或父目录已变化。") }
             if let reason = validatePolicy(candidate) { throw SpaceCleaningFilesystem.Failure(message: reason) }
@@ -207,9 +211,16 @@ public enum SpaceCleaningTransaction {
         guard permanentConfirmed, (try? original.validated()) != nil, original.canPurge,
               let source = original.locationURL, !isCancelled() else { return original }
         var record = original
+        if SpaceCleaningDevelopmentPolicy.reason(at: record.originalURL) != nil || SpaceCleaningDevelopmentPolicy.reason(at: source) != nil {
+            record.explanation = "开发环境或版本资料保持保护，可恢复或在 Finder 中复核，不执行永久删除。"
+            try? persist(record); return record
+        }
         if let reason = validatePolicy(record.candidate) { record.explanation = reason; try? persist(record); return record }
         do {
             let current = try verifiedSnapshot(record, at: source, isCancelled: isCancelled)
+            if let reason = SpaceCleaningDevelopmentPolicy.reason(in: current) {
+                return finish(record, .trashed, reason + " 可从清理记录恢复，未永久删除。", persist)
+            }
             // A fresh unique directory in the same Trash parent avoids moving
             // across volumes and never touches any unrelated Trash entries.
             let isolation = source.deletingLastPathComponent().appendingPathComponent(".fangcun-cleaning-" + record.id.uuidString + "-" + UUID().uuidString, isDirectory: true)

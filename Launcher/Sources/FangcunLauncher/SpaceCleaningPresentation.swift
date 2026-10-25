@@ -7,12 +7,17 @@ enum CleaningSortKey: String, CaseIterable { case name, directory, type, modifie
 
 enum CleaningScopeChoice: String, CaseIterable, Codable { case global, custom }
 enum CleaningResultTab { case recommended, reviewable, protected }
+enum CleaningFileSizeUnit: String, Codable, CaseIterable {
+    case mb = "MB", gb = "GB"
+    var bytes: Double { self == .mb ? 1_000_000 : 1_000_000_000 }
+}
 
 struct CleaningItemDisplay: Identifiable {
     let id: UUID
     let name: String
     let url: URL
     let bytes: UInt64
+    var allocatedBytes: UInt64 = 0
     let sizeIsComplete: Bool
     let group: CleaningResultGroup
     let subtitle: String
@@ -49,6 +54,7 @@ struct CleaningItemDisplay: Identifiable {
     }
     var protectionTitle: String? {
         guard group == .protected else { return nil }
+        if kind == .developmentEnvironment { return "开发环境" }
         if needsPurposeConfirmation { return "可确认用途" }
         if !sizeIsComplete { return "核验未完成" }
         switch kind {
@@ -61,6 +67,7 @@ struct CleaningItemDisplay: Identifiable {
     }
     var protectionGuidance: String? {
         guard group == .protected else { return nil }
+        if kind == .developmentEnvironment { return "清理扫描不展开依赖与版本资料。可单独统计占用，统计后仍保持保护，不提供内部文件清理。" }
         if needsPurposeConfirmation { return "若这是本地测试副本，可点「确认测试用途」。重新核验通过后会移到其他文件，由你勾选。" }
         if !sizeIsComplete { return "当前未完成内容核验，不能解除保护；可缩小扫描范围后重新检查。" }
         switch kind {
@@ -77,6 +84,7 @@ struct CleaningHistoryItemDisplay: Identifiable {
     let id: UUID
     let name: String
     let bytes: UInt64
+    var allocatedBytes: UInt64 = 0
     let state: SpaceCleaningRecordState
     let statusText: String
     let explanation: String
@@ -92,6 +100,8 @@ struct CleaningHistoryBatchDisplay: Identifiable {
     let method: SpaceCleaningMethod
     let items: [CleaningHistoryItemDisplay]
     let bytes: UInt64
+    var allocatedBytes: UInt64 { items.reduce(0) { $0 &+ $1.allocatedBytes } }
+    var successfulAllocatedBytes: UInt64 { items.filter { [.trashed, .deleted].contains($0.state) }.reduce(0) { $0 &+ $1.allocatedBytes } }
     var deletedCount: Int { items.filter { $0.state == .deleted }.count }
     var attentionCount: Int { items.filter { [.failed, .needsReview, .prepared, .isolated, .deleting, .restoring].contains($0.state) }.count }
     var restorableCount: Int { items.filter(\.canRestore).count }

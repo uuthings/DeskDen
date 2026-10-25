@@ -5,32 +5,58 @@ import Foundation
 public struct AITokenLedger: Codable, Equatable, Sendable {
     public static let retentionDays = 31
     public static let maximumRecords = 20_000
-    public var schemaVersion = 1
+    public static let maximumSummaryMonths = 120
+    public var schemaVersion = 2
     public private(set) var createdAt: Date
     public private(set) var updatedAt: Date
     public private(set) var records: [AITokenRecord] = []
     public private(set) var capacityLimited = false
+    public private(set) var archivedMonths: [AITokenMonthSummary] = []
+    /// A monotonic cutoff prevents re-importing already summarized records after
+    /// a clock rollback or reconnect. Monthly totals never retain record IDs.
+    public private(set) var archivedBefore: Date?
     public init(now: Date = Date()) { createdAt = now; updatedAt = now }
+
+    private enum CodingKeys: String, CodingKey { case schemaVersion, createdAt, updatedAt, records, capacityLimited, archivedMonths, archivedBefore }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let version = try values.decode(Int.self, forKey: .schemaVersion)
+        guard version == 1 || version == 2 else { throw AIUsageError.invalid("Token 历史格式来自更新版本，原文件已保留。") }
+        schemaVersion = 2
+        createdAt = try values.decode(Date.self, forKey: .createdAt); updatedAt = try values.decode(Date.self, forKey: .updatedAt)
+        records = try values.decode([AITokenRecord].self, forKey: .records)
+        capacityLimited = try values.decodeIfPresent(Bool.self, forKey: .capacityLimited) ?? false
+        archivedMonths = try values.decodeIfPresent([AITokenMonthSummary].self, forKey: .archivedMonths) ?? []
+        archivedBefore = try values.decodeIfPresent(Date.self, forKey: .archivedBefore)
+    }
 
     /// Disconnection is intentionally absent from ingestion. The caller may
     /// stop reading a provider while retaining its already-observed records.
-    public mutating func ingest(_ incoming: [AITokenRecord], at now: Date, maximumRecords: Int = Self.maximumRecords) throws {
-        guard now.timeIntervalSince1970.isFinite, now.timeIntervalSince1970 > 0, (1...Self.maximumRecords).contains(maximumRecords) else {
+    public mutating func ingest(_ incoming: [AITokenRecord], at now: Date, maximumRecords: Int = Self.maximumRecords, sourceCapacityLimited: Bool = false) throws {
+        guard now.timeIntervalSince1970.isFinite, now.timeIntervalSince1970 > 0, now.timeIntervalSince1970 <= 100_000_000_000,
+              (1...Self.maximumRecords).contains(maximumRecords) else {
             throw AIUsageError.invalid("Token 历史的保留范围无效。")
         }
         for record in incoming { try Self.validate(record) }
-        let cutoff = now.addingTimeInterval(-Double(Self.retentionDays) * 86_400)
-        let retained = (records + incoming).filter { $0.timestamp >= cutoff && $0.timestamp <= now.addingTimeInterval(300) }
+        let cutoff = max(now.addingTimeInterval(-Double(Self.retentionDays) * 86_400), archivedBefore ?? .distantPast)
+        let retained = records.filter { $0.timestamp >= cutoff } + incoming.filter { $0.timestamp >= cutoff && $0.timestamp <= now.addingTimeInterval(300) }
         let merged = AIUsageAggregation.deduplicate(retained)
         // Combining maximum values from duplicate records must itself remain
         // representable, even when each independent source record was valid.
         for record in merged { try Self.validate(record) }
         var next = self
+        next.archivedMonths = try AITokenMonthSummary.merged(archivedMonths, records: records.filter { $0.timestamp < cutoff }, now: max(now, updatedAt))
+        next.archivedBefore = cutoff
         next.records = Array(merged.suffix(maximumRecords))
-        next.capacityLimited = capacityLimited || merged.count > maximumRecords
-        next.updatedAt = now
+        next.capacityLimited = capacityLimited || merged.count > maximumRecords || sourceCapacityLimited
+        next.updatedAt = max(now, updatedAt)
         try next.validate()
         self = next
+    }
+
+    public func monthlySummaries(provider: AIProvider? = nil, now: Date = Date()) throws -> [AITokenMonthSummary] {
+        try AITokenMonthSummary.merged(archivedMonths, records: records.filter { $0.timestamp <= now }, now: now)
+            .filter { provider == nil || $0.provider == provider }
     }
 
     public func records(provider: AIProvider? = nil, period: AIUsagePeriod, enabledProviders: Set<AIProvider>? = nil, now: Date = Date()) -> [AITokenRecord] {
@@ -43,9 +69,9 @@ public struct AITokenLedger: Codable, Equatable, Sendable {
     }
 
     public func validate() throws {
-        guard schemaVersion == 1 else { throw AIUsageError.invalid("Token 历史格式来自更新版本，原文件已保留。") }
-        guard createdAt.timeIntervalSince1970.isFinite, createdAt.timeIntervalSince1970 > 0,
-              updatedAt.timeIntervalSince1970.isFinite, updatedAt.timeIntervalSince1970 > 0,
+        guard schemaVersion == 2 else { throw AIUsageError.invalid("Token 历史格式来自更新版本，原文件已保留。") }
+        guard createdAt.timeIntervalSince1970.isFinite, createdAt.timeIntervalSince1970 > 0, createdAt.timeIntervalSince1970 <= 100_000_000_000,
+              updatedAt.timeIntervalSince1970.isFinite, updatedAt.timeIntervalSince1970 > 0, updatedAt.timeIntervalSince1970 <= 100_000_000_000,
               records.count <= Self.maximumRecords else { throw AIUsageError.invalid("Token 历史范围无效，原文件已保留。") }
         var identities = Set<String>()
         var totalTokens: Int64 = 0
@@ -54,6 +80,21 @@ public struct AITokenLedger: Codable, Equatable, Sendable {
             guard identities.insert(record.provider.rawValue + ":" + record.id).inserted else { throw AIUsageError.invalid("Token 历史包含重复记录。") }
             guard record.timestamp <= updatedAt.addingTimeInterval(300) else { throw AIUsageError.invalid("Token 历史采集时间无效。") }
             let added = totalTokens.addingReportingOverflow(record.tokens.total)
+            guard !added.overflow else { throw AIUsageError.invalid("Token 历史汇总超出支持范围。") }
+            totalTokens = added.partialValue
+            if let archivedBefore, record.timestamp < archivedBefore { throw AIUsageError.invalid("Token 明细与已汇总历史范围重叠。") }
+        }
+        guard archivedMonths.count <= Self.maximumSummaryMonths * AIProvider.allCases.count,
+              Set(archivedMonths.map(\.id)).count == archivedMonths.count else { throw AIUsageError.invalid("Token 月度汇总范围无效。") }
+        if let archivedBefore {
+            guard archivedBefore.timeIntervalSince1970.isFinite, archivedBefore <= updatedAt else { throw AIUsageError.invalid("Token 汇总边界无效。") }
+        } else if !archivedMonths.isEmpty { throw AIUsageError.invalid("Token 汇总缺少明细边界。") }
+        for summary in archivedMonths {
+            guard summary.month.timeIntervalSince1970.isFinite, summary.month.timeIntervalSince1970 > 0,
+                  summary.month == (try? AITokenMonthSummary.month(containing: summary.month)), summary.month < (archivedBefore ?? .distantPast),
+                  summary.recordCount > 0 else { throw AIUsageError.invalid("Token 月度汇总内容无效。") }
+            _ = try AITokenMonthSummary.checkedAdd(.init(), summary.tokens)
+            let added = totalTokens.addingReportingOverflow(summary.tokens.total)
             guard !added.overflow else { throw AIUsageError.invalid("Token 历史汇总超出支持范围。") }
             totalTokens = added.partialValue
         }
@@ -65,7 +106,8 @@ public struct AITokenLedger: Codable, Equatable, Sendable {
             !value.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7F }
         }
         guard safe(record.id, maximumBytes: 512), safe(record.model, maximumBytes: 512),
-              record.timestamp.timeIntervalSince1970.isFinite, record.timestamp.timeIntervalSince1970 > 0 else {
+              record.timestamp.timeIntervalSince1970.isFinite, record.timestamp.timeIntervalSince1970 > 0,
+              record.timestamp.timeIntervalSince1970 <= 100_000_000_000 else {
             throw AIUsageError.invalid("Token 计量记录标识或时间无效。")
         }
         var sum: Int64 = 0

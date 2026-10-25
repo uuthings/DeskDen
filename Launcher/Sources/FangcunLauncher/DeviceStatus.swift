@@ -137,6 +137,8 @@ final class DeviceStatusModel: ObservableObject {
     private var systemSleeping = false
     private var historySegment = UUID()
     private var lastHistoryDate: Date?
+    private var resumeSamplingAfterCancelledQuit = false
+    private var preparingForQuit = false
 
     init(dataDirectory: URL, notifications: (any DeviceNotificationProviding)? = nil) {
         self.notifications = notifications ?? DeviceAlertService()
@@ -164,8 +166,14 @@ final class DeviceStatusModel: ObservableObject {
         }.store(in: &workspaceEvents)
     }
     private func systemWillSleep() {
+        let pendingLoop = loop, pendingSample = samplingTask
         systemSleeping = true; generation = UUID(); evaluator.breakContinuity()
-        historySegment = UUID(); lastHistoryDate = nil; loop?.cancel(); loop = nil
+        historySegment = UUID(); lastHistoryDate = nil; loop?.cancel(); loop = nil; samplingTask?.cancel(); samplingTask = nil
+        Task { [weak self] in
+            guard let self else { return }
+            await pendingLoop?.value; await pendingSample?.value
+            do { try await sampler.flush() } catch { lastError = "休眠前流量记录保存失败：\(error.localizedDescription)" }
+        }
     }
     private func systemDidWake() {
         systemSleeping = false; generation = UUID(); evaluator.breakContinuity()
@@ -187,6 +195,7 @@ final class DeviceStatusModel: ObservableObject {
     deinit { loop?.cancel(); samplingTask?.cancel() }
 
     func start(interval: TimeInterval = 2) {
+        guard !preparingForQuit else { return }
         samplingInterval = min(60, max(1, interval.isFinite ? interval : 2))
         guard !isSampling else { return }
         isSampling = true
@@ -196,7 +205,7 @@ final class DeviceStatusModel: ObservableObject {
 
     private func scheduleLoop() {
         loop?.cancel()
-        guard !systemSleeping else { return }
+        guard !systemSleeping, !preparingForQuit else { return }
         loop = Task { [weak self] in
             while !Task.isCancelled {
                 guard let delay = await self?.sampleAndNextInterval() else { return }
@@ -214,6 +223,21 @@ final class DeviceStatusModel: ObservableObject {
         isSampling = false; generation = UUID()
         loop?.cancel(); loop = nil; samplingTask?.cancel(); samplingTask = nil
         historySegment = UUID(); lastHistoryDate = nil; evaluator.breakContinuity()
+        Task { [sampler] in try? await sampler.flush() }
+    }
+
+    /// Awaited by the common native/menu/update termination barrier, before OS termination.
+    func prepareForQuit() async throws {
+        resumeSamplingAfterCancelledQuit = isSampling; preparingForQuit = true
+        let pendingLoop = loop, pendingSample = samplingTask
+        stop()
+        await pendingLoop?.value; await pendingSample?.value
+        try await sampler.flush()
+    }
+    func resumeAfterCancelledQuit() {
+        preparingForQuit = false
+        if resumeSamplingAfterCancelledQuit { start(interval: samplingInterval) }
+        resumeSamplingAfterCancelledQuit = false
     }
 
     func setWindowVisible(_ visible: Bool) {
@@ -239,7 +263,7 @@ final class DeviceStatusModel: ObservableObject {
     }
 
     func refresh() {
-        guard samplingTask == nil else { return }
+        guard samplingTask == nil, !preparingForQuit else { return }
         samplingTask = Task { [weak self] in
             guard let self else { return }
             await self.takeSample(); self.samplingTask = nil
@@ -273,6 +297,9 @@ final class DeviceStatusModel: ObservableObject {
     var budgetExceededBytes: UInt64 { budget.enabled && trafficSummary.totalBytes > budget.limitBytes ? trafficSummary.totalBytes - budget.limitBytes : 0 }
     func trafficSummary(period: DeviceBudgetPeriod, scope: DeviceTrafficScope) -> DeviceTrafficSummary {
         trafficLedger.summary(period: period, scope: scope, at: snapshot.sampledAt ?? Date())
+    }
+    func trafficHistory(yearly: Bool) -> [DeviceTrafficRollup] {
+        trafficLedger.history(scope: budget.scope, yearly: yearly, at: snapshot.sampledAt ?? Date())
     }
     func trafficPreview(_ rule: DeviceTrafficBudget) -> DeviceTrafficSummary {
         trafficLedger.summary(budget: rule, at: snapshot.sampledAt ?? Date())
@@ -386,7 +413,7 @@ final class DeviceStatusModel: ObservableObject {
     #endif
     private var takingSample = false
     private func takeSample() async {
-        guard !takingSample, !systemSleeping else { return }
+        guard !takingSample, !systemSleeping, !preparingForQuit else { return }
         takingSample = true; defer { takingSample = false }
         let token = generation, full = wantsPerformance
         let expectedInterval = effectiveInterval
@@ -437,6 +464,9 @@ private actor DeviceSampler {
     private var loaded = false
     private var persistenceError: String?
     private var networkProtected = false
+    private var trafficWrites = DevicePersistenceSchedule()
+    private var networkWrites = DevicePersistenceSchedule()
+    private var scheduledFlush: Task<Void, Never>?
     private var snapshot = DeviceSnapshot()
     private var previousCPU: DeviceCPUTicks?
     private var previousProcesses: [Int32: (started: UInt64, ticks: UInt64)] = [:]
@@ -461,10 +491,19 @@ private actor DeviceSampler {
     }
 
     #if DEBUG
-    func inspectTrafficStorageForChecks() -> String? { load(); persist(); return [trafficError, persistenceError].compactMap { $0 }.joined(separator: "；").nilIfEmpty }
+    func inspectTrafficStorageForChecks() -> String? { load(); trafficWrites.markChanged(); networkWrites.markChanged(); persist(force: true); return [trafficError, persistenceError].compactMap { $0 }.joined(separator: "；").nilIfEmpty }
     #endif
-    func selectInterfaces(_ ids: [String]?) { load(); accumulator.selectInterfaces(ids); persist() }
-    func beginRecording() { load(); accumulator.beginRecording(at: Date()); persist() }
+    func selectInterfaces(_ ids: [String]?) { load(); accumulator.selectInterfaces(ids); networkWrites.markChanged(); persist(force: true) }
+    func beginRecording() { load(); accumulator.beginRecording(at: Date()); networkWrites.markChanged(); persist(force: true) }
+    func flush() throws {
+        guard loaded else { return }
+        scheduledFlush?.cancel(); scheduledFlush = nil
+        persist(force: true)
+        if (trafficWrites.dirty && !trafficProtected) || (networkWrites.dirty && !networkProtected) {
+            throw NSError(domain: "Fangcun.NetworkPersistence", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                [trafficError, persistenceError].compactMap { $0 }.joined(separator: "；")])
+        }
+    }
 
     func sample(full: Bool, thermal: Bool, token: UUID, maximumGap: TimeInterval) -> DeviceSampleResult {
         load()
@@ -492,6 +531,7 @@ private actor DeviceSampler {
         let ethernet = physical.filter { interfaceMetadata[$0.key]?.scope == .ethernet }.mapValues(\.counter)
         trafficAccumulator.ingest(wifi: wifi, ethernet: ethernet, at: now, maximumGap: maximumGap)
         let delta = accumulator.ingest(counters, at: now, maximumGap: maximumGap)
+        trafficWrites.markChanged(); networkWrites.markChanged()
         let ledger = accumulator.ledger, today = ledger.today(at: now)
         snapshot.network = .init(downloadBytesPerSecond: delta?.downloadBytesPerSecond,
                                  uploadBytesPerSecond: delta?.uploadBytesPerSecond,
@@ -515,11 +555,11 @@ private actor DeviceSampler {
     private func load() {
         guard !loaded else { return }; loaded = true
         if FileManager.default.fileExists(atPath: trafficURL.path) {
-            do { trafficAccumulator = .init(ledger: try JSONDecoder().decode(DeviceTrafficLedger.self, from: Data(contentsOf: trafficURL)).validated()) }
+            do { trafficAccumulator = .init(ledger: try JSONDecoder().decode(DeviceTrafficLedger.self, from: boundedHistoryData(trafficURL)).validated()) }
             catch { trafficProtected = true; trafficError = "流量历史无法读取，已保留原文件；当前仅显示本次运行记录。" }
         }
         if FileManager.default.fileExists(atPath: ledgerURL.path) {
-            do { accumulator = DeviceNetworkAccumulator(ledger: try JSONDecoder().decode(DeviceNetworkLedger.self, from: Data(contentsOf: ledgerURL)).validated()) }
+            do { accumulator = DeviceNetworkAccumulator(ledger: try JSONDecoder().decode(DeviceNetworkLedger.self, from: boundedHistoryData(ledgerURL)).validated()) }
             catch {
                 networkProtected = true
                 persistenceError = "网络记录无法读取，已保留原文件；当前仅显示本次运行记录。"
@@ -536,23 +576,45 @@ private actor DeviceSampler {
 
     private func setPressure(_ value: DevicePressure) { pressure = value }
 
-    private func persist() {
-        if !trafficProtected {
+    private func boundedHistoryData(_ url: URL) throws -> Data {
+        let handle = try FileHandle(forReadingFrom: url); defer { try? handle.close() }
+        let data = try handle.read(upToCount: 4_194_305) ?? Data()
+        guard data.count <= 4_194_304 else { throw DeviceNetworkLedgerError.invalidFields }
+        return data
+    }
+
+    private func persist(force: Bool = false) {
+        defer { schedulePendingFlush() }
+        let uptime = ProcessInfo.processInfo.systemUptime
+        if !trafficProtected, trafficWrites.beginWrite(at: uptime, force: force) {
             do {
                 try FileManager.default.createDirectory(at: trafficURL.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
                 try JSONEncoder().encode(trafficAccumulator.ledger).write(to: trafficURL, options: .atomic)
                 try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: trafficURL.path); trafficError = nil
+                trafficWrites.didWrite()
             } catch { trafficError = "流量记录保存失败：\(error.localizedDescription)" }
         }
-        if networkProtected { return }
+        guard !networkProtected, networkWrites.beginWrite(at: uptime, force: force) else { return }
         do {
             try FileManager.default.createDirectory(at: ledgerURL.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             let data = try JSONEncoder().encode(accumulator.ledger)
             try data.write(to: ledgerURL, options: .atomic)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: ledgerURL.path)
+            networkWrites.didWrite()
             if persistenceError?.hasPrefix("网络记录保存失败") == true { persistenceError = nil }
         } catch { persistenceError = "网络记录保存失败：\(error.localizedDescription)" }
     }
+
+    private func schedulePendingFlush() {
+        let pending = (trafficWrites.dirty && !trafficProtected) || (networkWrites.dirty && !networkProtected)
+        guard pending else { scheduledFlush?.cancel(); scheduledFlush = nil; return }
+        guard scheduledFlush == nil else { return }
+        scheduledFlush = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(30)) } catch { return }
+            await self?.performScheduledFlush()
+        }
+    }
+    private func performScheduledFlush() { scheduledFlush = nil; persist(force: true) }
 
     private func samplePerformance(now: Date, maximumGap: TimeInterval) {
         let elapsed = previousPerformanceDate.map { now.timeIntervalSince($0) }
