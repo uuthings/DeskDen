@@ -6,7 +6,7 @@ enum ApplicationIconChoice: String, CaseIterable, Identifiable {
     case desk
     var id: String { rawValue }
     var title: String { "桌面" }
-    var subtitle: String { "暖米灰 · 工作窗口与桌面" }
+    var subtitle: String { "青蓝玻璃 · 工作窗口与桌面" }
     static func restored(_ value: String?) -> Self {
         // Retired landscape, 墨白 and 留白 choices all migrate to the approved identity.
         .desk
