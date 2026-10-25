@@ -558,6 +558,8 @@ enum NativeChecks {
         count += workbenchChecks.count; failures += workbenchChecks.failures
         let nativeControlHitChecks=await WorkbenchNativeControlHitChecks.run()
         count += nativeControlHitChecks.count;failures += nativeControlHitChecks.failures
+        let deviceCardActionChecks=await DeviceCardActionInteractionChecks.run()
+        count += deviceCardActionChecks.count;failures += deviceCardActionChecks.failures
         let shortcutChecks=WorkbenchShortcutChecks.run()
         count += shortcutChecks.count; failures += shortcutChecks.failures
         let shortcutResponderChecks=await WorkbenchShortcutResponderChecks.run()

@@ -104,7 +104,7 @@ import LauncherCore
         check(grid.cards[.profile]?.frame.height == 156 && [DeviceCardID.memory, .storage, .thermal].allSatisfy { grid.cards[$0]?.frame.height == 200 }, "wide view keeps profile and hardware summaries at content height")
         check(grid.cards[.cpu]?.frame.height == 272 && grid.cards[.processes]?.frame.height == 272 && grid.cards[.network] == nil && grid.cards[.traffic] == nil, "wide view grows only useful CPU and process content without reviving hidden network cards")
         let hideButton = grid.cards[.cpu]!.subviews.compactMap { $0 as? NSButton }.first { $0.accessibilityLabel() == "隐藏CPU 使用率" }
-        check(hideButton?.frame.width == 26, "wide view preserves readable control size rather than scaling the entire card")
+        check(hideButton?.frame.width == 28, "wide view preserves the shared 28-point icon target rather than scaling the entire card")
         grid.frame.size.width = 728
         grid.configure(model: model, editing: false, light: false, open: { _ in }, heightChanged: { _ in })
         grid.layoutSubtreeIfNeeded()
@@ -128,6 +128,123 @@ import LauncherCore
     private static func mouse(_ point: CGPoint) -> NSEvent { NSEvent.mouseEvent(with:.leftMouseDragged, location:point, modifierFlags:[], timestamp:0, windowNumber:0, context:nil, eventNumber:0, clickCount:1, pressure:1)! }
 }
 private extension CGRect { var center: CGPoint { CGPoint(x:midX,y:midY) } }
+
+/// Exercises the production AppKit card action, including its actual padding
+/// hit target and a rendered hover surface. It does not start sensor sampling.
+@MainActor enum DeviceCardActionInteractionChecks {
+    static func run() async -> (count: Int, failures: Int) {
+        var count = 0, failures = 0
+        func check(_ value: Bool, _ message: String) {
+            count += 1; if !value { failures += 1 }
+            print("\(value ? "PASS" : "FAIL") \(message)")
+        }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("fangcun-device-action-\(UUID().uuidString)")
+        let model = DeviceStatusModel(dataDirectory: directory)
+        let previousKey = NSApp.keyWindow, previousMain = NSApp.mainWindow
+        let previousPointer = CGEvent(source: nil)?.location
+        let previousCursor = ButtonCursorPolicy.shared.preference
+        let window = NativeUIFixtureWindow(contentRect: NSRect(x: 100, y: 100, width: 864, height: 650), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.acceptsMouseMovedEvents = true
+        let grid = DeviceDashboardNSView(frame: NSRect(x: 0, y: 0, width: 864, height: 650))
+        window.contentView = grid
+        var opened: [DeviceCardID] = []
+        grid.configure(model: model, editing: false, light: false, theme: .qingbiMist, open: { opened.append($0) }, heightChanged: { _ in })
+        defer {
+            grid.detachObservers(); grid.cancelInteraction()
+            window.orderOut(nil); window.contentView = nil; window.close()
+            ButtonCursorPolicy.shared.apply(previousCursor)
+            if let previousPointer { postPointer(previousPointer) }
+            if let previousMain, previousMain.isVisible { previousMain.makeMain() }
+            if let previousKey, previousKey.isVisible { previousKey.makeKey() }
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let mounted = await NativeUIFixtureWindow.prepare(window: window) { grid.cards.count == 6 }
+        check(mounted, "native card-action fixture mounts the production six-card dashboard")
+        guard mounted, let tile = grid.cards[.cpu],
+              let action = tile.subviews.compactMap({ $0 as? DeviceCardActionButton }).first(where: { $0.accessibilityIdentifier() == "fc.device.card.cpu.open" }) else {
+            check(false, "production CPU detail action is available in the native dashboard")
+            return (count, failures)
+        }
+        let savedLayout = model.dashboardLayout
+        ButtonCursorPolicy.shared.apply(.pointingHand)
+        await movePointer(to: NSPoint(x: 4, y: 4), in: window)
+        check(action.isHidden, "native detail action remains hidden when its card is neither hovered nor focused")
+        await movePointer(to: tile.convert(NSPoint(x: 40, y: 90), to: nil), in: window)
+        check(!action.isHidden && action.frame.size == NSSize(width: 28, height: 28), "card hover reveals a stable shared 28-point detail target")
+        for light in [false, true] {
+            grid.configure(model: model, editing: false, light: light, theme: .qingbiMist, open: { opened.append($0) }, heightChanged: { _ in })
+            grid.layoutSubtreeIfNeeded()
+            await movePointer(to: tile.convert(NSPoint(x: 40, y: 90), to: nil), in: window)
+            let originalFrame = action.frame
+            let strip = action.convert(NSRect(x: 3, y: 10, width: 3, height: 8), to: grid)
+            let outside = tile.convert(NSRect(x: 20, y: 30, width: 6, height: 6), to: grid)
+            let normal = pixels(in: strip, view: grid), normalOutside = pixels(in: outside, view: grid)
+            let paddingPoint = action.convert(NSPoint(x: 3, y: 14), to: nil)
+            await movePointer(to: paddingPoint, in: window)
+            check(changed(normal, pixels(in: strip, view: grid)), "native \(light ? "light" : "dark") detail hover draws a surface in empty button padding")
+            check(!changed(normalOutside, pixels(in: outside, view: grid)) && action.frame == originalFrame,
+                  "native \(light ? "light" : "dark") detail feedback stays inside its target without changing card layout")
+            let actualCursor = NSCursor.currentSystem
+            check(actualCursor?.hotSpot == NSCursor.pointingHand.hotSpot && actualCursor?.image.tiffRepresentation == NSCursor.pointingHand.image.tiffRepresentation,
+                  "native \(light ? "light" : "dark") detail padding displays the configured pointing-hand cursor")
+            capture(grid, name: light ? "light" : "dark")
+            let before = opened.count
+            click(at: paddingPoint, in: window)
+            try? await Task.sleep(for: .milliseconds(80))
+            check(opened.count == before + 1 && opened.last == .cpu, "native \(light ? "light" : "dark") detail padding routes exactly one CPU detail action")
+        }
+        check(model.dashboardLayout == savedLayout && !grid.isInteracting && !model.isSampling,
+              "native detail clicks preserve layout and never start a drag or sensor sampling")
+        action.isEnabled = false
+        await movePointer(to: tile.convert(NSPoint(x: 40, y: 90), to: nil), in: window)
+        let disabledStrip = action.convert(NSRect(x: 3, y: 10, width: 3, height: 8), to: grid)
+        let disabledNormal = pixels(in: disabledStrip, view: grid)
+        let disabledPoint = action.convert(NSPoint(x: 3, y: 14), to: nil)
+        await movePointer(to: disabledPoint, in: window)
+        let beforeDisabled = opened.count
+        click(at: disabledPoint, in: window)
+        check(!changed(disabledNormal, pixels(in: disabledStrip, view: grid)) && opened.count == beforeDisabled,
+              "disabled native detail action neither highlights nor executes from its padding")
+        action.isEnabled = true
+        print("Native device card-action checks: \(count - failures)/\(count) passed")
+        return (count, failures)
+    }
+    private static func pixels(in rect: NSRect, view: NSView) -> [UInt8]? {
+        view.displayIfNeeded()
+        guard let bitmap = view.bitmapImageRepForCachingDisplay(in: rect), let bytes = bitmap.bitmapData else { return nil }
+        view.cacheDisplay(in: rect, to: bitmap)
+        return Array(UnsafeBufferPointer(start: bytes, count: bitmap.bytesPerRow * bitmap.pixelsHigh))
+    }
+    private static func changed(_ before: [UInt8]?, _ after: [UInt8]?) -> Bool {
+        guard let before, let after, before.count == after.count else { return false }
+        return zip(before, after).filter { abs(Int($0) - Int($1)) > 2 }.count >= 8
+    }
+    private static func click(at point: NSPoint, in window: NSWindow) {
+        func event(_ type: NSEvent.EventType) -> NSEvent? {
+            NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)
+        }
+        guard let down = event(.leftMouseDown), let up = event(.leftMouseUp) else { return }
+        NSApp.postEvent(up, atStart: false); NSApp.sendEvent(down)
+    }
+    private static func postPointer(_ point: CGPoint) {
+        CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+    }
+    private static func movePointer(to point: NSPoint, in window: NSWindow) async {
+        let screen = window.convertPoint(toScreen: point)
+        postPointer(CGPoint(x: screen.x, y: (NSScreen.screens.first?.frame.maxY ?? 0) - screen.y))
+        try? await Task.sleep(for: .milliseconds(140))
+    }
+    private static func capture(_ view: NSView, name: String) {
+        guard let path = ProcessInfo.processInfo.environment["FANGCUN_HOVER_VISUAL_DIR"],
+              let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        guard let data = bitmap.representation(using: .png, properties: [:]) else { return }
+        let output = URL(fileURLWithPath: path, isDirectory: true)
+        try? FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        try? data.write(to: output.appendingPathComponent("device-detail-hover-" + name + ".png"))
+    }
+}
 
 /// Uses the existing native-workbench window whose accessibility tree is already
 /// mounted. The production child's actual Binding is inspected, not mouse input.

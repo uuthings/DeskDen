@@ -43,7 +43,9 @@ if CommandLine.arguments.contains("--vault-signing-check") {
         if CommandLine.arguments.contains("--pointer-check") {
             let checks = await WorkbenchNativeControlHitChecks.pointerInteractionChecks()
             for check in checks { print("\(check.0 ? "PASS" : "FAIL") \(check.1)") }
-            pointerFailures = checks.filter { !$0.0 }.count
+            let device = await DeviceCardActionInteractionChecks.run()
+            pointerFailures = checks.filter { !$0.0 }.count + device.failures
+            print("Pointer checks: \(checks.count + device.count) checks, \(pointerFailures) failures")
         }
         let result = await WorkbenchShortcutResponderChecks.run()
         print("Shortcut responder checks: \(result.count) checks, \(result.failures) failures")
@@ -55,8 +57,9 @@ if CommandLine.arguments.contains("--vault-signing-check") {
         await prepareNativeCheckWindows()
         let checks = await WorkbenchNativeControlHitChecks.pointerInteractionChecks()
         for check in checks { print("\(check.0 ? "PASS" : "FAIL") \(check.1)") }
-        let failures = checks.filter { !$0.0 }.count
-        print("Pointer checks: \(checks.count) checks, \(failures) failures")
+        let device = await DeviceCardActionInteractionChecks.run()
+        let failures = checks.filter { !$0.0 }.count + device.failures
+        print("Pointer checks: \(checks.count + device.count) checks, \(failures) failures")
         exit(failures == 0 ? 0 : 1)
     }
     application.run()

@@ -26,11 +26,15 @@ import SwiftUI
                 sessionsPath: directory.appendingPathComponent("disabled-" + $0.rawValue).path,
                 manualSnapshot: $0 == .codex ? weeklyOnly : bothWindows) }
             try JSONEncoder().encode(configs).write(to: sourceDirectory.appendingPathComponent("sources.json"))
+            let historyFixture = try dailyHistoryFixture(now: observed)
+            try JSONEncoder().encode(historyFixture).write(to: sourceDirectory.appendingPathComponent("quota-history.json"))
             let model = AIUsageModel(dataDirectory: directory, startServices: false, notifications: AIUsageCheckNotifications())
             model.refresh()
             for _ in 0..<300 where model.isRefreshing { try? await Task.sleep(for: .milliseconds(10)) }
             check(!model.isRefreshing && model.providerSummaries.first(where: { $0.provider == .codex })?.snapshot?.shortWindow == nil && model.providerSummaries.first(where: { $0.provider == .codex })?.snapshot?.accountPlan == .pro,
                   "AI native fixture loads an actual weekly-only Pro snapshot without inventing a short window")
+            check(historyFixture.allSatisfy { model.quotaHistory.contains($0) } && model.quotaHistory.count > 20,
+                  "AI native fixture restores synthetic calendar history through its isolated production history store")
             let coordinator = WorkbenchModalCoordinator()
             let inspection = AIUsageNativeDialogInspection()
             let surface = AIUsageCheckSurface(model: model, coordinator: coordinator, inspection: inspection)
@@ -76,6 +80,9 @@ import SwiftUI
                     if case .provider(let provider) = route {
                         let providerChecks = checkProviderGeometry(provider: provider, host: host, pageWidth: size.width)
                         count += providerChecks.count; failures += providerChecks.failures
+                        let dailyChecks = await checkDailyHistoryGeometry(provider: provider, model: model,
+                            host: host, window: window, pageWidth: size.width, inspection: inspection.quota)
+                        count += dailyChecks.count; failures += dailyChecks.failures
                     }
                 }
             }
@@ -113,6 +120,179 @@ import SwiftUI
         } catch { check(false, "AI native fixture failed: " + error.localizedDescription) }
         print("AI native checks: \(count - failures)/\(count) passed")
         return (count, failures)
+    }
+
+    /// This is synthetic QA metadata in a disposable directory. It includes
+    /// reset cycles, both actual durations, a later 0% reading, and missing days.
+    /// It is never mixed with the current user's account or retained as an asset.
+    private static func dailyHistoryFixture(now: Date) throws -> [AIQuotaSnapshot] {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: now)
+        var result: [AIQuotaSnapshot] = []
+        for offset in [1, 2, 4, 5, 7, 9, 10, 12, 14, 16, 19, 22, 25, 28, 30] {
+            guard let day = calendar.date(byAdding: .day, value: -offset, to: today),
+                  let observed = calendar.date(byAdding: .hour, value: 12, to: day) else { continue }
+            let short = try AIQuotaWindow(usedPercent: offset == 2 ? 0 : Double((31 - offset) * 9 % 100),
+                durationMinutes: 300, resetsAt: observed.addingTimeInterval(300 * 60))
+            let weekly = try AIQuotaWindow(usedPercent: Double(offset * 13 % 100), durationMinutes: 10_080,
+                resetsAt: observed.addingTimeInterval(10_080 * 60))
+            result.append(.init(provider: .codex, observedAt: observed, source: .manual,
+                shortWindow: nil, weeklyWindow: weekly, accountPlan: .pro))
+            result.append(.init(provider: .claude, observedAt: observed, source: .imported,
+                shortWindow: short, weeklyWindow: weekly))
+            if offset == 2 {
+                let earlier = observed.addingTimeInterval(-3_600)
+                result.append(.init(provider: .claude, observedAt: earlier, source: .manual,
+                    shortWindow: try .init(usedPercent: 90, durationMinutes: 300, resetsAt: observed), weeklyWindow: nil))
+            }
+        }
+        return result
+    }
+
+    private static func checkDailyHistoryGeometry(provider: AIProvider, model: AIUsageModel, host: NSView,
+        window: NSWindow, pageWidth: CGFloat, inspection: AIQuotaLayoutInspection) async -> (count: Int, failures: Int) {
+        var count = 0, failures = 0
+        let label = "\(provider.rawValue) at \(Int(pageWidth)) pt"
+        func check(_ value: Bool, _ message: String) {
+            count += 1; if !value { failures += 1 }
+            print("\(value ? "PASS" : "FAIL") \(message) in \(label)")
+        }
+        guard let scroll = descendants(host).compactMap({ $0 as? NSScrollView }).max(by: { $0.bounds.width < $1.bounds.width }),
+              let document = scroll.documentView else {
+            check(false, "daily heatmap is hosted in the actual page scroller"); return (count, failures)
+        }
+        let originalOrigin = scroll.contentView.bounds.origin
+        let previousPointer = CGEvent(source: nil)?.location
+        defer {
+            scroll.contentView.scroll(to: originalOrigin); scroll.reflectScrolledClipView(scroll.contentView)
+            if let previousPointer {
+                CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: previousPointer, mouseButton: .left)?.post(tap: .cghidEventTap)
+            }
+        }
+        // The page is taller than its viewport. Bring the real history section
+        // into view before reading its lazy grid, sampling pixels or capturing.
+        let section = accessibilityObjects(in: host).first { string("accessibilityIdentifier", from: $0) == "fc.ai.detail.dailyHistory" }
+        if let section, section.responds(to: NSSelectorFromString("accessibilityFrame")),
+           let bounds = section.value(forKey: "accessibilityFrame") as? NSValue {
+            let local = document.convert(window.convertFromScreen(bounds.rectValue), from: nil)
+            _ = document.scrollToVisible(local.insetBy(dx: 0, dy: -8))
+            scroll.reflectScrolledClipView(scroll.contentView)
+        } else {
+            // A lazy section may not yet expose AX. Scroll the owned document
+            // toward its middle, then wait for actual layout probes below.
+            let maximum = max(0, document.bounds.height - scroll.contentView.bounds.height)
+            let y = document.isFlipped ? min(360, maximum) : max(0, maximum - 360)
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: y)); scroll.reflectScrolledClipView(scroll.contentView)
+        }
+        let history = AIQuotaDailyHistory.build(model.quotaHistory, provider: provider)
+        let ready = await wait(window) {
+            history.series.allSatisfy { series in
+                series.days.filter(\.isInRange).allSatisfy {
+                    inspection.frame(dailyCellID(provider, duration: series.durationMinutes, day: $0.date)) != nil
+                }
+            }
+        }
+        check(!history.series.isEmpty && ready, "all 31 real calendar day cells mount for every actual quota duration")
+        let objects = accessibilityObjects(in: host)
+        for series in history.series {
+            let prefix = "fc.ai.history." + provider.rawValue + "." + String(series.durationMinutes)
+            let grid = inspection.frame(prefix + ".grid")
+            let mounted = series.days.enumerated().compactMap { index, day -> (Int, AIQuotaDailyCell, NSRect)? in
+                guard day.isInRange, let frame = inspection.frame(dailyCellID(provider, duration: series.durationMinutes, day: day.date)) else { return nil }
+                return (index, day, frame)
+            }
+            check(grid.map { abs($0.width - 260) < 0.5 } == true && mounted.count == 31 &&
+                  mounted.allSatisfy { abs($0.2.width - 32) < 0.5 && abs($0.2.height - 32) < 0.5 },
+                  "\(series.title) renders fixed 32 by 32 pt squares in a 260 pt seven-column grid")
+            check(grid.map { bounds in mounted.allSatisfy { index, _, cell in
+                abs(cell.minX - bounds.minX - CGFloat(index % 7) * 38) < 0.5 &&
+                    abs(bounds.maxY - cell.maxY - CGFloat(index / 7) * 38) < 0.5
+            } } == true, "\(series.title) dates align with weekday columns and 6 pt gaps without stretching")
+            check(series.days.filter { !$0.isInRange }.allSatisfy {
+                inspection.frame(dailyCellID(provider, duration: series.durationMinutes, day: $0.date)) == nil
+            }, "\(series.title) week-alignment padding creates no false observed or missing day cells")
+            let labelsMatch = mounted.allSatisfy { _, day, _ in
+                let id = prefix + ".day." + String(Int(day.date.timeIntervalSince1970))
+                let descriptions = objects.filter { string("accessibilityIdentifier", from: $0) == id }
+                    .compactMap { string("accessibilityLabel", from: $0) }
+                return descriptions.contains { description in
+                    day.reading == nil ? description.contains("无额度读数") : description.contains("当天最后观测") && description.contains(day.reading!.source.title)
+                }
+            }
+            check(labelsMatch, "\(series.title) exposes actual observations and missing days as distinct accessible states")
+            print("DETAIL daily heatmap \(label) duration=\(series.durationMinutes) grid=\(String(describing: grid)) cells=\(mounted.count) observedDays=\(series.observedDayCount)")
+        }
+        if provider == .claude, let short = history.series.first(where: { $0.durationMinutes == 300 }),
+           let zero = short.days.first(where: { $0.reading?.window.usedPercent == 0 }),
+           let missing = short.days.first(where: { $0.isInRange && $0.reading == nil }),
+           let zeroFrame = inspection.frame(dailyCellID(provider, duration: 300, day: zero.date)),
+           let missingFrame = inspection.frame(dailyCellID(provider, duration: 300, day: missing.date)) {
+            let zeroColor = dailyCellColor(zeroFrame, host: host, window: window)
+            let missingColor = dailyCellColor(missingFrame, host: host, window: window)
+            check(zeroColor.flatMap { a in missingColor.map { b in abs(a.redComponent - b.redComponent) + abs(a.greenComponent - b.greenComponent) + abs(a.blueComponent - b.blueComponent) > 0.02 } } == true,
+                  "a real observed 0% paints a different cell surface from a missing observation")
+            let primaryTop = NSScreen.screens.first?.frame.maxY ?? 0
+            CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
+                mouseCursorPosition: CGPoint(x: zeroFrame.midX, y: primaryTop - zeroFrame.midY), mouseButton: .left)?.post(tap: .cghidEventTap)
+            let expectedCaption = zero.date.formatted(.dateTime.month().day()) + " · 窗口已用 0%"
+            let showsObservation = await wait(window) {
+                dailyCaptionText(in: host).contains { normalizedDailyCaption($0.text).contains(normalizedDailyCaption(expectedCaption)) }
+            }
+            // SwiftUI's visible Text normally exposes AXValue on macOS, while
+            // the explicit day descriptions expose AXLabel. A containing
+            // accessibility group may join the caption's two visible lines.
+            // Check the actual visible text fields, never the day's help text.
+            let captionFields = dailyCaptionText(in: host).filter { normalizedDailyCaption($0.text).contains("· 窗口已用") }
+            print("DETAIL daily hover \(label) expected=\(String(reflecting: expectedCaption)) actual=" +
+                captionFields.prefix(12).map { $0.field + "=" + String(reflecting: $0.text) }.joined(separator: " | "))
+            check(showsObservation, "hovering a daily cell shows that day's last real observation rather than an inferred daily total")
+            let after = inspection.frame(dailyCellID(provider, duration: 300, day: zero.date))
+            check(after.map { abs($0.minX - zeroFrame.minX) < 0.5 && abs($0.minY - zeroFrame.minY) < 0.5 && abs($0.width - zeroFrame.width) < 0.5 && abs($0.height - zeroFrame.height) < 0.5 } == true,
+                  "daily hover leaves the actual square and neighboring calendar layout stable")
+        }
+        if ProcessInfo.processInfo.environment["FANGCUN_HOVER_VISUAL_DIR"] != nil {
+            check(captureDailyHistory(host, name: provider.rawValue + "-" + String(Int(pageWidth))),
+                  "daily heatmap exports its mounted synthetic provider page screenshot")
+        }
+        return (count, failures)
+    }
+
+    private static func dailyCellID(_ provider: AIProvider, duration: Int, day: Date) -> String {
+        "fc.ai.history." + provider.rawValue + "." + String(duration) + ".cell." + String(Int(day.timeIntervalSince1970))
+    }
+    private static func dailyCaptionText(in host: NSView) -> [(field: String, text: String)] {
+        accessibilityObjects(in: host).flatMap { object in
+            ["accessibilityLabel", "accessibilityValue"].compactMap { field -> (field: String, text: String)? in
+                guard object.responds(to: NSSelectorFromString(field)), let value = object.value(forKey: field) else { return nil }
+                let text = (value as? String) ?? (value as? NSAttributedString)?.string
+                guard let text, !text.isEmpty else { return nil }
+                let role = string("accessibilityRole", from: object) ?? String(describing: type(of: object))
+                return (role + "." + field, text)
+            }
+        }
+    }
+    private static func normalizedDailyCaption(_ text: String) -> String {
+        text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+    private static func dailyCellColor(_ screenRect: NSRect, host: NSView, window: NSWindow) -> NSColor? {
+        // Interior corner, away from day text, border and rounded corners.
+        let patch = NSRect(x: screenRect.minX + 7, y: screenRect.maxY - 10, width: 3, height: 3)
+        let local = host.convert(window.convertFromScreen(patch), from: nil)
+        guard host.bounds.contains(local), let bitmap = host.bitmapImageRepForCachingDisplay(in: local) else { return nil }
+        host.cacheDisplay(in: local, to: bitmap)
+        return bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh / 2)?.usingColorSpace(.deviceRGB)
+    }
+    private static func captureDailyHistory(_ host: NSView, name: String) -> Bool {
+        guard let path = ProcessInfo.processInfo.environment["FANGCUN_HOVER_VISUAL_DIR"],
+              let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return false }
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        guard let png = bitmap.representation(using: .png, properties: [:]), png.count > 1_000 else { return false }
+        let output = URL(fileURLWithPath: path, isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+            try png.write(to: output.appendingPathComponent("ai-daily-heatmap-" + name + ".png"))
+            return true
+        } catch { print("DETAIL AI daily heatmap capture: " + error.localizedDescription); return false }
     }
     private static func checkOverviewQuotaGeometry(host: NSView, pageWidth: CGFloat, inspection: AIQuotaLayoutInspection) -> (count: Int, failures: Int) {
         var count = 0, failures = 0

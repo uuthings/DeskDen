@@ -30,7 +30,7 @@ struct SpaceCleaningResultsView: View {
                     Spacer(minLength: 8)
                     if !model.coverageIssues.isEmpty {
                         Button("\(model.coverageIssues.count) 处未完整覆盖") { model.dialog = .issues }
-                            .buttonStyle(ClickablePlainButtonStyle()).foregroundStyle(palette.warning)
+                            .buttonStyle(WBTextActionButtonStyle()).foregroundStyle(palette.warning)
                     }
                     Text("\(model.visibleItems.count) 项")
                 }.font(.system(size: 11)).foregroundStyle(palette.muted).padding(.horizontal, 14).frame(height: 34)
@@ -66,7 +66,7 @@ struct SpaceCleaningResultsView: View {
                 Image(systemName: "magnifyingglass").foregroundStyle(palette.muted)
                 TextField("搜索名称或目录", text: $model.searchText).textFieldStyle(.plain)
                 if !model.searchText.isEmpty {
-                    Button { model.searchText = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(ClickablePlainButtonStyle())
+                    Button { model.searchText = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(WBIconButtonStyle(size: 24)).accessibilityLabel("清除搜索")
                 }
             }.font(.system(size: 11)).padding(.horizontal, 10).frame(width: min(260, max(196, availableWidth * 0.26)), height: 28)
                 .background(RoundedRectangle(cornerRadius: 8).fill(palette.soft)).overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.line))
@@ -82,7 +82,7 @@ struct SpaceCleaningResultsView: View {
             }.font(.system(size: 12)).foregroundStyle(active ? palette.text : palette.muted).frame(height: 40)
                 .overlay(alignment: .bottom) { if active { Capsule().fill(palette.accent).frame(height: 2) } }
                 .contentShape(Rectangle())
-        }.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel("\(title)，\(count) 项")
+        }.buttonStyle(WBTextActionButtonStyle()).accessibilityLabel("\(title)，\(count) 项")
             .accessibilityValue(active ? "当前分类" : "切换查看")
     }
     private var tableHeader: some View {
@@ -115,7 +115,7 @@ struct SpaceCleaningResultsView: View {
                 if !trailing { Spacer(minLength: 0) }
             }.frame(minHeight: 34).contentShape(Rectangle())
                 .foregroundStyle(active ? palette.text : palette.muted)
-        }.buttonStyle(ClickablePlainButtonStyle()).disabled(model.isBusy || confirming)
+        }.buttonStyle(WBTextActionButtonStyle()).disabled(model.isBusy || confirming)
             .accessibilityLabel("按" + title + "排序")
             .accessibilityValue(active ? (model.sortAscending ? "升序" : "降序") : "未排序")
             .accessibilityIdentifier("space-cleaning-sort-" + key.rawValue)
@@ -128,7 +128,7 @@ struct SpaceCleaningResultsView: View {
                     if item.needsPurposeConfirmation {
                         Button { model.requestTestPurpose(item.id) } label: {
                             Image(systemName: "lock.open").font(.system(size: 13)).frame(width: 24, height: 24)
-                        }.buttonStyle(ClickablePlainButtonStyle()).foregroundStyle(palette.accent)
+                        }.buttonStyle(WBIconButtonStyle(size: 24)).foregroundStyle(palette.accent)
                             .disabled(model.isBusy || model.requiresRescan || confirming)
                             .help("确认测试用途后可手动选择")
                             .accessibilityLabel("确认测试用途：" + item.name)
@@ -161,7 +161,7 @@ struct SpaceCleaningResultsView: View {
                         Text(model.shortPath(item.url.deletingLastPathComponent()))
                             .font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1).truncationMode(.middle)
                     }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-                }.buttonStyle(ClickablePlainButtonStyle()).disabled(model.isBusy || confirming)
+                }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 4, drawsSelection: false, showsBorder: false)).disabled(model.isBusy || confirming)
                 Text(item.typeTitle).font(.system(size: 11)).foregroundStyle(palette.secondary)
                     .lineLimit(2).frame(width: typeWidth, alignment: .leading)
                 VStack(alignment: .leading, spacing: 5) {
@@ -204,7 +204,7 @@ struct SpaceCleaningResultsView: View {
                     Text("仅核验这一项，确认后可手动选择。")
                         .font(.system(size: 11)).foregroundStyle(palette.muted)
                     Spacer(minLength: 8)
-                    Button("取消", action: model.closeDialog).buttonStyle(WBQuietButtonStyle()).disabled(model.isBusy)
+                    Button("取消", action: model.closeDialog).buttonStyle(WBButtonStyle()).disabled(model.isBusy)
                     Button(model.purposeReviewID == item.id ? "正在核验…" : "确认测试用途") { model.confirmTestPurpose(item.id) }
                         .buttonStyle(WBButtonStyle(primary: true)).disabled(!model.acknowledgement || model.isBusy)
                         .accessibilityIdentifier("space-cleaning-confirm-test-purpose")
@@ -260,10 +260,10 @@ struct SpaceCleaningResultsView: View {
                     .font(.system(size: 12, weight: .medium))
                 if model.selectedCount > 0 {
                     Button(model.onlySelected ? "返回分类" : "查看已选") { model.toggleSelectedFilter() }
-                        .buttonStyle(ClickablePlainButtonStyle()).font(.system(size: 11)).foregroundStyle(palette.accent)
+                        .buttonStyle(WBTextActionButtonStyle()).font(.system(size: 11)).foregroundStyle(palette.accent)
                         .disabled(model.isBusy || confirming)
                     Button("取消选择", action: model.clearSelection)
-                        .buttonStyle(ClickablePlainButtonStyle()).font(.system(size: 11)).foregroundStyle(palette.muted)
+                        .buttonStyle(WBTextActionButtonStyle()).font(.system(size: 11)).foregroundStyle(palette.muted)
                         .disabled(model.isBusy || confirming)
                 }
             }

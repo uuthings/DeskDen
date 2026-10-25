@@ -73,6 +73,7 @@ struct DeviceProcessActionsMenu: NSViewRepresentable {
     let viewDetails: () -> Void
     let request: (DeviceProcessActionMode) -> Void
     @Environment(\.isEnabled) private var enabled
+    @Environment(\.workbenchPalette) private var palette
 
     func makeNSView(context: Context) -> DeviceProcessMenuButton {
         let button = DeviceProcessMenuButton(frame: NSRect(x: 0, y: 0, width: 28, height: 28))
@@ -84,6 +85,7 @@ struct DeviceProcessActionsMenu: NSViewRepresentable {
         button.canQuit = canQuit; button.canForce = canForce
         button.isEnabled = enabled
         button.contentTintColor = textColor
+        button.palette = palette
         button.viewDetails = viewDetails; button.request = request
         button.setAccessibilityLabel("\(name) 的进程操作")
     }
@@ -99,8 +101,17 @@ struct DeviceProcessActionsMenu: NSViewRepresentable {
     var canForce = false
     var viewDetails: () -> Void = {}
     var request: (DeviceProcessActionMode) -> Void = { _ in }
+    var palette = ThemePalette() { didSet { needsDisplay = true } }
     private(set) var activeMenu: NSMenu?
+    private var hoverArea: NSTrackingArea?
+    private var hovering = false
     override var isFlipped: Bool { true }
+    override var isEnabled: Bool {
+        didSet { if !isEnabled { hovering = false }; needsDisplay = true }
+    }
+    override var isHidden: Bool {
+        didSet { if isHidden { hovering = false }; needsDisplay = true }
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -117,6 +128,26 @@ struct DeviceProcessActionsMenu: NSViewRepresentable {
         setAccessibilityIdentifier("fc.device.process.more")
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(rect: .zero, options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited], owner: self, userInfo: nil)
+        addTrackingArea(area); hoverArea = area
+    }
+    override func mouseEntered(with event: NSEvent) { hovering = isEnabled; needsDisplay = true }
+    override func mouseExited(with event: NSEvent) { hovering = false; needsDisplay = true }
+    override func highlight(_ flag: Bool) { super.highlight(flag); needsDisplay = true }
+    override func draw(_ dirtyRect: NSRect) {
+        let active = isEnabled && hovering, pressed = isEnabled && isHighlighted
+        if active || pressed {
+            let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 7, yRadius: 7)
+            palette.nsAccent.withAlphaComponent(pressed ? 0.25 : 0.15).setFill(); shape.fill()
+            palette.nsAccent.withAlphaComponent(pressed ? 0.66 : 0.44).setStroke(); shape.lineWidth = 1; shape.stroke()
+        }
+        let color = (active || pressed ? palette.nsText : contentTintColor ?? palette.nsSecondary).withAlphaComponent(isEnabled ? 1 : 0.4)
+        drawSymbol("ellipsis", in: NSRect(x: bounds.midX - 6, y: bounds.midY - 6, width: 12, height: 12), color: color)
+    }
 
     func makeActionsMenu() -> NSMenu {
         let menu = NSMenu(title: "\(processName) 的进程操作")

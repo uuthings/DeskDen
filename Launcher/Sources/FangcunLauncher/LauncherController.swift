@@ -1424,6 +1424,8 @@ final class HorizontalNavigationGesture {
 final class PageIndicatorButton: ClickableButton {
     let selectedPage: Bool
     let activate: () -> Void
+    private var hovered = false
+    private var tracking: NSTrackingArea?
     override var isFlipped: Bool { true }
     init(page:Int,count:Int,selected:Bool,frame:NSRect,activate:@escaping () -> Void) {
         selectedPage = selected; self.activate = activate
@@ -1435,10 +1437,19 @@ final class PageIndicatorButton: ClickableButton {
     }
     required init?(coder:NSCoder) { fatalError() }
     @objc func selectPage() { activate() }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
+        addTrackingArea(area); tracking = area
+    }
+    override func mouseEntered(with event: NSEvent) { hovered = true; needsDisplay = true }
+    override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true }
     override func draw(_ dirtyRect:NSRect) {
         let width:CGFloat = selectedPage ? 18 : 6
         let marker = NSRect(x:(bounds.width-width)/2,y:(bounds.height-6)/2,width:width,height:6)
-        Palette.text.withAlphaComponent(selectedPage ? 0.82 : isHighlighted ? 0.60 : 0.28).setFill()
+        let hovering = isEnabled && hovered
+        Palette.text.withAlphaComponent(selectedPage ? (hovering ? 0.94 : 0.82) : isHighlighted ? 0.60 : hovering ? 0.44 : 0.28).setFill()
         NSBezierPath(roundedRect:marker,xRadius:3,yRadius:3).fill()
         if window?.firstResponder === self {
             let focus = NSBezierPath(roundedRect:bounds.insetBy(dx:1,dy:5),xRadius:7,yRadius:7)

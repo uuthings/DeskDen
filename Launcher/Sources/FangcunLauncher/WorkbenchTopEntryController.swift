@@ -416,10 +416,10 @@ private struct WorkbenchTopSummaryView: View {
                         .font(.system(size: 11, weight: .medium)).padding(.horizontal, 10).frame(height: 28)
                         .background(palette.navSelected, in: RoundedRectangle(cornerRadius: 8))
                         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(palette.line, lineWidth: 1))
-                }.buttonStyle(ClickablePlainButtonStyle()).keyboardShortcut(.return, modifiers: []).accessibilityLabel("展开完整工作台")
+                }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 8, drawsSelection: false, showsBorder: false)).keyboardShortcut(.return, modifiers: []).accessibilityLabel("展开完整工作台")
                     .accessibilityIdentifier("mini-open-workbench")
                 Button(action: dismiss) { Image(systemName: "xmark").font(.system(size: 10, weight: .medium)).frame(width: 24, height: 24) }
-                    .buttonStyle(ClickablePlainButtonStyle()).foregroundStyle(palette.secondary).accessibilityLabel("关闭快速信息")
+                    .buttonStyle(WBIconButtonStyle(size: 24)).foregroundStyle(palette.secondary).accessibilityLabel("关闭快速信息")
                     .accessibilityIdentifier("mini-close")
             }.frame(height: 30)
             HStack(alignment: .top, spacing: 8) {

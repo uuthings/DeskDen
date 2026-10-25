@@ -242,7 +242,7 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
     private var host: NSHostingView<AnyView>?
     private var hover = false
     private var area: NSTrackingArea?
-    private let actionButton = ClickableButton(), styleButton = ClickableButton()
+    private let actionButton = DeviceCardActionButton(), styleButton = DeviceCardActionButton()
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
     override var canBecomeKeyView: Bool { !isGhost }
@@ -267,13 +267,12 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
             addSubview(host, positioned: .below, relativeTo: actionButton)
         }
         appearance = NSAppearance(named: light ? .aqua : .darkAqua)
-        actionButton.image = NSImage(systemSymbolName: editing ? "xmark" : "arrow.up.right", accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 12 * scale, weight: .regular))
-        actionButton.contentTintColor = ThemePalette(theme: theme, opacity: opacity, light: light).nsSecondary
+        let actionPalette = ThemePalette(theme: theme, opacity: opacity, light: light)
+        actionButton.configure(symbol: editing ? "xmark" : "arrow.up.right", palette: actionPalette, scale: scale)
         actionButton.setAccessibilityLabel((editing ? "隐藏" : "打开") + id.title)
         actionButton.setAccessibilityIdentifier("fc.device.card.\(id.rawValue).\(editing ? "hide" : "open")")
         actionButton.toolTip = (editing ? "隐藏" : "打开") + id.title
-        styleButton.image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 12 * scale, weight: .regular))
-        styleButton.contentTintColor = ThemePalette(theme: theme, opacity: opacity, light: light).nsSecondary
+        styleButton.configure(symbol: "slider.horizontal.3", palette: actionPalette, scale: scale)
         styleButton.isHidden = !editing || !id.supportsMeterStyle || isGhost
         styleButton.setAccessibilityLabel(id.title + "显示设置"); styleButton.toolTip = "进度显示设置"
         updateActionVisibility()
@@ -281,8 +280,8 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
     }
     override func layout() {
         super.layout(); host?.frame = bounds
-        actionButton.frame = NSRect(x: bounds.width - 39 * scale, y: 12 * scale, width: 26 * scale, height: 26 * scale)
-        styleButton.frame = NSRect(x: bounds.width - 65 * scale, y: 12 * scale, width: 24 * scale, height: 24 * scale)
+        actionButton.frame = NSRect(x: bounds.width - 41 * scale, y: 11 * scale, width: 28 * scale, height: 28 * scale)
+        styleButton.frame = NSRect(x: bounds.width - 73 * scale, y: 11 * scale, width: 28 * scale, height: 28 * scale)
     }
     private func edge(at point: CGPoint) -> DeviceResizeEdge? {
         guard editing else { return nil }
@@ -345,6 +344,54 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
     @objc private func activate() { grid?.activate(id) }
     @objc private func style() { grid?.style(id, anchor: styleButton) }
 }
+/// Native card chrome uses the same bounded icon feedback as WBIconButtonStyle.
+/// Only the action's 28-point target changes; the data card never gains a hover frame.
+@MainActor final class DeviceCardActionButton: ClickableButton {
+    private var palette = ThemePalette()
+    private var displayScale: CGFloat = 1
+    private var symbol = "arrow.up.right"
+    private var hovering = false
+    private var hoverArea: NSTrackingArea?
+
+    func configure(symbol: String, palette: ThemePalette, scale: CGFloat) {
+        self.symbol = symbol; self.palette = palette; displayScale = scale
+        image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        needsDisplay = true
+    }
+    override var isEnabled: Bool {
+        didSet { if !isEnabled { hovering = false }; needsDisplay = true }
+    }
+    override var isHidden: Bool {
+        didSet { if isHidden { hovering = false }; needsDisplay = true }
+    }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(rect: .zero, options: [.activeInKeyWindow, .inVisibleRect, .mouseEnteredAndExited], owner: self, userInfo: nil)
+        addTrackingArea(area); hoverArea = area
+    }
+    override func mouseEntered(with event: NSEvent) {
+        hovering = isEnabled; needsDisplay = true
+    }
+    override func mouseExited(with event: NSEvent) {
+        hovering = false; needsDisplay = true
+    }
+    override func highlight(_ flag: Bool) {
+        super.highlight(flag); needsDisplay = true
+    }
+    override func draw(_ dirtyRect: NSRect) {
+        let active = isEnabled && hovering, pressed = isEnabled && isHighlighted
+        if active || pressed {
+            let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 7, yRadius: 7)
+            palette.nsAccent.withAlphaComponent(pressed ? 0.25 : 0.15).setFill(); path.fill()
+            palette.nsAccent.withAlphaComponent(pressed ? 0.66 : 0.44).setStroke(); path.lineWidth = 1; path.stroke()
+        }
+        let side = 14 * displayScale
+        let color = (active || pressed ? palette.nsText : palette.nsSecondary).withAlphaComponent(isEnabled ? 1 : 0.4)
+        drawSymbol(symbol, in: NSRect(x: bounds.midX - side / 2, y: bounds.midY - side / 2, width: side, height: side), color: color)
+    }
+}
+
 struct DeviceMeterPopover: View {
     @ObservedObject var model: DeviceStatusModel
     let id: DeviceCardID

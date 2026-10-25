@@ -131,11 +131,11 @@ struct HealthCenterView: View {
             WBPageHeader(title: "体检中心", subtitle: "了解设备状态，让每次处理都有依据") {
                 Button { if let onOpenCleaning { onOpenCleaning() } else { model.showSpaceCleaning() } } label: {
                     HStack(alignment: .center, spacing: 6) {
-                        Image(systemName: "internaldrive.badge.checkmark").frame(width: 16, height: 16)
+                        Image(systemName: "internaldrive").frame(width: 16, height: 16).accessibilityIdentifier("health-open-space-cleaning-icon")
                         Text("清理空间").fixedSize().accessibilityIdentifier("health-open-space-cleaning-title")
-                    }.frame(minHeight: 16, alignment: .center)
+                    }.frame(minHeight: 16, alignment: .center).fixedSize(horizontal: true, vertical: false)
                 }
-                    .buttonStyle(WBButtonStyle()).disabled(storage.isScanning || storage.isProcessing || applications.isProcessing)
+                    .buttonStyle(WBButtonStyle()).fixedSize(horizontal: true, vertical: false).disabled(storage.isScanning || storage.isProcessing || applications.isProcessing)
                     .accessibilityElement(children: .contain).accessibilityIdentifier("health-open-space-cleaning")
             }
             if let message = model.assessmentNotice { notice(message, symbol: "clock.arrow.circlepath").padding(.bottom, 12) }
@@ -216,7 +216,7 @@ struct HealthCenterView: View {
                         Button { onReadDevice(factor) } label: { Label("查看读数", systemImage: "arrow.up.right") }
                             .buttonStyle(WBButtonStyle(compact: true)).accessibilityIdentifier("health-reading-" + factor.rawValue)
                         Spacer(minLength: 0)
-                        Button("评分依据") { model.scoreDetail = factor }.buttonStyle(ClickablePlainButtonStyle())
+                        Button("评分依据") { model.scoreDetail = factor }.buttonStyle(WBTextActionButtonStyle())
                             .font(.system(size: 11)).foregroundStyle(palette.accent).fixedSize()
                             .accessibilityIdentifier("health-factor-basis-" + factor.rawValue)
                     }
@@ -421,7 +421,7 @@ struct HealthCenterView: View {
                                     Spacer(minLength: 0)
                                     Text(factorValue(item.factor)).lineLimit(1).multilineTextAlignment(.trailing)
                                 }.font(.system(size: 11)).foregroundStyle(palette.secondary).frame(maxWidth: .infinity, minHeight: 33).contentShape(Rectangle())
-                            }.buttonStyle(ClickablePlainButtonStyle()).help("查看" + item.factor.title + "读数").accessibilityIdentifier("health-checked-" + item.factor.rawValue)
+                            }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 6, drawsSelection: false, showsBorder: false)).help("查看" + item.factor.title + "读数").accessibilityIdentifier("health-checked-" + item.factor.rawValue)
                         }
                     }.padding(.top, 5).overlay(alignment: .top) { palette.line.frame(height: 1) }.padding(.top, 5)
                 }
@@ -450,7 +450,7 @@ struct HealthCenterView: View {
                             Text(categorySize(item)).font(.system(size: compactReport ? 11 : 12, weight: .medium)).foregroundStyle(palette.secondary).fixedSize()
                             HStack(spacing: 3) { if fullReport { Text("复核").font(.system(size: 11)) }; Image(systemName: "chevron.right").font(.system(size: 11)) }.foregroundStyle(palette.accent)
                         }.padding(.top, 12).padding(.bottom, item == adviceCategories.last ? 0 : 12).frame(maxWidth: .infinity, minHeight: fullReport ? 82 : 70, alignment: .leading).contentShape(Rectangle())
-                    }.buttonStyle(ClickablePlainButtonStyle()).accessibilityIdentifier("health-advice-" + item.rawValue)
+                    }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 6, drawsSelection: false, showsBorder: false)).accessibilityIdentifier("health-advice-" + item.rawValue)
                     if item != adviceCategories.last { palette.line.frame(height: 1) }
                 }
                 if adviceCategories.isEmpty { Text("本次仅检查设备健康，未选择额外建议范围。").font(.system(size: 11)).foregroundStyle(palette.muted).padding(.vertical, 20).frame(maxWidth: .infinity) }
@@ -569,7 +569,7 @@ struct HealthCenterView: View {
                         .background(model.category == category ? palette.soft : .clear, in: RoundedRectangle(cornerRadius: 9))
                         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(model.category == category ? palette.accent.opacity(0.3) : .clear, lineWidth: 1))
                         .contentShape(RoundedRectangle(cornerRadius: 9))
-                }.buttonStyle(ClickablePlainButtonStyle()).accessibilityIdentifier("health-review-category-" + category.rawValue)
+                }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 9, drawsSelection: false, showsBorder: false)).accessibilityIdentifier("health-review-category-" + category.rawValue)
             }
             Spacer(minLength: 12)
             HStack(alignment: .top, spacing: 7) {
@@ -631,7 +631,7 @@ struct HealthCenterView: View {
                 Image(systemName: file.category == .symbolicLink ? "link" : "doc").font(.system(size: 15)).foregroundStyle(palette.accent)
                     .frame(width: 27, height: 29).background(palette.soft, in: RoundedRectangle(cornerRadius: 7)).accessibilityHidden(true)
             }
-            Button { selectedFile = file } label: { VStack(alignment: .leading, spacing: 5) { Text(URL(fileURLWithPath: file.relativePath).lastPathComponent).font(.system(size: 12, weight: .medium)).foregroundStyle(palette.text); Text(file.relativePath).font(.system(size: 10)).foregroundStyle(palette.muted).lineLimit(1).truncationMode(.middle); Text(status == .pendingReview || status == .retained ? file.explanation : status.explanation).font(.system(size: 10)).foregroundStyle(palette.muted).lineLimit(2) }.frame(maxWidth: .infinity, alignment: .leading) }.buttonStyle(ClickablePlainButtonStyle())
+            Button { selectedFile = file } label: { VStack(alignment: .leading, spacing: 5) { Text(URL(fileURLWithPath: file.relativePath).lastPathComponent).font(.system(size: 12, weight: .medium)).foregroundStyle(palette.text); Text(file.relativePath).font(.system(size: 10)).foregroundStyle(palette.muted).lineLimit(1).truncationMode(.middle); Text(status == .pendingReview || status == .retained ? file.explanation : status.explanation).font(.system(size: 10)).foregroundStyle(palette.muted).lineLimit(2) }.frame(maxWidth: .infinity, alignment: .leading) }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 6, drawsSelection: false, showsBorder: false))
                 .accessibilityIdentifier("health-file-details-" + file.id.uuidString)
             VStack(alignment: .trailing, spacing: 6) {
                 Text(DeviceFormat.bytes(file.logicalBytes)).font(.system(size: 11))

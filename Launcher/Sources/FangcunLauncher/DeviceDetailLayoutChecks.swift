@@ -13,13 +13,12 @@ import LauncherCore
         }
         @MainActor func checkLinkedArrow(_ identifier: String, in host: NSView, label: String) {
             let card = frame(identifier, in: host), action = frame(identifier + ".action", in: host)
-            check(action.map { abs($0.width - 28) < 1 && abs($0.height - 30) < 1 } == true,
-                  "mounted \(label) navigation Button remains accessible with its transparent 28×30 pt target")
+            check(action.map { abs($0.width - 28) < 1 && abs($0.height - 28) < 1 } == true,
+                  "mounted \(label) navigation Button remains accessible with its shared 28×28 pt icon target")
             check(card.flatMap { surface in action.map { button in
-                // 14 pt card padding + half the 22 pt title row. The target
-                // extends one point beyond the glyph's aligned right edge.
-                abs(surface.maxX - button.maxX - 13) < 1 && abs(surface.maxY - button.midY - 25) < 1
-            } } == true, "mounted \(label) arrow target stays in the 22 pt title row without moving its right-aligned glyph or growing the header")
+                // Shared 14 pt card padding and the unchanged 22 pt title row.
+                abs(surface.maxX - button.maxX - 14) < 1 && abs(surface.maxY - button.midY - 25) < 1
+            } } == true, "mounted \(label) arrow target stays in the 22 pt title row with the shared right inset and without growing the header")
             print("DETAIL device-detail linked-arrow \(label) card=\(String(describing: card)) action=\(String(describing: action))")
         }
         guard let host = window.contentView, !model.device.isSampling, !model.modals.isPresented else {

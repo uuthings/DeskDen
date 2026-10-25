@@ -114,7 +114,7 @@ struct CalendarModuleView:View {
                     Text("放假");Text("班").foregroundStyle(palette.critical).padding(.horizontal,3).background(palette.critical.opacity(0.08),in:RoundedRectangle(cornerRadius:3));Text("调休上班")
                 } else {Text("此年未载入调休数据")}
                 Spacer(minLength:4)
-                Button {model.showSources=true} label:{HStack(spacing:3){Text("中国大陆节假日");Image(systemName:"chevron.right").font(.system(size:9))}}.buttonStyle(ClickablePlainButtonStyle())
+                Button {model.showSources=true} label:{HStack(spacing:3){Text("中国大陆节假日");Image(systemName:"chevron.right").font(.system(size:9))}}.buttonStyle(WBTextActionButtonStyle())
             }.font(.system(size:11)).foregroundStyle(palette.muted).lineLimit(1).frame(height:18).padding(.top,12)
         }
     }
@@ -166,7 +166,7 @@ private struct CalendarSegment<Value:Hashable>:View {
     var body:some View {
         HStack(spacing:2){ForEach(items,id:\.self){item in
             Button {selection=item} label:{Text(title(item)).font(.system(size:11)).padding(.horizontal,8).frame(height:26).background(selection == item ? palette.control:.clear,in:RoundedRectangle(cornerRadius:6))}
-                .buttonStyle(ClickablePlainButtonStyle()).foregroundStyle(selection == item ? palette.text:palette.muted).accessibilityValue(selection == item ? "已选择":"")
+                .buttonStyle(WBSelectableButtonStyle(selected: selection == item, cornerRadius: 6, drawsSelection: false, showsBorder: false)).foregroundStyle(selection == item ? palette.text:palette.muted).accessibilityValue(selection == item ? "已选择":"")
         }}.padding(2).background(palette.soft,in:RoundedRectangle(cornerRadius:8)).overlay(RoundedRectangle(cornerRadius:8).strokeBorder(palette.line,lineWidth:1))
     }
 }
@@ -223,7 +223,7 @@ private struct CalendarWeekGrid:View {
                 VStack(spacing:0){ForEach(0..<6,id:\.self){_ in Rectangle().fill(palette.line).frame(height:1);Spacer(minLength:0)}}
                 ForEach(Array(entries.enumerated()),id:\.element.id){index,entry in
                     Button {open(entry)} label:{VStack(alignment:.leading,spacing:3){Text(entry.title).lineLimit(2);Text(calendarTime(entry,calendar:model.displayCalendar)).foregroundStyle(palette.secondary)}.font(.system(size:11)).padding(5).frame(maxWidth:.infinity,alignment:.leading).frame(minHeight:39,maxHeight:58).background(palette.soft,in:RoundedRectangle(cornerRadius:6)).overlay(RoundedRectangle(cornerRadius:6).strokeBorder(palette.line,lineWidth:1))}
-                        .buttonStyle(ClickablePlainButtonStyle()).padding(.top,offset(entry,index:index)).accessibilityLabel("\(entry.title)，\(calendarTime(entry,calendar:model.displayCalendar))")
+                        .buttonStyle(WBSelectableButtonStyle(cornerRadius: 6, showsBorder: false)).padding(.top,offset(entry,index:index)).accessibilityLabel("\(entry.title)，\(calendarTime(entry,calendar:model.displayCalendar))")
                 }
             }.frame(height:350)
         }.frame(minWidth:52,maxWidth:.infinity).overlay(alignment:.leading){palette.line.frame(width:1)}
@@ -255,7 +255,7 @@ private struct CalendarAgendaRow:View {
                     Text(entry.title).font(.system(size:12)).foregroundStyle(entry.isCompleted ? palette.muted:palette.text).strikethrough(entry.isCompleted).lineLimit(2).frame(minHeight:17,alignment:.top)
                     Text(detail).font(.system(size:11)).foregroundStyle(palette.muted).lineLimit(2)
                 }.frame(maxWidth:.infinity,alignment:.leading).contentShape(Rectangle())
-            }.buttonStyle(ClickablePlainButtonStyle())
+            }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 6, showsBorder: false))
         }.padding(.vertical,10).overlay(alignment:.bottom){palette.line.frame(height:1)}
     }
     private var detail:String {

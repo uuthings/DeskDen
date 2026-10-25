@@ -344,7 +344,7 @@ struct AIUsageModuleView: View {
                     .accessibilityElement(children: .contain).accessibilityIdentifier("fc.ai.detail.validity")
             }
             quotaHistory(provider).padding(.top, 12)
-            AINotice(text: "图表仅展示最近 24 小时实际读数，本机最多保留 31 天。跨重置、来源切换和采集中断会分段；空白不代表 0，不用 Token 推算额度。")
+            AINotice(text: "每格为一天最后一次实际读数，并非当日消耗；不同额度窗口分别展示。无读数不代表 0，本机最多保留 31 天。")
                 .accessibilityIdentifier("fc.ai.detail.historyNotice").padding(.top, 12)
             AIWeightedColumns(ratio: 1, gap: 12) {
                 providerTokenCard(provider)
@@ -353,36 +353,28 @@ struct AIUsageModuleView: View {
         }
     }
     private func quotaHistory(_ provider: AIProvider) -> some View {
-        let now = Date()
-        let recentSnapshots = model.quotaHistory.filter { $0.observedAt >= now.addingTimeInterval(-86_400) && $0.observedAt <= now }
-        let segments = AIQuotaHistorySegmentation.segments(recentSnapshots, provider: provider)
-        let points = segments.flatMap { $0.points }
+        let calendar = Calendar.current
+        let history = AIQuotaDailyHistory.build(model.quotaHistory, provider: provider, calendar: calendar)
         return WBCard(spacing: 0) {
-            AICardTitle(title: "已观测额度历史", symbol: "clock.arrow.circlepath", trailing: "最近 24 小时")
-            if points.isEmpty {
-                Text("最近 24 小时尚无有效额度历史。连接来源并读取后显示。").aiText(12, color: palette.muted).frame(maxWidth: .infinity, minHeight: expanded ? 170 : 155)
+            AICardTitle(title: "已观测额度历史", symbol: "square.grid.3x3.fill", trailing: "最近 31 天")
+            HStack(spacing: 8) {
+                Text(history.startDate.formatted(.dateTime.month().day()) + " — " + history.endDate.formatted(.dateTime.month().day()))
+                Spacer(minLength: 0)
+                Text("本地时区 · " + (calendar.timeZone.abbreviation() ?? calendar.timeZone.identifier))
+            }.aiText(11, color: palette.muted).padding(.top, 8).padding(.bottom, 18)
+            if history.series.isEmpty {
+                AIQuotaDailyHeatmap(days: history.days, title: "尚无额度读数", calendar: calendar,
+                    identifier: provider.rawValue + ".empty", empty: true)
             } else {
-                Chart {
-                    ForEach(segments) { segment in
-                        ForEach(segment.points) { point in
-                            LineMark(x: .value("采集时间", point.date), y: .value("已用百分比", point.usedPercent), series: .value("窗口", segment.id))
-                                .foregroundStyle(segment.window.durationMinutes == 10_080 ? palette.secondary : palette.accent)
-                            PointMark(x: .value("采集时间", point.date), y: .value("已用百分比", point.usedPercent))
-                                .foregroundStyle(segment.window.durationMinutes == 10_080 ? palette.secondary : palette.accent).symbolSize(14)
-                        }
+                LazyVGrid(columns: history.series.count == 1 ? [GridItem(.flexible())] : [GridItem(.adaptive(minimum: 300), spacing: 28)], spacing: 20) {
+                    ForEach(history.series) { series in
+                        AIQuotaDailyHeatmap(days: series.days, title: series.title, calendar: calendar,
+                            identifier: provider.rawValue + "." + String(series.durationMinutes))
                     }
-                }.chartYScale(domain: 0...100)
-                    .chartYAxis { AxisMarks(values: [0, 50, 100]) { value in AxisGridLine(); AxisValueLabel { if let number = value.as(Int.self) { Text("\(number)%") } } } }
-                    .chartXAxis { AxisMarks(values: .automatic(desiredCount: 5)) { _ in AxisValueLabel(format: .dateTime.month().day().hour()) } }
-                    .frame(height: expanded ? 170 : 155)
+                }
             }
-            HStack(spacing: 14) {
-                Label("短期窗口", systemImage: "circle.fill").foregroundStyle(palette.accent)
-                Label("每周窗口", systemImage: "circle.fill").foregroundStyle(palette.secondary)
-                Spacer()
-                Text("\(points.count) 个实际读数").foregroundStyle(palette.muted)
-            }.font(.system(size: 10)).padding(.top, 10)
-        }.frame(minHeight: 240, alignment: .top)
+            AIQuotaHeatmapLegend().padding(.top, 16)
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("fc.ai.detail.dailyHistory")
     }
     private func providerTokenCard(_ provider: AIProvider) -> some View {
         let records = model.filteredRecords(provider: provider, period: model.selectedPeriod)
@@ -571,6 +563,113 @@ struct AIProviderLogo: View {
             .frame(width: size, height: size).accessibilityHidden(true)
     }
 }
+
+/// The calendar cells are fixed squares. Padding has no cell surface, a missing
+/// observation has a neutral outline, and a real 0% has the first accent shade.
+private struct AIQuotaDailyHeatmap: View {
+    let days: [AIQuotaDailyCell]
+    let title: String
+    let calendar: Calendar
+    let identifier: String
+    var empty = false
+    @Environment(\.workbenchPalette) private var palette
+    @State private var hoveredDate: Date?
+    private let cellSize: CGFloat = 32
+    private let cellGap: CGFloat = 6
+    private var focusedDay: AIQuotaDailyCell? {
+        days.first { $0.date == hoveredDate } ?? days.last { $0.reading != nil } ?? days.last { $0.isInRange }
+    }
+    private var weekdays: [String] {
+        let names = calendar.veryShortStandaloneWeekdaySymbols
+        return (0..<7).map { names[($0 + calendar.firstWeekday - 1) % 7] }
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Text(title).aiText(12, weight: .medium, color: palette.text)
+                Spacer(minLength: 0)
+                Text("\(days.filter { $0.reading != nil }.count) 天有读数").aiText(10, color: palette.muted)
+            }
+            VStack(spacing: cellGap) {
+                HStack(spacing: cellGap) {
+                    ForEach(Array(weekdays.enumerated()), id: \.offset) { _, day in
+                        Text(day).font(.system(size: 10)).foregroundStyle(palette.muted).frame(width: cellSize, height: 16)
+                    }
+                }.accessibilityHidden(true)
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(cellSize), spacing: cellGap), count: 7), spacing: cellGap) {
+                    ForEach(days) { day in
+                        if day.isInRange {
+                            Text(String(calendar.component(.day, from: day.date)))
+                                .font(.system(size: 10, weight: .medium)).monospacedDigit()
+                                .foregroundStyle(day.reading == nil ? palette.muted : palette.text)
+                                .frame(width: cellSize, height: cellSize)
+                                .background(fill(day), in: RoundedRectangle(cornerRadius: 5))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 5).strokeBorder(
+                                        hoveredDate == day.date ? palette.accent : day.reading == nil ? palette.border : palette.accent.opacity(0.35),
+                                        lineWidth: hoveredDate == day.date ? 1.5 : 1)
+                                }
+                                .onHover { hoveredDate = $0 ? day.date : nil }
+                                .aiQuotaMeasuredRegion("fc.ai.history." + identifier + ".cell." + String(Int(day.date.timeIntervalSince1970)))
+                                .help(description(day))
+                                .accessibilityElement(children: .ignore).accessibilityLabel(description(day))
+                                .accessibilityIdentifier("fc.ai.history." + identifier + ".day." + String(Int(day.date.timeIntervalSince1970)))
+                        } else {
+                            Color.clear.frame(width: cellSize, height: cellSize).accessibilityHidden(true)
+                        }
+                    }
+                }.frame(width: cellSize * 7 + cellGap * 6)
+                    .aiQuotaMeasuredRegion("fc.ai.history." + identifier + ".grid")
+            }.frame(maxWidth: .infinity)
+            VStack(alignment: .leading, spacing: 3) {
+                if empty {
+                    Text("连接来源并读取后，按天记录真实额度。").foregroundStyle(palette.muted)
+                    Text("空白日期尚无读数").foregroundStyle(palette.muted)
+                } else if let day = focusedDay {
+                    Text(day.date.formatted(.dateTime.month().day()) + (day.reading.map {
+                        " · 窗口已用 " + $0.window.usedPercent.formatted(.number.precision(.fractionLength(0...1))) + "%"
+                    } ?? " · 无读数")).foregroundStyle(day.reading == nil ? palette.muted : palette.text)
+                    Text(day.reading.map { $0.observedAt.formatted(date: .omitted, time: .shortened) + " · " + $0.source.title } ?? "未观测到额度，不能视为 0%。")
+                        .foregroundStyle(palette.muted)
+                }
+            }.font(.system(size: 11)).lineLimit(1).frame(height: 34, alignment: .topLeading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("fc.ai.history." + identifier)
+    }
+    private func fill(_ day: AIQuotaDailyCell) -> Color {
+        guard let reading = day.reading else { return palette.soft.opacity(0.45) }
+        return palette.accent.opacity(0.16 + 0.64 * reading.window.usedPercent / 100)
+    }
+    private func description(_ day: AIQuotaDailyCell) -> String {
+        let date = day.date.formatted(date: .complete, time: .omitted)
+        guard let reading = day.reading else { return date + "，无额度读数；无读数不代表 0。" }
+        let reset = reading.window.resetsAt.map { "；该窗口重置时间 " + $0.formatted(date: .abbreviated, time: .shortened) } ?? "；来源未提供重置时间"
+        return date + "，" + title + "已用 " + reading.window.usedPercent.formatted(.number.precision(.fractionLength(0...1))) + "%；当天最后观测 " + reading.observedAt.formatted(date: .abbreviated, time: .shortened) + "；" + reading.source.title + reset
+    }
+}
+
+private struct AIQuotaHeatmapLegend: View {
+    @Environment(\.workbenchPalette) private var palette
+    var body: some View {
+        HStack(spacing: 5) {
+            Text("窗口已用").padding(.trailing, 3)
+            Text("0%")
+            ForEach([0, 25, 50, 75, 100], id: \.self) { percent in
+                RoundedRectangle(cornerRadius: 2).fill(palette.accent.opacity(0.16 + 0.64 * Double(percent) / 100))
+                    .overlay { RoundedRectangle(cornerRadius: 2).strokeBorder(palette.accent.opacity(0.35), lineWidth: 1) }
+                    .frame(width: 11, height: 11)
+            }
+            Text("100%")
+            RoundedRectangle(cornerRadius: 2).fill(palette.soft.opacity(0.45))
+                .overlay { RoundedRectangle(cornerRadius: 2).strokeBorder(palette.border, lineWidth: 1) }
+                .frame(width: 11, height: 11).padding(.leading, 10)
+            Text("无读数")
+            Spacer(minLength: 0)
+        }.font(.system(size: 10)).foregroundStyle(palette.muted).accessibilityElement(children: .ignore)
+            .accessibilityLabel("颜色越深，观测时的窗口已用比例越高；中性边框表示当天没有读数。")
+    }
+}
+
 private struct AIProviderQuotaCard: View {
     let summary: AIProviderSummary
     let minimumHeight: CGFloat
@@ -580,6 +679,7 @@ private struct AIProviderQuotaCard: View {
     var action: () -> Void
     @Environment(\.workbenchPalette) private var palette
     @State private var hovering = false
+    @State private var arrowHovered = false
     @FocusState private var actionFocused: Bool
     private var windows: [AIQuotaWindow] { summary.snapshot?.availableWindows ?? [] }
     private var rowGap: CGFloat { expanded ? 18 : 14 }
@@ -618,9 +718,12 @@ private struct AIProviderQuotaCard: View {
                 }
                 Spacer()
                 if showsAction {
-                    Image(systemName: "arrow.up.right").font(.system(size: 11))
-                        .foregroundStyle(palette.secondary).opacity(hovering || actionFocused ? 1 : 0)
-                        .frame(width: 26, height: 26).accessibilityHidden(true)
+                    Image(systemName: "arrow.up.right").font(.system(size: 14))
+                        .foregroundStyle(arrowHovered ? palette.text : palette.secondary)
+                        .frame(width: 28, height: 28)
+                        .overlay(WBIconFeedbackSurface(hovering: arrowHovered || actionFocused).allowsHitTesting(false))
+                        .onHover { arrowHovered = $0 }
+                        .opacity(hovering || actionFocused ? 1 : 0).accessibilityHidden(true)
                 }
             }.frame(height: 40)
                 .aiQuotaMeasuredRegion("fc.ai.quota.header." + summary.provider.rawValue)
@@ -741,13 +844,11 @@ private struct AICardTitle: View {
             if let trailing { Text(trailing).aiText(11, color: palette.muted) }
             if let actionTitle, let action {
                 Button(action: action) {
-                    Image(systemName: "arrow.up.right").font(.system(size: 11))
-                        .opacity(cardHovered || actionFocused ? 1 : 0)
-                        .frame(width: 26, height: 26).contentShape(Rectangle())
-                }.buttonStyle(ClickablePlainButtonStyle()).foregroundStyle(palette.secondary)
+                    Image(systemName: "arrow.up.right").opacity(cardHovered || actionFocused ? 1 : 0)
+                }.buttonStyle(WBIconButtonStyle(size: 28))
                     .focused($actionFocused).help(actionTitle).accessibilityLabel(actionTitle)
             }
-        }.frame(height: 22).padding(.bottom, 10)
+        }.frame(height: action == nil ? 22 : 28).padding(.bottom, 10)
     }
 }
 private struct AITokenTable: View {

@@ -49,7 +49,7 @@ struct SpaceCleaningHistoryView: View {
                         }
                         Spacer(minLength: 0)
                     }.frame(maxWidth: .infinity, minHeight: 56, alignment: .leading).contentShape(Rectangle())
-                }.buttonStyle(ClickablePlainButtonStyle())
+                }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 8, drawsSelection: false, showsBorder: false))
                     .accessibilityLabel((expanded ? "收起" : "展开") + "清理记录 " + SpaceCleaningFormat.date(batch.date))
                     .accessibilityValue(expanded ? "已展开" : "已收起")
                     .accessibilityIdentifier("space-cleaning-history-expand-" + batch.id.uuidString)

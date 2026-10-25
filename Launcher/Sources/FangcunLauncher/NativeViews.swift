@@ -274,6 +274,9 @@ final class ActionButton: ClickableButton {
     var hovered = false
     var tracking: NSTrackingArea?
     override var isFlipped: Bool { true }
+    override var isEnabled: Bool {
+        didSet { if !isEnabled { hovered = false }; needsDisplay = true }
+    }
     init(_ title: String, symbol: String? = nil, frame: NSRect, action: @escaping () -> Void) {
         super.init(frame: frame); self.title = title; self.symbol = symbol; actionBlock = action
         isBordered = false; setButtonType(.momentaryChange); target = self; self.action = #selector(invoke)
@@ -285,12 +288,18 @@ final class ActionButton: ClickableButton {
         if let tracking { removeTrackingArea(tracking) }
         tracking = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited,.activeAlways,.inVisibleRect], owner: self); addTrackingArea(tracking!); super.updateTrackingAreas()
     }
-    override func mouseEntered(with event: NSEvent) { hovered = true; needsDisplay = true }
+    override func mouseEntered(with event: NSEvent) { hovered = isEnabled; needsDisplay = true }
     override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true }
+    override func highlight(_ flag: Bool) { super.highlight(flag); needsDisplay = true }
     override func draw(_ dirtyRect: NSRect) {
         let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: radius, yRadius: radius)
         let isFocused = window?.firstResponder === self
-        if primary { (isEnabled ? Palette.accent : Palette.ink.withAlphaComponent(0.12)).setFill(); shape.fill() }
+        if primary {
+            (isEnabled ? Palette.accent : Palette.ink.withAlphaComponent(0.12)).setFill(); shape.fill()
+            if isEnabled && (hovered || isHighlighted) {
+                NSColor.black.withAlphaComponent(isHighlighted ? 0.22 : 0.12).setFill(); shape.fill()
+            }
+        }
         else if selected || hovered || isHighlighted || border || isFocused { NSColor.white.withAlphaComponent(isHighlighted ? 0.20 : selected ? 0.10 : hovered ? 0.08 : 0.035).setFill(); shape.fill() }
         if border { Palette.ink.withAlphaComponent(0.14).setStroke(); shape.stroke() }
         let foreground = (textColor ?? (primary ? NSColor(calibratedWhite: 0.13, alpha: 1) : selected ? Palette.text : Palette.secondary)).withAlphaComponent(isEnabled ? 1 : 0.35)
@@ -463,7 +472,12 @@ final class LauncherWorkbenchButton: FlippedView {
 }
 private final class LauncherWorkbenchAction: ClickableButton {
     let activate: () -> Void
+    private var hoverArea: NSTrackingArea?
+    private var hovering = false
     override var isFlipped:Bool { true }
+    override var isEnabled: Bool {
+        didSet { if !isEnabled { hovering = false }; needsDisplay = true }
+    }
     init(frame:NSRect,activate:@escaping ()->Void) {
         self.activate=activate; super.init(frame:frame)
         title="工作台"; isBordered=false; focusRingType = .none
@@ -472,11 +486,25 @@ private final class LauncherWorkbenchAction: ClickableButton {
     }
     required init?(coder:NSCoder) { fatalError() }
     @objc private func invoke() { activate() }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(rect: .zero, options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited], owner: self, userInfo: nil)
+        addTrackingArea(area); hoverArea = area
+    }
+    override func mouseEntered(with event: NSEvent) { hovering = isEnabled; needsDisplay = true }
+    override func mouseExited(with event: NSEvent) { hovering = false; needsDisplay = true }
+    override func highlight(_ flag: Bool) { super.highlight(flag); needsDisplay = true }
     override func draw(_ dirtyRect:NSRect) {
-        if isHighlighted { NSColor.white.withAlphaComponent(0.10).setFill(); NSBezierPath(roundedRect:bounds,xRadius:16,yRadius:16).fill() }
-        let text=NSAttributedString(string:title,attributes:[.font:NSFont.systemFont(ofSize:12,weight:.semibold),.foregroundColor:Palette.secondary])
+        let active = isEnabled && hovering, pressed = isEnabled && isHighlighted
+        if active || pressed {
+            Palette.ink.withAlphaComponent(pressed ? 0.12 : 0.045).setFill()
+            NSBezierPath(roundedRect:bounds,xRadius:bounds.height/2,yRadius:bounds.height/2).fill()
+        }
+        let color = (active || pressed ? Palette.text : Palette.secondary).withAlphaComponent(isEnabled ? 1 : 0.4)
+        let text=NSAttributedString(string:title,attributes:[.font:NSFont.systemFont(ofSize:12,weight:.semibold),.foregroundColor:color])
         let x=(bounds.width-16-6-text.size().width)/2
-        drawSymbol("rectangle.split.2x2",in:NSRect(x:x,y:(bounds.height-16)/2,width:16,height:16),color:Palette.secondary)
+        drawSymbol("rectangle.split.2x2",in:NSRect(x:x,y:(bounds.height-16)/2,width:16,height:16),color:color)
         text.draw(at:NSPoint(x:x+22,y:(bounds.height-text.size().height)/2))
     }
 }
@@ -899,7 +927,12 @@ final class ResultTile: ClickableButton {
     var reorderBlock: ((String,String) -> Void)?
     private var initialPoint:NSPoint?
     private var dragging = false
+    private var hoverArea: NSTrackingArea?
+    private var hovering = false
     override var isFlipped: Bool { true }
+    override var isEnabled: Bool {
+        didSet { if !isEnabled { hovering = false }; needsDisplay = true }
+    }
     init(entry:SearchEntry,list:Bool,selected:Bool,badge:String?,frame:NSRect) {
         self.entry = entry; self.list = list; self.selected = selected; self.badge = badge
         super.init(frame:frame); isBordered = false; title = ""; target = self; action = #selector(invoke)
@@ -921,6 +954,14 @@ final class ResultTile: ClickableButton {
     private func refreshSelectionAppearance() {
         setAccessibilitySelected(selected && selectionVisible); needsDisplay = true
     }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(rect: .zero, options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited], owner: self, userInfo: nil)
+        addTrackingArea(area); hoverArea = area
+    }
+    override func mouseEntered(with event: NSEvent) { hovering = isEnabled; needsDisplay = true }
+    override func mouseExited(with event: NSEvent) { hovering = false; needsDisplay = true }
     override func rightMouseDown(with event:NSEvent) { contextBlock?() }
     override func mouseDown(with event:NSEvent) {
         if event.modifierFlags.contains(.control) { contextBlock?(); return }
@@ -952,10 +993,10 @@ final class ResultTile: ClickableButton {
             NSColor.white.withAlphaComponent(Palette.isLight ? 0.20 : 0.09).setFill(); path.fill()
             NSColor(srgbRed:0.357,green:0.576,blue:0.741,alpha:1).setStroke(); path.lineWidth = 1; path.stroke()
         }
-        if isHighlighted || dropHighlight {
+        if isHighlighted || dropHighlight || hovering {
             let highlight = list ? bounds.insetBy(dx:1,dy:1) : iconRect.insetBy(dx:-8,dy:-8)
             let path = NSBezierPath(roundedRect:highlight,xRadius:list ? 9 : 20,yRadius:list ? 9 : 20)
-            Palette.ink.withAlphaComponent(isHighlighted ? 0.12 : 0.065).setFill(); path.fill()
+            Palette.ink.withAlphaComponent(isHighlighted ? 0.12 : dropHighlight ? 0.065 : 0.045).setFill(); path.fill()
             if dropHighlight { Palette.accent.setStroke(); path.lineWidth = 1; path.stroke() }
         }
         drawTarget(entry.target,in:iconRect,normalized:!list,opacity:isHighlighted ? 0.82 : 1)

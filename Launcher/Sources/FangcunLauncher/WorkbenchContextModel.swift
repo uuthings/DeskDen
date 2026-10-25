@@ -237,7 +237,7 @@ private struct WorkbenchWeatherDialog:View {
                     Button(action:search){if searching {ProgressView().controlSize(.small)} else {Text("搜索")}}.buttonStyle(WBButtonStyle()).disabled(searching || query.trimmingCharacters(in:.whitespacesAndNewlines).count<2)
                 }
                 if !results.isEmpty {
-                    ScrollView {VStack(spacing:3){ForEach(results){item in Button{select(item)}label:{HStack{Text(item.displayName).multilineTextAlignment(.leading);Spacer();if item == city {Image(systemName:"checkmark")}}.padding(8).frame(maxWidth:.infinity,alignment:.leading).background(item == city ? palette.navSelected:.clear,in:RoundedRectangle(cornerRadius:7))}.buttonStyle(ClickablePlainButtonStyle())}}.background(WorkbenchOverlayScrollbars())}.frame(maxHeight:120)
+                    ScrollView {VStack(spacing:3){ForEach(results){item in Button{select(item)}label:{HStack{Text(item.displayName).multilineTextAlignment(.leading);Spacer();if item == city {Image(systemName:"checkmark")}}.padding(8).frame(maxWidth:.infinity,alignment:.leading).background(item == city ? palette.navSelected:.clear,in:RoundedRectangle(cornerRadius:7))}.buttonStyle(WBSelectableButtonStyle(selected: item == city, cornerRadius: 7, drawsSelection: false, showsBorder: false))}}.background(WorkbenchOverlayScrollbars())}.frame(maxHeight:120)
                 } else if searched && !searching {Text("未找到城市，请尝试完整名称或英文名称。").font(.system(size:11)).foregroundStyle(palette.muted)}
                 if let city {
                     HStack {Text(city.displayName).lineLimit(2);Spacer();Button("刷新"){load(city,force:true)}.buttonStyle(WBButtonStyle(compact:true))}
@@ -279,7 +279,7 @@ private struct WorkbenchWeatherDialog:View {
             }
         } else {unavailable(preview?.issue ?? "正在读取天气…")}
     }
-    private func unavailable(_ text:String)->some View {VStack(spacing:14){Image(systemName:"cloud.slash").font(.system(size:36,weight:.light));Text(text);Text("日期、待办与其他模块照常显示。").font(.system(size:11))}.foregroundStyle(palette.secondary).frame(maxWidth:.infinity).padding(.vertical,22)}
+    private func unavailable(_ text:String)->some View {VStack(spacing:14){Image(systemName:"cloud").font(.system(size:36,weight:.light));Text(text);Text("日期、待办与其他模块照常显示。").font(.system(size:11))}.foregroundStyle(palette.secondary).frame(maxWidth:.infinity).padding(.vertical,22)}
     private func search() {
         searchTask?.cancel();let id=UUID();searchID=id;let text=query;searching=true;searched=true;issue=nil
         searchTask=Task {
@@ -311,6 +311,6 @@ private struct WorkbenchWeatherDialog:View {
 
 func weatherTemperature(_ value:Double?) -> String {value.map{String(format:"%.0f°",$0)} ?? "—"}
 func weatherSymbol(_ code:Int?,isDay:Bool?=true) -> String {
-    guard let code else {return "cloud.slash"}
-    switch code {case 0,1:return isDay == false ? "moon.stars":"sun.max";case 2:return isDay == false ? "cloud.moon":"cloud.sun";case 3:return "cloud";case 45,48:return "cloud.fog";case 51...67,80...82:return "cloud.rain";case 71...77,85,86:return "cloud.snow";case 95...99:return "cloud.bolt.rain";default:return "cloud.slash"}
+    guard let code else {return "cloud"}
+    switch code {case 0,1:return isDay == false ? "moon.stars":"sun.max";case 2:return isDay == false ? "cloud.moon":"cloud.sun";case 3:return "cloud";case 45,48:return "cloud.fog";case 51...67,80...82:return "cloud.rain";case 71...77,85,86:return "cloud.snow";case 95...99:return "cloud.bolt.rain";default:return "cloud"}
 }

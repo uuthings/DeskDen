@@ -84,7 +84,7 @@ struct WorkbenchOverview:View {
     private var deviceCard:some View {
         let s=device.snapshot
         return VStack(alignment:.leading,spacing:0) {
-            HStack(spacing:7){Image(systemName:"laptopcomputer").font(.system(size:16,weight:.light)).foregroundStyle(palette.secondary);Text("这台 Mac").font(.system(size:12,weight:.medium));Spacer();Button{navigate(.device)}label:{Image(systemName:"arrow.up.right")}.buttonStyle(WBIconButtonStyle(size:22)).accessibilityLabel("查看设备状态")}.frame(height:22).padding(.bottom,10)
+            HStack(spacing:7){Image(systemName:"laptopcomputer").font(.system(size:16,weight:.light)).foregroundStyle(palette.secondary);Text("这台 Mac").font(.system(size:12,weight:.medium));Spacer();Button{navigate(.device)}label:{Image(systemName:"arrow.up.right")}.buttonStyle(WBIconButtonStyle(size:28)).accessibilityLabel("查看设备状态").accessibilityIdentifier("home-device-detail")}.frame(height:22).padding(.bottom,10)
             VStack(alignment:.leading,spacing:compact ? 4:0) {
                 if compact {Text(s.deviceName).font(.system(size:15,weight:.medium));deviceIdentity(s)}
                 else {HStack(alignment:.firstTextBaseline,spacing:9){Text(s.deviceName).font(.system(size:expanded ? 18:15,weight:.medium)).lineLimit(1);deviceIdentity(s)}}
@@ -110,7 +110,7 @@ struct WorkbenchOverview:View {
             Text("共 "+DeviceFormat.capacity(total)).font(.system(size:11)).foregroundStyle(palette.muted)
             WBProgress(value:(percent ?? 0)/100,color:warning ? palette.warning:nil).accessibilityLabel(progressLabel).padding(.top,8).padding(.bottom,6)
             Text(note).font(.system(size:11)).foregroundStyle(palette.secondary).lineLimit(1).minimumScaleFactor(0.8)
-        }.frame(maxWidth:.infinity,alignment:.leading).contentShape(Rectangle())}.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel(title+"，"+DeviceFormat.capacity(used)+"，"+note)
+        }.frame(maxWidth:.infinity,alignment:.leading).contentShape(Rectangle())}.buttonStyle(ClickablePlainButtonStyle()).accessibilityIdentifier(title == "存储可用" ? "home-storage-readout" : "home-memory-readout").accessibilityLabel(title+"，"+DeviceFormat.capacity(used)+"，"+note)
     }
     private var agenda:some View {
         VStack(alignment:.leading,spacing:0) {
@@ -178,7 +178,7 @@ struct WorkbenchOverview:View {
                 Button{Task{await calendar.toggle(reminder)}}label:{ZStack{Circle().strokeBorder(reminder.isCompleted ? palette.accent:palette.muted.opacity(0.55),lineWidth:1);if reminder.isCompleted {Circle().fill(palette.accent);Image(systemName:"checkmark").font(.system(size:9,weight:.semibold)).foregroundStyle(palette.primaryText)}}.frame(width:16,height:16).padding(.top,1)}.buttonStyle(ClickablePlainButtonStyle()).disabled(calendar.isWorking || !reminder.isWritable).accessibilityLabel((reminder.isCompleted ? "恢复":"完成")+reminder.title)
             } else {Image(systemName:"calendar").font(.system(size:14)).foregroundStyle(palette.cool).frame(width:16,height:16).padding(.top,1)}
             VStack(alignment:.leading,spacing:3) {
-                Button{switch item {case .reminder(let reminder):calendar.openReminder(reminder);case .event(let event):calendar.selectedEvent=event}}label:{Text(item.title).font(.system(size:12,weight:.regular)).foregroundStyle(item.isCompleted ? palette.muted:palette.text).strikethrough(item.isCompleted).multilineTextAlignment(.leading).frame(maxWidth:.infinity,alignment:.leading).fixedSize(horizontal:false,vertical:true)}.buttonStyle(ClickablePlainButtonStyle())
+                Button{switch item {case .reminder(let reminder):calendar.openReminder(reminder);case .event(let event):calendar.selectedEvent=event}}label:{Text(item.title).font(.system(size:12,weight:.regular)).foregroundStyle(item.isCompleted ? palette.muted:palette.text).strikethrough(item.isCompleted).multilineTextAlignment(.leading).frame(maxWidth:.infinity,alignment:.leading).fixedSize(horizontal:false,vertical:true)}.buttonStyle(WBSelectableButtonStyle(cornerRadius: 6, drawsSelection: false, showsBorder: false))
                 Text(itemDescription(item)).font(.system(size:11)).foregroundStyle(palette.muted).fixedSize(horizontal:false,vertical:true)
             }
         }.padding(.vertical,9).frame(maxWidth:.infinity,minHeight:52,alignment:.topLeading)

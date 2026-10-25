@@ -355,9 +355,8 @@ private struct DeviceContentWidth: PreferenceKey {
     static let defaultValue: CGFloat = 864
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
-/// Only these two detail cards use a hover/focus navigation arrow. Its 16×22
-/// title slot stays fixed while the transparent 28×30 target extends inward;
-/// the actual Button remains available to keyboard and accessibility users.
+/// Related-detail actions use the same bounded icon surface as the overview
+/// and native dashboard cards, while retaining hover/focus disclosure.
 private struct DeviceLinkedDetailCard<Content: View>: View {
     let title: String
     let symbol: String
@@ -369,7 +368,6 @@ private struct DeviceLinkedDetailCard<Content: View>: View {
     @Environment(\.workbenchPalette) private var palette
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var cardHovered = false
-    @State private var actionHovered = false
     @FocusState private var actionFocused: Bool
 
     var body: some View {
@@ -378,30 +376,14 @@ private struct DeviceLinkedDetailCard<Content: View>: View {
                 Image(systemName: symbol).font(.system(size: 16)).frame(width: 16, height: 16).foregroundStyle(palette.accent).accessibilityHidden(true)
                 Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(palette.text)
                 Spacer(minLength: 0)
-                Color.clear.frame(width: 16, height: 22).overlay(alignment: .trailing) {
-                    Button(action: action) {
-                        Image(systemName: "arrow.up.right").font(.system(size: 16))
-                            .frame(width: 16, height: 16).frame(width: 16, height: 22)
-                            .foregroundStyle(actionHovered ? palette.text : palette.secondary)
-                            .opacity(cardHovered || actionFocused ? 1 : 0)
-                            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: cardHovered || actionFocused)
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 2)
-                                    .stroke(palette.text.opacity(actionFocused ? 0.25 : 0), lineWidth: 1)
-                                    .padding(-4).allowsHitTesting(false)
-                            }
-                            .accessibilityHidden(true)
-                            .padding(.leading, 11).padding(.trailing, 1).padding(.vertical, 4)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(ClickablePlainButtonStyle()).focusEffectDisabled().focused($actionFocused)
-                    .onHover { actionHovered = $0 }
+                Button(action: action) {
+                    Image(systemName: "arrow.up.right")
+                        .opacity(cardHovered || actionFocused ? 1 : 0)
+                        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: cardHovered || actionFocused)
+                        .accessibilityHidden(true)
+                }.buttonStyle(WBIconButtonStyle(size: 28)).focused($actionFocused)
                     .help(actionTitle).accessibilityLabel(actionTitle)
                     .accessibilityIdentifier(identifier + ".action")
-                    // The trailing alignment puts a 28 pt target 12 pt inward;
-                    // shift one point out to match CSS inset -4 -1 -4 -11.
-                    .offset(x: 1)
-                }
             }.frame(height: 22).padding(.bottom, 10)
             VStack(alignment: .leading, spacing: spacing) { content }
         }.onHover { cardHovered = $0 }
