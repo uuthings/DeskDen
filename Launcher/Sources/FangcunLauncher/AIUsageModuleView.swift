@@ -475,8 +475,37 @@ struct AIUsageModuleView: View {
                 AITokenTable(records: records, model: model, compact: contentWidth < 800, scrollHeight: expanded ? 525 : 405)
             }
             if model.tokenHistoryCapacityLimited { AINotice(text: "历史容量最多 20,000 条，最长保留 31 天。较早记录已移出，当前列表不代表完整账户历史。", warning: true).padding(.top, 12) }
+            monthlyTokenHistory.padding(.top, 12)
             privacyFootnote.padding(.top, 12)
         }
+    }
+    private var monthlyTokenHistory: some View {
+        let summaries = model.monthlyTokenHistory.filter { model.selectedProvider == nil || $0.provider == model.selectedProvider }
+        return WBCard(spacing: 0) {
+            AICardTitle(title: "月度用量汇总", symbol: "calendar", trailing: "最近 120 个月")
+            Text("明细保留 31 天，到期后只保留每月 Token 汇总；按 UTC 月份归档，仅包含本机实际采集到的记录。")
+                .aiText(11, color: palette.muted).padding(.bottom, 12)
+            if summaries.isEmpty {
+                Text("暂无月度记录").aiText(12, color: palette.muted).padding(.vertical, 12)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(summaries.reversed())) { summary in
+                            HStack(spacing: 12) {
+                                Text(summary.title).aiText(12, color: palette.text)
+                                Text(summary.provider.title).aiText(11, color: palette.muted)
+                                Spacer()
+                                Text(aiCount(summary.tokens.total) + " Token").aiText(12, weight: .medium, color: palette.text).monospacedDigit()
+                            }.padding(.vertical, 8)
+                        }
+                    }
+                }.frame(maxHeight: 240)
+            }
+            if model.tokenHistoryCapacityLimited {
+                Text("部分来源或明细曾达到容量上限，月度汇总也可能不完整。")
+                    .aiText(11, color: palette.muted).padding(.top, 8)
+            }
+        }.accessibilityIdentifier("fc.ai.history.monthly")
     }
     private var prices: some View {
         VStack(alignment: .leading, spacing: 0) {

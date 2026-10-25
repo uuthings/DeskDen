@@ -7,6 +7,10 @@ import Quartz
 @MainActor final class SpaceCleaningModel: NSObject, ObservableObject, @preconcurrency QLPreviewPanelDataSource {
     @Published var screen: CleaningScreen = .start
     @Published var scopeChoice: CleaningScopeChoice = .global
+    @Published private(set) var scanMode: SpaceCleaningScanMode = .cleanup
+    @Published var minimumFileSize = "100"
+    @Published var maximumFileSize = ""
+    @Published var fileSizeUnit: CleaningFileSizeUnit = .mb
     @Published var detailID: UUID?
     @Published var selectedIDs = Set<UUID>()
     @Published var dialog: CleaningDialog?
@@ -54,6 +58,8 @@ import Quartz
     @Published private(set) var scanItem = ""
     @Published private(set) var lastScanDate: Date?
     @Published private(set) var purposeReviewID: UUID?
+    @Published private(set) var measuringDirectoryID: UUID?
+    @Published private(set) var directorySizes: [UUID: SpaceCleaningDirectorySize] = [:]
     private var securityScopedDirectories: [URL] = []
     private var scopeOrigin: CleaningScreen = .start
     private var operationDestination: CleaningScreen = .start
@@ -87,6 +93,7 @@ import Quartz
         super.init()
         loadPreferences()
         loadScopePreference()
+        loadScanPreference()
         updateRunningApplications()
         for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
             runtimeObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
@@ -101,12 +108,43 @@ import Quartz
     var pendingHistoryItems: [CleaningHistoryItemDisplay] { batches.flatMap(\.items).filter { pendingHistoryIDs.contains($0.id) } }
     var selectedItems: [CleaningItemDisplay] { items.filter { selectedIDs.contains($0.id) && $0.isSelectable } }
     var selectedBytes: UInt64 { selectedItems.reduce(0) { $0 &+ $1.bytes } }
+    var selectedAllocatedBytes: UInt64 { selectedItems.reduce(0) { $0 &+ $1.allocatedBytes } }
     var selectedCount: Int { selectedItems.count }
     var isBusy: Bool { task != nil }
     var canProcess: Bool { !isBusy && !frozenForQuit && !requiresRescan && historyError == nil && selectedCount > 0 }
     var animationActive: Bool { windowVisible && [.start, .scope, .scanning].contains(screen) && !reduceMotion && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion && dialog == nil }
     var scopeSummary: String {
-        scopeChoice == .global ? "全局扫描 · 当前用户可访问位置" : "自定义位置 · \(customDirectories.count) 个文件夹"
+        (scanMode == .largeFiles ? "大文件 · " : "") + (scopeChoice == .global ? "全局扫描 · 当前用户可访问位置" : "自定义位置 · \(customDirectories.count) 个文件夹")
+    }
+    var largeFileRangeError: String? {
+        guard scanMode == .largeFiles else { return nil }
+        guard let minimum = fileSizeBytes(minimumFileSize) else { return "请输入大于 0 的有效最小大小。" }
+        if !maximumFileSize.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            guard let maximum = fileSizeBytes(maximumFileSize), maximum >= minimum else { return "最大大小须不小于最小大小，或留空表示不限。" }
+        }
+        return nil
+    }
+    private func fileSizeBytes(_ value: String) -> UInt64? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.allSatisfy({ $0.isASCII && ($0.isNumber || $0 == ".") }),
+              let number = Double(trimmed), number.isFinite else { return nil }
+        let bytes = (number * fileSizeUnit.bytes).rounded(.up)
+        guard bytes >= 1, bytes < Double(UInt64.max) else { return nil }
+        return UInt64(bytes)
+    }
+    func selectScanMode(_ mode: SpaceCleaningScanMode) {
+        guard !isBusy, scanMode != mode else { return }
+        scanMode = mode; invalidateResults(); saveScanPreference()
+    }
+    func setLargeFilePreset(_ minimum: String, unit: CleaningFileSizeUnit) {
+        guard !isBusy else { return }
+        minimumFileSize = minimum; maximumFileSize = ""; fileSizeUnit = unit
+        scanSettingsChanged()
+    }
+    func scanSettingsChanged() {
+        guard !isBusy else { return }
+        if screen != .scope { invalidateResults() }
+        saveScanPreference()
     }
     var reviewableItems: [CleaningItemDisplay] { items.filter { $0.group != .protected } }
     var recommendedItems: [CleaningItemDisplay] { items.filter { recommendedIDs.contains($0.id) } }
@@ -161,6 +199,7 @@ import Quartz
     }
     var noRecommendationsSummary: String {
         if requiresRescan { return "本次扫描未完成，请重新扫描后再清理。" }
+        if scanMode == .largeFiles { return scanReachedLimit ? "本次覆盖范围有限；已检查位置中未发现符合大小范围的可复核文件。" : "已检查位置中未发现符合大小范围的可复核文件。开发环境及受保护位置保持保留。" }
         if scanReachedLimit { return "本次扫描达到覆盖边界；已完整核验的内容中暂未发现建议整理的项目。" }
         let inUse = items.filter { $0.kind == .runningApplication }.count
         if inUse > 0 { return "有 \(inUse) 项关联应用或工具正在使用，已保留。其他文件由你选择。" }
@@ -183,6 +222,7 @@ import Quartz
     var reportSummary: String {
         if requiresRescan { return "文件状态已变化，请重新扫描后再选择" }
         if screen == .scanning { return "已检查 \(checkedCount) 项 · 逐项核验用途与保护规则" }
+        if scanMode == .largeFiles { return "找到 \(reviewableItems.count) 个符合大小范围的文件 · 均需手动选择" + (scanReachedLimit ? " · 覆盖范围有限" : "") }
         if recommendedIDs.isEmpty { return noRecommendationsSummary }
         let manualCount = recommendedIDs.subtracting(automaticallySelectedIDs).count
         let selection = automaticallySelectedIDs.isEmpty
@@ -195,7 +235,7 @@ import Quartz
         if !selectedIDs.insert(id).inserted { selectedIDs.remove(id) }
     }
     func selectRecommended() {
-        guard !isBusy, !requiresRescan else { return }
+        guard !isBusy, !requiresRescan, scanMode == .cleanup else { return }
         let context = makeContext()
         selectedIDs.formUnion(candidates.values.filter {
             $0.isRecommendedForSelection && SpaceCleaningScanner.validatePolicy(candidate: $0, context: context) == .unchanged
@@ -255,6 +295,7 @@ import Quartz
     }
     private func invalidateResults() {
         selectedIDs = []; recommendedIDs = []; automaticallySelectedIDs = []; detailID = nil; resultScrollID = nil; candidates = [:]; items = []
+        directorySizes = [:]; measuringDirectoryID = nil
         requiresRescan = false; screen = .start; message = historyError
     }
     /// Selecting files and clicking the clearly named Trash action is the user's
@@ -297,6 +338,27 @@ import Quartz
         acknowledgement = false; dialog = .purge(id)
     }
     func cancelScan() { cancellation.cancel(); message = "正在停止扫描，已检查内容会保留供查看。" }
+    func cancelDirectorySize() { cancellation.cancel() }
+    func measureDirectorySize(_ id: UUID) {
+        guard !isBusy, !frozenForQuit, let candidate = candidates[id], candidate.kind == .developmentEnvironment,
+              candidate.isDirectory, candidate.group == .protected else { return }
+        cancellation = StorageReviewCancellation(); let token = cancellation
+        generation = UUID(); let run = generation
+        measuringDirectoryID = id; directorySizes[id] = .init()
+        task = Task { [weak self] in
+            let size = await Task.detached(priority: .utility) {
+                SpaceCleaningDirectorySizeScanner.measure(directory: candidate.url, expectedIdentity: candidate.identity,
+                    isCancelled: { token.isCancelled }) { update in
+                        Task { @MainActor [weak self] in
+                            guard let self, self.generation == run, self.measuringDirectoryID == id else { return }
+                            self.directorySizes[id] = update
+                        }
+                    }
+            }.value
+            guard let self, self.generation == run else { return }
+            self.directorySizes[id] = size; self.measuringDirectoryID = nil; self.task = nil
+        }
+    }
     func cancelHistoryVerification() { cancellation.cancel(); message = "正在停止历史核验，原记录保持不变。" }
     func cancelProcessing() { cancellation.cancel(); message = "正在完成当前文件的安全收尾，其余项目将取消。" }
     func cancelAll() { cancellation.cancel(); closeDialog() }
@@ -334,18 +396,23 @@ import Quartz
 
     func startScan() {
         guard !isBusy, !frozenForQuit else { return }
+        guard largeFileRangeError == nil else { message = largeFileRangeError; return }
         let context = makeContext()
+        let options = SpaceCleaningOptions(mode: scanMode, minimumFileBytes: fileSizeBytes(minimumFileSize) ?? 100_000_000,
+                                           maximumFileBytes: fileSizeBytes(maximumFileSize))
         let scopes = selectedScopes(context)
         guard !scopes.isEmpty else { message = "请先选择要扫描的目录。"; return }
         generation = UUID(); let run = generation
         cancellation = StorageReviewCancellation(); let token = cancellation
         selectedIDs = []; confirmedIDs = []; detailID = nil; resultScrollID = nil; searchText = ""; onlySelected = false; resultTab = .recommended; items = []; recommendedIDs = []; automaticallySelectedIDs = []; candidates = [:]
+        directorySizes = [:]; measuringDirectoryID = nil
+        if scanMode == .largeFiles { resultTab = .reviewable; sortKey = .size; sortAscending = false }
         coverageIssues = []; coverageNotes = []; scanReachedLimit = false; requiresRescan = false; checkedCount = 0; scanPhase = .discovering; scanCompletedItems = 0; scanTotalItems = nil; scanDirectory = ""; scanItem = ""
         closeDialog(); message = historyError; screen = .scanning
         task = Task { [weak self] in
             let report = await Task.detached(priority: .utility) {
                 var lastUpdate = Date.distantPast
-                let report = SpaceCleaningScanner.scan(scopes: scopes, context: context, isCancelled: { token.isCancelled }) { progress in
+                let report = SpaceCleaningScanner.scan(scopes: scopes, context: context, options: options, isCancelled: { token.isCancelled }) { progress in
                     guard Date().timeIntervalSince(lastUpdate) >= 0.08 || [.complete, .cancelled, .failed].contains(progress.stage) else { return }
                     lastUpdate = Date()
                     Task { @MainActor [weak self] in
@@ -359,6 +426,11 @@ import Quartz
             self.checkedCount = report.checkedEntries
             self.coverageIssues = report.issues.filter { ![.missing, .duplicate].contains($0.kind) }.map { $0.url.path.replacingOccurrences(of: self.homeDirectory.path, with: "~") + " · " + $0.reason }
             self.coverageNotes = report.scopes.map { $0.title + " · " + $0.directory.path.replacingOccurrences(of: self.homeDirectory.path, with: "~") }
+            self.coverageNotes.append("开发依赖、Git 资料与虚拟环境默认保留，未展开的目录不计入已知容量。")
+            if options.mode == .largeFiles {
+                self.coverageNotes.append("普通文件大小 ≥ " + SpaceCleaningFormat.bytes(options.minimumFileBytes) +
+                    (options.maximumFileBytes.map { "，且 ≤ " + SpaceCleaningFormat.bytes($0) } ?? "；无上限") + "。包与受保护目录不展开。")
+            }
             self.coverageNotes += report.issues.filter { [.missing, .duplicate].contains($0.kind) }.map { $0.url.path.replacingOccurrences(of: self.homeDirectory.path, with: "~") + " · " + $0.reason }
             self.candidates = Dictionary(uniqueKeysWithValues: report.candidates.map { ($0.id, $0) })
             self.items = report.candidates.map(Self.display).sorted {
@@ -395,6 +467,7 @@ import Quartz
         }
     }
     private func selectRecommendedAfterScan(context: SpaceCleaningContext) {
+        guard scanMode == .cleanup else { recommendedIDs = []; automaticallySelectedIDs = []; selectedIDs = []; return }
         recommendedIDs = Set(candidates.values.filter {
             $0.isCleanupSuggestion && SpaceCleaningScanner.validatePolicy(candidate: $0, context: context) == .unchanged
         }.map(\.id))
@@ -538,6 +611,7 @@ import Quartz
             return CleaningHistoryBatchDisplay(id: id, date: entries.first!.createdAt, method: entries.first!.method,
                 items: entries.map { record in
                     CleaningHistoryItemDisplay(id: record.id, name: record.candidate.title, bytes: record.candidate.logicalBytes,
+                        allocatedBytes: record.candidate.allocatedBytes,
                         state: record.state, statusText: Self.stateTitle(record.state), explanation: record.explanation + (record.state == .needsReview ? record.previousTrashURL.map { " 上次废纸篓位置：" + $0.path } ?? "" : ""),
                         canRestore: record.canRestore && historyError == nil, canPurge: record.canPurge && historyError == nil,
                         originalURL: record.originalURL, resultURL: record.restoredURL ?? record.locationURL)
@@ -561,7 +635,7 @@ import Quartz
         }
     }
     private nonisolated static func display(_ item: SpaceCleaningCandidate) -> CleaningItemDisplay {
-        .init(id: item.id, name: item.title, url: item.url, bytes: item.logicalBytes, sizeIsComplete: item.sizeIsComplete,
+        .init(id: item.id, name: item.title, url: item.url, bytes: item.logicalBytes, allocatedBytes: item.allocatedBytes, sizeIsComplete: item.sizeIsComplete,
               group: CleaningResultGroup(rawValue: item.group.rawValue) ?? .protected,
               subtitle: item.url.deletingLastPathComponent().path, reason: item.reason, impact: item.impact,
               isSelectable: item.canProcess, needsPurposeConfirmation: item.canConfirmTestPurpose,
@@ -593,7 +667,33 @@ import Quartz
             scanItem = progress.currentFileName ?? url.lastPathComponent
         }
     }
-    private struct ScopePreference: Codable { var format = 1; var choice: CleaningScopeChoice; var bookmarks: [Data] }
+    private struct ScopePreference: Codable {
+        var format = 1; var choice: CleaningScopeChoice; var bookmarks: [Data]
+        var requestedPaths: [String]? = nil
+    }
+    private struct ScanPreference: Codable {
+        var mode: SpaceCleaningScanMode; var minimum: String; var maximum: String; var unit: CleaningFileSizeUnit
+    }
+    private var scanPreferenceURL: URL { dataDirectory.appendingPathComponent("scan-options.json") }
+    private var scanPreferencesWritable = true
+    private func loadScanPreference() {
+        guard FileManager.default.fileExists(atPath: scanPreferenceURL.path) else { return }
+        do {
+            let data = try Data(contentsOf: scanPreferenceURL)
+            guard data.count < 4096 else { throw CocoaError(.fileReadCorruptFile) }
+            let value = try JSONDecoder().decode(ScanPreference.self, from: data)
+            scanMode = value.mode; minimumFileSize = value.minimum; maximumFileSize = value.maximum; fileSizeUnit = value.unit
+        } catch { scanPreferencesWritable = false; message = "扫描方式设置无法读取，原文件已保留；本次使用普通清理。" }
+    }
+    private func saveScanPreference() {
+        guard scanPreferencesWritable else { return }
+        do {
+            try FileManager.default.createDirectory(at: dataDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            let value = ScanPreference(mode: scanMode, minimum: minimumFileSize, maximum: maximumFileSize, unit: fileSizeUnit)
+            try JSONEncoder().encode(value).write(to: scanPreferenceURL, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: scanPreferenceURL.path)
+        } catch { message = "扫描设置本次已生效，但未能保存。" }
+    }
     private var scopePreferenceURL: URL { dataDirectory.appendingPathComponent("scope.json") }
     private func loadScopePreference() {
         guard FileManager.default.fileExists(atPath: scopePreferenceURL.path) else { return }
@@ -603,11 +703,19 @@ import Quartz
             let saved = try JSONDecoder().decode(ScopePreference.self, from: data)
             guard saved.format == 1, saved.bookmarks.count <= 128 else { throw CocoaError(.fileReadCorruptFile) }
             var resolved: [URL] = []
-            for bookmark in saved.bookmarks {
+            for (index, bookmark) in saved.bookmarks.enumerated() {
                 var stale = false
                 let url = try URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope, .withoutUI], bookmarkDataIsStale: &stale)
                 if url.startAccessingSecurityScopedResource() { securityScopedDirectories.append(url) }
-                resolved.append(url)
+                if let paths = saved.requestedPaths, paths.count == saved.bookmarks.count, paths[index].hasPrefix("/") {
+                    let requested = URL(fileURLWithPath: paths[index], isDirectory: true)
+                    // Preserve dependency names in a user-selected alias. A bookmark
+                    // may resolve directly to its target and otherwise lose that policy.
+                    if SpaceCleaningScanner.developmentProtectionReason(at: requested) != nil ||
+                        SpaceCleaningScanner.canonicalURL(requested) == SpaceCleaningScanner.canonicalURL(url) {
+                        resolved.append(requested)
+                    } else { resolved.append(url) }
+                } else { resolved.append(url) }
             }
             customDirectories = resolved; scopeChoice = saved.choice
         } catch {
@@ -620,13 +728,16 @@ import Quartz
         do {
             let bookmarks = try customDirectories.map { try $0.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil) }
             try FileManager.default.createDirectory(at: dataDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            try JSONEncoder().encode(ScopePreference(choice: scopeChoice, bookmarks: bookmarks)).write(to: scopePreferenceURL, options: .atomic)
+            try JSONEncoder().encode(ScopePreference(choice: scopeChoice, bookmarks: bookmarks, requestedPaths: customDirectories.map(\.path))).write(to: scopePreferenceURL, options: .atomic)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: scopePreferenceURL.path)
         } catch { message = "本次扫描位置已生效，但未能保存；下次需重新选择。" }
     }
     private func releaseUnusedScopeAccess() {
-        for url in securityScopedDirectories where !customDirectories.contains(url) { url.stopAccessingSecurityScopedResource() }
-        securityScopedDirectories.removeAll { !customDirectories.contains($0) }
+        func retained(_ url: URL) -> Bool {
+            customDirectories.contains { $0 == url || (SpaceCleaningScanner.canonicalURL($0).map { $0 == SpaceCleaningScanner.canonicalURL(url) } ?? false) }
+        }
+        for url in securityScopedDirectories where !retained(url) { url.stopAccessingSecurityScopedResource() }
+        securityScopedDirectories.removeAll { !retained($0) }
     }
 
     private struct Preferences: Codable { var format = 1; var method: SpaceCleaningMethod }

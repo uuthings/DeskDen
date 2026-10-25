@@ -106,7 +106,7 @@ final class AITokenLedgerTests: XCTestCase {
         let store = AITokenLedgerStore(url: folder.appendingPathComponent("tokens.json"))
         var ledger = AITokenLedger(now: now)
         try ledger.ingest([record("one")], at: now)
-        var future = ledger; future.schemaVersion = 2
+        var future = ledger; future.schemaVersion = 3
         var duplicate = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(ledger)) as? [String: Any])
         let rows = try XCTUnwrap(duplicate["records"] as? [[String: Any]])
         duplicate["records"] = rows + rows

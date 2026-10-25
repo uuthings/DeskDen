@@ -53,7 +53,10 @@ struct SpaceCleaningHistoryView: View {
                     .accessibilityLabel((expanded ? "收起" : "展开") + "清理记录 " + SpaceCleaningFormat.date(batch.date))
                     .accessibilityValue(expanded ? "已展开" : "已收起")
                     .accessibilityIdentifier("space-cleaning-history-expand-" + batch.id.uuidString)
-                Text(SpaceCleaningFormat.bytes(batch.bytes)).font(.system(size: 15)).monospacedDigit().fixedSize()
+                VStack(alignment: .trailing, spacing: 5) {
+                    Text(SpaceCleaningFormat.bytes(batch.allocatedBytes)).font(.system(size: 15)).monospacedDigit()
+                    Text("扫描时磁盘占用").font(.system(size: 10)).foregroundStyle(palette.muted)
+                }.fixedSize()
                 if batch.restorableCount > 0 {
                     Button("恢复本次") { model.requestRestore(batch.id) }.buttonStyle(WBButtonStyle()).disabled(model.isBusy)
                         .accessibilityIdentifier("space-cleaning-history-restore-" + batch.id.uuidString)
@@ -99,6 +102,8 @@ struct SpaceCleaningHistoryView: View {
             }.frame(minHeight: 32)
             Text(item.explanation).font(.system(size: 11)).foregroundStyle(palette.muted).textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
+            Text("文件大小 \(SpaceCleaningFormat.bytes(item.bytes)) · 扫描时磁盘占用 \(SpaceCleaningFormat.bytes(item.allocatedBytes))")
+                .font(.system(size: 11)).foregroundStyle(palette.muted).fixedSize(horizontal: false, vertical: true)
             Text((item.resultURL ?? item.originalURL).path).font(.system(size: 10)).foregroundStyle(palette.muted)
                 .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
         }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
@@ -138,7 +143,7 @@ struct SpaceCleaningCompletionView: View {
         let skipped = batch.items.filter { [.skipped, .cancelled].contains($0.state) }.count + unprocessed
         let attention = batch.attentionCount
         let title = attention > 0 ? "本次清理需要核对" : succeeded.isEmpty && unprocessed > 0 ? "清理已停止" : skipped > 0 || succeeded.isEmpty ? "本次清理已结束" : "清理完成"
-        let processedBytes = succeeded.reduce(UInt64(0)) { $0 &+ $1.bytes }
+        let processedBytes = batch.successfulAllocatedBytes
         return VStack(alignment: .leading, spacing: 24) {
             HStack(alignment: .center, spacing: 18) {
                 Image(systemName: attention > 0 ? "exclamationmark.circle" : skipped > 0 && succeeded.isEmpty ? "pause.circle" : "checkmark.circle")
@@ -153,7 +158,7 @@ struct SpaceCleaningCompletionView: View {
             }
             HStack(spacing: 12) {
                 completionMetric("\(succeeded.count) 项", caption: batch.method == .trash ? "已移入废纸篓" : "已永久删除", symbol: batch.method == .trash ? "trash" : "trash.slash")
-                completionMetric(SpaceCleaningFormat.bytes(processedBytes), caption: "成功处理项目占用", symbol: "internaldrive")
+                completionMetric(SpaceCleaningFormat.bytes(processedBytes), caption: "处理项目扫描时占用", symbol: "internaldrive")
                 completionMetric("\(batch.restorableCount) 项", caption: "可从清理记录恢复", symbol: "arrow.uturn.backward")
             }.accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-completed-summary")
             Text(batch.method == .trash ? "移入废纸篓的项目仍然占用空间，可从清理记录逐项恢复，也可单独永久删除本批剩余项目。" : "永久删除的项目无法恢复。项目大小不等于实际释放空间，请以系统可用容量为准。")

@@ -190,6 +190,8 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
                 await self.cleaning.prepareForQuit()
                 await self.health.prepareForQuit()
                 try await self.calendar.suspendOwnNotificationsForQuit()
+                try await self.device.prepareForQuit()
+                try await self.ai.prepareForQuit()
                 self.confirmingQuit=false
                 owner.finishConfirmedQuit()
                 // Keep both the UI and notification gate frozen until the OS
@@ -199,9 +201,11 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
                 self.calendar.resumeOwnNotificationsAfterCancelledQuit()
                 self.health.resumeAfterCancelledQuit()
                 self.cleaning.resumeAfterCancelledQuit()
+                self.device.resumeAfterCancelledQuit()
+                self.ai.resumeAfterCancelledQuit()
                 self.quitting=false;self.confirmingQuit=false
                 owner.cancelPendingSystemTermination()
-                self.message="退出前未能暂停方寸提醒：\(error.localizedDescription)"
+                self.message="退出前数据保存或提醒暂停未完成：\(error.localizedDescription)"
             }
         }
     }

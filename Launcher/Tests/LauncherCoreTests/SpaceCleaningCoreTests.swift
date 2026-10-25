@@ -3,6 +3,120 @@ import Darwin
 @testable import LauncherCore
 
 final class SpaceCleaningCoreTests: XCTestCase {
+    func testDevelopmentBoundariesAreVisibleButNeverEnumerated() throws {
+        try fixture { home in
+            let paths = ["Developer/Project/node_modules", "Developer/Project/.git", "Developer/Project/.venv", "Developer/Project/venv", "Developer/custom-environment"]
+            for path in paths { try file(home, path + "/nested/keep.data") }
+            try file(home, "Developer/custom-environment/pyvenv.cfg")
+            try file(home, "Developer/Project/package.json")
+            var enumerated: [String] = []
+            let metadata = SpaceCleaningMetadataReader(flags: { _ in 0 }, willEnumerate: { enumerated.append($0.path) })
+            let report = SpaceCleaningScanner.scan(scopes: [.init(directory: home.appendingPathComponent("Developer"))],
+                context: .init(homeDirectory: home), metadata: metadata)
+            let protected = report.candidates.filter { $0.kind == .developmentEnvironment }
+            XCTAssertEqual(protected.count, paths.count)
+            XCTAssertTrue(protected.allSatisfy { $0.group == .protected && !$0.canProcess && !$0.sizeIsComplete && $0.logicalBytes == 0 })
+            XCTAssertFalse(report.candidates.contains { $0.title == "keep.data" })
+            for path in paths {
+                XCTAssertFalse(enumerated.contains { $0 == home.appendingPathComponent(path).path || $0.hasPrefix(home.appendingPathComponent(path).path + "/") })
+            }
+            XCTAssertTrue(report.complete)
+        }
+    }
+
+    func testCustomScopeInsideDependencyCannotBypassBoundaryAndLinksAreNotFollowed() throws {
+        try fixture { home in
+            let file = try file(home, "node_modules/library/keep.js")
+            let inside = scan(home, at: "node_modules/library")
+            XCTAssertEqual(inside.candidates.count, 1)
+            XCTAssertEqual(inside.candidates.first?.kind, .developmentEnvironment)
+            XCTAssertFalse(inside.candidates.contains { $0.url == file })
+            try FileManager.default.createSymbolicLink(at: home.appendingPathComponent("linked"), withDestinationURL: home.appendingPathComponent("node_modules"))
+            let report = scan(home)
+            XCTAssertEqual(report.candidates.first { $0.title == "linked" }?.kind, .symbolicLink)
+            XCTAssertFalse(report.candidates.contains { $0.title == "keep.js" })
+        }
+    }
+
+    func testDependencyNameInSymbolicAncestorSurvivesScopeResolution() throws {
+        try fixture { home in
+            try file(home, "shared-dependencies/library/subdirectory/keep.js")
+            let project = home.appendingPathComponent("project")
+            try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+            try FileManager.default.createSymbolicLink(at: project.appendingPathComponent("node_modules"), withDestinationURL: home.appendingPathComponent("shared-dependencies"))
+            var enumerated: [URL] = []
+            let report = SpaceCleaningScanner.scan(scopes: [.init(directory: project.appendingPathComponent("node_modules/library/subdirectory"))],
+                context: .init(homeDirectory: home), metadata: .init(flags: { _ in 0 }, willEnumerate: { enumerated.append($0) }))
+            XCTAssertTrue(enumerated.isEmpty)
+            XCTAssertTrue(report.candidates.isEmpty)
+            XCTAssertTrue(report.issues.contains { $0.kind == .unsafePath })
+            XCTAssertTrue(FileManager.default.fileExists(atPath: home.appendingPathComponent("shared-dependencies/library/subdirectory/keep.js").path))
+        }
+    }
+
+    func testEnvironmentInsideKnownCachePreventsWholeDirectoryCleanup() throws {
+        try fixture { home in
+            try file(home, ".npm/_cacache/content/node_modules/library/keep.js")
+            try file(home, ".npm/_cacache/content/download.cache")
+            let report = scan(home, at: ".npm/_cacache")
+            let candidate = try XCTUnwrap(report.candidates.first)
+            XCTAssertEqual(candidate.kind, .developmentEnvironment)
+            XCTAssertFalse(candidate.canProcess)
+            XCTAssertFalse(candidate.isRecommendedForSelection)
+        }
+    }
+
+    func testNewVirtualEnvironmentMarkerRevokesExistingFileAndReceiptPolicies() throws {
+        try fixture { home in
+            try file(home, "custom-environment/keep.data")
+            let candidate = try XCTUnwrap(scan(home, at: "custom-environment").candidates.first)
+            XCTAssertTrue(candidate.canProcess)
+            try file(home, "custom-environment/pyvenv.cfg")
+            let context = SpaceCleaningContext(homeDirectory: home)
+            XCTAssertEqual(SpaceCleaningScanner.revalidate(candidate: candidate, context: context), .protected)
+            XCTAssertEqual(SpaceCleaningScanner.validatePolicy(candidate: candidate, context: context), .protected)
+        }
+    }
+
+    func testLargeFilesUseInclusiveBoundsBeforeCreatingCandidatesAndKeepProtection() throws {
+        try fixture { home in
+            for (name, size) in [("small", 9), ("lower", 10), ("upper", 20), ("larger", 21)] {
+                try file(home, "Downloads/" + name, bytes: size)
+            }
+            try file(home, "Downloads/node_modules/large.bin", bytes: 15)
+            try file(home, "Downloads/ReleaseArchives/important.bin", bytes: 15)
+            let report = scan(home, at: "Downloads", options: .init(mode: .largeFiles, minimumFileBytes: 10, maximumFileBytes: 20))
+            XCTAssertEqual(Set(report.candidates.filter(\.canProcess).map(\.title)), Set(["lower", "upper"]))
+            XCTAssertEqual(report.candidates.first { $0.title == "node_modules" }?.kind, .developmentEnvironment)
+            XCTAssertEqual(report.candidates.first { $0.title == "ReleaseArchives" }?.group, .protected)
+            XCTAssertFalse(report.candidates.contains { $0.title == "large.bin" || $0.title == "important.bin" })
+        }
+    }
+
+    func testLargeFileScanSeparatesSparseLogicalSizeFromAllocatedSpace() throws {
+        try fixture { home in
+            let url = try file(home, "Downloads/sparse.data", bytes: 0)
+            let handle = try FileHandle(forWritingTo: url)
+            try handle.truncate(atOffset: 100_000_000); try handle.close()
+            let report = scan(home, at: "Downloads", options: .init(mode: .largeFiles))
+            let candidate = try XCTUnwrap(report.candidates.first)
+            XCTAssertEqual(candidate.logicalBytes, 100_000_000)
+            XCTAssertLessThan(candidate.allocatedBytes, candidate.logicalBytes)
+            XCTAssertEqual(candidate.allocatedBytes, SpaceCleaningScanner.captureIdentity(at: url)?.allocatedBytes)
+            XCTAssertTrue(candidate.canProcess)
+        }
+    }
+
+    func testLargeFilesScanTraversesKnownCacheDirectoriesWithoutSelectingAnAggregate() throws {
+        try fixture { home in
+            try file(home, ".npm/_cacache/content/large", bytes: 50)
+            try file(home, ".npm/_cacache/content/small", bytes: 2)
+            let report = scan(home, at: ".npm/_cacache", options: .init(mode: .largeFiles, minimumFileBytes: 40))
+            XCTAssertEqual(report.candidates.map(\.title), ["large"])
+            XCTAssertFalse(report.candidates[0].isDirectory)
+        }
+    }
+
     private func fixture(_ body: (URL) throws -> Void) throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("SpaceCleaningTests-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

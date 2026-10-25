@@ -8,7 +8,7 @@ struct SpaceCleaningResultsView: View {
     private let columnGap: CGFloat = 12
     private let typeWidth: CGFloat = 86
     private let dateWidth: CGFloat = 110
-    private let sizeWidth: CGFloat = 80
+    private let sizeWidth: CGFloat = 112
     private var confirming: Bool { model.dialog == .confirm }
     @State private var availableWidth: CGFloat = 864
 
@@ -46,20 +46,20 @@ struct SpaceCleaningResultsView: View {
     private var summary: some View {
         HStack(alignment: .center, spacing: 24) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("扫描结果").font(.system(size: 18, weight: .medium))
+                Text(model.scanMode == .largeFiles ? "大文件扫描结果" : "扫描结果").font(.system(size: 18, weight: .medium))
                 Text(model.reportSummary).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(2)
             }.frame(maxWidth: .infinity, alignment: .leading)
             VStack(alignment: .trailing, spacing: 5) {
-                Text(SpaceCleaningFormat.bytes(model.recommendedItems.reduce(0) { $0 &+ $1.bytes }))
+                Text(SpaceCleaningFormat.bytes((model.scanMode == .largeFiles ? model.reviewableItems : model.recommendedItems).reduce(0) { $0 &+ $1.allocatedBytes }))
                     .font(.system(size: 27, weight: .medium)).monospacedDigit()
-                Text("建议清理占用").font(.system(size: 11)).foregroundStyle(palette.muted)
+                Text(model.scanMode == .largeFiles ? "这些文件的磁盘占用" : "建议项目磁盘占用").font(.system(size: 11)).foregroundStyle(palette.muted)
             }
         }.padding(14).padding(.vertical, 4)
     }
     private var controls: some View {
         HStack(spacing: 18) {
-            tab("建议清理", count: model.recommendedItems.count, value: .recommended)
-            tab("其他文件", count: model.otherItems.count, value: .reviewable)
+            if model.scanMode == .cleanup { tab("建议清理", count: model.recommendedItems.count, value: .recommended) }
+            tab(model.scanMode == .largeFiles ? "符合范围的文件" : "其他文件", count: model.otherItems.count, value: .reviewable)
             if !model.protectedItems.isEmpty { tab("已保护", count: model.protectedItems.count, value: .protected) }
             Spacer(minLength: 0)
             HStack(spacing: 7) {
@@ -100,7 +100,7 @@ struct SpaceCleaningResultsView: View {
             }.frame(maxWidth: .infinity, alignment: .leading)
             sortHeader("类型", key: .type).frame(width: typeWidth, alignment: .leading)
             sortHeader("修改日期", key: .modified).frame(width: dateWidth, alignment: .leading)
-            sortHeader("大小", key: .size, trailing: true).frame(width: sizeWidth, alignment: .trailing)
+            sortHeader("文件大小", key: .size, trailing: true).frame(width: sizeWidth, alignment: .trailing)
         }.font(.system(size: 11)).foregroundStyle(palette.muted).padding(.horizontal, 14).frame(height: 34)
             .background(palette.soft).overlay(alignment: .top) { Rectangle().fill(palette.line).frame(height: 1) }
     }
@@ -122,7 +122,8 @@ struct SpaceCleaningResultsView: View {
             .help("点击按" + title + "排序，再次点击切换升序或降序")
     }
     private func row(_ item: CleaningItemDisplay) -> some View {
-        VStack(spacing: 0) {
+        let measured = model.directorySizes[item.id]
+        return VStack(spacing: 0) {
             HStack(spacing: columnGap) {
                 if item.group == .protected {
                     if item.needsPurposeConfirmation {
@@ -168,8 +169,14 @@ struct SpaceCleaningResultsView: View {
                     Text(item.modifiedDate, format: .dateTime.year().month(.twoDigits).day(.twoDigits))
                     Text(item.modifiedDate, format: .dateTime.hour().minute()).foregroundStyle(palette.muted)
                 }.font(.system(size: 11)).monospacedDigit().frame(width: dateWidth, alignment: .leading)
-                Text((item.sizeIsComplete ? "" : "至少 ") + SpaceCleaningFormat.bytes(item.bytes))
-                    .font(.system(size: 12)).monospacedDigit().lineLimit(2).frame(width: sizeWidth, alignment: .trailing)
+                VStack(alignment: .trailing, spacing: 5) {
+                    Text(measured.map { $0.checkedEntries == 0 && !$0.complete ? "大小未知" : ($0.complete ? "" : "部分 ") + SpaceCleaningFormat.bytes($0.logicalBytes) } ??
+                         (!item.sizeIsComplete && item.bytes == 0 ? "未统计" : (item.sizeIsComplete ? "" : "至少 ") + SpaceCleaningFormat.bytes(item.bytes)))
+                        .font(.system(size: 12))
+                    if measured.map({ $0.complete || $0.checkedEntries > 0 }) == true || (measured == nil && (item.sizeIsComplete || item.allocatedBytes > 0)) {
+                        Text("占用 " + SpaceCleaningFormat.bytes(measured?.allocatedBytes ?? item.allocatedBytes)).font(.system(size: 10)).foregroundStyle(palette.muted)
+                    }
+                }.monospacedDigit().lineLimit(1).frame(width: sizeWidth, alignment: .trailing)
             }.padding(.horizontal, 14).frame(height: 68).background(model.detailID == item.id ? palette.soft : .clear)
             if model.detailID == item.id { detail(item) }
             Rectangle().fill(palette.line).frame(height: 1)
@@ -178,12 +185,12 @@ struct SpaceCleaningResultsView: View {
     private var emptyResults: some View {
         VStack(spacing: 12) {
             Image(systemName: model.searchText.isEmpty ? "checkmark.circle" : "magnifyingglass").font(.system(size: 26, weight: .light)).foregroundStyle(palette.accent)
-            Text(!model.searchText.isEmpty ? "没有匹配的项目" : model.onlySelected ? "还没有选择文件" : model.resultTab == .recommended ? "暂未发现建议整理的内容" : "这个分类没有项目")
+            Text(!model.searchText.isEmpty ? "没有匹配的项目" : model.onlySelected ? "还没有选择文件" : model.scanMode == .largeFiles && model.resultTab == .reviewable ? "未找到符合大小范围的文件" : model.resultTab == .recommended ? "暂未发现建议整理的内容" : "这个分类没有项目")
                 .font(.system(size: 14, weight: .medium))
-            if model.resultTab == .recommended && model.searchText.isEmpty && !model.onlySelected {
+            if (model.resultTab == .recommended || model.scanMode == .largeFiles && model.resultTab == .reviewable) && model.searchText.isEmpty && !model.onlySelected {
                 Text(model.noRecommendationsSummary).font(.system(size: 11)).foregroundStyle(palette.muted).multilineTextAlignment(.center).frame(maxWidth: 430)
                 if !model.otherItems.isEmpty { Button("查看其他文件") { model.showResults(.reviewable) }.buttonStyle(WBButtonStyle()) }
-            } else if model.onlySelected { Button("返回建议清理") { model.showResults(.recommended) }.buttonStyle(WBQuietButtonStyle()) }
+            } else if model.onlySelected { Button("返回文件列表") { model.showResults(model.scanMode == .largeFiles ? .reviewable : .recommended) }.buttonStyle(WBQuietButtonStyle()) }
         }.frame(maxWidth: .infinity).padding(.horizontal, 24).padding(.vertical, 40)
     }
     private func detail(_ item: CleaningItemDisplay) -> some View {
@@ -195,6 +202,7 @@ struct SpaceCleaningResultsView: View {
             if let guidance = item.protectionGuidance {
                 Text(guidance).font(.system(size: 11)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
             }
+            if item.kind == .developmentEnvironment && item.isDirectory { directorySizeAnalysis(item) }
             if model.dialog == .purpose(item.id) {
                 Rectangle().fill(palette.line).frame(height: 1)
                 Toggle("我确认它仅用于测试，不是发布原件或唯一保留归档", isOn: $model.acknowledgement)
@@ -211,6 +219,10 @@ struct SpaceCleaningResultsView: View {
                 }
             }
             Text(item.url.path).font(.system(size: 11)).foregroundStyle(palette.muted).textSelection(.enabled)
+            if item.sizeIsComplete {
+                Text("文件大小 \(SpaceCleaningFormat.bytes(item.bytes)) · 磁盘占用 \(SpaceCleaningFormat.bytes(item.allocatedBytes))。稀疏、压缩或共享数据可能使两者不同；删除后实际释放量以系统可用空间为准。")
+                    .font(.system(size: 11)).foregroundStyle(palette.muted).fixedSize(horizontal: false, vertical: true)
+            }
             HStack(spacing: 8) {
                 Button("快速预览") { model.preview(item.id) }.buttonStyle(WBButtonStyle(compact: true))
                 Button("在 Finder 中查看") { model.reveal(item.id) }.buttonStyle(WBButtonStyle(compact: true))
@@ -221,6 +233,34 @@ struct SpaceCleaningResultsView: View {
             }
         }.padding(EdgeInsets(top: 12, leading: 50, bottom: 14, trailing: 14)).background(palette.soft)
             .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-file-detail")
+    }
+    private func directorySizeAnalysis(_ item: CleaningItemDisplay) -> some View {
+        let active = model.measuringDirectoryID == item.id
+        let measured = model.directorySizes[item.id]
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                if active {
+                    Text("正在统计 · 已检查 \(measured?.checkedEntries ?? 0) 项").font(.system(size: 11)).foregroundStyle(palette.secondary)
+                    Spacer()
+                    Button("停止统计", action: model.cancelDirectorySize).buttonStyle(WBButtonStyle(compact: true))
+                        .accessibilityIdentifier("space-cleaning-cancel-size")
+                } else {
+                    Text(measured.map { $0.complete ? "统计完成 · 保持保护" : $0.checkedEntries == 0 ? "容量未知 · 保持保护" : "部分统计 · 保持保护" } ?? "仅查看容量，不改变清理保护")
+                        .font(.system(size: 11)).foregroundStyle(palette.secondary)
+                    Spacer()
+                    Button(measured == nil ? "仅统计占用" : "重新统计占用") { model.measureDirectorySize(item.id) }
+                        .buttonStyle(WBButtonStyle(compact: true)).disabled(model.isBusy || model.requiresRescan)
+                        .accessibilityIdentifier("space-cleaning-measure-size-" + item.id.uuidString)
+                }
+            }
+            if let measured, measured.complete || measured.checkedEntries > 0 {
+                Text("\(measured.complete ? "" : "已读取部分：")文件大小 \(SpaceCleaningFormat.bytes(measured.logicalBytes)) · 磁盘占用 \(SpaceCleaningFormat.bytes(measured.allocatedBytes))")
+                    .font(.system(size: 11)).foregroundStyle(palette.muted)
+            }
+            if let reason = measured?.reason { Text(reason).font(.system(size: 11)).foregroundStyle(palette.muted) }
+            Text("只读取文件信息，不跟随链接或下载云端内容；最多检查 10 万项、32 层。统计容量不代表可释放空间。")
+                .font(.system(size: 11)).foregroundStyle(palette.muted).fixedSize(horizontal: false, vertical: true)
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-directory-size")
     }
     private var selectionFooter: some View {
         VStack(spacing: 0) {
@@ -256,7 +296,7 @@ struct SpaceCleaningResultsView: View {
     private var selectionSummary: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 10) {
-                Text(model.selectedCount == 0 ? "尚未选择文件" : "已选 \(model.selectedCount) 项 · \(SpaceCleaningFormat.bytes(model.selectedBytes))")
+                Text(model.selectedCount == 0 ? "尚未选择文件" : "已选 \(model.selectedCount) 项 · 占用 \(SpaceCleaningFormat.bytes(model.selectedAllocatedBytes))")
                     .font(.system(size: 12, weight: .medium))
                 if model.selectedCount > 0 {
                     Button(model.onlySelected ? "返回分类" : "查看已选") { model.toggleSelectedFilter() }
@@ -317,7 +357,7 @@ struct SpaceCleaningResultsView: View {
             HStack {
                 Label("永久删除这 \(model.selectedCount) 项？", systemImage: "trash.slash").font(.system(size: 14, weight: .medium))
                 Spacer()
-                Text(SpaceCleaningFormat.bytes(model.selectedBytes)).font(.system(size: 14)).monospacedDigit()
+                Text("磁盘占用 " + SpaceCleaningFormat.bytes(model.selectedAllocatedBytes)).font(.system(size: 14)).monospacedDigit()
             }
             Text("这些文件不会进入废纸篓，清理记录只能保留操作信息，无法恢复文件。")
                 .font(.system(size: 11)).foregroundStyle(palette.secondary)

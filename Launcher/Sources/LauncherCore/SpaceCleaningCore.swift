@@ -11,7 +11,7 @@ public enum SpaceCleaningKind: String, Codable, CaseIterable, Sendable {
     case browserCache, packageCache, derivedData, oldDiagnostic, recentDiagnostic
     case downloadedFile, installerPackage, downloadedDiskImage, developmentFile, personalFile, testApplication, testArchive
     case unknownApplication, unknownArchive, releaseArchive, releaseMaterial, installedApplication
-    case symbolicLink, hardLink, package, runningApplication, cloudPlaceholder, unsupported
+    case symbolicLink, hardLink, package, runningApplication, cloudPlaceholder, unsupported, developmentEnvironment
 }
 public enum SpaceCleaningScopeKind: String, Codable, Sendable {
     case browserCache, packageCache, derivedData, diagnostics, downloads, development, archives
@@ -63,14 +63,22 @@ public struct SpaceCleaningContext: Sendable {
         self.activeToolNames = activeToolNames
     }
 }
+public enum SpaceCleaningScanMode: String, Codable, CaseIterable, Sendable { case cleanup, largeFiles }
 public struct SpaceCleaningOptions: Equatable, Sendable {
     public var maximumEntries: Int
     public var maximumDepth: Int
     public var diagnosticMinimumAge: TimeInterval
-    public init(maximumEntries: Int = 100_000, maximumDepth: Int = 32, diagnosticMinimumAge: TimeInterval = 30 * 86_400) {
+    public var mode: SpaceCleaningScanMode
+    public var minimumFileBytes: UInt64
+    public var maximumFileBytes: UInt64?
+    public init(maximumEntries: Int = 100_000, maximumDepth: Int = 32, diagnosticMinimumAge: TimeInterval = 30 * 86_400,
+                mode: SpaceCleaningScanMode = .cleanup, minimumFileBytes: UInt64 = 100_000_000, maximumFileBytes: UInt64? = nil) {
         self.maximumEntries = min(1_000_000, max(1, maximumEntries))
         self.maximumDepth = min(128, max(1, maximumDepth))
         self.diagnosticMinimumAge = diagnosticMinimumAge.isFinite ? max(0, diagnosticMinimumAge) : 30 * 86_400
+        let minimum = max(1, minimumFileBytes)
+        self.mode = mode; self.minimumFileBytes = minimum
+        self.maximumFileBytes = maximumFileBytes.map { max(minimum, $0) }
     }
 }
 public struct SpaceCleaningCandidate: Identifiable, Codable, Equatable, Sendable {
@@ -166,7 +174,11 @@ public enum SpaceCleaningValidation: String, Codable, Equatable, Sendable {
 }
 
 public enum SpaceCleaningScanner {
-    public static let ruleVersion = "2026-10-24.2"
+    public static let ruleVersion = "2026-10-25.1"
+
+    public static func developmentProtectionReason(at url: URL) -> String? {
+        SpaceCleaningDevelopmentPolicy.reason(at: url)
+    }
 
     /// Known locations are explicit. This never makes the home directory a cache scope.
     public static func recommendedScopes(context: SpaceCleaningContext = .init()) -> [SpaceCleaningScope] {
@@ -236,6 +248,7 @@ public enum SpaceCleaningScanner {
                                   options: SpaceCleaningOptions = .init(), isCancelled: () -> Bool = { false }) -> SpaceCleaningValidation {
         if isCancelled() { return .cancelled }
         guard candidate.canProcess else { return .protected }
+        guard SpaceCleaningDevelopmentPolicy.reason(at: candidate.url) == nil else { return .protected }
         guard !isCloudPlaceholder(at: candidate.url), !candidate.ancestorIdentities.contains(where: { isCloudPlaceholder(at: $0.url) }) else { return .protected }
         guard let root = captureIdentity(at: candidate.rootURL), isDirectory(root),
               root.fileKey == candidate.rootIdentity.fileKey,
@@ -296,6 +309,7 @@ public enum SpaceCleaningScanner {
     /// The original URL need not exist. This never verifies receipt integrity or the Trash object.
     public static func validatePolicy(candidate: SpaceCleaningCandidate, context: SpaceCleaningContext) -> SpaceCleaningValidation {
         guard candidate.canProcess else { return .protected }
+        guard SpaceCleaningDevelopmentPolicy.reason(at: candidate.url) == nil else { return .protected }
         guard !isCloudPlaceholder(at: candidate.url), !candidate.ancestorIdentities.contains(where: { isCloudPlaceholder(at: $0.url) }) else { return .protected }
         let worker = Worker(context: context, options: .init(), now: Date(), cancelled: { false }, progress: { _ in })
         if worker.isReleaseProtected(candidate.url) || (candidate.url.pathExtension.lowercased() == "app" && worker.isInstalled(candidate.url)) ||
@@ -406,6 +420,10 @@ private final class Worker {
         let ancestors: [SpaceCleaningPathIdentity]
     }
     var pendingCandidates: [PendingCandidate] = []
+    private var developmentLookup = SpaceCleaningDevelopmentPolicy.Lookup()
+    private func developmentReason(_ url: URL, identity: StorageReviewFileIdentity? = nil) -> String? {
+        developmentLookup.reason(at: url, identity: identity)
+    }
 
     init(context: SpaceCleaningContext, options: SpaceCleaningOptions, now: Date, metadata: SpaceCleaningMetadataReader = .live,
          cancelled: @escaping () -> Bool, progress: @escaping (SpaceCleaningProgress) -> Void) {
@@ -437,14 +455,27 @@ private final class Worker {
                 }
                 issue(scope, scope.directory, .cloudPlaceholder, "此目录尚未下载到本机，未读取其中内容。"); completedScopes += 1; continue
             }
+            // Check the requested path before realpath can erase a dependency
+            // name in a symbolic-link ancestor (node_modules -> shared location).
+            let requestedDevelopmentReason = developmentReason(scope.directory, identity: original)
             guard Scanner.isDirectory(original), !Scanner.isSymbolicLink(original), let root = Scanner.canonicalURL(scope.directory),
                   validRoot(root), !isPackage(root), !hasPackageAncestor(root), let rootIdentity = Scanner.captureIdentity(at: root) else {
                 issue(scope, scope.directory, .unsafePath, "范围是链接、受保护系统位置或不可读取的目录，已跳过。"); completedScopes += 1; continue
             }
+            if requestedDevelopmentReason != nil && developmentReason(root, identity: rootIdentity) == nil {
+                issue(scope, scope.directory, .unsafePath, "所选路径经过开发依赖或版本资料，已保留且未展开链接目标。")
+                visitedRoots.append(root.path); completedScopes += 1; continue
+            }
             guard !visitedRoots.contains(where: { Scanner.contains(root.path, in: $0) }) else {
                 issue(scope, root, .duplicate, "与其他范围重叠，未重复扫描。"); completedScopes += 1; continue
             }
-            if scope.kind == .releaseArchiveDiscovery {
+            if developmentReason(root, identity: rootIdentity) != nil {
+                let parent = root.deletingLastPathComponent()
+                if let parentIdentity = Scanner.captureIdentity(at: parent), Scanner.isDirectory(parentIdentity) {
+                    pendingCandidates.append(.init(url: root, identity: rootIdentity, scope: scope, root: parent,
+                        rootIdentity: parentIdentity, ancestors: [.init(url: parent, identity: parentIdentity)]))
+                }
+            } else if scope.kind == .releaseArchiveDiscovery {
                 discoverReleaseArchives(scope, root: root, rootIdentity: rootIdentity)
             } else {
                 walk(scope, directory: root, root: root, rootIdentity: rootIdentity, ancestors: [.init(url: root, identity: rootIdentity)], depth: 0)
@@ -513,7 +544,10 @@ private final class Worker {
                 if visitedRoots.contains(where: { Scanner.contains(child.path, in: $0) }) { continue }
                 guard visit(child, scope: scope) else { break }
                 guard let identity = Scanner.captureIdentity(at: child) else { issue(scope, child, .unreadable, "文件已消失或无法读取元数据。"); continue }
-                if Scanner.isDirectory(identity), !Scanner.isSymbolicLink(identity), !cloudPlaceholder(child), !shouldAggregate(child, scope: scope) {
+                if options.mode == .largeFiles, Scanner.isRegular(identity),
+                   developmentReason(child, identity: identity) == nil, !cloudPlaceholder(child),
+                   (identity.sizeBytes < options.minimumFileBytes || options.maximumFileBytes.map({ identity.sizeBytes > $0 }) == true) { continue }
+                if Scanner.isDirectory(identity), !Scanner.isSymbolicLink(identity), !cloudPlaceholder(child), !shouldAggregate(child, scope: scope, identity: identity) {
                     guard identity.device == rootIdentity.device, Scanner.canonicalURL(child)?.path == child.path else {
                         issue(scope, child, .unsafePath, "跨卷目录或路径已变化，未继续扫描。"); continue
                     }
@@ -550,7 +584,7 @@ private final class Worker {
     }
 
     struct Classification { var kind: SpaceCleaningKind; var group: SpaceCleaningGroup; var reason: String; var impact: String; var testable = false }
-    struct Measurement { var logical: UInt64 = 0; var allocated: UInt64 = 0; var fingerprint: String?; var complete = true; var unsafe = false; var releaseContent = false; var cloudContent = false }
+    struct Measurement { var logical: UInt64 = 0; var allocated: UInt64 = 0; var fingerprint: String?; var complete = true; var unsafe = false; var releaseContent = false; var cloudContent = false; var developmentContent = false }
 
     func makeCandidate(_ url: URL, identity: StorageReviewFileIdentity, scope: SpaceCleaningScope, root: URL,
                        rootIdentity: StorageReviewFileIdentity, ancestors: [SpaceCleaningPathIdentity]) -> SpaceCleaningCandidate? {
@@ -560,16 +594,31 @@ private final class Worker {
         }
         var classification = classify(url, identity: identity)
         var measurement = Measurement()
-        if classification.kind == .cloudPlaceholder {
+        if classification.kind == .developmentEnvironment {
+            measurement.complete = false
+        } else if classification.kind == .cloudPlaceholder {
             measurement.complete = false; measurement.cloudContent = true
             issue(scope, url, .cloudPlaceholder, "内容尚未下载到本机，未读取或计入可清理容量。")
+        } else if directory, options.mode == .largeFiles {
+            // Large-file discovery does not unpack application/document packages or
+            // count protected directory contents as a single large regular file.
+            measurement.complete = false
         } else if directory {
             measurement = measure(url, rootIdentity: identity, scope: scope, allowBundleLinks: ["app", "xcarchive"].contains(url.pathExtension.lowercased()),
                                   protectedBudget: classification.group == .protected && !classification.testable)
         } else if Scanner.isRegular(identity) {
             measurement.logical = identity.sizeBytes; measurement.allocated = identity.allocatedBytes
         }
-        if measurement.cloudContent {
+        if measurement.developmentContent {
+            classification = .init(kind: .developmentEnvironment, group: .protected,
+                                   reason: "目录含有开发环境或版本资料，已停止展开并保留整个目录。", impact: "不拆分清理依赖；已读取的容量不代表整个目录大小。")
+            measurement.complete = false
+        } else if classification.kind == .developmentEnvironment {
+            classification.group = .protected
+        } else if directory && options.mode == .largeFiles {
+            classification.group = .protected; classification.testable = false
+            classification.reason += "大文件扫描不展开此类目录，未统计内部容量。"
+        } else if measurement.cloudContent {
             classification = .init(kind: .cloudPlaceholder, group: .protected,
                                    reason: directory ? "目录含有尚未下载到本机的内容，未展开或处理占位内容。" : "云端内容尚未下载到本机，本次保留。",
                                    impact: "不触发下载，不计入本机可清理容量。")
@@ -603,6 +652,10 @@ private final class Worker {
     func classify(_ url: URL, identity: StorageReviewFileIdentity) -> Classification {
         if Scanner.isSymbolicLink(identity) { return .init(kind: .symbolicLink, group: .protected, reason: "符号链接默认保留，未跟随目标。", impact: "链接大小不代表目标占用。") }
         if cloudPlaceholder(url) { return .init(kind: .cloudPlaceholder, group: .protected, reason: "云端内容尚未下载到本机，本次保留。", impact: "不触发下载，不计入本机可清理容量。") }
+        if let reason = developmentReason(url, identity: identity) {
+            return .init(kind: .developmentEnvironment, group: .protected, reason: reason,
+                         impact: "依赖仍可能用于构建或调试，不提供内部文件清理。")
+        }
         if isReleaseProtected(url) { return .init(kind: url.pathExtension.lowercased() == "xcarchive" ? .releaseArchive : .releaseMaterial,
                                                   group: .protected, reason: "正式发布档案或关联材料，保留原件。", impact: "用于发布、更新和问题定位。") }
         if context.runningApplicationURLs.contains(where: { overlaps(url.path, canonicalPath($0)) }) || cacheOwnerIsRunning(url) {
@@ -681,6 +734,10 @@ private final class Worker {
                 guard visit(child, scope: scope) else { result.complete = false; break }
                 measuredEntries += 1
                 guard let childIdentity = Scanner.captureIdentity(at: child) else { result.complete = false; break }
+                if developmentReason(child, identity: childIdentity) != nil {
+                    result.complete = false; result.unsafe = true; result.developmentContent = true
+                    continue
+                }
                 let relative = String(child.path.dropFirst(root.path.count + 1))
                 let record = "\(relative.utf8.count):\(relative):\(childIdentity.device):\(childIdentity.inode):\(childIdentity.sizeBytes):\(childIdentity.allocatedBytes):\(childIdentity.modifiedSeconds):\(childIdentity.modifiedNanoseconds):\(childIdentity.changedSeconds):\(childIdentity.changedNanoseconds):\(childIdentity.linkCount):\(childIdentity.mode)\n"
                 hash.update(data: Data(record.utf8))
@@ -717,8 +774,10 @@ private final class Worker {
         return result
     }
 
-    func shouldAggregate(_ url: URL, scope: SpaceCleaningScope) -> Bool {
+    func shouldAggregate(_ url: URL, scope: SpaceCleaningScope, identity: StorageReviewFileIdentity) -> Bool {
+        if developmentReason(url, identity: identity) != nil { return true }
         if isPackage(url) || isReleaseProtected(url) { return true }
+        if options.mode == .largeFiles { return false }
         if cacheKind(url) != nil { return true }
         if url.deletingLastPathComponent().path == home.appendingPathComponent("Library/Caches").path,
            !["Google", "Firefox"].contains(url.lastPathComponent),

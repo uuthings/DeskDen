@@ -65,17 +65,40 @@ public enum DeviceNetworkLedgerError: LocalizedError {
 }
 
 public struct DeviceNetworkLedger: Codable, Equatable, Sendable {
+    public static let maximumDailyRecords = 400
+    public static let maximumArchivedMonths = 120
     public var days: [String: DeviceNetworkDay] = [:]
+    /// Contains only days removed from `days`; the two tiers never overlap.
+    public var archivedMonths: [String: DeviceNetworkMonth] = [:]
+    public var compactedThroughDay: String?
+    public var olderHistoryExpired = false
     public var recordingStartedAt: Date
     public var recordingReceived: UInt64 = 0
     public var recordingSent: UInt64 = 0
     public var recordingCoveredSeconds: TimeInterval = 0
     public var selectedInterfaceIDs: [String]? // nil: physical Wi-Fi / Ethernet, []: none
     public init(now: Date = Date()) { recordingStartedAt = now }
+    private enum CodingKeys: String, CodingKey {
+        case days, archivedMonths, compactedThroughDay, olderHistoryExpired, recordingStartedAt
+        case recordingReceived, recordingSent, recordingCoveredSeconds, selectedInterfaceIDs
+    }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        days = try values.decode([String: DeviceNetworkDay].self, forKey: .days)
+        archivedMonths = try values.decodeIfPresent([String: DeviceNetworkMonth].self, forKey: .archivedMonths) ?? [:]
+        compactedThroughDay = try values.decodeIfPresent(String.self, forKey: .compactedThroughDay)
+        olderHistoryExpired = try values.decodeIfPresent(Bool.self, forKey: .olderHistoryExpired) ?? false
+        recordingStartedAt = try values.decode(Date.self, forKey: .recordingStartedAt)
+        recordingReceived = try values.decode(UInt64.self, forKey: .recordingReceived)
+        recordingSent = try values.decode(UInt64.self, forKey: .recordingSent)
+        recordingCoveredSeconds = try values.decode(TimeInterval.self, forKey: .recordingCoveredSeconds)
+        selectedInterfaceIDs = try values.decodeIfPresent([String].self, forKey: .selectedInterfaceIDs)
+    }
     public func validated() throws -> Self {
         func validDate(_ date: Date) -> Bool { date.timeIntervalSince1970.isFinite && abs(date.timeIntervalSince1970) <= 100_000_000_000 }
         func validSeconds(_ value: Double) -> Bool { value.isFinite && value >= 0 && value <= 1_000_000_000_000 }
-        guard validDate(recordingStartedAt), validSeconds(recordingCoveredSeconds), days.count <= 400 else { throw DeviceNetworkLedgerError.invalidFields }
+        guard validDate(recordingStartedAt), validSeconds(recordingCoveredSeconds), days.count <= Self.maximumDailyRecords,
+              archivedMonths.count <= Self.maximumArchivedMonths else { throw DeviceNetworkLedgerError.invalidFields }
         for (key, day) in days {
             guard key.count == 10, key.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil,
                   validSeconds(day.coveredSeconds), (0...1_000_000_000).contains(day.excludedIntervals),
@@ -86,6 +109,7 @@ public struct DeviceNetworkLedger: Codable, Equatable, Sendable {
                   Self.dayKey(date, calendar: calendar) == key else { throw DeviceNetworkLedgerError.invalidFields }
             if let first = day.firstSample, let last = day.lastSample, first > last { throw DeviceNetworkLedgerError.invalidFields }
         }
+        try validateArchivedMonths()
         return self
     }
     public static func dayKey(_ date: Date, calendar: Calendar = .current) -> String {
@@ -121,9 +145,12 @@ public struct DeviceNetworkAccumulator: Sendable {
     public mutating func ingest(_ counters: [String: DeviceNetworkCounter], at date: Date,
                                 maximumGap: TimeInterval, calendar: Calendar = .current) -> DeviceNetworkDelta? {
         guard date.timeIntervalSince1970.isFinite, abs(date.timeIntervalSince1970) <= 100_000_000_000, maximumGap.isFinite, maximumGap > 0 else { previous = nil; return nil }
+        // A backwards clock must not recreate a day already represented in a monthly total.
+        let observedKey = DeviceNetworkLedger.dayKey(date, calendar: calendar)
+        if let watermark = ledger.compactedThroughDay, observedKey <= watermark { previous = nil; return nil }
         defer {
             previous = (date, counters)
-            for obsolete in ledger.days.keys.sorted().dropLast(400) { ledger.days.removeValue(forKey: obsolete) }
+            ledger.compactHistory()
         }
         guard let old = previous else {
             // A decoded ledger intentionally contains no counter baseline. Record the uncovered restart

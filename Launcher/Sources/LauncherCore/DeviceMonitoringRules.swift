@@ -162,10 +162,13 @@ public struct DeviceTrafficSummary: Equatable, Sendable {
     public var coveredSeconds: TimeInterval
     public var excludedIntervals: Int
     public var dailyUsage: [DeviceTrafficDay]
+    public var archivedRecordedDays: Int = 0
+    public var includesMonthlyHistory = false
+    public var omitsPartialArchivedMonth = false
     public var totalBytes: UInt64 { saturatedAdd(received, sent) }
     public var isPartialPeriod: Bool {
         let elapsedEnd = min(measuredAt, periodEnd)
-        return elapsedEnd > periodStart && (recordingStartedAt > periodStart || excludedIntervals > 0 ||
+        return elapsedEnd > periodStart && (omitsPartialArchivedMonth || recordingStartedAt > periodStart || excludedIntervals > 0 ||
             coveredSeconds + 15 < max(0, elapsedEnd.timeIntervalSince(max(periodStart, recordingStartedAt))))
     }
     public var isActivePeriod: Bool { measuredAt >= periodStart && measuredAt < periodEnd }
@@ -202,11 +205,22 @@ public struct DeviceTrafficLedger: Codable, Equatable, Sendable {
         let elapsedEnd = min(date, range.end)
         // Total every retained measured bucket inside the selected interval. A long custom range
         // must not fabricate history or silently exclude older retained days from its total.
-        let included = ledger.days.filter { key, _ in
+        var included = ledger.days.filter { key, _ in
             let pieces = key.split(separator: "-").compactMap { Int($0) }
             guard pieces.count == 3, let day = DeviceBudgetDate(year: pieces[0], month: pieces[1], day: pieces[2]).date(in: c) else { return false }
             return day >= range.start && day < range.end && day <= date
         }.map(\.value)
+        var archivedRecordedDays = 0, includesMonthlyHistory = false, omitsPartialArchivedMonth = false
+        for month in ledger.archivedMonths.values {
+            guard let first = DeviceNetworkLedger.date(forDay: month.firstDay, calendar: c),
+                  let last = DeviceNetworkLedger.date(forDay: month.lastDay, calendar: c),
+                  let end = c.date(byAdding: .day, value: 1, to: last), first < elapsedEnd, end > range.start else { continue }
+            // Exact totals can be reused only when the query encloses every compacted day.
+            // Never distribute old monthly bytes proportionally across a partial month.
+            if first >= range.start && end <= elapsedEnd {
+                included.append(month.totals); archivedRecordedDays += month.recordedDays; includesMonthlyHistory = true
+            } else { omitsPartialArchivedMonth = true }
+        }
         // Bound chart size independently of accounting. Histories longer than 400 calendar days
         // show the latest 400 days; omitted/missing collection remains explicit in the UI.
         let lastDay = c.startOfDay(for: min(date, range.end.addingTimeInterval(-0.001)))
@@ -220,8 +234,42 @@ public struct DeviceTrafficLedger: Codable, Equatable, Sendable {
         return .init(period: budget.period, scope: budget.scope, periodStart: range.start, periodEnd: range.end, recordingStartedAt: startedAt,
                      timeZoneIdentifier: timeZoneIdentifier, measuredAt: date, received: included.reduce(0) { saturatedAdd($0, $1.received) },
                      sent: included.reduce(0) { saturatedAdd($0, $1.sent) }, coveredSeconds: included.reduce(0) { min(1_000_000_000_000, $0 + ($1.coveredSeconds.isFinite ? max(0, $1.coveredSeconds) : 0)) },
-                     excludedIntervals: included.reduce(0) { saturatedCount($0, $1.excludedIntervals) }, dailyUsage: days)
+                     excludedIntervals: included.reduce(0) { saturatedCount($0, $1.excludedIntervals) }, dailyUsage: days,
+                     archivedRecordedDays: archivedRecordedDays, includesMonthlyHistory: includesMonthlyHistory,
+                     omitsPartialArchivedMonth: omitsPartialArchivedMonth)
     }
+
+    public func history(scope: DeviceTrafficScope, yearly: Bool, at date: Date) -> [DeviceTrafficRollup] {
+        let ledger = scopes[scope] ?? .init(now: startedAt), c = calendar
+        var months = ledger.archivedMonths.mapValues { $0.totals }
+        for (key, day) in ledger.days {
+            let month = String(key.prefix(7))
+            if months[month] == nil { months[month] = day } else { months[month]?.merge(day) }
+        }
+        var buckets: [String: DeviceNetworkDay] = [:]
+        for (month, value) in months {
+            let key = yearly ? String(month.prefix(4)) : month
+            if buckets[key] == nil { buckets[key] = value } else { buckets[key]?.merge(value) }
+        }
+        return buckets.keys.sorted(by: >).compactMap { key in
+            let parts = key.split(separator: "-").compactMap { Int($0) }
+            guard let year = parts.first,
+                  let start = DeviceBudgetDate(year: year, month: yearly ? 1 : (parts.count == 2 ? parts[1] : 0), day: 1).date(in: c),
+                  let end = c.date(byAdding: yearly ? .year : .month, value: 1, to: start), let total = buckets[key] else { return nil }
+            let expected = max(0, min(end, date).timeIntervalSince(start))
+            return .init(id: key, received: total.received, sent: total.sent, coveredSeconds: total.coveredSeconds,
+                         isPartial: startedAt > start || total.excludedIntervals > 0 || total.coveredSeconds + 15 < expected)
+        }
+    }
+}
+
+public struct DeviceTrafficRollup: Identifiable, Equatable, Sendable {
+    public var id: String
+    public var received: UInt64
+    public var sent: UInt64
+    public var coveredSeconds: TimeInterval
+    public var isPartial: Bool
+    public var totalBytes: UInt64 { saturatedAdd(received, sent) }
 }
 public struct DeviceTrafficAccumulator: Sendable {
     public private(set) var ledger: DeviceTrafficLedger

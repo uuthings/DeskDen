@@ -21,8 +21,8 @@ struct SpaceCleaningDialogContent: View {
         case .purge(let id):
             if let batch = model.batches.first(where: { $0.id == id }) ?? (model.currentBatch?.id == id ? model.currentBatch : nil) {
                 let items = batch.items.filter(\.canPurge)
-                SpaceCleaningPurgeDialog(items: items.map { .init(id: $0.id.uuidString, name: $0.name, bytes: $0.bytes) },
-                    totalBytes: items.reduce(0) { partial, item in let sum = partial.addingReportingOverflow(item.bytes); return sum.overflow ? .max : sum.partialValue },
+                SpaceCleaningPurgeDialog(items: items.map { .init(id: $0.id.uuidString, name: $0.name, bytes: $0.allocatedBytes) },
+                    totalBytes: items.reduce(0) { partial, item in let sum = partial.addingReportingOverflow(item.allocatedBytes); return sum.overflow ? .max : sum.partialValue },
                     dismiss: model.closeDialog, purge: { model.executePurge(batchID: id) }, acknowledged: $model.acknowledgement)
             } else { unavailableDialog }
         case .issues: issuesDialog
@@ -97,6 +97,8 @@ struct SpaceCleaningRulesDialog: View {
                     rule("PKG 安装包、下载与桌面中的 DMG", status: "建议整理 · 手动选择")
                     rule("已满 30 天的诊断记录", status: "建议整理 · 手动选择")
                     rule("个人文件与普通压缩包", status: "自行选择")
+                    rule("开发依赖、Git 资料与虚拟环境", status: "不展开 · 保留")
+                    rule("大文件扫描", status: "按大小查找 · 全部手选")
                     rule("测试 App 与测试归档", status: "可见 · 人工选择")
                     rule("用途不明的归档", status: "保留 · 可确认用途")
                     rule("正式发布原件与关联材料", status: "可见 · 受保护")
@@ -217,7 +219,7 @@ struct SpaceCleaningPurgeDialog: View {
     var body: some View {
         WorkbenchDialogFrame(title: "永久删除本次项目", dismiss: dismiss) {
             VStack(alignment: .leading, spacing: 16) {
-                Text("仅删除本次记录中仍在废纸篓的 \(items.count) 项，共 \(SpaceCleaningFormat.bytes(totalBytes))。不会清空废纸篓中的其他内容。")
+                Text("仅删除本次记录中仍在废纸篓的 \(items.count) 项，扫描时磁盘占用共 \(SpaceCleaningFormat.bytes(totalBytes))。实际释放量以系统可用空间为准，不会清空废纸篓中的其他内容。")
                     .font(.system(size: 12)).foregroundStyle(palette.secondary).lineSpacing(5)
                 SpaceCleaningConfirmationList(items: items)
                 Toggle("我理解这一步完成后，这些项目将无法恢复", isOn: $acknowledged)

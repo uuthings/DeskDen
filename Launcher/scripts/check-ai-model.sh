@@ -7,6 +7,9 @@ swiftc -swift-version 6 -emit-library -emit-module -module-name LauncherCore \
   "$task_root/Sources/LauncherCore/AIUsageCore.swift" \
   "$task_root/Sources/LauncherCore/AIQuotaAlerts.swift" \
   "$task_root/Sources/LauncherCore/AITokenLedger.swift" \
+  "$task_root/Sources/LauncherCore/AITokenMonthlyHistory.swift" \
+  "$task_root/Sources/LauncherCore/AIUsageParseCache.swift" \
+  "$task_root/Sources/LauncherCore/AIUsageHistoryStore.swift" \
   -emit-module-path "$check_dir/LauncherCore.swiftmodule" -o "$check_dir/libLauncherCore.dylib"
 swiftc -swift-version 6 -parse-as-library -I "$check_dir" -L "$check_dir" -lLauncherCore \
   -Xlinker -rpath -Xlinker "$check_dir" \

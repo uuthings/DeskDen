@@ -433,7 +433,7 @@ struct DeviceTrafficHistoryView: View {
                 Spacer()
                 Text(days.last.map { dayLabel($0.date) } ?? "")
             }.font(.system(size: 10)).foregroundStyle(palette.muted)
-            Text("灰色基线表示没有有效采集；保留最近 400 个有记录的日期，图表最多显示最近 400 个自然日。未采集及已过期历史不补算。").font(.system(size: 10)).foregroundStyle(palette.muted)
+            Text("灰色基线表示没有有效采集；每日明细保留最近 400 个记录日，较早数据按月汇总。图表最多显示最近 400 个自然日，未采集时段不补算。").font(.system(size: 10)).foregroundStyle(palette.muted)
         }
     }
     private func dayLabel(_ date: Date) -> String {
