@@ -697,7 +697,7 @@ struct HealthCenterView: View {
                 }
             }.padding(.top, 4)
             HStack(spacing: 20) {
-                resultMetric("当前可用空间", value: device.snapshot.disk.map { DeviceFormat.bytes($0.available) } ?? "—", detail: "未处理文件")
+                resultMetric("当前可用空间", value: device.snapshot.disk.map { DeviceFormat.storage($0.available) } ?? "—", detail: "未处理文件")
                 resultMetric("内存压力", value: DeviceFormat.pressure(device.snapshot.memory?.pressure ?? .unknown), detail: model.waitingForFreshSample ? "等待后续有效采样" : "以有效设备采样为准")
                 resultMetric("最近评分", value: model.score.map(String.init) ?? "—", detail: "未因处理自动加分")
             }.padding(14).background(innerSurface)
@@ -720,7 +720,7 @@ struct HealthCenterView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 14) { iconTile("checkmark", size: 48); VStack(alignment: .leading, spacing: 7) { eyebrow("处理记录", symbol: "clock"); Text(storage.lastOperationID == nil ? "最近处理记录" : "已完成本次复核").font(.system(size: 21, weight: .medium)); Text(storage.lastOperationID == nil ? "按实际记录查看、核对或恢复文件。" : "本次已移到废纸篓 \(storage.receipts.filter { $0.operationID == storage.lastOperationID && $0.result.state == .trashed && $0.restoredAt == nil }.count) 项，失败与跳过分别保留结果。").font(.system(size: 12)).foregroundStyle(palette.secondary) } }
             HStack(spacing: 20) {
-                resultMetric("当前可用空间", value: device.snapshot.disk.map { DeviceFormat.bytes($0.available) } ?? "—", detail: "以真实设备采样为准")
+                resultMetric("当前可用空间", value: device.snapshot.disk.map { DeviceFormat.storage($0.available) } ?? "—", detail: "以真实设备采样为准")
                 resultMetric("内存压力", value: DeviceFormat.pressure(device.snapshot.memory?.pressure ?? .unknown), detail: model.waitingForFreshSample ? "等待后续有效采样" : "已按真实状态重新评估")
                 resultMetric("最近评分", value: model.score.map(String.init) ?? "—", detail: "未因处理自动加分")
             }.padding(14).background(innerSurface)

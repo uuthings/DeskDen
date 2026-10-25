@@ -81,6 +81,8 @@ private struct ModalLifecycleEditor:View {
         }
         let output = ProcessInfo.processInfo.environment["FANGCUN_APPEARANCE_OUTPUT"].map { URL(fileURLWithPath: $0) }
         if let output { try? FileManager.default.createDirectory(at: output, withIntermediateDirectories: true) }
+        let originalTheme = Palette.workbenchTheme, originalLight = Palette.isLight, originalOpacity = Palette.glassOpacity
+        defer { Palette.workbenchTheme = originalTheme; Palette.isLight = originalLight; Palette.glassOpacity = originalOpacity }
         for theme in LauncherTheme.allCases {
             for light in [false, true] {
                 for opacity in [0.5, 0.7, 0.9] {
@@ -97,6 +99,39 @@ private struct ModalLifecycleEditor:View {
                     if let output, let image, opacity == 0.7 {
                         try? image.write(to: output.appendingPathComponent("surfaces-\(theme.rawValue)-\(light ? "light" : "dark").png"))
                     }
+                    // Exercise the production independent NSPanel, not only a
+                    // card rendered inside the main window's environment.
+                    let anchor = WBPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 32), pullsDown: false)
+                    anchor.workbenchTheme = theme; anchor.interfaceLight = light; anchor.interfaceOpacity = opacity
+                    anchor.addItems(withTitles: ["跟随城市 · 上海 · UTC+8", "跟随系统", "自定义时区"])
+                    anchor.selectItem(at: 0)
+                    let popup = WBChoicePopup(anchor: anchor)
+                    let popupImage = await captureNative(popup.contentView!)
+                    let popupEffects = descendants(popup.contentView!).compactMap { $0 as? NSVisualEffectView }
+                    check(!popup.isVisible && popup.appearance?.name == (light ? .aqua : .darkAqua) && !popupEffects.isEmpty &&
+                          popupEffects.allSatisfy { $0.appearance?.name == (light ? .aqua : .darkAqua) && $0.blendingMode == .behindWindow },
+                          "independent selection popup keeps its requested appearance and samples behind its window")
+                    check(popupImage != nil, "production popup renders offscreen without ordering a window")
+                    if let output, let popupImage, opacity == 0.7 {
+                        try? popupImage.write(to: output.appendingPathComponent("popup-\(theme.rawValue)-\(light ? "light" : "dark").png"))
+                    }
+                    popup.contentView = nil; popup.close()
+
+                    Palette.workbenchTheme = theme; Palette.isLight = light; Palette.glassOpacity = opacity
+                    let mini = WorkbenchNotchSurface(size: CGSize(width: 600, height: 208), notchWidth: 180, safeTop: 32)
+                    let miniWindow = NSWindow(contentRect: mini.bounds, styleMask: [.borderless], backing: .buffered, defer: false)
+                    miniWindow.isReleasedWhenClosed = false; miniWindow.isOpaque = false; miniWindow.backgroundColor = .clear
+                    miniWindow.contentView = mini; mini.setPhase(.expanded, animated: false)
+                    let miniImage = await captureNative(mini)
+                    let miniEffects = descendants(mini).compactMap { $0 as? NSVisualEffectView }
+                    check(!miniWindow.isVisible && mini.materialOpacity == opacity && mini.contentTopInset >= 32 && !miniEffects.isEmpty &&
+                          miniEffects.allSatisfy { $0.appearance?.name == (light ? .aqua : .darkAqua) && $0.blendingMode == .behindWindow },
+                          "mini uses the shared card material with behind-window blending and preserves the camera safe area")
+                    check(miniImage != nil, "mini material renders in a hidden fixture")
+                    if let output, let miniImage, opacity == 0.7 {
+                        try? miniImage.write(to: output.appendingPathComponent("mini-surface-\(theme.rawValue)-\(light ? "light" : "dark").png"))
+                    }
+                    miniWindow.contentView = nil; miniWindow.close()
                 }
             }
         }
@@ -142,9 +177,31 @@ private struct ModalLifecycleEditor:View {
             .background(WorkbenchMaterialSurface(kind: .panel, radius: 14)).padding(40)
             .background(WorkbenchSceneBackground(motionEnabled: false, active: false))
             .workbenchThemeEnvironment(theme: .qingbiMist, opacity: 0.7, backgroundMotion: false)
-        let cityImage = await capture(city, size: CGSize(width: 550, height: 480))
+        let cityImage = await capture(city, size: CGSize(width: 550, height: 760))
         check(cityImage != nil, "city list renders with the shared card material and overlay scrollbar")
         if let output, let cityImage { try? cityImage.write(to: output.appendingPathComponent("city-picker.png")) }
+        let weatherContext = WorkbenchContextModel(dataDirectory: directory.appendingPathComponent("weather-fixture"), provider: AppearanceWeatherProvider())
+        defer { context.stop(); weatherContext.stop() }
+        let fixtureCity = WeatherCity(id: "appearance:shanghai", name: "上海", latitude: 31.23, longitude: 121.47, timeZoneIdentifier: "Asia/Shanghai")
+        for unit in WeatherTemperatureUnit.allCases {
+            check(weatherContext.saveContext(city: fixtureCity, zone: "city", twelveHour: false, temperatureUnit: unit), "weather appearance fixture saves the selected unit and city together")
+            for _ in 0..<100 where weatherContext.loadingWeather { try? await Task.sleep(for: .milliseconds(10)) }
+            check(weatherContext.weather?.snapshot?.temperatureCelsius == 17 && weatherContext.weatherStatusTitle == "阴", "weather rendering uses the injected current reading, not a live request")
+            for width: CGFloat in [340, 600, 1000] {
+                let header = VStack(alignment: .leading, spacing: 16) {
+                    Text("界面验收样例").font(.system(size: 11))
+                    WorkbenchHomeContextHeader(context: weatherContext, compact: width < 600)
+                }.frame(maxWidth: .infinity, alignment: .trailing).padding(20)
+                    .background(WorkbenchMaterialSurface()).padding(16)
+                    .background(WorkbenchSceneBackground(motionEnabled: false, active: false))
+                    .workbenchThemeEnvironment(theme: .qingbiMist, opacity: 0.7, backgroundMotion: false)
+                let headerImage = await capture(header, size: CGSize(width: width, height: 230))
+                check(headerImage != nil, "production weather and time header renders at \(width) pt with \(unit.symbol)")
+                if let output, let headerImage {
+                    try? headerImage.write(to: output.appendingPathComponent("weather-header-\(Int(width))-\(unit.rawValue).png"))
+                }
+            }
+        }
         let callout = WBChartCallout(anchor: CGRect(x: 380, y: 74, width: 20, height: 76), canvas: CGSize(width: 580, height: 157), size: CGSize(width: 218, height: 112)) {
             VStack(alignment: .leading, spacing: 10) {
                 Text("10 月 25 日").font(.system(size: 12, weight: .medium))
@@ -168,10 +225,24 @@ private struct ModalLifecycleEditor:View {
         let host = NSHostingView(rootView: view)
         host.frame = CGRect(origin: .zero, size: size); window.contentView = host
         defer { window.contentView = nil; window.close() }
+        return await captureNative(host)
+    }
+    private static func descendants(_ view: NSView) -> [NSView] { view.subviews.flatMap { [$0] + descendants($0) } }
+    private static func captureNative(_ view: NSView) async -> Data? {
         try? await Task.sleep(for: .milliseconds(120))
-        host.layoutSubtreeIfNeeded()
-        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return nil }
-        host.cacheDisplay(in: host.bounds, to: rep)
+        view.layoutSubtreeIfNeeded()
+        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
+        view.cacheDisplay(in: view.bounds, to: rep)
         return rep.representation(using: .png, properties: [:])
+    }
+}
+
+private struct AppearanceWeatherProvider: WeatherProviding {
+    let providerID = "appearance-fixture"
+    func searchCities(query: String, language: String) async throws -> [WeatherCity] { [] }
+    func currentWeather(for city: WeatherCity, receivedAt: Date) async throws -> WeatherSnapshot {
+        WeatherSnapshot(city: city, observedAt: receivedAt, receivedAt: receivedAt, temperatureCelsius: 17,
+                        weatherCode: 3, isDay: true, providerID: providerID, attribution: "Synthetic appearance fixture",
+                        attributionURL: URL(string: "https://example.invalid/weather-fixture")!)
     }
 }

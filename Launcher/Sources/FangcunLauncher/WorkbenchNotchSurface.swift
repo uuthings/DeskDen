@@ -12,10 +12,8 @@ import SwiftUI
     private let outline = CAShapeLayer()
     private let contentMask = CAShapeLayer()
     private let materialContainer = FlippedView()
-    private let glass = GlassBackgroundView()
+    private let glass = NSHostingView(rootView: AnyView(EmptyView()))
     private let materialMask = CAShapeLayer()
-    private let sceneLayer = CALayer()
-    private let sceneTone = CAGradientLayer()
     private(set) var theme = Palette.workbenchTheme
     private var host: NSView?
     private(set) var phase: Phase = .closed
@@ -40,20 +38,8 @@ import SwiftUI
         materialContainer.frame = bounds
         materialContainer.wantsLayer = true
         materialContainer.layer?.mask = materialMask
-        sceneLayer.frame = bounds
-        sceneLayer.contentsGravity = .resizeAspectFill
-        sceneLayer.masksToBounds = true
-        materialContainer.layer?.addSublayer(sceneLayer)
-        sceneTone.frame = bounds
-        sceneTone.startPoint = CGPoint(x: 0, y: 0)
-        sceneTone.endPoint = CGPoint(x: 1, y: 1)
-        materialContainer.layer?.addSublayer(sceneTone)
         glass.frame = bounds
         glass.autoresizingMask = [.width, .height]
-        glass.surfaceStyle = .workbench
-        glass.blendingMode = .withinWindow
-        glass.radius = 0
-        glass.drawsBorder = false
         materialContainer.addSubview(glass)
         addSubview(materialContainer)
         refreshAppearance()
@@ -63,18 +49,13 @@ import SwiftUI
 
     func refreshAppearance() {
         appearance = NSAppearance(named: Palette.isLight ? .aqua : .darkAqua)
-        glass.refreshAppearance()
         theme = Palette.workbenchTheme
         outline.strokeColor = NSColor(Palette.workbenchPalette.line).cgColor
-        if let image=WorkbenchSceneAssets.image(for:Palette.workbenchTheme) {
-            sceneLayer.contents=image.cgImage(forProposedRect:nil,context:nil,hints:nil)
-        } else {sceneLayer.contents=nil}
-        sceneLayer.frame=bounds
-        // The same scene remains stationary. A quiet, theme-derived veil gives
-        // the compact readings a consistent surface above bright horizons.
-        sceneTone.frame = bounds
-        sceneTone.colors = [NSColor(Palette.workbenchPalette.chrome).withAlphaComponent(Palette.isLight ? 0.16 : 0.20).cgColor,
-                            NSColor(Palette.workbenchPalette.surface).withAlphaComponent(Palette.isLight ? 0.22 : 0.28).cgColor]
+        // A separate panel samples what is behind its window. An opaque scene
+        // image underneath the tint would defeat the shared opacity setting.
+        glass.rootView = AnyView(WorkbenchMaterialSurface(kind: .panel, radius: 0, behindWindow: true)
+            .workbenchThemeEnvironment(theme: theme, opacity: Palette.glassOpacity, backgroundMotion: false,
+                                      appearance: Palette.isLight ? .light : .dark))
     }
     var materialOpacity: Double { Palette.glassOpacity }
     var usesLightAppearance: Bool { appearance?.name == .aqua }

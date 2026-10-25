@@ -106,6 +106,9 @@ private struct WorkbenchThemeEnvironmentModifier: ViewModifier {
         content.environment(\.workbenchTheme, theme)
             .environment(\.workbenchOpacity, ThemePalette(theme: theme, opacity: opacity).opacity)
             .environment(\.workbenchBackgroundMotion, backgroundMotion)
+            // Independent AppKit hosting views do not inherit the presenting
+            // SwiftUI tree. Keep the actual palette in sync with the preference.
+            .environment(\.colorScheme, light ? .light : .dark)
             .preferredColorScheme(appearance == .system ? nil : appearance == .light ? .light : .dark)
             .tint(ThemePalette(theme: theme, opacity: opacity, light: light).accent)
     }
@@ -118,13 +121,14 @@ struct WorkbenchMaterialSurface: View {
     enum Kind { case card, panel, chrome, sidebar, shell, control, selected }
     var kind: Kind = .card
     var radius: CGFloat = 15
+    var behindWindow = false
     @Environment(\.workbenchPalette) private var palette
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         ZStack {
             if kind == .card || kind == .panel || kind == .selected {
-                WorkbenchBackdropBlur().opacity(0.14)
+                WorkbenchBackdropBlur(behindWindow: behindWindow).opacity(0.14)
             }
             switch kind {
             case .card: shape.fill(palette.surfaceGradient)
@@ -155,17 +159,21 @@ struct WorkbenchMaterialSurface: View {
 }
 
 private struct WorkbenchBackdropBlur: NSViewRepresentable {
+    var behindWindow: Bool
     @Environment(\.colorScheme) private var scheme
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = WorkbenchPassthroughVisualEffectView()
-        view.blendingMode = .withinWindow
+        view.blendingMode = behindWindow ? .behindWindow : .withinWindow
         view.material = .underWindowBackground
         view.state = .active
         view.isEmphasized = false
         view.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
         return view
     }
-    func updateNSView(_ view: NSVisualEffectView, context: Context) { view.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua) }
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {
+        view.blendingMode = behindWindow ? .behindWindow : .withinWindow
+        view.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
+    }
 }
 
 private final class WorkbenchPassthroughVisualEffectView:NSVisualEffectView {

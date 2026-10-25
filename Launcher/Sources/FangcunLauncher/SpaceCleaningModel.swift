@@ -25,6 +25,8 @@ import Quartz
     @Published private(set) var diskVolumeName: String?
     @Published private(set) var diskTotal: UInt64?
     @Published private(set) var diskAvailable: UInt64?
+    @Published private(set) var diskImmediatelyFree: UInt64?
+    @Published private(set) var diskReclaimableEstimate: UInt64?
     @Published private(set) var coverageIssues: [String] = []
     @Published private(set) var coverageNotes: [String] = []
     private var scanReachedLimit = false
@@ -372,13 +374,10 @@ import Quartz
     func refreshDisk() {
         let root = homeDirectory
         Task { [weak self] in
-            let values = await Task.detached(priority: .utility) { () -> (String?, UInt64?, UInt64?) in
-                guard let value = try? root.resourceValues(forKeys: [.volumeNameKey, .volumeTotalCapacityKey, .volumeAvailableCapacityKey]) else { return (nil, nil, nil) }
-                return (value.volumeName, value.volumeTotalCapacity.flatMap { $0 > 0 ? UInt64($0) : nil },
-                        value.volumeAvailableCapacity.flatMap { $0 >= 0 ? UInt64($0) : nil })
-            }.value
+            let capacity = await Task.detached(priority: .utility) { DeviceStorageCapacity.read(at: root) }.value
             guard let self else { return }
-            self.diskVolumeName = values.0; self.diskTotal = values.1; self.diskAvailable = values.2
+            self.diskVolumeName = capacity?.volumeName; self.diskTotal = capacity?.total; self.diskAvailable = capacity?.available
+            self.diskImmediatelyFree = capacity?.immediatelyFree; self.diskReclaimableEstimate = capacity?.reclaimableEstimate
         }
     }
     func reveal(_ id: UUID) {
