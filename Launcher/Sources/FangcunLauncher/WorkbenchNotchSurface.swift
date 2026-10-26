@@ -1,32 +1,40 @@
 import AppKit
 import QuartzCore
 import SwiftUI
+import LauncherCore
 
 /// The compact Mini has one fixed-height information row below the screen's
 /// hardware safe area. Header controls occupy the two sides of that area.
 enum WorkbenchMiniLayout {
-    static let sectionHeight: CGFloat = 148
+    static let sectionHeight: CGFloat = 236
+    static let cardWidth: CGFloat = 220
+    static let cardGap: CGFloat = 10
+    static let smallCardHeight: CGFloat = 72
+    static let mediumCardHeight: CGFloat = 113
     static let headerHeight: CGFloat = 28
     static let headerTop: CGFloat = 4
     static let horizontalInset: CGFloat = 34
     static let bottomInset: CGFloat = 12
-    static let minimumWidth: CGFloat = 480
-    static let maximumWidth: CGFloat = 760
+    static let minimumWidth: CGFloat = 320
+    static let maximumWidth: CGFloat = 978
     static let shoulderWidth: CGFloat = 22
     static let shoulderDepth: CGFloat = 26
     static let bottomRadius: CGFloat = 18
 
     static func contentTopInset(safeTop: CGFloat) -> CGFloat {
-        max(40, (safeTop.isFinite ? max(0, safeTop) : 0) + 8)
+        max(44, (safeTop.isFinite ? max(0, safeTop) : 0) + 12)
+    }
+
+    static func size(cards: [WorkbenchMiniCardID], screenWidth: CGFloat, safeTop: CGFloat, notchWidth: CGFloat) -> CGSize {
+        let columns = (WorkbenchMiniPacking.pack(cards).map(\.column).max() ?? 0) + 1
+        let desired = horizontalInset * 2 + CGFloat(columns) * cardWidth + CGFloat(columns - 1) * cardGap
+        let headerMinimum = max(minimumWidth, notchWidth > 0 ? notchWidth + 300 : minimumWidth)
+        let width = min(maximumWidth, max(headerMinimum, desired), max(288, screenWidth - 32))
+        return CGSize(width: width, height: height(safeTop: safeTop))
     }
 
     static func size(sectionCount: Int, screenWidth: CGFloat, safeTop: CGFloat, notchWidth: CGFloat) -> CGSize {
-        // Reserve both header wings around the actual camera, including its
-        // safe margin. Hide sections without stretching the remaining regions.
-        let headerMinimum = max(minimumWidth, notchWidth + 300)
-        let desired = horizontalInset * 2 + CGFloat(max(1, sectionCount)) * 168 + CGFloat(max(0, sectionCount - 1)) * 8
-        let width = min(maximumWidth, max(headerMinimum, desired), max(320, screenWidth - 32))
-        return CGSize(width: width, height: height(safeTop: safeTop))
+        size(cards: sectionCount == 0 ? [] : WorkbenchMiniCardID.builtIn, screenWidth: screenWidth, safeTop: safeTop, notchWidth: notchWidth)
     }
 
     static func height(safeTop: CGFloat) -> CGFloat {

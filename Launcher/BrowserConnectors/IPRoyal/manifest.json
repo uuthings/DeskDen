@@ -1,0 +1,50 @@
+{
+  "manifest_version": 3,
+  "name": "方寸 · IPRoyal 用量助手",
+  "version": "1.0.0",
+  "description": "仅将 IPRoyal 静态 ISP 订单的流量额度同步到本机方寸。",
+  "minimum_chrome_version": "111",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnpmcSue0pNsi2SFeFBHfTayDQBPp9MOEuvM2r8Yp2R2RH36mfFAbN7frnyOdG5wQ3tkV06xkpoJlwfNGguKyn/yrdlFmnMQ3hg/wP42bpawhyjaMb9bdPpRRlmxDsu6n6Ste46j66HYesaU+tarBeeRoLehWiUqEPnQ2aOODEXtbFze4fEP3PztuTBmogz+4k6Cd8xw7vVfSzaXAfzSpLdhMU05gl15hlrUiJYb16JXkDjIKwIr3tmXHp86FZNevivsZJMJ+ItTaq47JhPGmYSaJSYm9nV8iYNQDpiCyOlbFaJv5TAHrryn/ywFGPRUW95uenROECfcwOBiNIk+/fQIDAQAB",
+  "permissions": [
+    "storage",
+    "alarms",
+    "nativeMessaging"
+  ],
+  "host_permissions": [
+    "https://dashboard.iproyal.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "方寸 IPRoyal 连接",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://dashboard.iproyal.com/me/orders/*"
+      ],
+      "js": [
+        "protocol.js",
+        "observer.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_start",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "https://dashboard.iproyal.com/me/orders/*"
+      ],
+      "js": [
+        "protocol.js",
+        "content.js"
+      ],
+      "world": "ISOLATED",
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ]
+}

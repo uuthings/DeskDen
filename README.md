@@ -31,4 +31,6 @@ App 最低运行系统为 macOS 14；从源码构建需要 **Xcode 27.0（Swift 
 
 [安装与升级](docs/install.md) · [使用说明](docs/usage.md) · [软件更新](docs/updating.md) · [公开范围与贡献方式](docs/public-source.md)
 
+当前源码另包含[模块化 Mini](docs/mini-dashboard.md)与[多来源用量统计](docs/provider-usage.md)。IPRoyal 网页助手需要手动安装和真实账号验证；这些源码变更不代表上方正式安装包已包含或已完成账号联调。
+
 本仓库由维护者直接维护，不接受 Pull Request；问题反馈使用 Issues。目前尚未指定开源许可证，源码公开本身不额外授予开源许可。

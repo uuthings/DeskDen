@@ -51,6 +51,20 @@ class PublicGateTests(unittest.TestCase):
         self.git("add", "Design/private-diary.md")
         self.assertNotEqual(self.check("--staged").returncode, 0)
 
+    def test_browser_connector_has_an_exact_source_scope(self):
+        prefix = "Launcher/BrowserConnectors/IPRoyal/"
+        for name in ["manifest.json", "extension-id.txt", "protocol.js", "observer.js", "content.js", "background.js",
+                     "popup.js", "popup.html", "popup.css", "README.md", "install.command", "prepare-kit.py",
+                     "tests/protocol.test.cjs", "tests/native-host.test.py"]:
+            self.write(prefix + name, "public fixture\n")
+            self.git("add", prefix + name)
+        self.assertEqual(self.check("--staged").returncode, 0)
+        for name in ["captured-response.json", "NativeMessagingHosts/host.json", "Extension/private-profile.json"]:
+            self.write(prefix + name, "must stay local\n")
+            self.git("add", prefix + name)
+            self.assertNotEqual(self.check("--staged").returncode, 0)
+            self.git("rm", "--cached", prefix + name)
+
     def test_public_signing_metadata_is_allowed(self):
         self.write("README.md", "Team: ABCD123456\nCertificate SHA-1: 0123456789012345678901234567890123456789\n")
         self.git("add", "README.md")

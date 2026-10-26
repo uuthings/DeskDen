@@ -101,6 +101,11 @@ struct AIUsageModuleView: View {
     @ObservedObject var model: AIUsageModel
     var openDesktopCards: (() -> Void)? = nil
     var returnToSettingsPrivacy: (() -> Void)? = nil
+    var overviewTitle = "AI 用量"
+    var overviewSubtitle = "账户额度与本机活动，分别记录"
+    var overviewRefreshTitle = "刷新"
+    var overviewSourcesTitle = "来源管理"
+    var overviewSupplement: AnyView? = nil
     @Environment(\.workbenchPalette) private var palette
     @Environment(\.workbenchDeviceExpanded) private var expanded
     @State private var contentWidth: CGFloat = 864
@@ -154,10 +159,10 @@ struct AIUsageModuleView: View {
     }
     private var overview: some View {
         VStack(alignment: .leading, spacing: 0) {
-            WBPageHeader(title: "AI 用量", subtitle: "账户额度与本机活动，分别记录") {
+            WBPageHeader(title: overviewTitle, subtitle: overviewSubtitle) {
                 HStack(spacing: 8) {
-                    Button { model.refresh() } label: { Label("刷新", systemImage: "arrow.clockwise") }.buttonStyle(WBButtonStyle()).disabled(model.isRefreshing).accessibilityIdentifier("fc.ai.refresh")
-                    Button { model.openSources() } label: { Label("来源管理", systemImage: "point.3.connected.trianglepath.dotted") }.buttonStyle(WBButtonStyle()).accessibilityIdentifier("fc.ai.sources")
+                    Button { model.refresh() } label: { Label(overviewRefreshTitle, systemImage: "arrow.clockwise") }.buttonStyle(WBButtonStyle()).disabled(model.isRefreshing).accessibilityIdentifier("fc.ai.refresh")
+                    Button { model.openSources() } label: { Label(overviewSourcesTitle, systemImage: "point.3.connected.trianglepath.dotted") }.buttonStyle(WBButtonStyle()).accessibilityIdentifier("fc.ai.sources")
                 }
             }
             storageProtection
@@ -165,6 +170,7 @@ struct AIUsageModuleView: View {
                 providerCard(.codex)
                 providerCard(.claude)
             }
+            if let overviewSupplement { overviewSupplement.padding(.top, 20) }
             activitySectionHeader
             AIWeightedColumns(ratio: contentWidth < 800 ? 1.25 : 1.55, gap: 12) {
                 tokenCard(visibleRecords, title: "Token 总量", showChart: true)

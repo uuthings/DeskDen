@@ -114,6 +114,8 @@ final class DeviceStatusModel: ObservableObject {
     @Published private(set) var budget = DeviceTrafficBudget()
     @Published private(set) var temperatureRule = DeviceTemperatureRule()
     @Published private(set) var trafficSummary = DeviceTrafficLedger().summary(period: .month, scope: .all, at: Date())
+    /// Refresh signal only: the fixed physical-network ledger is not a provider's billed usage.
+    @Published private(set) var physicalTrafficCounter: ProviderPhysicalTrafficCounter?
     @Published private(set) var notificationPermission: DeviceNotificationPermission = .unknown
     @Published private(set) var monitoringError: String?
     private var trafficLedger = DeviceTrafficLedger()
@@ -424,6 +426,9 @@ final class DeviceStatusModel: ObservableObject {
         snapshot = result.snapshot; interfaces = result.interfaces
         selectedInterfaceIDs = result.selection; lastError = result.error
         trafficLedger = result.trafficLedger; trafficSummary = trafficPreview(budget)
+        if let physical = trafficLedger.scopes[.all] {
+            physicalTrafficCounter = .init(epoch: trafficLedger.startedAt, received: physical.recordingReceived, sent: physical.recordingSent)
+        }
         await evaluateMonitoring(at: snapshot.sampledAt ?? Date(), maximumGap: maximumGap)
         guard generation == token, !Task.isCancelled else { return }
         guard isWindowVisible, full, let now = snapshot.sampledAt else { return }

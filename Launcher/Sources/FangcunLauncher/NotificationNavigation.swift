@@ -66,6 +66,7 @@ import LauncherCore
             || model.modals.isPresented || workbench.presentationWindow?.attachedSheet != nil
             || model.confirmingQuit || model.calendar.editor != nil || model.ai.dialog != nil
             || model.ai.hasUnsavedPriceChanges
+            || model.usagePresentation.editor != nil
         if blocked {
             if revealBlocked {
                 if editorPanel != nil || overlay != nil || hasUnsavedLauncherChanges || pickerActive {show()}
@@ -78,6 +79,7 @@ import LauncherCore
         case .ai(let provider):
             showWorkbench(route:.ai)
             guard model.route == .ai else {return false}
+            model.usagePresentation.selectedSourceID=nil
             if let provider {model.ai.show(.provider(provider))}
             else {model.ai.showOverview();model.toast="通知中的 AI 账户已不可用，已打开 AI 用量。"}
         case .networkBudget:

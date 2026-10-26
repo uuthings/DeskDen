@@ -14,13 +14,16 @@ struct WorkbenchMiniContextData {
     let condition:String
     let symbol:String
     let weatherNote:String?
-
+    var shortDate:String = ""
+    var weekday:String = ""
 }
 
 extension WorkbenchMiniContextData {
     @MainActor init(context:WorkbenchContextModel,now:Date) {
         time=context.time(now)
         date=WorkbenchMiniFormat.date(now,calendar:context.dateContext.calendar,pattern:"M月d日 · EEEE")
+        shortDate=WorkbenchMiniFormat.date(now,calendar:context.dateContext.calendar,pattern:"M月d日")
+        weekday=WorkbenchMiniFormat.date(now,calendar:context.dateContext.calendar,pattern:"EEE")
         zoneHelp=WorkbenchContextModel.zoneTitle(context.effectiveTimeZoneIdentifier,at:now)
         zone=zoneHelp.components(separatedBy:" · ").last ?? zoneHelp
         city=context.settings.city?.name ?? "未选择城市"
@@ -98,6 +101,7 @@ struct WorkbenchMiniQuotaData:Equatable {
     let label:String
     let value:String
     let fraction:Double?
+    var reset:String = "—"
 }
 
 struct WorkbenchMiniAIData {
@@ -126,7 +130,9 @@ extension WorkbenchMiniAIData {
                 return WorkbenchMiniQuotaData(label:index == 0 ? "短时":"每周",value:"—",fraction:nil)
             }
             let label=window.durationMinutes == 10_080 ? "每周":window.durationMinutes % 60 == 0 ? "\(window.durationMinutes / 60)小时":"\(window.durationMinutes)分钟"
-            return WorkbenchMiniQuotaData(label:label,value:String(format:"%.0f%%",window.usedPercent),fraction:window.usedPercent/100)
+            let reset=window.resetsAt.map {WorkbenchMiniFormat.date($0,calendar:displayCalendar,
+                pattern:displayCalendar.isDate($0,inSameDayAs:now) ? "HH:mm":"M/d HH:mm")} ?? "未提供"
+            return WorkbenchMiniQuotaData(label:label,value:String(format:"%.0f%%",window.usedPercent),fraction:window.usedPercent/100,reset:reset)
         }
         var lines=[summary?.detail ?? "正在读取已配置的本机额度来源。"]
         if isStale {lines.append("上次读数已过期，等待来源更新；不代表当前已用比例。")}
@@ -147,6 +153,129 @@ enum WorkbenchMiniFormat {
         let formatter=DateFormatter();formatter.locale=Locale(identifier:"zh_CN")
         formatter.calendar=calendar;formatter.timeZone=calendar.timeZone;formatter.dateFormat=pattern
         return formatter.string(from:date)
+    }
+}
+
+struct WorkbenchMiniNetworkPoint: Identifiable {
+    var id: Date { date }
+    let date: Date
+    let segment: UUID
+    let download: Double?
+    let upload: Double?
+}
+
+struct WorkbenchMiniDeviceData {
+    var cpu = "—"
+    var memory = "—"
+    var temperature = "—"
+    var download = "—"
+    var upload = "—"
+    var note: String?
+    var memoryFraction: Double?
+    var memoryPressure = "压力不可用"
+    var disk = "—"
+    var diskFraction: Double?
+    var diskNote = "正在读取启动卷容量"
+    var gpuTemperature = "—"
+    var leftFan = "—"
+    var rightFan = "—"
+    var thermalState = "不可用"
+    var sensorNote = "当前硬件未返回有效传感器读数"
+    var todayTraffic = "—"
+    var periodTraffic = "—"
+    var trafficFraction: Double?
+    var trafficNote = "尚未采集流量"
+    var networkPoints: [WorkbenchMiniNetworkPoint] = []
+}
+
+extension WorkbenchMiniDeviceData {
+    init(snapshot: DeviceSnapshot, openedAt: Date, history: [DeviceHistoryPoint] = [],
+         summary: DeviceTrafficSummary? = nil, budget: DeviceTrafficBudget? = nil,
+         unit: WeatherTemperatureUnit = .celsius, now: Date = Date()) {
+        let fresh = snapshot.performanceSampledAt.map { $0 >= openedAt && now.timeIntervalSince($0) < 90 } ?? false
+        cpu = DeviceFormat.percent(fresh ? snapshot.cpuPercent : nil)
+        if fresh, let memory = snapshot.memory {
+            self.memory = DeviceFormat.capacity(memory.used) + " / " + DeviceFormat.capacity(memory.total)
+            memoryFraction = memory.total > 0 ? Double(memory.used) / Double(memory.total) : nil
+            memoryPressure = DeviceFormat.pressure(memory.pressure)
+        }
+        if fresh, let disk = snapshot.disk {
+            self.disk = DeviceFormat.storage(disk.used) + " / " + DeviceFormat.storage(disk.total)
+            diskFraction = disk.total > 0 ? Double(disk.used) / Double(disk.total) : nil
+            diskNote = "启动卷：\(disk.name)\n已用／总量采用十进制；可用 \(DeviceFormat.storage(disk.available))。"
+        }
+        temperature = unit.formatted(fresh ? snapshot.cpuTemperature : nil)
+        gpuTemperature = unit.formatted(fresh ? snapshot.gpuTemperature : nil)
+        func fan(_ index: Int) -> String {
+            guard fresh, let fans = snapshot.fanRPM, index < fans.count,
+                  let value = fans[index], value.isFinite, value >= 0 else { return "—" }
+            return String(format: "%.0f RPM", value)
+        }
+        leftFan = fan(0); rightFan = fan(1)
+        thermalState = fresh ? DeviceFormat.thermal(snapshot.thermalState) : "读取中"
+        sensorNote = ([snapshot.sensorSource] + [snapshot.unavailableReasons["temperature"], snapshot.unavailableReasons["fan"]].compactMap { $0 }).joined(separator: "\n")
+        download = DeviceFormat.rate(fresh ? snapshot.network.downloadBytesPerSecond : nil)
+        upload = DeviceFormat.rate(fresh ? snapshot.network.uploadBytesPerSecond : nil)
+        note = fresh ? nil : "正在读取本机数据"
+        if snapshot.network.todayCoverageSeconds > 0 {
+            let total = snapshot.network.todayDownload.addingReportingOverflow(snapshot.network.todayUpload)
+            todayTraffic = DeviceFormat.storage(total.overflow ? UInt64.max : total.partialValue)
+        }
+        if let summary, summary.coveredSeconds > 0 {
+            periodTraffic = DeviceFormat.storage(summary.totalBytes)
+            if let budget, budget.enabled, budget.limitBytes > 0 {
+                periodTraffic += " / " + DeviceFormat.storage(budget.limitBytes)
+                trafficFraction = Double(summary.totalBytes) / Double(budget.limitBytes)
+            }
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = TimeZone(identifier: summary.timeZoneIdentifier) ?? TimeZone(secondsFromGMT: 0)!
+            let start = WorkbenchMiniFormat.date(summary.periodStart, calendar: calendar, pattern: "M/d")
+            let end = WorkbenchMiniFormat.date(summary.periodEnd.addingTimeInterval(-1), calendar: calendar, pattern: "M/d")
+            trafficNote = "\(start)–\(end) · \(summary.scope.title)\n本机已采集流量；\(summary.isPartialPeriod ? "仅覆盖部分时间" : "覆盖当前周期")。"
+            trafficNote += budget?.enabled == true ? "预算为本机自设额度。" : "尚未启用流量预算。"
+        }
+        if fresh {
+            let cutoff = now.addingTimeInterval(-60)
+            networkPoints = history.suffix(64).filter { $0.date >= cutoff && $0.date <= now.addingTimeInterval(1) }.map {
+                .init(date: $0.date, segment: $0.segment, download: $0.downloadBytesPerSecond, upload: $0.uploadBytesPerSecond)
+            }
+        }
+    }
+}
+
+/// Provider snapshots enter the same small-card renderer without introducing
+/// credential handling or another refresh loop inside the transient panel.
+struct WorkbenchMiniExternalProviderData: Identifiable {
+    let id: UUID
+    let title: String
+    let stateText: String
+    let amount: String
+    let fraction: Double?
+    let detail: String
+    let isStale: Bool
+}
+
+extension WorkbenchMiniExternalProviderData {
+    init(configuration: ProviderUsageConfiguration, state: ProviderUsageSourceState, now: Date, calendar: Calendar) {
+        id = configuration.id; title = configuration.name
+        let status = state.status(at: now, maximumAge: configuration.refreshPolicy.maximumInterval)
+        let snapshot = state.snapshot.flatMap { $0.sourceID == configuration.id && (try? $0.validate(now: now)) != nil ? $0 : nil }
+        stateText = configuration.enabled ? (snapshot == nil && status == .ready ? "尚无有效读数" : status.title) : "已停用"
+        isStale = !configuration.enabled || status != .ready || snapshot == nil
+        if let snapshot {
+            let divisor = snapshot.displayUnit.divisor
+            amount = String(format: "%.1f / %.1f %@", Double(snapshot.usedBytes) / divisor,
+                            Double(snapshot.limitBytes) / divisor, snapshot.displayUnit.title)
+            fraction = snapshot.usedPercent / 100
+            let observed = WorkbenchMiniFormat.date(snapshot.observedAt, calendar: calendar, pattern: "M/d HH:mm")
+            let reset = snapshot.resetsAt.map { WorkbenchMiniFormat.date($0, calendar: calendar, pattern: "M/d HH:mm") }
+                ?? snapshot.resetDateText.map { $0 + "（服务商日期）" } ?? "来源未提供"
+            detail = [snapshot.sourceDescription, snapshot.displayUnit.explanation, "采集：" + observed,
+                      "重置：" + reset, isStale ? "上次有效读数；不代表当前余额。" : nil, state.message].compactMap { $0 }.joined(separator: "\n")
+        } else {
+            amount = "尚无读数"; fraction = nil
+            detail = state.message ?? "请在用量页面连接此来源；小窗不自行查询或推算服务商用量。"
+        }
     }
 }
 
