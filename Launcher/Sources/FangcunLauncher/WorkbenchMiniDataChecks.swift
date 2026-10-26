@@ -58,6 +58,53 @@ import LauncherCore
             check(wrong.windows.allSatisfy {$0.fraction == nil && $0.value == "—"},"a provider mismatch cannot display another provider's quota")
             let error=WorkbenchMiniAIData(summary:.init(provider:.codex,state:.error,snapshot:reversed,detail:"夹具失败"),provider:.codex,now:now)
             check(error.stateText == "读取失败" && error.detail.contains("夹具失败"),"retained quota does not conceal its source failure")
+            check(ai.windows[0].reset == "10:44" && ai.windows[1].reset == "10/26 10:24", "quota reset labels preserve the display timezone and next-day date")
+
+            var snapshot = DeviceSnapshot()
+            let unavailable = WorkbenchMiniDeviceData(snapshot: snapshot, openedAt: now, now: now)
+            check(unavailable.memory == "—" && unavailable.disk == "—" && unavailable.download == "—" && unavailable.periodTraffic == "—" && unavailable.memoryFraction == nil, "missing device readings never become zero usage")
+            snapshot.performanceSampledAt = now
+            snapshot.cpuTemperature = 50; snapshot.gpuTemperature = 40; snapshot.fanRPM = [0, nil]
+            snapshot.memory = .init(total: 16_000, used: 8_000, available: 8_000, application: 5_000, wired: 2_000, compressed: 1_000, cached: 0, swapUsed: nil, pageIns: 0, pageOuts: 0, pressure: .normal)
+            snapshot.disk = .init(name: "Fixture", fileSystem: "APFS", total: 1_000_000_000_000, used: 700_000_000_000, available: 300_000_000_000, readBytesPerSecond: nil, writeBytesPerSecond: nil)
+            snapshot.network.downloadBytesPerSecond = 0; snapshot.network.uploadBytesPerSecond = 0
+            snapshot.network.todayCoverageSeconds = 10
+            let live = WorkbenchMiniDeviceData(snapshot: snapshot, openedAt: now, unit: .fahrenheit, now: now)
+            check(live.memoryFraction == 0.5 && live.diskFraction == 0.7 && live.disk.contains("1 TB"), "device fractions and decimal storage use the actual capacity snapshot")
+            check(live.temperature == "122°F" && live.gpuTemperature == "104°F" && live.leftFan == "0 RPM" && live.rightFan == "—", "sensor units and genuine zero RPM remain distinct from unavailable readings")
+            check(live.download == DeviceFormat.rate(0) && live.todayTraffic == DeviceFormat.storage(0), "covered zero network traffic remains a valid zero")
+            let segment = UUID()
+            let history = (0..<1_000).map { index in
+                DeviceHistoryPoint(date: now.addingTimeInterval(Double(index - 999)), segment: segment,
+                    cpuPercent: nil, downloadBytesPerSecond: index == 999 ? nil : 0, uploadBytesPerSecond: 1)
+            }
+            let graph = WorkbenchMiniDeviceData(snapshot: snapshot, openedAt: now, history: history, now: now)
+            check(graph.networkPoints.count == 61 && graph.networkPoints.first?.date == now.addingTimeInterval(-60) && graph.networkPoints.last?.download == nil, "Mini graph reads a bounded sixty-second tail and retains unavailable samples as gaps")
+            let old = WorkbenchMiniDeviceData(snapshot: snapshot, openedAt: now.addingTimeInterval(1), history: history, now: now.addingTimeInterval(100))
+            check(old.networkPoints.isEmpty && old.download == "—" && old.temperature == "—", "stale pre-open samples cannot appear as current readings")
+            var budget = DeviceTrafficBudget(); budget.enabled = true; budget.limitGB = 100
+            var traffic = DeviceTrafficLedger(now: now.addingTimeInterval(-60), timeZone: zone.timeZone).summary(budget: budget, at: now)
+            traffic.coveredSeconds = 10; traffic.received = 20_000_000_000; traffic.sent = 10_000_000_000
+            let period = WorkbenchMiniDeviceData(snapshot: snapshot, openedAt: now, summary: traffic, budget: budget, now: now)
+            check(period.trafficFraction == 0.3 && period.trafficNote.contains("本机自设额度"), "local period usage remains labeled as a local budget")
+            traffic.coveredSeconds = 0
+            check(WorkbenchMiniDeviceData(snapshot: snapshot, openedAt: now, summary: traffic, budget: budget, now: now).trafficFraction == nil, "an uncovered period does not become a zero budget reading")
+
+            let source = ProviderUsageConfiguration(kind: .bandwagon, name: "Fixture source", resourceID: "123")
+            var externalSnapshot = ProviderUsageSnapshot(sourceID: source.id, observedAt: now, usedBytes: 1_073_741_824, limitBytes: 10_737_418_240, resetDateText: "2026-11-01", displayUnit: .binaryGB, sourceDescription: "Synthetic provider fixture")
+            let external = WorkbenchMiniExternalProviderData(configuration: source, state: .init(snapshot: externalSnapshot), now: now, calendar: zone)
+            check(external.amount == "1.0 / 10.0 GB" && external.fraction == 0.1 && !external.isStale, "external cards project the provider's binary unit without adding local network bytes")
+            check(external.detail.contains("2026-11-01（服务商日期）") && external.detail.contains("1,073,741,824"), "provider date-only reset and byte convention stay explicit")
+            var slowSource = source; slowSource.refreshPolicy.maximumInterval = 43_200
+            check(!WorkbenchMiniExternalProviderData(configuration: slowSource, state: .init(snapshot: externalSnapshot), now: now.addingTimeInterval(25_200), calendar: zone).isStale, "Mini freshness respects the source's configured maximum refresh interval")
+            let absent = WorkbenchMiniExternalProviderData(configuration: source, state: .init(), now: now, calendar: zone)
+            check(absent.amount == "尚无读数" && absent.fraction == nil, "unconnected external source remains reachable without an invented balance")
+            var failedRefresh = ProviderUsageRefreshState(); failedRefresh.failed(.transport, at: now)
+            let failed = WorkbenchMiniExternalProviderData(configuration: source, state: .init(snapshot: externalSnapshot, refresh: failedRefresh), now: now, calendar: zone)
+            check(failed.isStale && failed.stateText == "更新失败" && failed.detail.contains("上次有效读数"), "retained provider balances disclose refresh failure")
+            externalSnapshot.sourceID = UUID()
+            let mismatched = WorkbenchMiniExternalProviderData(configuration: source, state: .init(snapshot: externalSnapshot), now: now, calendar: zone)
+            check(mismatched.fraction == nil && mismatched.stateText == "尚无有效读数", "a mismatched provider identity cannot display another source's balance")
 
             let context=WorkbenchContextModel(dataDirectory:root.appendingPathComponent("Context"),provider:MiniCheckWeather())
             defer {context.stop()}

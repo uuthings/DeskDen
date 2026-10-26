@@ -27,6 +27,9 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     let modals=WorkbenchModalCoordinator()
     let calendar:CalendarModel
     let ai:AIUsageModel
+    let providerUsage:ProviderUsageModel
+    let providerBrowser:ProviderUsageBrowserBridge
+    let usagePresentation=ProviderUsagePresentation()
     let vault:VaultModel
     private(set) var widgets:DesktopWidgetsController!
     @Published var route:WorkbenchRoute = .overview
@@ -69,13 +72,14 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     var closeWindow:(()->Void)?
     func setTopEntryPresentation(_ value:Bool) {isTopEntryPresentation=value}
     private var changed:AnyCancellable?
+    private var providerTrafficChanges:AnyCancellable?
     private var modalChanges:AnyCancellable?
     private var systemAppearanceObserver:NSKeyValueObservation?
     @Published private(set) var windowVisible=false
     private(set) var miniContextVisible=false
     private let startServices:Bool
     private var quitPreparationTask:Task<Void,Never>?
-    init(owner:LauncherController,calendar:CalendarModel?=nil,ai:AIUsageModel?=nil,device:DeviceStatusModel?=nil,health:HealthCenterModel?=nil,cleaning:SpaceCleaningModel?=nil,startServices:Bool=true) {
+    init(owner:LauncherController,calendar:CalendarModel?=nil,ai:AIUsageModel?=nil,device:DeviceStatusModel?=nil,health:HealthCenterModel?=nil,cleaning:SpaceCleaningModel?=nil,providerUsage:ProviderUsageModel?=nil,startServices:Bool=true) {
         self.owner=owner;self.startServices=startServices
         dataDirectory=owner.store.url.deletingLastPathComponent().appendingPathComponent("Workbench",isDirectory:true)
         preferenceStore=WorkbenchPreferenceStore(url:dataDirectory.appendingPathComponent("preferences.json"))
@@ -86,6 +90,10 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         context=WorkbenchContextModel(dataDirectory:dataDirectory.appendingPathComponent("Context"))
         self.calendar=calendar ?? CalendarModel(dataDirectory:dataDirectory.appendingPathComponent("Calendar"))
         self.ai=ai ?? AIUsageModel(dataDirectory:dataDirectory.appendingPathComponent("AI"))
+        let providerDirectory=dataDirectory.appendingPathComponent("ProviderUsage",isDirectory:true)
+        let browser=ProviderUsageBrowserBridge(directory:providerDirectory.appendingPathComponent("BrowserBridge",isDirectory:true))
+        providerBrowser=browser
+        self.providerUsage=providerUsage ?? ProviderUsageModel(dataDirectory:providerDirectory,startServices:startServices,browserRequest:{ configuration in try await browser.request(configuration:configuration) })
         vault=VaultModel(dataDirectory:dataDirectory.appendingPathComponent("Vault"))
         opacity=owner.configuration.settings.glassOpacity;appearance=owner.configuration.settings.workbenchAppearance
         buttonHoverCursor=owner.configuration.settings.buttonHoverCursor
@@ -96,6 +104,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         widgets=DesktopWidgetsController(device:self.device,calendar:self.calendar,ai:self.ai,open:{[weak self] route in self?.navigate(route);self?.revealWindow?()},onChange:{[weak self] card in self?.updateCard(card)})
         changed=NotificationCenter.default.publisher(for:.fangcunConfigurationChanged).sink { [weak self] _ in Task { @MainActor in self?.syncAppearance() } }
         modalChanges=modals.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
+        providerTrafficChanges=self.device.$physicalTrafficCounter.compactMap{$0}.removeDuplicates().sink { [weak self] counter in self?.providerUsage.receivePhysicalTraffic(counter) }
         systemAppearanceObserver=NSApp.observe(\.effectiveAppearance,options:[.new]) { [weak self] _,_ in
             Task { @MainActor in if self?.appearance == .system {self?.syncAppearance()} }
         }
@@ -112,6 +121,28 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         route=next;updateSamplingVisibility()
     }
     func openHealth() { navigate(.health) }
+    func openUsageOverview() {
+        guard !modals.isPresented,usagePresentation.editor == nil else {revealWindow?();return}
+        ai.showOverview();usagePresentation.selectedSourceID=nil;navigate(.ai)
+    }
+    func openProviderUsage(_ id:UUID) {
+        guard !modals.isPresented,usagePresentation.editor == nil else {revealWindow?();return}
+        navigate(.ai);guard route == .ai else {return}
+        ai.showOverview();usagePresentation.selectedSourceID=id
+    }
+    func exportProviderBrowserKit(completion:@escaping(String)->Void) {
+        let panel=NSOpenPanel();panel.canChooseDirectories=true;panel.canChooseFiles=false;panel.canCreateDirectories=true;panel.allowsMultipleSelection=false
+        panel.message="选择连接包的保存位置；此操作不会安装浏览器扩展或注册本机连接。";panel.prompt="导出到此位置"
+        let finish:(NSApplication.ModalResponse)->Void = {response in
+            guard response == .OK,let parent=panel.url else {return}
+            do {
+                let target=try ProviderUsageBrowserBridge.exportConnectionKit(to:parent,applicationURL:Bundle.main.bundleURL,bridgeDirectory:self.dataDirectory.appendingPathComponent("ProviderUsage/BrowserBridge",isDirectory:true))
+                NSWorkspace.shared.selectFile(target.path,inFileViewerRootedAtPath:parent.path)
+                completion("连接包已导出。按包内说明完成安装后，再验证订单额度。")
+            } catch {completion("导出失败："+error.localizedDescription)}
+        }
+        if let hostWindow {panel.beginSheetModal(for:hostWindow,completionHandler:finish)} else {finish(panel.runModal())}
+    }
     func openHealthReading(_ factor:DeviceHealthFactor) {
         readingReturnRoute = .health
         switch factor {case .storage:deviceDetail = .storage;case .memory:deviceDetail = .memory;case .thermal,.battery:deviceDetail = .thermal}
@@ -199,6 +230,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
                 try await self.calendar.suspendOwnNotificationsForQuit()
                 try await self.device.prepareForQuit()
                 try await self.ai.prepareForQuit()
+                try await self.providerUsage.prepareForQuit()
                 self.confirmingQuit=false
                 owner.finishConfirmedQuit()
                 // Keep both the UI and notification gate frozen until the OS
@@ -210,6 +242,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
                 self.cleaning.resumeAfterCancelledQuit()
                 self.device.resumeAfterCancelledQuit()
                 self.ai.resumeAfterCancelledQuit()
+                self.providerUsage.resumeAfterCancelledQuit()
                 self.quitting=false;self.confirmingQuit=false
                 owner.cancelPendingSystemTermination()
                 self.message="退出前数据保存或提醒暂停未完成：\(error.localizedDescription)"
@@ -255,6 +288,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
             .init(id:"notifications",title:"系统通知",state:device.notificationPermission.title,detail:"方寸本机日历提醒、流量预算和温度提醒共用系统通知授权；不同模块保持独立通知标识，系统提醒事项由系统管理。"),
             .init(id:"codex",title:"Codex 额度",state:ai.providerSummaries.first(where:{$0.provider.rawValue == "codex"})?.state.title ?? "无读数",detail:ai.providerSummaries.first(where:{$0.provider.rawValue == "codex"})?.detail ?? "未读取到计量元数据。"),
             .init(id:"claude",title:"Claude 额度",state:ai.providerSummaries.first(where:{$0.provider.rawValue == "claude"})?.state.title ?? "无读数",detail:"额度与 Token 独立统计；只接入官方状态数据或明确标记的导入数据，不读取认证密钥。"),
+            .init(id:"provider-usage",title:"服务流量额度",state:providerUsage.storageError == nil ? "\(providerUsage.sources.count) 个来源":"记录需要恢复",detail:"搬瓦工使用本机钥匙串保存的实例 API Key；IPRoyal 由限定站点的 Chrome 助手交付额度。各来源独立刷新与周期，不读取 Google 认证资料，不把本机网络量当服务商账单。"),
             .init(id:"vault",title:"私密资料",state:vault.isUnlocked ? "已解锁":"已锁定",detail:"PBKDF2-SHA256 与 AES-GCM；离开页面、关闭窗口、闲置与系统保护事件撤销会话。"),
             .init(id:"widgets",title:"桌面组件",state:"\(preferences.cards.filter(\.visible).count) 张已显示",detail:"桌面层/置顶、大小、位置锁定、鼠标穿透和来源可独立保存。"),
             .init(id:"launcher",title:"启动器",state:owner?.storageProblem == nil ? "本机配置已加载":"配置异常",detail:"统一设置、38 键绑定、全局快捷键、应用搜索与数字快启。")

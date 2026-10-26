@@ -150,7 +150,7 @@ struct WorkbenchRootView: View {
                     case .cleaning: EmptyView()
                     case .calendar: CalendarModuleView(model: model.calendar,context:model.context,returnToSettingsPrivacy:{model.navigate(.settings);model.settingsTab = .privacy})
                     case .network: EmptyView()
-                    case .ai: AIUsageModuleView(model: model.ai, openDesktopCards: { model.navigate(.cards) },returnToSettingsPrivacy:{model.navigate(.settings);model.settingsTab = .privacy})
+                    case .ai: UsageStatisticsView(app:model)
                     case .vault: VaultModuleView(model: model.vault,returnToSettingsPrivacy:{model.navigate(.settings);model.settingsTab = .privacy})
                     case .cards: DesktopCardsView(cards: model.preferences.cards, update: model.updateCard, openDesktop: { model.showDesktop?() }, device: model.device, calendar: model.calendar, ai: model.ai)
                     case .settings: WorkbenchSettingsView(model: model)
@@ -164,6 +164,7 @@ struct WorkbenchRootView: View {
                 .onChange(of:model.route) {_,_ in resetToTop()}
                 .onChange(of:model.settingsTab) {_,_ in if model.route == .settings {resetToTop()}}
                 .onReceive(model.ai.$destination.removeDuplicates()) {_ in if model.route == .ai {resetToTop()}}
+                .onReceive(model.usagePresentation.$selectedSourceID.removeDuplicates()) {_ in if model.route == .ai {resetToTop()}}
                 .onReceive(model.calendar.$showSources.removeDuplicates()) {_ in if model.route == .calendar {resetToTop()}}
                 .onReceive(model.vault.$showingProtection.removeDuplicates()) {_ in if model.route == .vault {resetToTop()}}
                 .onReceive(model.cleaning.$screen.removeDuplicates()) {_ in if model.route == .cleaning {resetToTop()}}
@@ -213,7 +214,7 @@ struct WorkbenchRootView: View {
         }.padding(.horizontal,12).padding(.top,22).padding(.bottom,15)
     }
     private func navigation(_ route: WorkbenchRoute, expanded: Bool) -> some View {
-        Button { if route == .health {model.openHealth()} else {if route == .ai {model.ai.showOverview()};model.navigate(route)} } label: {
+        Button { if route == .health {model.openHealth()} else if route == .ai {model.openUsageOverview()} else {model.navigate(route)} } label: {
             HStack(spacing: 10) {
                 Image(systemName: route.symbol).font(.system(size: 16, weight: .light)).frame(width: 18)
                     .foregroundStyle(model.route == route ? palette.accent : palette.secondary)

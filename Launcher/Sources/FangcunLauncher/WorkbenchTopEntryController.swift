@@ -213,7 +213,30 @@ struct WorkbenchTopEntryInput {
         save(value, dismiss: false)
     }
     func restoreMiniSections() {
-        var value = preferences; value.visibleSections = WorkbenchMiniSection.allCases
+        var value = preferences
+        value.cardOrder = WorkbenchMiniCardID.builtIn
+        value.visibleCards = WorkbenchMiniCardID.builtIn
+        value.showDate = true; value.showWeather = true
+        save(value, dismiss: false)
+    }
+    var availableMiniCards: [WorkbenchMiniCardID] {
+        WorkbenchMiniCardID.builtIn + (owner?.workbenchController?.model.providerUsage.sources.map { .provider($0.id) } ?? [])
+    }
+    func miniCardTitle(_ card: WorkbenchMiniCardID) -> String {
+        owner?.workbenchController?.model.providerUsage.sources.first { $0.id == card.providerID }?.name ?? card.title
+    }
+    func setMiniCard(_ card: WorkbenchMiniCardID, visible: Bool) {
+        guard availableMiniCards.contains(card) else { return }
+        var value = preferences; value.setCard(card, visible: visible)
+        save(value, dismiss: false)
+    }
+    func setMiniHeader(date: Bool, weather: Bool) {
+        var value = preferences; value.showDate = date; value.showWeather = weather
+        save(value, dismiss: false)
+    }
+    func moveMiniCard(_ card: WorkbenchMiniCardID, target: WorkbenchMiniCardID, after: Bool) {
+        guard availableMiniCards.contains(card), availableMiniCards.contains(target) else { return }
+        var value = preferences; value.moveCard(card, relativeTo: target, after: after)
         save(value, dismiss: false)
     }
     private func save(_ value: WorkbenchTopEntryPreferences, dismiss: Bool = true) {
@@ -347,7 +370,7 @@ struct WorkbenchTopEntryInput {
         panel.setAccessibilityLabel("方寸灵动岛")
         panel.appearance = NSAppearance(named: Palette.isLight ? .aqua : .darkAqua)
         let notchWidth = hardwareNotchWidth(on: screen)
-        let size = WorkbenchMiniLayout.size(sectionCount: preferences.visibleSections.count,
+        let size = WorkbenchMiniLayout.size(cards: preferences.activeCards(available: availableMiniCards),
                                             screenWidth: screen.frame.width, safeTop: screen.safeAreaInsets.top,
                                             notchWidth: notchWidth)
         if islandScreen !== screen || islandSurface?.expandedSize != size {
@@ -390,9 +413,23 @@ struct WorkbenchTopEntryInput {
     }
     private func mountMini(model: WorkbenchAppModel, on screen: NSScreen) {
         let host = NSHostingView(rootView: WorkbenchMiniView(model: model, controller: self, openedAt: miniOpenedAt,
-            safeTop: screen.safeAreaInsets.top, notchWidth: hardwareNotchWidth(on: screen), open: { [weak self] in
+            safeTop: screen.safeAreaInsets.top, notchWidth: hardwareNotchWidth(on: screen), open: { [weak self] card in
                 guard let self else { return }
-                self.owner?.workbenchController?.model.navigate(.overview)
+                if let model = self.owner?.workbenchController?.model {
+                    switch card {
+                    case .codex, .claude:
+                        if !model.modals.isPresented, model.usagePresentation.editor == nil {
+                            model.openUsageOverview()
+                            if model.route == .ai { model.ai.show(.provider(card == .codex ? .codex : .claude)) }
+                        }
+                    case .traffic, .network: model.navigate(.network)
+                    case .disk: model.openDeviceReading(.storage)
+                    case .memory: model.openDeviceReading(.memory)
+                    case .thermal: model.openDeviceReading(.thermal)
+                    case .todo: model.navigate(.calendar)
+                    default: if let id = card.providerID { model.openProviderUsage(id) }
+                    }
+                }
                 self.owner?.showWorkbenchFromTopEntry(originFrame: self.islandPresentationFrame)
             }, finishConfiguration: { [weak self] in self?.resizeMiniAfterConfiguration() }).nativeCheckAccessibility())
         islandSurface?.setContent(host)
@@ -405,12 +442,12 @@ struct WorkbenchTopEntryInput {
     }
     private func updateMiniConsumers() {
         guard let model = owner?.workbenchController?.model else { return }
-        let deviceVisible = summaryVisible && preferences.visibleSections.contains(.device)
+        let deviceVisible = summaryVisible && preferences.visibleCards.contains { [.traffic, .disk, .memory, .network, .thermal].contains($0) }
         model.device.setQuickSummaryVisible(deviceVisible)
         if deviceVisible && !miniDeviceVisible { model.device.refresh() }
         miniDeviceVisible = deviceVisible
-        model.setMiniContextVisible(summaryVisible && preferences.visibleSections.contains(.context))
-        let agendaVisible = summaryVisible && preferences.visibleSections.contains(.agenda)
+        model.setMiniContextVisible(summaryVisible && preferences.showWeather)
+        let agendaVisible = summaryVisible && preferences.visibleCards.contains(.todo)
         guard agendaVisible != miniAgendaVisible else { return }
         miniAgendaVisible = agendaVisible
         miniAgendaTask?.cancel(); miniAgendaTask = nil
@@ -450,7 +487,7 @@ struct WorkbenchTopEntrySettingsRow: View {
             HStack(spacing: 18) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("顶部感知入口").font(.system(size: 13, weight: .medium))
-                    Text("滑入顶部直接展开迷你信息，点击进入工作台首页；切换应用自动收起。").font(.system(size: 12))
+                    Text("滑入顶部展开信息卡片，点击卡片进入对应模块；切换应用自动收起。").font(.system(size: 12))
                         .foregroundStyle(WorkbenchStyle.secondary).fixedSize(horizontal: false, vertical: true)
                 }.frame(maxWidth: 400, alignment: .leading)
                 Spacer(minLength: 5)
@@ -462,15 +499,19 @@ struct WorkbenchTopEntrySettingsRow: View {
             }
             if controller.preferences.mode == .summary {
                 HStack(spacing: 18) {
-                    ForEach(WorkbenchMiniSection.allCases) { section in
-                        Toggle(section.title, isOn: Binding(get: { controller.preferences.visibleSections.contains(section) },
-                            set: { controller.setMiniSection(section, visible: $0) }))
+                    Toggle("日期时间", isOn: Binding(get: { controller.preferences.showDate }, set: { controller.setMiniHeader(date: $0, weather: controller.preferences.showWeather) }))
+                    Toggle("城市天气", isOn: Binding(get: { controller.preferences.showWeather }, set: { controller.setMiniHeader(date: controller.preferences.showDate, weather: $0) }))
+                    Spacer(minLength: 0)
+                    Button("恢复默认", action: controller.restoreMiniSections).buttonStyle(.plain).clickableCursor()
+                }.font(.system(size: 11)).toggleStyle(.checkbox).clickableCursor().disabled(!controller.preferences.enabled)
+                LazyVGrid(columns: [.init(.adaptive(minimum: 125), alignment: .leading)], alignment: .leading, spacing: 8) {
+                    ForEach(controller.availableMiniCards) { card in
+                        Toggle(controller.miniCardTitle(card), isOn: Binding(get: { controller.preferences.visibleCards.contains(card) },
+                            set: { controller.setMiniCard(card, visible: $0) }))
                             .font(.system(size: 11)).toggleStyle(.checkbox).clickableCursor()
                     }
-                    Spacer(minLength: 0)
-                    Button("恢复默认", action: controller.restoreMiniSections).font(.system(size: 11)).buttonStyle(.plain).clickableCursor()
                 }.disabled(!controller.preferences.enabled)
-                Text("默认显示全部四项；城市、时区和温度单位沿用首页设置。").font(.system(size: 11)).foregroundStyle(WorkbenchStyle.secondary)
+                Text("默认八张卡片；小窗编辑模式支持拖动和方向键排序。城市、时区和温度单位沿用首页设置。").font(.system(size: 11)).foregroundStyle(WorkbenchStyle.secondary)
             }
             if let error = controller.error { Text(error).font(.system(size: 11)).foregroundStyle(WorkbenchStyle.warning) }
         }.padding(.vertical, 17)

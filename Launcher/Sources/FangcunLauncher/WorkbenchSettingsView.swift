@@ -60,6 +60,9 @@ struct WorkbenchSettingsView: View {
                     WBSelect("按钮悬停指针", selection: Binding(get: { model.buttonHoverCursor }, set: model.changeButtonHoverCursor), options: ButtonHoverCursor.allCases.map { (value: $0, title: $0.title) }).frame(width: 174)
                 }
             }
+            if let controller = model.owner?.topEntryController {
+                WorkbenchMiniDisplaySettings(controller: controller, providers: model.providerUsage)
+            }
             WBCard(title: "数据更新", symbol: "arrow.clockwise", spacing: 10) {
                 VStack(spacing: 0) {
                     settingsRow("设备采样间隔", "隐藏时降低性能采样频率，保留网络累计", first: true) {
@@ -179,8 +182,11 @@ struct WorkbenchSettingsView: View {
                             model.calendar.openSources(fromSettingsPrivacy:true); model.navigate(.calendar)
                         }.buttonStyle(WBButtonStyle(compact: true))
                     }
-                    settingsRow("AI 数据", "只读取计量元数据，不读取对话正文与密钥", last: true) {
+                    settingsRow("AI 数据", "只读取计量元数据，不读取对话正文与密钥") {
                         Button("来源管理") { model.ai.openSources(fromSettingsPrivacy:true);model.navigate(.ai) }.buttonStyle(WBButtonStyle(compact: true))
+                    }
+                    settingsRow("服务流量额度", "实例凭据存入钥匙串；浏览器连接只同步额度", last: true) {
+                        Button("管理来源") {model.openUsageOverview()}.buttonStyle(WBButtonStyle(compact:true))
                     }
                 }
             }
@@ -246,6 +252,40 @@ struct WorkbenchSettingsView: View {
             .padding(.top, 13).padding(.bottom, last ? 0 : 13)
             if !last { Rectangle().fill(palette.line).frame(height: 1) }
         }
+    }
+}
+
+private struct WorkbenchMiniDisplaySettings: View {
+    @ObservedObject var controller: WorkbenchTopEntryController
+    @ObservedObject var providers: ProviderUsageModel
+    @Environment(\.workbenchPalette) private var palette
+    var body: some View {
+        WBCard(title: "Mini 显示内容", symbol: "rectangle.topthird.inset.filled", spacing: 14) {
+            HStack(spacing: 20) {
+                Toggle("日期时间", isOn: Binding(get: { controller.preferences.showDate }, set: { controller.setMiniHeader(date: $0, weather: controller.preferences.showWeather) }))
+                Toggle("城市天气", isOn: Binding(get: { controller.preferences.showWeather }, set: { controller.setMiniHeader(date: controller.preferences.showDate, weather: $0) }))
+                Spacer()
+                Button("恢复默认", action: controller.restoreMiniSections).buttonStyle(WBButtonStyle(compact: true))
+            }.toggleStyle(.checkbox).font(.system(size: 12))
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), alignment: .leading)], alignment: .leading, spacing: 12) {
+                ForEach(WorkbenchMiniCardID.builtIn) { card in cardToggle(card, title: card.title) }
+            }
+            if !providers.sources.isEmpty {
+                Text("服务额度").font(.system(size: 11, weight: .medium)).foregroundStyle(palette.muted)
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), alignment: .leading)], alignment: .leading, spacing: 12) {
+                        ForEach(providers.sources) { source in cardToggle(.provider(source.id), title: source.name) }
+                    }.padding(.vertical, 2)
+                }.frame(maxHeight: 180)
+            }
+            Text("在 Mini 编辑模式中拖动或使用方向键调整顺序。每张卡片宽 220 点，空间不足时分页；城市、时区和温度单位沿用首页设置。")
+                .font(.system(size: 11)).foregroundStyle(palette.muted)
+            if let error = controller.error { Text(error).font(.system(size: 11)).foregroundStyle(palette.warning) }
+        }
+    }
+    private func cardToggle(_ card: WorkbenchMiniCardID, title: String) -> some View {
+        Toggle(title, isOn: Binding(get: { controller.preferences.visibleCards.contains(card) }, set: { controller.setMiniCard(card, visible: $0) }))
+            .toggleStyle(.checkbox).font(.system(size: 12)).lineLimit(1).help(title)
     }
 }
 

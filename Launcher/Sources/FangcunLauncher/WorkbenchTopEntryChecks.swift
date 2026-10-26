@@ -8,8 +8,14 @@ import LauncherCore
         // Match the real app's background accessory policy when validating
         // WindowServer visibility; .prohibited intentionally forbids UI activation.
         let previousPolicy = NSApp.activationPolicy()
+        let previousApplication = NSWorkspace.shared.frontmostApplication
         NSApp.setActivationPolicy(.accessory)
-        defer { NSApp.setActivationPolicy(previousPolicy) }
+        defer {
+            NSApp.setActivationPolicy(previousPolicy)
+            if previousApplication?.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+                previousApplication?.activate(options: [])
+            }
+        }
         var count = 0, failures = 0
         func check(_ condition: Bool, _ text: String) {
             count += 1
@@ -245,11 +251,14 @@ import LauncherCore
                   && expandedTarget.map { abs($0.maxY - screen.frame.maxY) <= 1 } == true,
                   "intent confirmation targets the complete mini card directly at the screen top")
             let notchWidth = screen.auxiliaryTopRightArea.flatMap { right in screen.auxiliaryTopLeftArea.map { right.minX - $0.maxX } } ?? 0
-            let miniSize = WorkbenchMiniLayout.size(sectionCount: 4, screenWidth: screen.frame.width,
+            let miniSize = WorkbenchMiniLayout.size(cards: WorkbenchMiniCardID.builtIn, screenWidth: screen.frame.width,
                                                     safeTop: screen.safeAreaInsets.top, notchWidth: notchWidth)
             check((expandedTarget?.width ?? 0) == miniSize.width && expandedTarget?.height == miniSize.height
                   && (controller.islandContentTopInset ?? -1) >= screen.safeAreaInsets.top,
                   "direct mini information has the intended width and reserves the physical camera area")
+            check(miniSize.height == max(44, screen.safeAreaInsets.top + 12) + 236 + 12
+                  && (screen.frame.width < 780 || miniSize.width == 748),
+                  "the default eight-card Mini uses three fixed-width columns and the modular safe-area height")
             if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
                 try? await Task.sleep(for: .milliseconds(80))
                 let intermediate = controller.islandPresentationFrame
@@ -315,6 +324,37 @@ import LauncherCore
             owner.configuration.settings.workbenchTheme = initialTheme
             owner.configuration.settings.workbenchAppearance = initialAppearance
             model.syncAppearance(); controller.refreshAppearance()
+            if let miniWindow = NSApp.windows.first(where: { $0.windowNumber == controller.islandWindowNumber }), let host = miniWindow.contentView {
+                check(press("mini-configure", in: host), "the real Mini enters layout editing through its native control")
+                await settle()
+                check(press("mini-card-codex", in: host), "the real Mini focuses a card without opening the workbench while editing")
+                await settle()
+                print("DETAIL mini keyboard before key=\(miniWindow.isKeyWindow) active=\(NSApp.isActive) firstResponder=\(String(describing:miniWindow.firstResponder.map {type(of:$0)}))")
+                let arrow = String(UnicodeScalar(NSDownArrowFunctionKey)!)
+                if let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: miniWindow.windowNumber, context: nil, characters: arrow, charactersIgnoringModifiers: arrow, isARepeat: false, keyCode: 125) {
+                    miniWindow.sendEvent(event)
+                }
+                await settle()
+                print("DETAIL mini keyboard after order=\(controller.preferences.cardOrder.map(\.rawValue).joined(separator:","))")
+                check(controller.preferences.cardOrder.prefix(2) == [.claude, .codex] && !ordinary.isVisible,
+                      "a down-arrow through the real Mini responder path reorders the focused card without navigation")
+                for card in [WorkbenchMiniCardID.codex, .claude, .traffic] { controller.setMiniCard(card, visible: false) }
+                check(press("mini-configure", in: host), "finishing native layout editing applies the selected card set")
+                await settle()
+                let compact = WorkbenchMiniLayout.size(cards: controller.preferences.activeCards(available: controller.availableMiniCards),
+                    screenWidth: screen.frame.width, safeTop: screen.safeAreaInsets.top, notchWidth: notchWidth)
+                check(controller.islandTargetFrame?.width == compact.width && controller.islandTargetFrame?.height == miniSize.height,
+                      "hiding a column contracts the real Mini width while preserving its fixed safe-area height")
+                controller.restoreMiniSections()
+                if let resizedHost = miniWindow.contentView {
+                    _ = press("mini-configure", in: resizedHost); await settle()
+                    _ = press("mini-configure", in: resizedHost); await settle()
+                }
+                check(controller.preferences.visibleCards == WorkbenchMiniCardID.builtIn && controller.islandTargetFrame == expandedTarget
+                      && controller.islandWindowNumber == anticipationWindow,
+                      "restoring all cards reuses the same native panel and restores its default three-column geometry")
+            } else { check(false, "the real Mini exposes its own native content for modular interactions") }
             controller.handleApplicationActivation(processIdentifier: ProcessInfo.processInfo.processIdentifier + 100_000)
             await settle()
             check(!controller.isQuickSummaryVisible && !ordinary.isVisible && NSApp.activationPolicy() == .accessory,
@@ -491,6 +531,25 @@ import LauncherCore
         return (count, failures)
     }
     private static func settle() async { try? await Task.sleep(for: .milliseconds(500)) }
+    private static func press(_ identifier: String, in root: NSView) -> Bool {
+        var pending: [NSObject] = [root], visited = Set<ObjectIdentifier>()
+        let selector = NSSelectorFromString("accessibilityPerformPress")
+        while let object = pending.popLast(), visited.count < 8_192 {
+            guard visited.insert(ObjectIdentifier(object)).inserted else { continue }
+            if object.responds(to: NSSelectorFromString("accessibilityIdentifier")),
+               object.value(forKey: "accessibilityIdentifier") as? String == identifier, object.responds(to: selector) {
+                typealias Press = @convention(c) (AnyObject, Selector) -> Bool
+                if unsafeBitCast(object.method(for: selector), to: Press.self)(object, selector) { return true }
+                let role = object.responds(to: NSSelectorFromString("accessibilityRole")) ? object.value(forKey: "accessibilityRole") : nil
+                print("DETAIL top-entry native press declined id=\(identifier) role=\(String(describing:role)) type=\(type(of:object))")
+            }
+            if let view = object as? NSView { pending.append(contentsOf: view.subviews) }
+            for key in ["accessibilityChildren", "accessibilityContents"] where object.responds(to: NSSelectorFromString(key)) {
+                if let children = object.value(forKey: key) as? [NSObject] { pending.append(contentsOf: children) }
+            }
+        }
+        return false
+    }
     private static func waitUntil(_ ready: () -> Bool) async {
         for _ in 0..<30 {
             if ready() { return }

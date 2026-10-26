@@ -6,6 +6,8 @@ The Desk icon suite has an exact file scope: `app-master.svg`, `app-small.svg`, 
 
 Historical design exploration, authorization or collaboration diaries, real account screenshots, old apps, test deliverables, build caches and machine configuration stay outside the public index. Ignoring them does not delete local files. Public builds and verification do not require private archives.
 
+The IPRoyal browser connector has an exact source-only scope under `Launcher/BrowserConnectors/IPRoyal`: its manifest and public extension identity, named JavaScript/HTML/CSS files, installer and export script, README, and two named protocol tests. Exported connection kits, Native Messaging registrations, browser profiles, captured account responses and local mailbox files are never public inputs. The manifest key identifies the extension; it is a public key, not a service credential.
+
 `tools/check-public-scope.py` enforces a path allowlist, file types, size limits, regular-file modes, private home-path and key checks, and pinned Gitleaks scanning. Image and policy changes also need visual and metadata review; text scanning cannot inspect pixels.
 
 `tools/ensure-gitleaks.py` pins Gitleaks 8.30.1, downloads from its [official release](https://github.com/gitleaks/gitleaks/releases/tag/v8.30.1), and checks the pinned SHA-256 before executing it. The cache stays outside this repository. Download, version and scanner failures fail the gate.
