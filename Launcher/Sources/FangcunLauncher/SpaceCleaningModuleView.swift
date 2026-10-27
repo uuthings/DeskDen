@@ -89,9 +89,8 @@ struct SpaceCleaningModuleView: View {
     @ViewBuilder private func content(width: CGFloat, height: CGFloat, expanded: Bool) -> some View {
         if let dialog = model.dialog, dialog != .confirm, !isPurpose(dialog) {
             SpaceCleaningSurface {
-                ScrollView {
+                WorkbenchScrollView {
                     SpaceCleaningDialogContent(model: model, dialog: dialog)
-                        .background(WorkbenchOverlayScrollbars())
                 }.scrollBounceBehavior(.basedOnSize)
                 Spacer(minLength: 0)
             }
@@ -114,7 +113,7 @@ struct SpaceCleaningModuleView: View {
         let heroHeight = model.scanMode == .largeFiles ? 112.0 : min(expanded ? 212.0 : 188.0, max(132, height - 376))
         return SpaceCleaningSurface {
             VStack(alignment: .leading, spacing: 12) {
-                ScrollView {
+                WorkbenchScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                 storageOverview(width: width).frame(minHeight: heroHeight)
                 scanModeControls(expanded: expanded)
@@ -140,7 +139,7 @@ struct SpaceCleaningModuleView: View {
                     }
                 }.accessibilityElement(children: .contain)
                     .accessibilityIdentifier(editingScope ? "space-cleaning-scope-editor" : "space-cleaning-scope-options")
-                }.padding(.trailing, 4).background(WorkbenchOverlayScrollbars())
+                }.padding(.trailing, 4)
                 }.scrollBounceBehavior(.basedOnSize).id(model.scanMode)
                 HStack(spacing: 10) {
                     Text(displayedScope == .global ? "未获权限的位置会在结果中说明" : "\(displayedLocations.count) 个位置 · 可在上方添加或移除")
@@ -317,7 +316,7 @@ struct SpaceCleaningModuleView: View {
                     .buttonStyle(WBQuietButtonStyle())
                     .accessibilityIdentifier("space-cleaning-manage-locations")
             }
-            ScrollView {
+            WorkbenchScrollView {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8, alignment: .leading), count: columns), spacing: 8) {
                     ForEach(displayedLocations, id: \.self) { location in
                         HStack(spacing: 10) {
@@ -341,7 +340,7 @@ struct SpaceCleaningModuleView: View {
                             .accessibilityLabel("扫描文件夹 " + model.shortPath(location))
                             .accessibilityIdentifier("space-cleaning-location-" + location.lastPathComponent)
                     }
-                }.padding(.trailing, 12).background(WorkbenchOverlayScrollbars())
+                }.padding(.trailing, 12)
                 if displayedLocations.isEmpty {
                     Text("支持多选文件夹，也可以选择外接磁盘中的位置")
                         .font(.system(size: 11)).foregroundStyle(palette.muted).frame(maxWidth: .infinity, minHeight: rowHeight * 2 + 8)
@@ -359,7 +358,7 @@ struct SpaceCleaningModuleView: View {
     private func scanning(height: CGFloat) -> some View {
         let fraction = model.scanPhase == .discovering ? nil : model.scanFraction
         return SpaceCleaningSurface {
-            ScrollView {
+            WorkbenchScrollView {
             VStack(spacing: 0) {
             SpaceCleaningAperture(active: model.animationActive, scanning: true)
                 .frame(height: max(170, min(276, height * 0.46))).frame(maxWidth: 680).frame(maxWidth: .infinity)
@@ -389,7 +388,7 @@ struct SpaceCleaningModuleView: View {
                 Label("开发依赖和发布原件保持保护", systemImage: "checkmark.shield")
                     .font(.system(size: 11)).foregroundStyle(palette.muted)
             }.frame(maxWidth: 660).padding(.horizontal, 30).padding(.bottom, 20).frame(maxWidth: .infinity)
-            }.background(WorkbenchOverlayScrollbars())
+            }
             }.scrollBounceBehavior(.basedOnSize)
             HStack {
                 Label(model.scopeChoice == .global ? "当前用户常用位置" : "自定义位置", systemImage: model.scopeChoice == .global ? "globe" : "folder")
@@ -408,7 +407,7 @@ struct SpaceCleaningModuleView: View {
     }
     private func processing(height: CGFloat) -> some View {
         SpaceCleaningSurface {
-            ScrollView {
+            WorkbenchScrollView {
             VStack(spacing: 0) {
                 ZStack {
                     Circle().fill(palette.accent.opacity(0.06)).frame(width: 160, height: 160)
@@ -431,7 +430,7 @@ struct SpaceCleaningModuleView: View {
                 Text("已处理 \(model.processingCompleted) / \(model.processingTotal) 项")
                     .font(.system(size: 12)).monospacedDigit()
             }.frame(maxWidth: 660).padding(.horizontal, 30).padding(.bottom, 20).frame(maxWidth: .infinity)
-            }.background(WorkbenchOverlayScrollbars())
+            }
             }.scrollBounceBehavior(.basedOnSize)
             HStack(spacing: 12) {
                 Text("停止后保留已完成的操作，其余项目不会继续处理。")

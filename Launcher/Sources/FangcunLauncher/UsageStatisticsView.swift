@@ -442,40 +442,38 @@ private struct ProviderUsageEditorView: View {
     @ObservedObject var appearance: UsagePresentationModel
     @Environment(\.workbenchPalette) private var palette
     var body: some View {
-        WorkbenchDialogFrame(title: editor.existing ? "配置用量来源" : "添加用量来源", dismiss: presentation.requestCloseEditor) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack(alignment: .top, spacing: 12) {
-                        field("服务平台") { WBSelect("服务平台", selection: $editor.kind, options: ProviderUsageKind.allCases.map { (value: $0, title: $0.title) }).disabled(editor.existing) }
-                        field("卡片名称") { TextField("自定义显示名称", text: $editor.name).textFieldStyle(ProviderUsageFieldStyle()) }
+        WorkbenchDialogFrame(title: editor.existing ? "配置用量来源" : "添加用量来源", dismiss: presentation.requestCloseEditor, maximumBodyHeight: 420) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 12) {
+                    field("服务平台") { WBSelect("服务平台", selection: $editor.kind, options: ProviderUsageKind.allCases.map { (value: $0, title: $0.title) }).disabled(editor.existing) }
+                    field("卡片名称") { TextField("自定义显示名称", text: $editor.name).textFieldStyle(ProviderUsageFieldStyle()) }
+                }
+                UsageIconPicker(selection: $editor.cardAppearance.icon, appearance: appearance, serviceKind: editor.kind)
+                field(editor.kind == .bandwagon ? "实例编号 VEID" : "静态 ISP 订单编号") {
+                    TextField(editor.kind == .bandwagon ? "KiwiVM 中的 VEID" : "订单详情中的编号", text: $editor.resourceID).textFieldStyle(ProviderUsageFieldStyle())
+                        .accessibilityLabel(editor.kind == .bandwagon ? "实例编号 VEID" : "静态 ISP 订单编号")
+                        .accessibilityIdentifier("fc.usage.editor.resource-id")
+                }
+                if editor.kind == .bandwagon {
+                    field("API Key") {
+                        SecureField(editor.credentialPlaceholder, text: $editor.secret).textFieldStyle(ProviderUsageFieldStyle())
+                            .accessibilityLabel("API Key").accessibilityIdentifier("fc.usage.editor.api-key")
                     }
-                    UsageIconPicker(selection: $editor.cardAppearance.icon, appearance: appearance, serviceKind: editor.kind)
-                    field(editor.kind == .bandwagon ? "实例编号 VEID" : "静态 ISP 订单编号") {
-                        TextField(editor.kind == .bandwagon ? "KiwiVM 中的 VEID" : "订单详情中的编号", text: $editor.resourceID).textFieldStyle(ProviderUsageFieldStyle())
-                            .accessibilityLabel(editor.kind == .bandwagon ? "实例编号 VEID" : "静态 ISP 订单编号")
-                            .accessibilityIdentifier("fc.usage.editor.resource-id")
-                    }
-                    if editor.kind == .bandwagon {
-                        field("API Key") {
-                            SecureField(editor.credentialPlaceholder, text: $editor.secret).textFieldStyle(ProviderUsageFieldStyle())
-                                .accessibilityLabel("API Key").accessibilityIdentifier("fc.usage.editor.api-key")
-                        }
-                        bandwagonConnectionHelp
-                    } else {
-                        Text("使用 Chrome 网页助手连接现有 IPRoyal 登录；无需填写官方 API Token，也不需要修改 Google 登录方式。首次安装和流量读取仍需验证。").font(.system(size: 11)).foregroundStyle(palette.secondary)
-                    }
-                    HStack(spacing: 12) {
-                        field("累计阈值 · MB") { TextField("1000", text: $editor.thresholdMB).textFieldStyle(ProviderUsageFieldStyle()) }
-                        field("最短间隔 · 小时") { TextField("1", text: $editor.minimumHours).textFieldStyle(ProviderUsageFieldStyle()) }
-                        field("最长间隔 · 小时") { TextField("6", text: $editor.maximumHours).textFieldStyle(ProviderUsageFieldStyle()) }
-                    }
-                    Text("1 GB = 1000 MB。累计流量与时间共同触发；不同来源独立计算。").font(.system(size: 11)).foregroundStyle(palette.muted)
-                    Toggle("自动更新此来源", isOn: $editor.enabled).toggleStyle(.switch).controlSize(.small)
-                    Toggle("在概览中显示", isOn: $editor.cardAppearance.visible).toggleStyle(.switch).controlSize(.small)
-                    if let error = editor.error { Text(error).font(.system(size: 11)).foregroundStyle(palette.warning).accessibilityIdentifier("fc.usage.editor.error") }
-                    if let error = appearance.errorMessage { Text(error).font(.system(size: 11)).foregroundStyle(palette.warning) }
-                }.padding(.vertical, 2)
-            }.frame(maxHeight: 420).disabled(editor.saving)
+                    bandwagonConnectionHelp
+                } else {
+                    Text("使用 Chrome 网页助手连接现有 IPRoyal 登录；无需填写官方 API Token，也不需要修改 Google 登录方式。首次安装和流量读取仍需验证。").font(.system(size: 11)).foregroundStyle(palette.secondary)
+                }
+                HStack(spacing: 12) {
+                    field("累计阈值 · MB") { TextField("1000", text: $editor.thresholdMB).textFieldStyle(ProviderUsageFieldStyle()) }
+                    field("最短间隔 · 小时") { TextField("1", text: $editor.minimumHours).textFieldStyle(ProviderUsageFieldStyle()) }
+                    field("最长间隔 · 小时") { TextField("6", text: $editor.maximumHours).textFieldStyle(ProviderUsageFieldStyle()) }
+                }
+                Text("1 GB = 1000 MB。累计流量与时间共同触发；不同来源独立计算。").font(.system(size: 11)).foregroundStyle(palette.muted)
+                Toggle("自动更新此来源", isOn: $editor.enabled).toggleStyle(.switch).controlSize(.small)
+                Toggle("在概览中显示", isOn: $editor.cardAppearance.visible).toggleStyle(.switch).controlSize(.small)
+                if let error = editor.error { Text(error).font(.system(size: 11)).foregroundStyle(palette.warning).accessibilityIdentifier("fc.usage.editor.error") }
+                if let error = appearance.errorMessage { Text(error).font(.system(size: 11)).foregroundStyle(palette.warning) }
+            }.padding(.vertical, 2).disabled(editor.saving)
         } actions: {
             if editor.saving { ProgressView().controlSize(.small); Text(editor.savingTitle).font(.system(size: 11)).foregroundStyle(palette.muted) }
             Spacer()

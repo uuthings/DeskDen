@@ -119,7 +119,7 @@ struct CalendarModuleView:View {
         }
     }
     private var monthAgenda:some View {
-        ScrollView {
+        WorkbenchScrollView {
             LazyVStack(alignment:.leading,spacing:0) {
                 if model.monthEntries.isEmpty {calendarEmpty("这个月还没有安排")}
                 ForEach(Array(model.monthEntries.enumerated()),id:\.element.id){index,entry in
@@ -128,7 +128,7 @@ struct CalendarModuleView:View {
                     }
                     CalendarAgendaRow(model:model,entry:entry)
                 }
-            }.frame(maxWidth:.infinity,alignment:.leading).background(WorkbenchOverlayScrollbars())
+            }.frame(maxWidth:.infinity,alignment:.leading)
         }.scrollBounceBehavior(.basedOnSize).accessibilityElement(children:.contain).accessibilityIdentifier("fc.calendar.agenda")
     }
     private func dayLabel(_ entry:CalendarAgendaEntry)->String {
@@ -179,7 +179,7 @@ private struct CalendarSideCard<Content:View>:View {
     var body:some View {
         VStack(alignment:.leading,spacing:0) {
             HStack(spacing:7){Image(systemName:symbol).font(.system(size:16)).foregroundStyle(palette.accent);Text(title).font(.system(size:12,weight:.medium));Spacer()}.frame(height:22).padding(.bottom,10)
-            ScrollView {VStack(alignment:.leading,spacing:0,content:content).frame(maxWidth:.infinity,alignment:.leading).background(WorkbenchOverlayScrollbars())}.scrollBounceBehavior(.basedOnSize)
+            WorkbenchScrollView {VStack(alignment:.leading,spacing:0,content:content).frame(maxWidth:.infinity,alignment:.leading)}.scrollBounceBehavior(.basedOnSize)
         }.padding(14).frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).background(WorkbenchMaterialSurface())
     }
 }
@@ -201,12 +201,12 @@ private struct CalendarWeekGrid:View {
     @ObservedObject var model:CalendarModel
     @Environment(\.workbenchPalette) private var palette
     var body:some View {
-        ScrollView(.horizontal) {
+        WorkbenchScrollView(.horizontal) {
             HStack(alignment:.top,spacing:4) {
                 VStack(spacing:0){Color.clear.frame(height:30);ForEach([8,10,12,14,16,18],id:\.self){hour in Text(String(format:"%02d:00",hour)).font(.system(size:11)).foregroundStyle(palette.muted).frame(maxHeight:.infinity,alignment:.top)}}.frame(width:38)
                 ForEach(model.weekDays,id:\.self){date in weekDay(date)}
             }.frame(minWidth:450,maxWidth:.infinity).frame(height:390).padding(.top,8)
-        }.background(WorkbenchOverlayScrollbars()).frame(maxHeight:.infinity,alignment:.top).accessibilityElement(children:.contain).accessibilityIdentifier("fc.calendar.week")
+        }.frame(maxHeight:.infinity,alignment:.top).accessibilityElement(children:.contain).accessibilityIdentifier("fc.calendar.week")
     }
     private func weekDay(_ date:Date)->some View {
         let entries=ReminderQueries.entries(reminders:model.reminders,events:model.visibleCalendarEvents,filter:.day,day:date,calendar:model.displayCalendar)
@@ -312,24 +312,11 @@ private struct CalendarDialog<Content:View,Actions:View>:View {
     var body:some View {
         VStack(alignment:.leading,spacing:0) {
             HStack {Text(title).font(.system(size:15,weight:.medium));Spacer();Button(action:dismiss){Image(systemName:"xmark")}.buttonStyle(WBIconButtonStyle(size:32)).accessibilityLabel("关闭")}.padding(.horizontal,18).padding(.top,18).padding(.bottom,13)
-            CalendarDialogBody {content()}.padding(.horizontal,18).padding(.bottom,18)
+            WorkbenchDialogBody(maximumHeight:380) { VStack(alignment:.leading,spacing:16,content:content) }
             HStack(spacing:8,content:actions).padding(.horizontal,18).padding(.vertical,13).overlay(alignment:.top){palette.line.frame(height:1)}
         }.foregroundStyle(palette.text).frame(width:470)
     }
 }
-private struct CalendarDialogBody<Content:View>:View {
-    @ViewBuilder var content:()->Content
-    @State private var height:CGFloat=260
-    var body:some View {
-        ScrollView {
-            VStack(alignment:.leading,spacing:16,content:content).frame(maxWidth:.infinity,alignment:.leading)
-                .background{GeometryReader {g in Color.clear.preference(key:CalendarDialogHeightKey.self,value:g.size.height)}}
-                .background(WorkbenchOverlayScrollbars())
-        }.frame(height:min(380,max(40,height))).scrollBounceBehavior(.basedOnSize).onPreferenceChange(CalendarDialogHeightKey.self){height=$0}
-    }
-}
-private struct CalendarDialogHeightKey:PreferenceKey {static let defaultValue:CGFloat=0;static func reduce(value:inout CGFloat,nextValue:()->CGFloat){value=max(value,nextValue())}}
-
 private struct CalendarReminderEditor:View {
     @ObservedObject var model:CalendarModel
     let initial:CalendarReminderDraft

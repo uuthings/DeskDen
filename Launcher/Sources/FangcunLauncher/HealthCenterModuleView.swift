@@ -594,7 +594,7 @@ struct HealthCenterView: View {
                     .accessibilityIdentifier("health-files-clear-selection")
             }.frame(height: 32).accessibilityElement(children: .contain).accessibilityIdentifier("health-file-tools")
                 .padding(.bottom, 4)
-            ScrollView { LazyVStack(spacing: 0) { ForEach(filteredFiles) { file in fileRow(file) }; if filteredFiles.isEmpty { emptyFiles } } }
+            WorkbenchScrollView { LazyVStack(spacing: 0) { ForEach(filteredFiles) { file in fileRow(file) }; if filteredFiles.isEmpty { emptyFiles } } }
                 .frame(height: explorerListHeight).background(innerSurface)
                 .accessibilityElement(children: .contain).accessibilityIdentifier("health-file-candidates")
             if let report = storage.report, !report.issues.isEmpty {
@@ -751,12 +751,12 @@ struct HealthCenterView: View {
         return WorkbenchDialogFrame(title: "确认处理所选项目", dismiss: { storage.confirmingPlan = nil }) {
             VStack(alignment: .leading, spacing: 14) {
                 dialogBanner("sparkles", title: "\(plan.selectedCandidateIDs.count) 项空间内容", detail: "移到废纸篓 · \(DeviceFormat.bytes(plan.logicalBytes))")
-                ScrollView {
+                WorkbenchScrollView {
                     VStack(spacing: 0) {
                         ForEach(files) { file in
                             HStack(spacing: 12) { Text(file.relativePath).lineLimit(1).truncationMode(.middle); Spacer(minLength: 0); Text(DeviceFormat.bytes(file.logicalBytes)).fixedSize() }.font(.system(size: 11)).foregroundStyle(palette.secondary).padding(.vertical, 9).overlay(alignment: .bottom) { palette.line.frame(height: 1) }
                         }
-                    }.background(WorkbenchOverlayScrollbars())
+                    }
                 }.frame(height: min(210, CGFloat(max(1, files.count)) * 34))
                 Text("请确认所选内容归属、可重建性，并已关闭相关文件。处理前再次核验身份与范围，变化项目将跳过；本次不会退出应用或永久删除文件。").font(.system(size: 11)).foregroundStyle(palette.muted).lineSpacing(5).fixedSize(horizontal: false, vertical: true)
             }
@@ -873,12 +873,11 @@ private struct HealthPinnedReviewWorkspace<Content: View, Footer: View>: View {
     var body: some View {
         if let maximumHeight {
             VStack(alignment: .leading, spacing: 0) {
-                ScrollView {
+                WorkbenchScrollView {
                     content.fixedSize(horizontal: false, vertical: true)
                         .background(GeometryReader { proxy in
                             Color.clear.preference(key: HealthReviewBodyHeightKey.self, value: proxy.size.height).allowsHitTesting(false)
                         })
-                        .background(WorkbenchOverlayScrollbars())
                 }.frame(height: min(bodyHeight > 0 ? bodyHeight : maximumHeight, max(0, maximumHeight - footerHeight)))
                     .scrollBounceBehavior(.basedOnSize)
                     .accessibilityElement(children: .contain).accessibilityIdentifier(contentIdentifier)

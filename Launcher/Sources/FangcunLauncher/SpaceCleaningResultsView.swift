@@ -28,11 +28,11 @@ struct SpaceCleaningResultsView: View {
                 summary
                 controls
                 tableHeader
-                ScrollView {
+                WorkbenchScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(model.visibleItems) { item in row(item).id(item.id) }
                         if model.visibleItems.isEmpty { emptyResults }
-                    }.scrollTargetLayout().background(WorkbenchOverlayScrollbars())
+                    }.scrollTargetLayout()
                 }.scrollPosition(id: $model.resultScrollID, anchor: .top).scrollBounceBehavior(.basedOnSize)
                     .accessibilityIdentifier("space-cleaning-result-list")
                 HStack {

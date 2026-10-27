@@ -414,7 +414,7 @@ struct DeviceTrafficHistoryView: View {
                 }
             }.frame(height: 18)
             GeometryReader { geometry in
-                ScrollView(.horizontal, showsIndicators: days.count > 62) {
+                WorkbenchScrollView(.horizontal, showsIndicators: days.count > 62) {
                     HStack(alignment: .bottom, spacing: days.count > 14 ? 4 : 8) {
                         ForEach(Array(days.enumerated()), id: \.offset) { _, day in
                             RoundedRectangle(cornerRadius: 3).fill(day.coveredSeconds == 0 ? palette.muted.opacity(0.25) : palette.accent.opacity(selected?.date == day.date ? 0.95 : 0.65))
@@ -425,7 +425,7 @@ struct DeviceTrafficHistoryView: View {
                                 .help("\(dayLabel(day.date))：\(trafficLabel(day))")
                                 .accessibilityLabel("\(dayLabel(day.date))，\(trafficLabel(day))")
                         }
-                    }.frame(width: max(geometry.size.width, days.count > 62 ? CGFloat(days.count) * 8 : 0)).background(WorkbenchOverlayScrollbars())
+                    }.frame(width: max(geometry.size.width, days.count > 62 ? CGFloat(days.count) * 8 : 0))
                 }
             }.frame(height: 128)
             HStack {

@@ -25,7 +25,7 @@ struct NetworkMonitorView: View {
     }
 
     var body: some View {
-        ScrollView {
+        WorkbenchScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 WBPageHeader(title: "网络监控", subtitle: "实时连接、今日记录与周期流量") {
                     Button { drafts.load(model); budgetOpen = true } label: { Label("流量预算", systemImage: "slider.horizontal.3") }.buttonStyle(WBButtonStyle())
@@ -46,7 +46,6 @@ struct NetworkMonitorView: View {
             }.frame(maxWidth: .infinity, alignment: .leading)
                 .background(GeometryReader { proxy in Color.clear.preference(key: NetworkContentWidth.self, value: proxy.size.width) })
                 .workbenchPageCanvas()
-                .background(WorkbenchOverlayScrollbars())
         }.onPreferenceChange(NetworkContentWidth.self) { contentWidth = $0 }.scrollContentBackground(.hidden).accessibilityElement(children:.contain).accessibilityIdentifier("fc.page.network")
             .task {drafts.load(model);openNotificationBudget();await model.refreshNotificationPermission()}
             .onReceive(NotificationCenter.default.publisher(for:.fangcunNotificationOpenBudget)) {note in
@@ -219,7 +218,7 @@ struct NetworkRecordsDialog: View {
                 Text(model.budget.scope.title)
             }.font(.system(size: 11)).foregroundStyle(palette.muted)
             HStack { Text("日期").frame(maxWidth: .infinity, alignment: .leading); Text("下载").frame(width: 86, alignment: .trailing); Text("上传").frame(width: 86, alignment: .trailing); Text("合计").frame(width: 86, alignment: .trailing) }.font(.system(size: 11)).foregroundStyle(palette.muted)
-            ScrollView {
+            WorkbenchScrollView {
                 LazyVStack(spacing: 0) {
                     if detail == "day" {
                     ForEach(summary.dailyUsage.filter { $0.coveredSeconds > 0 }.reversed()) { day in
@@ -249,7 +248,7 @@ struct NetworkRecordsDialog: View {
                         }
                         if rows.isEmpty { Text("尚无汇总记录").font(.system(size: 12)).foregroundStyle(palette.muted).padding(.vertical, 24) }
                     }
-                }.background(WorkbenchOverlayScrollbars())
+                }
             }.frame(maxHeight: 300)
             Text(detail == "day" ? "\(coverageText)。未列出的日期不代表零流量；较早日期可查看月度或年度汇总。记录时区：\(summary.timeZoneIdentifier)。" : "保留最近 400 个记录日，较早数据合并为最多 120 个月汇总；年度数据由现有日／月记录合计。旧版已经丢弃的记录无法恢复，未采集时段不补算。记录时区：\(summary.timeZoneIdentifier)。")
                 .font(.system(size: 11)).foregroundStyle(palette.muted)
@@ -404,13 +403,16 @@ struct DeviceDialog<Content: View, Actions: View>: View {
     let title: String
     var width: CGFloat = 470
     let dismiss: () -> Void
+    var maximumBodyHeight: CGFloat = 480
     @ViewBuilder let content: Content
     @ViewBuilder let actions: Actions
     @Environment(\.workbenchPalette) private var palette
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack { Text(title).font(.system(size: 14, weight: .medium)); Spacer(); Button(action: dismiss) { Image(systemName: "xmark") }.buttonStyle(WBIconButtonStyle()).accessibilityLabel("关闭") }.padding(18)
-            VStack(alignment: .leading, spacing: 16) { content }.padding(.horizontal, 18).padding(.bottom, 18)
+            WorkbenchDialogBody(maximumHeight: maximumBodyHeight) {
+                VStack(alignment: .leading, spacing: 16) { content }
+            }
             HStack(spacing: 8) { Spacer(); actions }.padding(.horizontal, 18).padding(.vertical, 13).overlay(alignment: .top) { palette.line.frame(height: 1) }
         }.frame(width: width).foregroundStyle(palette.text)
             .accessibilityElement(children: .contain).accessibilityLabel(title)
@@ -425,59 +427,57 @@ struct DeviceBudgetDialog: View {
     @Environment(\.workbenchPalette) private var palette
     @State private var discard = false
     var body: some View {
-        DeviceDialog(title: "流量预算", dismiss: close) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    HStack(spacing: 12) {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text("启用流量预算").font(.system(size: 12, weight: .medium)).foregroundStyle(palette.text)
-                            Text("按选定周期记录，接近额度时提醒").font(.system(size: 11)).foregroundStyle(palette.muted)
+        DeviceDialog(title: "流量预算", dismiss: close, maximumBodyHeight: 470) {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("启用流量预算").font(.system(size: 12, weight: .medium)).foregroundStyle(palette.text)
+                        Text("按选定周期记录，接近额度时提醒").font(.system(size: 11)).foregroundStyle(palette.muted)
+                    }
+                    Spacer(minLength: 12)
+                    Toggle("启用流量预算", isOn: $drafts.budget.enabled)
+                        .labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.mini).fixedSize().tint(palette.accent)
+                        .disabled(drafts.savingBudget).accessibilityIdentifier("fc.network.budget.enabled")
+                }.frame(maxWidth: .infinity, minHeight: 32)
+                Group {
+                    VStack(alignment: .leading, spacing: 12) {
+                        sectionTitle("周期与额度")
+                        HStack(alignment: .top, spacing: 12) {
+                            DeviceRuleField("统计周期") { WBSelect("统计周期", selection: $drafts.budget.period, options: DeviceBudgetPeriod.allCases.map { ($0, $0.title) }) }
+                            DeviceRuleNumberField(title: "可用额度", value: $drafts.budget.limit, unit: "GB", error: drafts.budgetErrors["limit"])
                         }
-                        Spacer(minLength: 12)
-                        Toggle("启用流量预算", isOn: $drafts.budget.enabled)
-                            .labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.mini).fixedSize().tint(palette.accent)
-                            .disabled(drafts.savingBudget).accessibilityIdentifier("fc.network.budget.enabled")
-                    }.frame(maxWidth: .infinity, minHeight: 32)
-                    Group {
-                        VStack(alignment: .leading, spacing: 12) {
-                            sectionTitle("周期与额度")
-                            HStack(alignment: .top, spacing: 12) {
-                                DeviceRuleField("统计周期") { WBSelect("统计周期", selection: $drafts.budget.period, options: DeviceBudgetPeriod.allCases.map { ($0, $0.title) }) }
-                                DeviceRuleNumberField(title: "可用额度", value: $drafts.budget.limit, unit: "GB", error: drafts.budgetErrors["limit"])
+                        if drafts.budget.period.supportsAnchor {
+                            Toggle("自定义账期起点", isOn: $drafts.budget.usesAnchor).clickableCursor().font(.system(size: 12))
+                            if drafts.budget.usesAnchor {
+                                dateField("账期起算日", value: $drafts.budget.anchor)
+                                Text("按该日期重复计算账期；月份天数不足时采用月末。").font(.system(size: 11)).foregroundStyle(palette.muted)
                             }
-                            if drafts.budget.period.supportsAnchor {
-                                Toggle("自定义账期起点", isOn: $drafts.budget.usesAnchor).clickableCursor().font(.system(size: 12))
-                                if drafts.budget.usesAnchor {
-                                    dateField("账期起算日", value: $drafts.budget.anchor)
-                                    Text("按该日期重复计算账期；月份天数不足时采用月末。").font(.system(size: 11)).foregroundStyle(palette.muted)
-                                }
-                            } else if drafts.budget.period == .custom {
-                                dateField("开始日期", value: $drafts.budget.customStart)
-                                dateField("结束日期 · 包含当天", value: $drafts.budget.customEnd)
-                            }
-                            if let error = drafts.budgetErrors["dates"] { Text(error).font(.system(size: 11)).foregroundStyle(palette.warning) }
+                        } else if drafts.budget.period == .custom {
+                            dateField("开始日期", value: $drafts.budget.customStart)
+                            dateField("结束日期 · 包含当天", value: $drafts.budget.customEnd)
                         }
-                        VStack(alignment: .leading, spacing: 12) {
-                            sectionTitle("范围与提醒")
-                            HStack(alignment: .top, spacing: 12) {
-                                DeviceRuleField("统计范围") { WBSelect("统计范围", selection: $drafts.budget.scope, options: DeviceTrafficScope.allCases.map { ($0, $0.title) }) }
-                                DeviceRuleNumberField(title: "接近额度时提醒", value: $drafts.budget.warning, unit: "%", error: drafts.budgetErrors["warning"])
-                            }
-                            Toggle("发送系统通知", isOn: $drafts.budget.notifications).clickableCursor().font(.system(size: 12))
+                        if let error = drafts.budgetErrors["dates"] { Text(error).font(.system(size: 11)).foregroundStyle(palette.warning) }
+                    }
+                    VStack(alignment: .leading, spacing: 12) {
+                        sectionTitle("范围与提醒")
+                        HStack(alignment: .top, spacing: 12) {
+                            DeviceRuleField("统计范围") { WBSelect("统计范围", selection: $drafts.budget.scope, options: DeviceTrafficScope.allCases.map { ($0, $0.title) }) }
+                            DeviceRuleNumberField(title: "接近额度时提醒", value: $drafts.budget.warning, unit: "%", error: drafts.budgetErrors["warning"])
                         }
-                        let preview = model.trafficPreview(drafts.budget.rule(from: model.budget))
-                        VStack(alignment: .leading, spacing: 7) {
-                            Text("当前账期").font(.system(size: 11)).foregroundStyle(palette.muted)
-                            Text(DeviceTrafficDisplay.period(preview, includeYear: true)).font(.system(size: 12, weight: .medium))
-                            Text("记录时区 · \(preview.timeZoneIdentifier)").font(.system(size: 11)).foregroundStyle(palette.muted)
-                        }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                            .background(palette.soft, in: RoundedRectangle(cornerRadius: 8))
-                    }.disabled(!drafts.budget.enabled || drafts.savingBudget)
-                    Text("预算仅提醒，不会限速或断网。保存后再申请通知权限，未采集的时段不补记流量。")
-                        .font(.system(size: 11)).foregroundStyle(palette.muted).fixedSize(horizontal: false, vertical: true)
-                    if drafts.budgetStatus != "已保存" { Text(drafts.budgetStatus).font(.system(size: 11)).foregroundStyle(palette.warning) }
-                }.background(WorkbenchOverlayScrollbars())
-            }.frame(maxHeight: 470)
+                        Toggle("发送系统通知", isOn: $drafts.budget.notifications).clickableCursor().font(.system(size: 12))
+                    }
+                    let preview = model.trafficPreview(drafts.budget.rule(from: model.budget))
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("当前账期").font(.system(size: 11)).foregroundStyle(palette.muted)
+                        Text(DeviceTrafficDisplay.period(preview, includeYear: true)).font(.system(size: 12, weight: .medium))
+                        Text("记录时区 · \(preview.timeZoneIdentifier)").font(.system(size: 11)).foregroundStyle(palette.muted)
+                    }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(palette.soft, in: RoundedRectangle(cornerRadius: 8))
+                }.disabled(!drafts.budget.enabled || drafts.savingBudget)
+                Text("预算仅提醒，不会限速或断网。保存后再申请通知权限，未采集的时段不补记流量。")
+                    .font(.system(size: 11)).foregroundStyle(palette.muted).fixedSize(horizontal: false, vertical: true)
+                if drafts.budgetStatus != "已保存" { Text(drafts.budgetStatus).font(.system(size: 11)).foregroundStyle(palette.warning) }
+            }
         } actions: {
             Button("取消", action: close).buttonStyle(WBButtonStyle()).keyboardShortcut(.cancelAction)
             Button("保存预算") { Task { await drafts.saveBudget(model); if !drafts.budgetDirty && drafts.budgetErrors.isEmpty { dismiss() } } }.buttonStyle(WBButtonStyle(primary: true)).disabled(drafts.savingBudget).keyboardShortcut(.defaultAction)

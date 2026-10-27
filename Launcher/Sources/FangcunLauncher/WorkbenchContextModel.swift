@@ -220,33 +220,6 @@ struct WorkbenchDiscardConfirmation: View {
     }
 }
 
-struct WorkbenchDialogFrame<Content:View,Actions:View>:View {
-    let title:String
-    let dismiss:()->Void
-    var scrollsContent = false
-    @ViewBuilder let content:()->Content
-    @ViewBuilder let actions:()->Actions
-    @Environment(\.workbenchPalette) private var palette
-    var body:some View {
-        VStack(alignment:.leading,spacing:0) {
-            HStack {Text(title).font(.system(size:15,weight:.medium));Spacer();Button(action:dismiss){Image(systemName:"xmark")}.buttonStyle(WBIconButtonStyle(size:32)).accessibilityLabel("关闭"+title)}.padding(EdgeInsets(top:18,leading:18,bottom:13,trailing:18))
-            if scrollsContent {
-                ScrollView {
-                    paddedContent.background(WorkbenchOverlayScrollbars())
-                }.frame(maxHeight:480).scrollBounceBehavior(.basedOnSize)
-            } else {
-                paddedContent
-            }
-            Rectangle().fill(palette.line).frame(height:1)
-            HStack(spacing:8){actions()}.padding(.horizontal,18).padding(.vertical,13)
-        }.foregroundStyle(palette.text).accessibilityElement(children:.contain).accessibilityLabel(title)
-    }
-    // Reading gutters belong to the document so its scrollbar stays at the dialog edge.
-    private var paddedContent:some View {
-        content().padding(.horizontal,18).padding(.bottom,18)
-    }
-}
-
 private struct WorkbenchClockDialog: View {
     @ObservedObject var model: WorkbenchContextModel
     @ObservedObject var close: WorkbenchDraftCloseCoordinator
@@ -337,7 +310,7 @@ struct WorkbenchWeatherDialog:View {
     private var city:WeatherCity? {draft.city}
     private var cleanQuery:String {query.trimmingCharacters(in:.whitespacesAndNewlines)}
     var body:some View {
-        WorkbenchDialogFrame(title:"城市、天气与时间",dismiss:requestDismiss,scrollsContent:true) {
+        WorkbenchDialogFrame(title:"城市、天气与时间",dismiss:requestDismiss) {
             VStack(alignment:.leading,spacing:14) {
                 HStack(spacing:8) {
                     Image(systemName:"magnifyingglass").foregroundStyle(palette.muted)
@@ -350,7 +323,7 @@ struct WorkbenchWeatherDialog:View {
                     .overlay(RoundedRectangle(cornerRadius:8).strokeBorder(palette.line,lineWidth:1))
                 VStack(alignment:.leading,spacing:7) {
                     HStack {Text(cleanQuery.isEmpty ? "常用城市":"搜索结果");Spacer();Text(searching ? "正在查找…":"选择后保存")}.font(.system(size:11)).foregroundStyle(palette.muted)
-                    ScrollView {
+                    WorkbenchScrollView {
                         LazyVStack(spacing:2) {
                             ForEach(results) {item in
                                 Button {select(item)} label:{
@@ -370,7 +343,7 @@ struct WorkbenchWeatherDialog:View {
                                     .font(.system(size:11)).foregroundStyle(palette.muted).lineSpacing(4)
                                     .frame(maxWidth:.infinity,minHeight:100)
                             }
-                        }.padding(.trailing,12).background(WorkbenchOverlayScrollbars())
+                        }.padding(.trailing,12)
                     }.frame(height:144).scrollBounceBehavior(.basedOnSize)
                         .accessibilityIdentifier("context-city-results")
                 }

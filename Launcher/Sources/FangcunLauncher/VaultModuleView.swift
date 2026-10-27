@@ -183,7 +183,7 @@ private struct VaultUnlockedView:View {
                 Button{categoryName="";editingCategoryID=nil;showCategories=true;model.recordActivity()}label:{Label("管理分类",systemImage:"folder.badge.gearshape")}
                     .buttonStyle(WBButtonStyle(compact:true)).help("新增、重命名或删除分类").accessibilityIdentifier("fc.vault.categories.manage")
             }
-            ScrollView {
+            WorkbenchScrollView {
                 LazyVStack(spacing:2) {
                     ForEach(filtered){document in
                         Button{model.selectDocument(document.id)}label:{VStack(alignment:.leading,spacing:5){
@@ -196,7 +196,7 @@ private struct VaultUnlockedView:View {
                         }.padding(.vertical,12).padding(.horizontal,9).frame(maxWidth:.infinity,alignment:.leading).foregroundStyle(model.selectedID == document.id ? palette.text:palette.secondary).background(model.selectedID == document.id ? palette.navSelected:.clear,in:RoundedRectangle(cornerRadius:8))}.buttonStyle(WBSelectableButtonStyle(selected: model.selectedID == document.id, cornerRadius: 8, drawsSelection: false, showsBorder: false))
                     }
                     if filtered.isEmpty {Text(query.isEmpty ? "此分类暂无文本":"没有匹配的标题").font(.system(size:11)).foregroundStyle(palette.muted).padding(.vertical,20)}
-                }.background(WorkbenchOverlayScrollbars())
+                }
             }
         }
     }
@@ -204,7 +204,7 @@ private struct VaultUnlockedView:View {
         WorkbenchDialogFrame(title:"管理分类",dismiss:{showCategories=false;categoryName="";editingCategoryID=nil}){
             VStack(alignment:.leading,spacing:14){
                 Text("分类与文本一起加密保存。「未分类」始终保留；删除其他分类时可先选择文本去向。").font(.system(size:12)).foregroundStyle(palette.secondary)
-                ScrollView {VStack(spacing:4){ForEach(model.categories){category in
+                WorkbenchScrollView {VStack(spacing:4){ForEach(model.categories){category in
                     HStack(spacing:10){VStack(alignment:.leading,spacing:4){Text(category.name).font(.system(size:12));Text("\(model.documents.filter{$0.effectiveCategoryID == category.id}.count) 条文本").font(.system(size:11)).foregroundStyle(palette.muted)};Spacer();Button{editingCategoryID=category.id;categoryName=category.name}label:{Image(systemName:"pencil")}.buttonStyle(WBIconButtonStyle(size:28)).accessibilityLabel("重命名 \(category.name)");Button{moveDestination="unclassified";categoryDeletion=category}label:{Image(systemName:"trash")}.buttonStyle(WBIconButtonStyle(size:28)).foregroundStyle(palette.critical).accessibilityLabel("删除分类 \(category.name)")}.padding(.vertical,8)
                 }}}.frame(maxHeight:240)
                 VStack(alignment:.leading,spacing:6){Text(editingCategoryID == nil ? "新增分类":"重命名分类").font(.system(size:12));HStack(spacing:10){TextField("1–30 个字",text:$categoryName).modifier(VaultInputStyle());Button(editingCategoryID == nil ? "新增":"保存"){let saved=editingCategoryID.map{model.renameCategory($0,to:categoryName)} ?? model.addCategory(categoryName);if saved {categoryName="";editingCategoryID=nil}}.buttonStyle(WBButtonStyle(primary:true)).disabled(categoryName.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty);if editingCategoryID != nil {Button("取消"){categoryName="";editingCategoryID=nil}.buttonStyle(WBButtonStyle())}}}

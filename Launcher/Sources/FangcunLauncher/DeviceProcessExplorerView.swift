@@ -133,7 +133,7 @@ struct DeviceProcessExplorerView: View {
             }.padding(memoryFocused ? 0 : 12).padding(.bottom, memoryFocused ? 12 : 0).overlay(alignment: .bottom) { if !memoryFocused { palette.line.frame(height: 1) } }
             tableHeader
             ScrollViewReader { reader in
-                ScrollView(.vertical) {
+                WorkbenchScrollView(.vertical) {
                     LazyVStack(spacing: 0) {
                         Color.clear.frame(height: 0).id("process-list-top")
                         ForEach(results) { group in
@@ -150,7 +150,7 @@ struct DeviceProcessExplorerView: View {
                                 if hasFilter { Button("显示全部进程") { filter = .all; query = "" }.buttonStyle(WBButtonStyle(compact: true)) }
                             }.padding(.vertical, 28).frame(maxWidth: .infinity)
                         }
-                    }.background(WorkbenchOverlayScrollbars())
+                    }
                 }.scrollIndicators(.visible).accessibilityIdentifier("process-results-scroll")
                     .onChange(of: viewportKey) { _, _ in reader.scrollTo("process-list-top", anchor: .top) }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -103,6 +103,8 @@ import LauncherCore
             check(press("fc.usage.config.service", in: host), "configuration exposes a service category")
             await settle(host)
             check(app.usagePresentation.configurationGroup == .service, "service configuration changes category without navigating the overview")
+            check(nativeViews(host).compactMap { $0 as? NSScrollView }.contains { abs($0.bounds.width - 564) < 1 && $0.bounds.height >= 120 && $0.bounds.height <= 300 },
+                  "configuration keeps its independent source list readable inside the adaptive dialog body")
             if let output { check(save(host, to: output.appendingPathComponent("usage-configuration.png")), "configuration renders offscreen") }
             app.usagePresentation.showingConfiguration = false; await settle(host)
             app.usagePresentation.editAI(.codex, appearance: .init())
@@ -175,6 +177,10 @@ import LauncherCore
                 for width in [960, 1120, 1728] {
                     window.setContentSize(.init(width: width, height: width == 1728 ? 993 : 758)); await settle(host)
                     let controls = objects(host), bounds = window.convertToScreen(host.bounds)
+                    let scrolls = nativeViews(host).compactMap { $0 as? NSScrollView }
+                    let editorScroll = scrolls.first { abs($0.bounds.width - 560) < 1 }
+                    check(editorScroll.map { $0.scrollerStyle == .overlay && $0.autohidesScrollers && abs($0.contentSize.width - 560) < 1 } ?? false,
+                          "Bandwagon editor \(width)/\(light): body scrolls at the full dialog edge without a reserved track")
                     let saveFrame = frame("fc.usage.editor.save", objects: controls)
                     check(saveFrame.map { abs($0.height - 32) < 1 && $0.minX >= bounds.minX && $0.maxX <= bounds.maxX && $0.minY >= bounds.minY && $0.maxY <= bounds.maxY } ?? false,
                           "Bandwagon editor \(width)/\(light): verification remains a visible 32-point fixed-footer action")
@@ -210,6 +216,7 @@ import LauncherCore
         print("Usage UI checks: \(count) checks, \(failures) failures")
         return (count, failures)
     }
+    private static func nativeViews(_ root: NSView) -> [NSView] { root.subviews.flatMap { [$0] + nativeViews($0) } }
     private static func settle(_ host: NSView) async { try? await Task.sleep(for: .milliseconds(120)); host.layoutSubtreeIfNeeded() }
     private static func save(_ host: NSView, to url: URL) -> Bool {
         guard let image = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return false }

@@ -54,7 +54,7 @@ struct SpaceCleaningDialogContent: View {
             VStack(alignment: .leading, spacing: 14) {
                 Text(model.coverageIssues.isEmpty ? "扫描只覆盖已识别和已选择的位置。未安装软件对应的可选目录会正常跳过。" : "下列位置或项目没有得到完整结果。已检查的数据仍可查看，不能据此认为整台 Mac 都已扫描。")
                     .font(.system(size: 12)).foregroundStyle(palette.secondary).lineSpacing(5)
-                ScrollView {
+                WorkbenchScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
                         ForEach(Array(model.coverageIssues.enumerated()), id: \.offset) { _, issue in
                             Label(issue, systemImage: "info.circle").font(.system(size: 11)).foregroundStyle(palette.muted).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
@@ -65,7 +65,7 @@ struct SpaceCleaningDialogContent: View {
                                 Text(note).font(.system(size: 11)).foregroundStyle(palette.muted).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                             }
                         }
-                    }.frame(maxWidth: .infinity, alignment: .leading).background(WorkbenchOverlayScrollbars())
+                    }.frame(maxWidth: .infinity, alignment: .leading)
                 }.frame(maxHeight: 280).scrollBounceBehavior(.basedOnSize)
             }
         } actions: {
@@ -159,7 +159,7 @@ private struct SpaceCleaningConfirmationList: View {
     let items: [SpaceCleaningConfirmationItem]
     @Environment(\.workbenchPalette) private var palette
     var body: some View {
-        ScrollView {
+        WorkbenchScrollView {
             LazyVStack(spacing: 0) {
                 ForEach(items) { item in
                     VStack(spacing: 0) {
@@ -170,7 +170,7 @@ private struct SpaceCleaningConfirmationList: View {
                         }.font(.system(size: 11)).padding(.vertical, 8)
                     }
                 }
-            }.background(WorkbenchOverlayScrollbars())
+            }
         }.scrollBounceBehavior(.basedOnSize).frame(maxHeight: min(176, CGFloat(items.count) * 34 + 2))
     }
 }

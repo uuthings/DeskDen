@@ -30,7 +30,7 @@ struct UsageConfigurationView: View {
                     category(.service, title: "服务流量")
                     Spacer(minLength: 0)
                 }.overlay(alignment: .bottom) { Rectangle().fill(palette.line).frame(height: 1) }
-                ScrollView {
+                WorkbenchScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         if presentation.configurationGroup == .ai {
                             ForEach(AIProvider.allCases) { provider in aiRow(provider) }

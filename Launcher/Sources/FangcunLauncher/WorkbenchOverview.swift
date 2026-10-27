@@ -140,9 +140,9 @@ struct WorkbenchOverview:View {
     private func planColumn(title:String,subtitle:String,items:[CalendarAgendaEntry],empty:String)->some View {
         VStack(spacing:3) {
             HStack{Text(title);Spacer();Text(subtitle).foregroundStyle(palette.muted)}.font(.system(size:11)).foregroundStyle(palette.secondary).frame(height:16)
-            ScrollView {
+            WorkbenchScrollView {
                 if items.isEmpty {Text(empty).font(.system(size:11)).foregroundStyle(palette.muted).frame(maxWidth:.infinity,alignment:.leading).padding(.vertical,19)}
-                else {VStack(spacing:0){ForEach(items){item in planRow(item);if item.id != items.last?.id {Rectangle().fill(palette.line).frame(height:1)}}}.background(WorkbenchOverlayScrollbars())}
+                else {VStack(spacing:0){ForEach(items){item in planRow(item);if item.id != items.last?.id {Rectangle().fill(palette.line).frame(height:1)}}}}
             }.frame(height:expanded ? 160:112)
                 .accessibilityElement(children:.contain).accessibilityIdentifier("fc.home.agenda."+(title == "日程" ? "events":"reminders"))
         }.frame(maxWidth:.infinity,alignment:.topLeading)

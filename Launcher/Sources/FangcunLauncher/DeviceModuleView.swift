@@ -37,7 +37,7 @@ struct DeviceModuleView: View {
 
     var body: some View {
         ScrollViewReader { scrollProxy in
-        ScrollView(detail == .processes ? [] : .vertical) {
+        WorkbenchScrollView(detail == .processes ? [] : .vertical) {
             VStack(alignment: .leading, spacing: 0) {
                 if let detail { detailPage(detail) }
                 else {
@@ -71,7 +71,6 @@ struct DeviceModuleView: View {
                 .background(GeometryReader { proxy in Color.clear.preference(key: DeviceContentWidth.self, value: proxy.size.width) })
                 .workbenchPageCanvas()
                 .id("device-page-top")
-                .background(WorkbenchOverlayScrollbars())
                 .accessibilityElement(children:.contain).accessibilityIdentifier(detail.map { "fc.page.device.\($0.rawValue)" } ?? "fc.page.device")
         }.onPreferenceChange(DeviceContentWidth.self) { contentWidth = $0 }.scrollContentBackground(.hidden).scrollBounceBehavior(.basedOnSize)
             .task { monitoringDrafts.load(model); await model.refreshNotificationPermission() }
@@ -472,15 +471,9 @@ struct DeviceSheetView: View {
     @State private var useAutomatic = true
     @State private var selected: Set<String> = []
     @State private var confirmReset = false
-    @State private var contentHeight: CGFloat = 100
     var body: some View {
-        DeviceDialog(title: item.title, dismiss: dismiss) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) { content }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(GeometryReader { proxy in Color.clear.preference(key: DeviceSheetHeight.self, value: proxy.size.height) })
-                    .background(WorkbenchOverlayScrollbars())
-            }.frame(height: min(390, max(80, contentHeight))).onPreferenceChange(DeviceSheetHeight.self) { contentHeight = $0 }
+        DeviceDialog(title: item.title, dismiss: dismiss, maximumBodyHeight: 390) {
+            VStack(alignment: .leading, spacing: 12) { content }
         } actions: {
             if case .networkOptions = item {
                 Button("开始新记录") { confirmReset = true }.buttonStyle(WBButtonStyle())
@@ -561,11 +554,6 @@ struct DeviceSheetView: View {
     }
     private func date(_ value: Date?) -> String { value?.formatted(date: .abbreviated, time: .standard) ?? "尚无有效记录" }
     private func explanation(_ text: String) -> some View { Text(text).font(.system(size: 11)).foregroundStyle(palette.muted).lineSpacing(4).fixedSize(horizontal: false, vertical: true).padding(.top, 14) }
-}
-
-private struct DeviceSheetHeight: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 struct DeviceFact: View {
