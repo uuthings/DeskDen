@@ -19,8 +19,8 @@ struct WorkbenchMiniContextData {
 }
 
 extension WorkbenchMiniContextData {
-    @MainActor init(context:WorkbenchContextModel,now:Date) {
-        time=context.time(now)
+    @MainActor init(context:WorkbenchContextModel,now:Date,showSeconds:Bool=false) {
+        time=context.time(now,seconds:showSeconds)
         date=WorkbenchMiniFormat.date(now,calendar:context.dateContext.calendar,pattern:"M月d日 · EEEE")
         shortDate=WorkbenchMiniFormat.date(now,calendar:context.dateContext.calendar,pattern:"M月d日")
         weekday=WorkbenchMiniFormat.date(now,calendar:context.dateContext.calendar,pattern:"EEE")

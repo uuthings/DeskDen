@@ -2,6 +2,10 @@
 
 The top-edge panel shares the workbench material, theme, light/dark appearance and interface opacity. The top shoulders attach to the screen edge, and the header avoids the actual camera notch. Date/time and weather are independently visible; long header content is reduced within the available safe space rather than crossing the notch.
 
+Click either the date/time or weather header to open the homepage's city, weather and time dialog in the existing main window, including before a city is selected. Existing dialogs and unsaved configuration keep their navigation protection. Header text uses a consistent **12 pt** size, including time and temperature values.
+
+**Show seconds** is available in the Mini's display settings and the main window's top-entry settings. It defaults to off and saves independently of header visibility. The visible clock updates each second when enabled, otherwise on minute boundaries, using the homepage's timezone and 12/24-hour preference. It does not change reminder times or increase weather/provider polling.
+
 Cards retain a fixed width of **220 pt**. Small cards are **72 pt** high and medium cards are **113 pt** high, separated by **10 pt**. A column holds at most three small cards or two medium cards. The default eight cards occupy three columns: **748 × 292 pt** on the common 32 pt top-safe-area geometry. The maximum panel width is **978 pt** (four columns); extra cards paginate. Unusual safe areas can increase the height to protect the header. Available screen width can reduce the number of visible columns, with pagination preserving access to every enabled card.
 
 Default content:
