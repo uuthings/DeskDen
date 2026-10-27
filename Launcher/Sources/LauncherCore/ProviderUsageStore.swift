@@ -11,6 +11,7 @@ public struct ProviderUsageDocument: Codable, Equatable, Sendable {
         for source in sources { try source.validate() }
         for (id, state) in states {
             try state.refresh.validate()
+            try state.validateResetObservations(now: now)
             if let snapshot = state.snapshot { guard snapshot.sourceID == id else { throw ProviderUsageFailure.storage }; try snapshot.validate(now: now) }
             guard state.message.map({ $0.count <= 240 }) ?? true else { throw ProviderUsageFailure.storage }
         }

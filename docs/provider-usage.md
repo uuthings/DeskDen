@@ -1,6 +1,12 @@
 # Provider usage and network monitoring
 
-The **用量统计** navigation entry combines existing AI quotas and local Token activity with independent service quota sources. Each IPRoyal order and Bandwagon VPS keeps its own identity, balance, last successful observation and reset rule. The **网络监控** module remains separate and keeps its existing single local traffic budget.
+The **用量与额度** navigation entry combines existing AI quotas and local Token activity with independent service quota sources. Each IPRoyal order and Bandwagon VPS keeps its own identity, balance, last successful observation and reset rule. The **网络监控** module remains separate and keeps its existing single local traffic budget.
+
+The overview uses separate **AI 用量** and **服务流量** groups. Cards stay 248 × 208 logical points with 14-point padding and 12-point gaps; more window space adds columns rather than stretching cards. Each group can collapse independently, and its choice is saved. Collapsing does not stop collection or querying. **本机 Token 记录** belongs to the AI group instead of adding activity charts beneath the full overview.
+
+Use **配置用量** to manage the two categories. AI cards use the supported Codex and Claude source identities; hiding or restoring a card does not disconnect its collector or delete activity records. It does not create additional accounts sharing one set of readings. Service sources remain independently configurable. Card display names and icons are separate from connection metadata. Choose an included symbol or import a static PNG, JPEG or WebP image up to 2 MB; Fangcun keeps a small normalized local copy, so the original file can move. Card icons contain no authentication information.
+
+Service cards show remaining allowance, cycle consumption and total allowance, the provider's reset information, and the last successful observation. Missing or stale data remains explicit. Details include **打开 IPRoyal 订单** for the configured order's official dashboard page, or **打开搬瓦工服务** for the provider's services page. These links open in the default browser without attaching the API Key or browser-session material.
 
 Service balances come from the provider. Local received/sent bytes are only an activity signal that decides when to query again; they are never subtracted from a provider balance or attributed to a particular subscription. Unknown values remain unknown. A failed query retains the last successful reading and its timestamp.
 
@@ -21,6 +27,8 @@ The optional Chrome connector reuses the user's ordinary dashboard login. It obs
 Export a connection kit from the IPRoyal connection dialog, install it yourself, enable the extension and add the static ISP order number. The App and exported kit must remain at stable locations. Exporting does not install or grant permissions. Real Chrome installation, Google login, quota comparison and session persistence require manual acceptance before relying on this route. A successful synthetic test does not establish a real login's lifetime.
 
 The provider's `bandwidth_limit_reset_at` is currently a date-only value. It is shown as the provider's date with timezone unconfirmed, without inventing midnight or converting it into a different day. Quota observations may lag actual traffic; the query timestamp is not a billing cutoff timestamp.
+
+Details retain a bounded cycle-change log. A later provider date together with lower usage and higher remaining allowance creates a candidate; a subsequent compatible reading confirms what Fangcun observed. An allowance change or balance increase alone is not treated as a reset. The log shows the last old-cycle observation, first new-cycle observation and confirmation time in the workbench timezone. These observations do not establish the provider's actual reset instant or timezone. Up to 12 confirmed changes are retained, with at most one pending candidate.
 
 ## Refresh policy
 

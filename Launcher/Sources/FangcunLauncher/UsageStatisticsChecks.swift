@@ -11,6 +11,8 @@ import LauncherCore
             count += 1; if !value { failures += 1 }
             print("\(value ? "PASS" : "FAIL") \(label)")
         }
+        let presentationChecks = UsagePresentationModelChecks.run()
+        count += presentationChecks.count; failures += presentationChecks.failures
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("fangcun-usage-ui-\(UUID())")
         let output = ProcessInfo.processInfo.environment["FANGCUN_USAGE_OUTPUT"].map { URL(fileURLWithPath: $0) }
         let originalPalette = (Palette.workbenchTheme, Palette.isLight, Palette.glassOpacity)
@@ -25,11 +27,21 @@ import LauncherCore
             owner.scanning = true
             let aiFolder = folder.appendingPathComponent("AI"), aiSources = aiFolder.appendingPathComponent("AIUsage")
             try FileManager.default.createDirectory(at: aiSources, withIntermediateDirectories: true)
-            let disabled = AIProvider.allCases.map { AIUsageSourceConfiguration(provider: $0, enabled: false,
-                sessionsPath: folder.appendingPathComponent("disabled-" + $0.rawValue).path) }
+            let now = Date()
+            let disabled = try AIProvider.allCases.map { provider in
+                AIUsageSourceConfiguration(provider: provider, enabled: false,
+                    sessionsPath: folder.appendingPathComponent("disabled-" + provider.rawValue).path,
+                    manualSnapshot: AIQuotaSnapshot(provider: provider, observedAt: now, source: .manual,
+                        shortWindow: provider == .codex ? try AIQuotaWindow(usedPercent: 32, durationMinutes: 300, resetsAt: now.addingTimeInterval(7200)) : nil,
+                        weeklyWindow: try AIQuotaWindow(usedPercent: provider == .codex ? 16 : 28, durationMinutes: 10_080, resetsAt: now.addingTimeInterval(86_400)),
+                        accountPlan: provider == .codex ? .plus : .pro))
+            }
             try JSONEncoder().encode(disabled).write(to: aiSources.appendingPathComponent("sources.json"))
             let ai = AIUsageModel(dataDirectory: aiFolder, startServices: false, notifications: UsageCheckAINotifications())
-            let providerFolder = folder.appendingPathComponent("Provider"), now = Date()
+            ai.refresh()
+            for _ in 0..<40 where ai.isRefreshing { try? await Task.sleep(for: .milliseconds(25)) }
+            check(!ai.isRefreshing && ai.providerSummaries.allSatisfy { $0.snapshot != nil }, "isolated AI readings load without scanning automatic sources")
+            let providerFolder = folder.appendingPathComponent("Provider")
             let isp = ProviderUsageConfiguration(kind: .iproyal, name: "ISP 示例订单", resourceID: "1001")
             let vps = ProviderUsageConfiguration(kind: .bandwagon, name: "VPS 示例实例", resourceID: "1002")
             let missing = ProviderUsageConfiguration(kind: .iproyal, name: "等待连接的订单", resourceID: "1003")
@@ -38,6 +50,10 @@ import LauncherCore
                 remainingBytes: 55_000_000_000, resetDateText: "2026-11-25", displayUnit: .decimalGB, sourceDescription: "隔离测试数据"))
             document.states[vps.id] = .init(snapshot: .init(sourceID: vps.id, observedAt: now, usedBytes: 128 * 1_073_741_824, limitBytes: 1000 * 1_073_741_824,
                 resetsAt: now.addingTimeInterval(86_400), displayUnit: .binaryGB, sourceDescription: "隔离测试数据"))
+            var failedFirstRead = ProviderUsageSourceState()
+            failedFirstRead.refresh.failed(.transport, at: now)
+            failedFirstRead.message = ProviderUsageFailure.transport.localizedDescription
+            document.states[missing.id] = failedFirstRead
             try ProviderUsageStore(url: providerFolder.appendingPathComponent("provider-usage.json")).save(document)
             let provider = ProviderUsageModel(dataDirectory: providerFolder, startServices: false)
             let calendar = CalendarModel(dataDirectory: folder.appendingPathComponent("Calendar"), system: UsageCheckCalendar(), notifier: UsageCheckNotifications())
@@ -57,16 +73,56 @@ import LauncherCore
                     let objects = objects(host)
                     let cardFrames = [isp, vps, missing].compactMap { frame("fc.usage.source." + $0.id.uuidString, objects: objects) }
                     let screen = window.convertToScreen(host.bounds)
-                    check(cardFrames.count == 3 && cardFrames.allSatisfy { $0.width >= 270 && $0.minX >= screen.minX && $0.maxX <= screen.maxX + 1 },
-                          "usage \(width)/\(light): every service card has readable width inside the shared page")
+                    check(cardFrames.count == 3 && cardFrames.allSatisfy { abs($0.width - 248) < 1 && abs($0.height - 208) < 1 && $0.minX >= screen.minX && $0.maxX <= screen.maxX + 1 },
+                          "usage \(width)/\(light): every service card preserves the approved 248 by 208 size inside the shared page")
+                    let aiFrames = AIProvider.allCases.compactMap { frame("fc.ai.provider." + $0.rawValue, objects: objects) }
+                    check(aiFrames.count == 2 && aiFrames.allSatisfy { abs($0.width - 248) < 1 && abs($0.height - 208) < 1 },
+                          "usage \(width)/\(light): AI cards use the same fixed size as service cards")
+                    if cardFrames.count == 3 {
+                        check(abs(cardFrames[1].minX - cardFrames[0].minX - 260) < 1
+                              && (width != 960 || abs(cardFrames[2].minX - cardFrames[0].minX) < 1),
+                              "usage \(width)/\(light): cards retain 12-point gaps and wrap from the left")
+                    }
                     check(provider.refreshing.isEmpty && !app.device.isSampling, "usage fixture performs no live collection")
                     if let output { check(save(host, to: output.appendingPathComponent("usage-\(width)-\(light ? "light" : "dark").png")), "usage surface renders offscreen") }
                 }
             }
+            check(WorkbenchRoute.ai.title == "用量与额度", "saved AI route keeps its identity with the clearer navigation title")
+            check(frame("fc.usage.tokens", objects: objects(host)) != nil, "local Token records have an entrance within the AI category")
+            check(press("fc.usage.group.service", in: host), "service group exposes a native collapse action")
+            await settle(host)
+            let restoredAppearance = UsagePresentationModel(dataDirectory: app.dataDirectory.appendingPathComponent("UsagePresentation"))
+            check(app.usageAppearance.isCollapsed(.service) && restoredAppearance.isCollapsed(.service)
+                  && frame("fc.usage.source." + isp.id.uuidString, objects: objects(host)) == nil,
+                  "collapse removes the service tiles and persists independently of their source records")
+            check(provider.sources.count == 3 && provider.state(for: isp.id).snapshot != nil, "collapsing preserves service sources and cached observations")
+            _ = press("fc.usage.group.service", in: host); await settle(host)
+            check(press("fc.usage.configure", in: host), "overview opens unified usage configuration")
+            await settle(host)
+            check(app.modals.isPresented && frame("fc.usage.configuration", objects: objects(host)) != nil, "usage configuration is mounted in the shared modal host")
+            check(press("fc.usage.config.service", in: host), "configuration exposes a service category")
+            await settle(host)
+            check(app.usagePresentation.configurationGroup == .service, "service configuration changes category without navigating the overview")
+            if let output { check(save(host, to: output.appendingPathComponent("usage-configuration.png")), "configuration renders offscreen") }
+            app.usagePresentation.showingConfiguration = false; await settle(host)
+            app.usagePresentation.editAI(.codex, appearance: .init())
+            let aiDraft = app.usagePresentation.aiEditor!
+            aiDraft.name = "未保存的 AI 名称"
+            app.openProviderUsage(vps.id)
+            check(app.usagePresentation.selectedSourceID == nil && app.usagePresentation.aiEditor === aiDraft,
+                  "source navigation preserves a new AI display draft before its modal mounts")
+            await settle(host)
+            app.usagePresentation.requestCloseAIEditor(); await settle(host)
+            check(app.usagePresentation.discardEditor && app.usagePresentation.aiEditor === aiDraft,
+                  "AI display edits use explicit discard protection")
+            app.usagePresentation.discard(); await settle(host)
             check(press("fc.usage.source." + isp.id.uuidString, in: host), "whole service card exposes a native action")
             await settle(host)
             check(app.usagePresentation.selectedSourceID == isp.id, "service card opens its own independent detail")
-            check(frame("fc.usage.detail", objects: objects(host)) != nil, "service detail mounts through the production navigation")
+            check(frame("fc.ai.provider.codex", objects: objects(host)) == nil
+                  && frame("fc.usage.order-link", objects: objects(host)) != nil,
+                  "service detail replaces the AI overview and mounts its native order action")
+            check(frame("fc.usage.order-link", objects: objects(host)) != nil, "service detail exposes the official order link without opening a browser during checks")
             if let output { check(save(host, to: output.appendingPathComponent("usage-detail.png")), "service detail renders offscreen") }
             app.usagePresentation.edit(isp); await settle(host)
             check(app.modals.isPresented && window.attachedSheet == nil, "connection editing uses the shared modal host")
@@ -89,7 +145,7 @@ import LauncherCore
             app.openUsageOverview(); await settle(host)
             check(app.route == .ai && app.ai.destination == .overview && app.usagePresentation.selectedSourceID == nil, "unified overview returns without changing the legacy route identity")
             let pending = provider.state(for: missing.id)
-            check(pending.snapshot == nil && pending.status() == .pending, "an unconnected order retains unknown usage")
+            check(pending.snapshot == nil && pending.status() == .failed, "a failed first query retains unknown usage instead of a fabricated old reading")
             if Bundle.main.bundleURL.pathExtension == "app" {
                 let kit = try ProviderUsageBrowserBridge.exportConnectionKit(to: folder, applicationURL: Bundle.main.bundleURL, bridgeDirectory: folder.appendingPathComponent("Bridge"))
                 let manifest = try JSONSerialization.jsonObject(with: Data(contentsOf: kit.appendingPathComponent("com.uuthings.fangcun.iproyal.json"))) as? [String: Any]

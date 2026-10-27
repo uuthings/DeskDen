@@ -227,7 +227,9 @@ typealias ProviderUsageBrowserRequest = @MainActor (ProviderUsageConfiguration) 
     private func accept(_ snapshot: ProviderUsageSnapshot, for configuration: ProviderUsageConfiguration, acknowledgedBytes: UInt64) throws {
         try validate(snapshot, for: configuration)
         var next = document, state = state(for: configuration.id)
+        guard state.snapshot.map({ snapshot.observedAt >= $0.observedAt }) ?? true else { throw ProviderUsageFailure.invalidResponse }
         let checkedReset = state.snapshot?.resetsAt
+        state.recordResetObservation(snapshot, kind: configuration.kind)
         state.snapshot = snapshot; state.message = nil; state.refresh.succeeded(at: now(), acknowledgedBytes: acknowledgedBytes, checkedReset: checkedReset)
         next.states[configuration.id] = state
         guard persist(next) else { throw ProviderUsageFailure.storage }
