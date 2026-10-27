@@ -87,6 +87,43 @@ import LauncherCore
                     if let output { check(save(host, to: output.appendingPathComponent("usage-\(width)-\(light ? "light" : "dark").png")), "usage surface renders offscreen") }
                 }
             }
+            for aiProvider in AIProvider.allCases {
+                _ = app.usageAppearance.setVisible(false, for: UsagePresentationSourceID.ai(aiProvider))
+            }
+            for source in provider.sources {
+                _ = app.usageAppearance.setVisible(false, for: UsagePresentationSourceID.service(source.id))
+            }
+            for light in [false, true] {
+                app.changeAppearance(light ? .light : .dark)
+                for width in [960, 1120, 1350, 1728] {
+                    window.setContentSize(.init(width: width, height: width >= 1350 ? 993 : 758)); await settle(host)
+                    let emptyFrames = ["ai", "service"].compactMap { frame("fc.usage.empty." + $0, objects: objects(host)) }
+                    let bounds = window.convertToScreen(host.bounds)
+                    check(emptyFrames.count == 2 && emptyFrames.allSatisfy {
+                        abs($0.width - 248) < 1 && abs($0.height - 208) < 1
+                            && $0.minX >= bounds.minX && $0.maxX <= bounds.maxX
+                    }, "empty usage \(width)/\(light): both groups occupy a single source-card slot instead of a full-width banner")
+                    check(emptyFrames.count == 2 && abs(emptyFrames[0].minX - emptyFrames[1].minX) < 1,
+                          "empty usage \(width)/\(light): source placeholders retain the shared left edge")
+                    if let output { check(save(host, to: output.appendingPathComponent("usage-empty-\(width)-\(light ? "light" : "dark").png")), "empty usage surface renders offscreen") }
+                }
+            }
+            for group in [UsageCardGroup.ai, .service] {
+                check(press("fc.usage.empty." + group.rawValue, in: host), "empty \(group.rawValue) card exposes a whole-card configuration action")
+                await settle(host)
+                check(app.usagePresentation.showingConfiguration && app.usagePresentation.configurationGroup == group,
+                      "empty \(group.rawValue) card opens its corresponding configuration category")
+                app.usagePresentation.showingConfiguration = false; await settle(host)
+            }
+            check(provider.sources.count == 3 && provider.state(for: isp.id).snapshot == document.states[isp.id]?.snapshot,
+                  "empty-state configuration preserves connected sources and their last real observations")
+            for aiProvider in AIProvider.allCases {
+                _ = app.usageAppearance.setVisible(true, for: UsagePresentationSourceID.ai(aiProvider))
+            }
+            for source in provider.sources {
+                _ = app.usageAppearance.setVisible(true, for: UsagePresentationSourceID.service(source.id))
+            }
+            await settle(host)
             check(WorkbenchRoute.ai.title == "用量与额度", "saved AI route keeps its identity with the clearer navigation title")
             check(frame("fc.usage.tokens", objects: objects(host)) != nil, "local Token records have an entrance within the AI category")
             check(press("fc.usage.group.service", in: host), "service group exposes a native collapse action")

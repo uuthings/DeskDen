@@ -141,7 +141,7 @@ import SwiftUI
             print("\(value ? "PASS" : "FAIL") \(message)")
         }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("fangcun-update-relaunch-\(UUID().uuidString)").resolvingSymlinksInPath()
-        var apps: [UpdateCheckApp] = [], movers: [UpdateCheckMover] = [], services: [StorageReviewService] = []
+        var apps: [UpdateCheckApp] = [], movers: [UpdateCheckMover] = [], services: [SpaceCleaningModel] = []
         do {
             let active = try makeApp(root.appendingPathComponent("active-dialog")); apps.append(active)
             active.owner.preparingUpdateRelaunch = true
@@ -214,16 +214,21 @@ import SwiftUI
             check(vaultRetry == .terminateLater && vaultRetryFinished && vaultAlerts == 1 && !vault.model.confirmingQuit && vaultReplies == [true],
                   "after the encrypted save succeeds, Sparkle retries the retained relaunch intent and replies once without another save or generic quit prompt")
 
-            let transaction = root.appendingPathComponent("gated-processing"), source = transaction.appendingPathComponent("source"), trash = transaction.appendingPathComponent("fake-trash"), data = transaction.appendingPathComponent("storage")
+            let rawTransaction = root.appendingPathComponent("gated-processing")
+            try FileManager.default.createDirectory(at: rawTransaction, withIntermediateDirectories: true)
+            // Journal directories use the same POSIX-canonical spelling as the
+            // production scanner; /var is a symlink and must not bypass its no-follow gate.
+            guard let transaction = SpaceCleaningScanner.canonicalURL(rawTransaction) else { throw UpdateCheckError.missingFixture }
+            let source = transaction.appendingPathComponent("home/Downloads"), trash = transaction.appendingPathComponent("fake-trash"), data = transaction.appendingPathComponent("storage")
             for url in [source, trash, data] { try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true) }
             for name in ["a.cache", "b.cache"] { try Data(("synthetic update " + name).utf8).write(to: source.appendingPathComponent(name)) }
             let mover = UpdateCheckMover(root: transaction, trash: trash); movers.append(mover)
-            let storage = StorageReviewService(dataDirectory: data, mover: mover); services.append(storage)
-            try storage.registerScope(.init(directory: source, kind: .rebuildableCache)); storage.scan(kinds: [.rebuildableCache])
-            guard await wait({ !storage.isScanning && storage.report?.stage == .report }), let report = storage.report else { throw UpdateCheckError.missingFixture }
-            storage.selectAll(report.candidates); storage.prepareProcessing(); storage.executeConfirmedPlan()
+            let storage = SpaceCleaningModel(dataDirectory: data, homeDirectory: transaction.appendingPathComponent("home"), mover: mover); services.append(storage)
+            storage.startScan(); await storage.waitUntilIdle()
+            guard storage.screen == .results, storage.items.count == 2 else { throw UpdateCheckError.missingFixture }
+            storage.resultTab = .reviewable; storage.toggleVisibleSelection(); storage.requestCleanup()
             guard await wait({ mover.entered }) else { throw UpdateCheckError.missingFixture }
-            let installed = try makeApp(transaction.appendingPathComponent("app"), storage: storage); apps.append(installed)
+            let installed = try makeApp(transaction.appendingPathComponent("app"), cleaning: storage); apps.append(installed)
             _ = await wait { !installed.notifier.pending.isEmpty }
             installed.notifier.armClear()
             var installReplies: [Bool] = [], terminations = 0
@@ -232,16 +237,16 @@ import SwiftUI
             let installReply = installed.owner.applicationShouldTerminate(NSApp)
             _ = await wait { installed.model.calendar.ownNotificationsSuspendedForQuit }
             check(installReply == .terminateLater && installed.model.quitting && !installed.model.confirmingQuit
-                    && installed.owner.systemTerminationPending && installReplies.isEmpty && !installed.notifier.clearEntered && storage.isProcessing,
-                  "explicit Install and Relaunch skips generic quit consent but waits for the current health transaction before notifications")
+                    && installed.owner.systemTerminationPending && installReplies.isEmpty && !installed.notifier.clearEntered && storage.isBusy,
+                  "explicit Install and Relaunch skips generic quit consent but waits for the current cleaning transaction before notifications")
             let repeated = installed.owner.applicationShouldTerminate(NSApp)
             check(repeated == .terminateLater && !installed.model.confirmingQuit && installReplies.isEmpty,
                   "a repeated native termination request during update preparation cannot start another confirmation or reply early")
             mover.release()
             guard await wait({ installed.notifier.clearEntered }) else { throw UpdateCheckError.missingFixture }
-            let receipts = try JSONDecoder().decode([StorageReviewReceipt].self, from: Data(contentsOf: data.appendingPathComponent("storage-actions.json")))
-            check(!storage.isProcessing && mover.moves == 1 && receipts == storage.receipts && receipts.count == 1 && installReplies.isEmpty,
-                  "update relaunch waits for a durable health receipt, cancels the next file and still defers its OS reply for notification clearing")
+            let receipts = try SpaceCleaningHistoryStore(fileURL: data.appendingPathComponent("history.json")).records
+            check(!storage.isBusy && mover.moves == 1 && receipts.count == 1 && receipts.first?.state == .trashed && storage.batches.flatMap(\.items).map(\.id) == receipts.map(\.id) && installReplies.isEmpty,
+                  "update relaunch waits for a durable cleaning receipt, cancels the next file and still defers its OS reply for notification clearing")
             installed.notifier.releaseClear()
             let finished = await wait { installReplies == [true] }
             await installed.model.waitForQuitPreparation()
@@ -261,7 +266,7 @@ import SwiftUI
             app.owner.workbenchController?.window?.delegate = nil; app.owner.workbenchController?.window?.close(); app.owner.workbenchController = nil
             app.owner.closeOverlay(render: false); app.owner.panel.orderOut(nil); app.owner.toastTask?.cancel()
         }
-        for service in services { await service.stopForQuit() }
+        for service in services { await service.prepareForQuit() }
         try? FileManager.default.removeItem(at: root)
         return (count, failures)
     }
@@ -271,7 +276,7 @@ import SwiftUI
         let device: DeviceStatusModel; let system: UpdateCheckCalendar
         let deviceNotifications: UpdateCheckDeviceNotifications; let aiNotifications: UpdateCheckAINotifications
     }
-    private static func makeApp(_ directory: URL, storage: StorageReviewService? = nil) throws -> UpdateCheckApp {
+    private static func makeApp(_ directory: URL, cleaning: SpaceCleaningModel? = nil) throws -> UpdateCheckApp {
         let owner = LauncherController(dataDirectory: directory.appendingPathComponent("Launcher"))
         owner.configurePanel(); owner.scanning = true; try owner.store.save(owner.configuration)
         let system = UpdateCheckCalendar(), notifier = UpdateCheckReminderNotifications(), calendarDirectory = directory.appendingPathComponent("Calendar")
@@ -285,9 +290,8 @@ import SwiftUI
         try JSONEncoder().encode(sources).write(to: sourcesDirectory.appendingPathComponent("sources.json"))
         let deviceNotifications = UpdateCheckDeviceNotifications(), aiNotifications = UpdateCheckAINotifications()
         let device = DeviceStatusModel(dataDirectory: directory.appendingPathComponent("Device"), notifications: deviceNotifications)
-        let health = HealthCenterModel(device: device, dataDirectory: directory.appendingPathComponent("Health"), storageService: storage)
         let ai = AIUsageModel(dataDirectory: aiDirectory, startServices: false, notifications: aiNotifications)
-        let model = WorkbenchAppModel(owner: owner, calendar: calendar, ai: ai, device: device, health: health, startServices: false)
+        let model = WorkbenchAppModel(owner: owner, calendar: calendar, ai: ai, device: device, cleaning: cleaning, startServices: false)
         model.route = .overview; owner.workbenchController = WorkbenchWindowController(owner: owner, model: model, autosavesFrame: false)
         owner.replyToSystemTermination = { _ in }; owner.terminateApplication = {}
         return .init(owner: owner, model: model, notifier: notifier, device: device, system: system, deviceNotifications: deviceNotifications, aiNotifications: aiNotifications)
@@ -365,25 +369,21 @@ private enum UpdateCheckError: Error { case engineStart, missingFixture, unsafeP
     func requestPermission() async throws -> Bool { requests += 1; return false }
     func deliver(_ event: AIQuotaAlertEvent) async throws {}
 }
-private final class UpdateCheckMover: StorageReviewFileMoving, @unchecked Sendable {
+private final class UpdateCheckMover: SpaceCleaningFileOperating, @unchecked Sendable {
     private let condition = NSCondition(), root: URL, trash: URL
     private var released = false, enteredValue = false, movesValue = 0, timedOutValue = false
-    init(root: URL, trash: URL) { self.root = root.resolvingSymlinksInPath(); self.trash = trash }
+    init(root: URL, trash: URL) { self.root = root; self.trash = trash }
     var entered: Bool { condition.lock(); defer { condition.unlock() }; return enteredValue }
     var moves: Int { condition.lock(); defer { condition.unlock() }; return movesValue }
     var timedOut: Bool { condition.lock(); defer { condition.unlock() }; return timedOutValue }
     func release() { condition.lock(); released = true; condition.broadcast(); condition.unlock() }
     func moveToTrash(_ source: URL) throws -> URL {
-        guard source.resolvingSymlinksInPath().path.hasPrefix(root.path + "/") else { throw UpdateCheckError.unsafePath }
+        guard source.path.hasPrefix(root.path + "/"), trash.path.hasPrefix(root.path + "/") else { throw UpdateCheckError.unsafePath }
         condition.lock(); movesValue += 1; enteredValue = true
         let deadline = Date().addingTimeInterval(12)
         while !released { if !condition.wait(until: deadline), !released { timedOutValue = true; condition.unlock(); throw UpdateCheckError.timedOut } }
         condition.unlock()
         let destination = trash.appendingPathComponent(UUID().uuidString)
         try FileManager.default.moveItem(at: source, to: destination); return destination
-    }
-    func moveBack(_ source: URL, to destination: URL) throws {
-        guard source.resolvingSymlinksInPath().path.hasPrefix(root.path + "/"), destination.deletingLastPathComponent().resolvingSymlinksInPath().path.hasPrefix(root.path + "/") else { throw UpdateCheckError.unsafePath }
-        try FileManager.default.moveItem(at: source, to: destination)
     }
 }

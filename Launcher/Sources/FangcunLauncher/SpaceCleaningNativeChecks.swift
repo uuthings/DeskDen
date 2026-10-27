@@ -73,9 +73,9 @@ import LauncherCore
                       "\(id) changes its visible background on hover without moving its hit area")
             }
             app.navigate(.overview)
-            _ = await settle(window) { exists("home-open-health", in: host) }
-            check(try await hoverBackground("home-open-health", host: host, window: window, output: output),
-                  "home's primary health action has visible hover feedback")
+            _ = await settle(window) { exists("home-open-cleaning", in: host) }
+            check(try await hoverBackground("home-open-cleaning", host: host, window: window, output: output),
+                  "home's primary cleaning action has visible hover feedback")
             let homeBoundaryIDs = ["fc.page.home", "fc.home.agenda", "fc.home.calendar.strip", "home-device-detail"]
             let homeBoundaryFrames = homeBoundaryIDs.map { frame($0, in: host) }
             let homePageScroll = objects(host).compactMap { $0 as? NSScrollView }.max { $0.bounds.width * $0.bounds.height < $1.bounds.width * $1.bounds.height }
@@ -123,7 +123,7 @@ import LauncherCore
                       "\(id) does not gain a second hover border or card background")
             }
             app.navigate(.overview)
-            _ = await settle(window) { exists("home-open-health", in: host) }
+            _ = await settle(window) { exists("home-open-cleaning", in: host) }
             try capture(host: host, name: "home-window", output: output)
             app.navigate(.calendar); calendar.goToToday()
             let day = calendar.displayCalendar.dateComponents([.year, .month, .day], from: Date())
@@ -142,16 +142,6 @@ import LauncherCore
                 _ = await settle(window) { exists("fc.calendar.workspace", in: host) }
             }
             window.setContentSize(NSSize(width: 1120, height: 758))
-            app.navigate(.health)
-            _ = await settle(window) { exists("health-start", in: host) }
-            for id in ["health-start", "health-open-space-cleaning"] {
-                check(try await hoverBackground(id, host: host, window: window, output: output),
-                      "\(id) shows a themed hover background")
-            }
-            check(NSImage(systemSymbolName: "internaldrive", accessibilityDescription: nil) != nil,
-                  "health cleanup icon exists in the running system symbol set")
-            check(healthCleanupGlyphsAligned(host: host, window: window),
-                  "health cleanup button paints its icon and title centered together with a normal gap")
             app.navigate(.cleaning)
             _ = await settle(window) { exists("space-cleaning-start", in: host) }
             cleaning.editScope(custom: true)
@@ -173,9 +163,12 @@ import LauncherCore
             cleaning.cancelScope()
 
             let sizes: [(String, NSSize)] = [("window", .init(width: 1120, height: 758)), ("compact", .init(width: 900, height: 620)), ("large", .init(width: 1728, height: 978))]
+            var ordinaryOverviewFrames: [String: [NSRect?]] = [:]
+            let stableOverviewIDs = ["space-cleaning-disk-occupancy", "space-cleaning-home-intro", "space-cleaning-mode-cleanup", "space-cleaning-mode-largeFiles"]
             for (name, size) in sizes {
                 window.setContentSize(size)
                 _ = await settle(window) { exists("space-cleaning-start", in: host) }
+                ordinaryOverviewFrames[name] = stableOverviewIDs.map { frame($0, in: host) }
                 let metrics = WorkbenchShellMetrics(viewport: size)
                 let contentWidth = min(1360, size.width - metrics.sidebarWidth - 2 - metrics.contentGutter * 2)
                 let module = frame("space-cleaning", in: host)
@@ -185,9 +178,7 @@ import LauncherCore
                       "\(name) cleaning preserves the production sidebar width")
                 check(host.bounds.size == size, "\(name) cleaning keeps the native viewport size")
                 for result in homeLayoutChecks(in: host) { check(result.0, "\(name) global home " + result.1) }
-                if name != "compact" {
-                    for result in scopeTileLayoutChecks(in: host) { check(result.0, "\(name) global home " + result.1) }
-                }
+                for result in scopeTileLayoutChecks(in: host) { check(result.0, "\(name) global home " + result.1) }
                 try capture(host: host, name: "start-\(name)", output: output)
             }
             cleaning.selectScanMode(.largeFiles)
@@ -195,11 +186,31 @@ import LauncherCore
                 window.setContentSize(size)
                 _ = await settle(window) { exists("space-cleaning-large-file-options", in: host) }
                 for result in homeLayoutChecks(in: host) { check(result.0, "\(name) large-file home " + result.1) }
+                check(stableOverviewIDs.enumerated().allSatisfy { index, id in
+                    ordinaryOverviewFrames[name]?[index].flatMap { before in frame(id, in: host).map { after in
+                        abs(before.minX - after.minX) < 1 && abs(before.maxY - after.maxY) < 1 &&
+                        abs(before.width - after.width) < 1 && abs(before.height - after.height) < 1
+                    } } == true
+                }, "\(name) changing scan mode leaves the overview and mode controls at the same position and size")
+                for result in largeFileControlChecks(in: host) { check(result.0, "\(name) large-file setup " + result.1) }
                 check(enabled("space-cleaning-start", in: host) == true && cleaning.items.isEmpty,
                       "\(name) large-file setup keeps scanning explicit and its primary action available")
                 try capture(host: host, name: "large-file-home-" + name, output: output)
             }
             cleaning.selectScanMode(.cleanup)
+            var roomyPreparationHeight: CGFloat?
+            for height in stride(from: 620.0, through: 920.0, by: 100) {
+                window.setContentSize(NSSize(width: 1120, height: height))
+                _ = await settle(window) { host.bounds.height == height }
+                for result in homeLayoutChecks(in: host) { check(result.0, "\(Int(height))-point viewport " + result.1) }
+                if height >= 720, let currentHeight = frame("space-cleaning-home-surface", in: host)?.height {
+                    if let roomyPreparationHeight {
+                        check(abs(currentHeight - roomyPreparationHeight) < 2,
+                              "extra window height does not create blank space between preparation content and its actions")
+                    }
+                    roomyPreparationHeight = currentHeight
+                }
+            }
             window.setContentSize(NSSize(width: 1120, height: 758))
             owner.configuration.settings.workbenchAppearance = .light; app.syncAppearance()
             _ = await settle(window) { exists("space-cleaning-start", in: host) }
@@ -546,22 +557,6 @@ import LauncherCore
             check(cleaning.requiresRescan && cleaning.selectedCount == 0, "restoration invalidates stale cleanup selection")
             check(calendarSystem.requests == 0 && calendarNotifications.requests == 0 && !app.device.isSampling,
                   "cleaning UI fixtures do not request calendar access or start device sampling")
-            app.openHealth(); app.health.showOverview()
-            _ = await settle(window) { exists("health-overview-factor-storage", in: host) }
-            check(DeviceHealthFactor.allCases.allSatisfy {
-                exists("health-factor-deduction-" + $0.rawValue, in: host) && exists("health-factor-basis-" + $0.rawValue, in: host)
-            }, "each health factor exposes its own deduction state and scoring details")
-            check(!objects(host).contains { object in
-                guard object.responds(to: NSSelectorFromString("accessibilityLabel")),
-                      let label = object.value(forKey: "accessibilityLabel") as? String else { return false }
-                return label.contains("返回空间清理") || label.contains("返回设备状态")
-            }, "health opened from cleaning has no cross-module return menu")
-            try capture(host: host, name: "health-factor-deductions", output: output)
-            app.health.scoreDetail = .storage
-            _ = await settle(window) { exists("health-score-detail-storage", in: host) }
-            check(exists("health-score-detail-storage", in: host), "storage scoring rules open in their own detail instead of expanding below the cards")
-            try capture(host: host, name: "health-score-detail", output: output)
-            app.health.scoreDetail = nil
             app.navigate(.cleaning)
             await cleaning.prepareForQuit()
             print("DETAIL space-cleaning owned-view evidence=\(output.path); real fixture scan and transactions; no actual user Trash; manual screenshot review remains separate")
@@ -577,32 +572,6 @@ import LauncherCore
             try? await Task.sleep(for: .milliseconds(20))
         } while ContinuousClock.now < deadline
         return predicate()
-    }
-    /// A SwiftUI Button exposes a combined AX action, not its decorative image
-    /// and Text separately. Verify the actual rendered icon/title ink instead
-    /// of silently skipping geometry assertions for unavailable AX children.
-    private static func healthCleanupGlyphsAligned(host: NSView, window: NSWindow) -> Bool {
-        guard let screen = frame("health-open-space-cleaning", in: host), screen.width < 160,
-              abs(screen.height - 32) < 1 else { return false }
-        let rect = host.convert(window.convertFromScreen(screen), from: nil)
-        guard let bitmap = host.bitmapImageRepForCachingDisplay(in: rect) else { return false }
-        host.cacheDisplay(in: rect, to: bitmap)
-        let sx = CGFloat(bitmap.pixelsWide) / rect.width, sy = CGFloat(bitmap.pixelsHigh) / rect.height
-        var minX = CGFloat.greatestFiniteMagnitude, maxX: CGFloat = 0
-        var minY = CGFloat.greatestFiniteMagnitude, maxY: CGFloat = 0
-        var iconPixels = 0, textPixels = 0
-        for y in Int(4 * sy)..<Int((rect.height - 4) * sy) {
-            for x in Int(4 * sx)..<Int((rect.width - 4) * sx) {
-                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
-                      color.redComponent > 0.65, color.greenComponent > 0.70, color.blueComponent > 0.65 else { continue }
-                let px = CGFloat(x) / sx, py = CGFloat(y) / sy
-                minX = min(minX, px); maxX = max(maxX, px); minY = min(minY, py); maxY = max(maxY, py)
-                if px < 30 { iconPixels += 1 } else { textPixels += 1 }
-            }
-        }
-        print("DETAIL health cleanup painted content button=\(screen) ink=\(minX),\(minY)—\(maxX),\(maxY) iconPixels=\(iconPixels) textPixels=\(textPixels)")
-        return iconPixels > 12 && textPixels > 40 && abs((minX + maxX) / 2 - rect.width / 2) < 2.5 &&
-            abs((minY + maxY) / 2 - rect.height / 2) < 2.5
     }
     /// Compare an empty padding strip from the production view before/after
     /// an OS-delivered mouse move. Text color changes alone cannot pass this.
@@ -747,17 +716,48 @@ import LauncherCore
         let occupancy = frame("space-cleaning-disk-occupancy", in: host)
         let intro = frame("space-cleaning-home-intro", in: host)
         let buttonContained = module.flatMap { outer in start.map { outer.insetBy(dx: -1, dy: -1).contains($0) } } ?? false
+        let scope = frame("space-cleaning-scope-options", in: host) ?? frame("space-cleaning-scope-editor", in: host)
+        let actions = frame("space-cleaning-home-actions", in: host)
+        let scopeFits = scope.flatMap { scope in actions.map { scope.minY >= $0.maxY - 1 } } ?? false
+        let scopeActionGap = scope.flatMap { scope in actions.map { scope.minY - $0.maxY } }
         return [
             (homeRulesStayWithCard(in: host), "keeps the rules link within 35 pt of the card"),
             (surface.flatMap { card in module.map { card.height >= min(360, $0.height * 0.65) } } ?? false,
              "gives the scan preparation card useful vertical space"),
             (buttonContained, "keeps the scan button inside the visible module"),
-            // The accessibility bounds may omit the ring's outer padding;
-            // both the 112-point and 132-point layouts must remain readable.
+            (surface.flatMap { card in module.map { $0.insetBy(dx: -1, dy: -1).contains(card) } } ?? false,
+             "bounds the preparation surface by the actual available viewport"),
+            (!scopeFits || scopeActionGap.map { $0 >= 8 && $0 <= 20 } == true,
+             "places visible scope content directly above its actions without a blank filler area"),
+            (scopeFits || exists("space-cleaning-scope-scroll-hint", in: host),
+             "identifies overflowing scope content with a visible scrolling hint"),
+            // The ring keeps its intrinsic size in both scan modes. A short
+            // viewport scrolls the document instead of shrinking the overview.
             (occupancy.flatMap { ring in surface.map { $0.contains(ring) && ring.width >= 96 && ring.width <= 133 } } ?? false,
              "keeps the actual disk occupancy ring inside the preparation card"),
             (occupancy.flatMap { ring in intro.map { $0.minX > ring.maxX && !$0.intersects(ring) } } ?? false,
              "separates the storage readouts from the occupancy ring")
+        ]
+    }
+    private static func largeFileControlChecks(in host: NSView) -> [(Bool, String)] {
+        let modeIDs = ["space-cleaning-mode-cleanup", "space-cleaning-mode-largeFiles"]
+        let modeFrames = modeIDs.compactMap { frame($0, in: host) }
+        let presetIDs = ["space-cleaning-preset-100", "space-cleaning-preset-500", "space-cleaning-preset-1gb"]
+        let presetFrames = presetIDs.compactMap { frame($0, in: host) }
+        let fieldIDs = ["space-cleaning-minimum-size", "space-cleaning-maximum-size", "space-cleaning-size-unit"]
+        let fieldFrames = fieldIDs.compactMap { frame($0, in: host) }
+        let options = frame("space-cleaning-large-file-options", in: host)
+        let all = presetFrames + fieldFrames
+        let expectedSingleRow = (frame("space-cleaning-home-surface", in: host)?.width ?? 0) >= 600
+        return [
+            (modeFrames.count == 2 && modeFrames.allSatisfy { abs($0.height - 32) < 1 && abs($0.width - 140) < 1 },
+             "uses bounded, standard-height mode controls"),
+            (presetFrames.count == 3 && fieldFrames.count == 3 && all.allSatisfy { abs($0.height - 32) < 1 },
+             "gives presets, range inputs and unit selection the same 32-point height"),
+            (!expectedSingleRow || (all.count == 6 && all.allSatisfy { abs($0.midY - all[0].midY) < 1 }),
+             "keeps presets and size range on one row whenever the complete controls fit"),
+            (options.map { outer in all.count == 6 && all.allSatisfy { outer.insetBy(dx: -1, dy: -1).contains($0) } } ?? false,
+             "keeps every size control inside its options container")
         ]
     }
     private static func scopeTileLayoutChecks(in host: NSView) -> [(Bool, String)] {

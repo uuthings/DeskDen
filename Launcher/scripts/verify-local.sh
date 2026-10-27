@@ -34,7 +34,7 @@ python3 ./scripts/check-update-config.py > "$verification_dir/update-config-chec
 python3 ../tools/test-prepare-update-feed.py > "$verification_dir/update-preparation-checks.log" 2>&1
 zsh ./scripts/check-app-icons.sh > "$verification_dir/app-icon-checks.log" 2>&1
 swift test > "$verification_dir/core-tests.log" 2>&1
-# Full mounted health and expanded AI checks are DEBUG-only. Keep their result
+# Full mounted workbench and expanded AI checks are DEBUG-only. Keep their result
 # separate from the production Release executable instead of reporting 0/0 as coverage.
 ./scripts/build-local.sh "$verification_dir/Debug/方寸.app" debug > "$verification_dir/debug-build.log" 2>&1
 "$verification_dir/Debug/方寸.app/Contents/MacOS/FangcunLauncher" --self-check > "$verification_dir/debug-native-checks.log" 2>&1

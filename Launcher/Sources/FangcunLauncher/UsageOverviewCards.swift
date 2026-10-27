@@ -28,6 +28,37 @@ struct UsageCardGrid: Layout {
     }
 }
 
+/// An unconfigured group occupies one source slot, just like a connected card.
+/// The entire surface opens configuration; there is no second nested button.
+struct UsageEmptySourceCard: View {
+    let title: String
+    let description: String
+    let actionTitle: String
+    let symbol: String
+    @Environment(\.workbenchPalette) private var palette
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Image(systemName: symbol)
+                .font(.system(size: 22)).foregroundStyle(palette.accent)
+                .frame(width: 32, height: 32, alignment: .leading)
+                .accessibilityHidden(true)
+                .padding(.bottom, 12)
+            Text(title).font(.system(size: 13, weight: .medium))
+                .foregroundStyle(palette.text).padding(.bottom, 8)
+            Text(description).font(.system(size: 12)).foregroundStyle(palette.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 12)
+            Label(actionTitle, systemImage: "plus")
+                .font(.system(size: 12, weight: .medium)).foregroundStyle(palette.accent)
+                .frame(height: 28)
+        }
+        .padding(14)
+        .frame(width: UsageCardGrid.cardSize.width, height: UsageCardGrid.cardSize.height, alignment: .topLeading)
+        .background(WorkbenchMaterialSurface(kind: .card, radius: 15))
+        .contentShape(RoundedRectangle(cornerRadius: 15))
+    }
+}
+
 struct UsageSourceIcon: View {
     @ObservedObject var appearance: UsagePresentationModel
     let icon: UsageCardIcon
@@ -98,7 +129,7 @@ struct UsageAIQuotaCard: View {
             }.font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
                 .padding(.top, 8).overlay(alignment: .top) { Rectangle().fill(palette.line).frame(height: 1) }
         }
-        .foregroundStyle(palette.text).padding(14).frame(width: 248, height: 208, alignment: .topLeading)
+        .foregroundStyle(palette.text).padding(14).frame(width: UsageCardGrid.cardSize.width, height: UsageCardGrid.cardSize.height, alignment: .topLeading)
         .background(WorkbenchMaterialSurface(kind: .card, radius: 15))
         .contentShape(RoundedRectangle(cornerRadius: 15))
     }
@@ -198,7 +229,7 @@ struct ProviderQuotaCard: View {
             }.font(.system(size: 11)).foregroundStyle(state.refresh.authenticationRequired || state.refresh.failureCount > 0 ? palette.warning : palette.muted)
                 .padding(.top, 8).overlay(alignment: .top) { Rectangle().fill(palette.line).frame(height: 1) }
         }
-        .foregroundStyle(palette.text).padding(14).frame(width: 248, height: 208, alignment: .topLeading)
+        .foregroundStyle(palette.text).padding(14).frame(width: UsageCardGrid.cardSize.width, height: UsageCardGrid.cardSize.height, alignment: .topLeading)
         .background(WorkbenchMaterialSurface(kind: .card, radius: 15))
         .contentShape(RoundedRectangle(cornerRadius: 15))
     }

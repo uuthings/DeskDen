@@ -10,7 +10,7 @@ import LauncherCore
         let root=FileManager.default.temporaryDirectory.appendingPathComponent("fangcun-exit-lifecycle-\(UUID().uuidString)").resolvingSymlinksInPath()
         var apps:[QuitCheckApp]=[]
         var movers:[QuitCheckMover]=[]
-        var services:[StorageReviewService]=[]
+        var services:[SpaceCleaningModel]=[]
         do {
             // Hold the actual cancellation API while a concurrent refresh and
             // activation callback try to replace the local notification plan.
@@ -56,17 +56,19 @@ import LauncherCore
 
             // The OS request must wait for both durable processing completion and
             // the notification cancellation boundary, without ending this process.
-            let transactionRoot=root.appendingPathComponent("system-quit"),source=transactionRoot.appendingPathComponent("selected-source"),trash=transactionRoot.appendingPathComponent("fake-trash"),data=transactionRoot.appendingPathComponent("storage")
+            let rawTransaction=root.appendingPathComponent("system-quit")
+            try FileManager.default.createDirectory(at:rawTransaction,withIntermediateDirectories:true)
+            guard let transactionRoot=SpaceCleaningScanner.canonicalURL(rawTransaction) else {throw QuitCheckError.missingReport}
+            let source=transactionRoot.appendingPathComponent("home/Downloads"),trash=transactionRoot.appendingPathComponent("fake-trash"),data=transactionRoot.appendingPathComponent("storage")
             for url in [source,trash,data] {try FileManager.default.createDirectory(at:url,withIntermediateDirectories:true)}
             for name in ["a.cache","b.cache"] {try Data(("exit fixture "+name).utf8).write(to:source.appendingPathComponent(name))}
             let mover=QuitCheckMover(root:transactionRoot,trash:trash);movers.append(mover)
-            let service=StorageReviewService(dataDirectory:data,mover:mover);services.append(service)
-            try service.registerScope(.init(directory:source,kind:.rebuildableCache))
-            service.scan(kinds:[.rebuildableCache])
-            guard await wait({!service.isScanning && service.report?.stage == .report}),let report=service.report else {throw QuitCheckError.missingReport}
-            service.selectAll(report.candidates);service.prepareProcessing();service.executeConfirmedPlan()
+            let service=SpaceCleaningModel(dataDirectory:data,homeDirectory:transactionRoot.appendingPathComponent("home"),mover:mover);services.append(service)
+            service.startScan();await service.waitUntilIdle()
+            guard service.screen == .results,service.items.count == 2 else {throw QuitCheckError.missingReport}
+            service.resultTab = .reviewable;service.toggleVisibleSelection();service.requestCleanup()
             let moving=await wait {mover.entered}
-            let app=try makeApp(transactionRoot.appendingPathComponent("app"),storage:service);apps.append(app)
+            let app=try makeApp(transactionRoot.appendingPathComponent("app"),cleaning:service);apps.append(app)
             _=await wait {!app.notifier.pending.isEmpty}
             var replies:[Bool]=[],terminateCalls=0
             app.owner.replyToSystemTermination={replies.append($0)}
@@ -80,12 +82,12 @@ import LauncherCore
             _=app.owner.applicationShouldTerminate(NSApp);app.model.confirmQuit();app.model.confirmQuit()
             await settle()
             await app.model.calendar.refresh();await settle()
-            check(moving && app.model.quitting && app.model.calendar.ownNotificationsSuspendedForQuit && replies.isEmpty && !app.notifier.clearEntered && service.isProcessing,
-                  "confirmed system quit freezes notifications and waits for the current real health transaction")
+            check(moving && app.model.quitting && app.model.calendar.ownNotificationsSuspendedForQuit && replies.isEmpty && !app.notifier.clearEntered && service.isBusy,
+                  "confirmed system quit freezes notifications and waits for the current real cleaning transaction")
             mover.release()
             let cancellingNotifications=await wait {app.notifier.clearEntered}
-            let savedReceipts=try JSONDecoder().decode([StorageReviewReceipt].self,from:Data(contentsOf:data.appendingPathComponent("storage-actions.json")))
-            check(cancellingNotifications && !service.isProcessing && savedReceipts == service.receipts && service.receipts.count == 1 && mover.moves == 1 && replies.isEmpty,
+            let savedReceipts=try SpaceCleaningHistoryStore(fileURL:data.appendingPathComponent("history.json")).records
+            check(cancellingNotifications && !service.isBusy && savedReceipts.count == 1 && savedReceipts.first?.state == .trashed && service.batches.flatMap(\.items).map(\.id) == savedReceipts.map(\.id) && mover.moves == 1 && replies.isEmpty,
                   "system exit still waits for notifications after one durable receipt and skips the next file")
             app.notifier.releaseClear()
             let approved=await wait {replies == [true]}
@@ -104,7 +106,9 @@ import LauncherCore
             _=await wait {failure.notifier.clearEntered}
             failure.notifier.releaseClear(failing:true)
             let recovered=await wait {!failure.model.quitting && !failure.model.calendar.ownNotificationsSuspendedForQuit && failure.notifier.pending.count == 1}
-            check(recovered && failureReplies == [false] && !failure.model.confirmingQuit && failure.model.message?.contains("未能暂停") == true,
+            let recoveryMessageShown = failure.model.message?.hasPrefix("退出前数据保存或提醒暂停未完成：") == true
+            print("DETAIL quit-cancellation recovery=\(recovered) replies=\(failureReplies) confirming=\(failure.model.confirmingQuit) quitting=\(failure.model.quitting) notificationsSuspended=\(failure.model.calendar.ownNotificationsSuspendedForQuit) pending=\(failure.notifier.pending.count) message=\(failure.model.message ?? "<none>")")
+            check(recovered && failureReplies == [false] && !failure.model.confirmingQuit && recoveryMessageShown,
                   "failed notification cancellation cancels native quit and restores the app and filtered schedule")
 
             let menu=try makeApp(root.appendingPathComponent("menu-quit"));apps.append(menu)
@@ -125,7 +129,7 @@ import LauncherCore
             app.owner.workbenchController?.window?.delegate=nil;app.owner.workbenchController?.window?.close();app.owner.workbenchController=nil
             app.owner.closeOverlay(render:false);app.owner.panel.orderOut(nil);app.owner.toastTask?.cancel()
         }
-        for service in services {await service.stopForQuit()}
+        for service in services {await service.prepareForQuit()}
         try? FileManager.default.removeItem(at:root)
         return(count,failures)
     }
@@ -138,7 +142,7 @@ import LauncherCore
         let deviceNotifications:QuitCheckDeviceNotifications
         let aiNotifications:QuitCheckAINotifications
     }
-    private static func makeApp(_ directory:URL,storage:StorageReviewService?=nil) throws -> QuitCheckApp {
+    private static func makeApp(_ directory:URL,cleaning:SpaceCleaningModel?=nil) throws -> QuitCheckApp {
         let owner=LauncherController(dataDirectory:directory.appendingPathComponent("Launcher"))
         owner.configurePanel();owner.scanning=true
         try owner.store.save(owner.configuration)
@@ -154,9 +158,8 @@ import LauncherCore
         try JSONEncoder().encode(sources).write(to:aiSources.appendingPathComponent("sources.json"))
         let deviceNotifications=QuitCheckDeviceNotifications(),aiNotifications=QuitCheckAINotifications()
         let device=DeviceStatusModel(dataDirectory:directory.appendingPathComponent("Device"),notifications:deviceNotifications)
-        let health=HealthCenterModel(device:device,dataDirectory:directory.appendingPathComponent("Health"),storageService:storage)
         let ai=AIUsageModel(dataDirectory:aiDirectory,startServices:false,notifications:aiNotifications)
-        let model=WorkbenchAppModel(owner:owner,calendar:calendar,ai:ai,device:device,health:health,startServices:false)
+        let model=WorkbenchAppModel(owner:owner,calendar:calendar,ai:ai,device:device,cleaning:cleaning,startServices:false)
         model.route = .settings
         owner.workbenchController=WorkbenchWindowController(owner:owner,model:model,autosavesFrame:false)
         owner.replyToSystemTermination={_ in};owner.terminateApplication={}
@@ -212,26 +215,22 @@ private enum QuitCheckError:Error {case missingReport,missingDraft,cancellationF
     func requestPermission() async throws -> Bool {requests += 1;return false}
     func deliver(_ event:AIQuotaAlertEvent) async throws {}
 }
-private final class QuitCheckMover:StorageReviewFileMoving,@unchecked Sendable {
+private final class QuitCheckMover:SpaceCleaningFileOperating,@unchecked Sendable {
     private let condition=NSCondition()
     private let root:URL,trash:URL
     private var released=false,enteredValue=false,timedOutValue=false,movesValue=0
-    init(root:URL,trash:URL){self.root=root.resolvingSymlinksInPath();self.trash=trash}
+    init(root:URL,trash:URL){self.root=root;self.trash=trash}
     var entered:Bool {condition.lock();defer{condition.unlock()};return enteredValue}
     var moves:Int {condition.lock();defer{condition.unlock()};return movesValue}
     var timedOut:Bool {condition.lock();defer{condition.unlock()};return timedOutValue}
     func release(){condition.lock();released=true;condition.broadcast();condition.unlock()}
     func moveToTrash(_ source:URL) throws -> URL {
-        guard source.resolvingSymlinksInPath().path.hasPrefix(root.path+"/") else {throw QuitCheckError.unsafePath}
+        guard source.path.hasPrefix(root.path+"/"),trash.path.hasPrefix(root.path+"/") else {throw QuitCheckError.unsafePath}
         condition.lock();movesValue += 1;enteredValue=true
         let deadline=Date().addingTimeInterval(8)
         while !released {if !condition.wait(until:deadline),!released {timedOutValue=true;condition.unlock();throw QuitCheckError.timeout}}
         condition.unlock()
         let destination=trash.appendingPathComponent(UUID().uuidString)
         try FileManager.default.moveItem(at:source,to:destination);return destination
-    }
-    func moveBack(_ source:URL,to destination:URL) throws {
-        guard source.resolvingSymlinksInPath().path.hasPrefix(root.path+"/"),destination.deletingLastPathComponent().resolvingSymlinksInPath().path.hasPrefix(root.path+"/") else {throw QuitCheckError.unsafePath}
-        try FileManager.default.moveItem(at:source,to:destination)
     }
 }

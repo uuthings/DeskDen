@@ -2,24 +2,17 @@ import AppKit
 import SwiftUI
 import LauncherCore
 
-/// The window shell has one set of metrics for every module. Large displays give
-/// navigation a little more breathing room without enlarging page typography.
+/// Resizing gives space to page content, never to window chrome or navigation.
 struct WorkbenchShellMetrics {
-    let expanded: Bool
-    let compact: Bool
     let chromeHeight: CGFloat
     let contentGutter: CGFloat
     let sidebarWidth: CGFloat
 
     init(viewport: CGSize) {
-        expanded = viewport.width >= 1350 && viewport.height >= 800
-        compact = viewport.width < 1000
-        chromeHeight = expanded ? 50 : 46
+        chromeHeight = 46
         // Fixed reading margins are independent of scrollbar presence.
-        contentGutter = (expanded ? 28 : compact ? 20 : 24) + 11
-        sidebarWidth = expanded
-            ? min(280, 216 + max(0, viewport.width - 1350) / 12).rounded()
-            : compact ? 160 : 184
+        contentGutter = 35
+        sidebarWidth = 184
     }
 }
 
@@ -61,24 +54,24 @@ struct WorkbenchRootView: View {
     var body: some View {
         GeometryReader { viewport in
             let metrics = WorkbenchShellMetrics(viewport: viewport.size)
-            let expanded = metrics.expanded
-            let compact = metrics.compact
             let chromeHeight = metrics.chromeHeight
             let gutter = metrics.contentGutter
-            let pageInsets = EdgeInsets(top:expanded ? 26:compact ? 20:22,leading:gutter,bottom:expanded || compact ? 20:16,trailing:gutter)
+            let pageInsets = EdgeInsets(top:22,leading:gutter,bottom:16,trailing:gutter)
             ZStack(alignment: .topLeading) {
                 WorkbenchSceneBackground(theme: model.theme, motionEnabled: model.backgroundMotion && !model.reduceMotion, active: model.windowVisible)
                 VStack(spacing: 0) {
-                    chrome(expanded: expanded).frame(height: chromeHeight)
+                    chrome.frame(height: chromeHeight)
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("workbench-chrome")
                         .background(WorkbenchMaterialSurface(kind: .chrome, radius: 0))
                         .overlay(alignment:.bottom) {Rectangle().fill(palette.line).frame(height:1)}
                     HStack(spacing: 0) {
-                        sidebar(expanded: expanded).frame(width: metrics.sidebarWidth)
+                        sidebar.frame(width: metrics.sidebarWidth)
                             .background(WorkbenchMaterialSurface(kind: .sidebar, radius: 0))
                             .overlay(alignment:.trailing) {Rectangle().fill(palette.line).frame(width:1)}
                             .accessibilityElement(children: .contain)
                             .accessibilityIdentifier("workbench-sidebar")
-                        content(gutter: gutter, expanded: expanded, compact:compact)
+                        content
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                             .environment(\.workbenchPageInsets,pageInsets)
                     }
@@ -92,8 +85,8 @@ struct WorkbenchRootView: View {
                 if model.confirmingQuit { WorkbenchQuitConfirmation(model: model) }
             }
             .environment(\.workbenchScale, 1)
-            .environment(\.workbenchDeviceExpanded, expanded)
-            .environment(\.workbenchContentHeight, max(0, viewport.size.height - chromeHeight - 2 - (expanded ? 26:compact ? 20:22) - (expanded || compact ? 20:16)))
+            .environment(\.workbenchDeviceExpanded, false)
+            .environment(\.workbenchContentHeight, max(0, viewport.size.height - chromeHeight - 2 - 22 - 16))
             .environment(\.workbenchPageScrollHeight, max(0, viewport.size.height - chromeHeight - 2))
         }
         .clipShape(RoundedRectangle(cornerRadius: model.isFullScreen ? 0 : WorkbenchViewport.windowRadius))
@@ -109,12 +102,12 @@ struct WorkbenchRootView: View {
         .onChange(of: model.route) { _, _ in model.brandMenuPresented = false }
         .onChange(of: model.windowVisible) { _, visible in if !visible { model.brandMenuPresented = false } }
     }
-    private func chrome(expanded: Bool) -> some View {
+    private var chrome: some View {
         HStack(spacing: 12) {
             HStack(spacing: 8) {
                 WorkbenchBrandMark(pointSize: 25)
                 Text("方寸").font(.system(size: 12, weight: .medium))
-                Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")
+                Text("V" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"))
                     .font(.system(size: 11)).foregroundStyle(palette.muted)
             }.padding(.leading, 4).frame(height: 32)
                 .accessibilityElement(children: .combine).accessibilityIdentifier("window-brand")
@@ -127,12 +120,12 @@ struct WorkbenchRootView: View {
             WorkbenchWindowIconControls(model: model)
         }.padding(.horizontal, 14)
     }
-    @ViewBuilder private func content(gutter: CGFloat, expanded: Bool, compact:Bool) -> some View {
+    @ViewBuilder private var content: some View {
         if model.route == .device {
-            DeviceModuleView(model: model.device, onOpenNetwork:{model.navigate(.network)},onOpenHealth:model.openHealth, requestedDetail:$model.deviceDetail,requestedDetailReturnTitle:model.requestedReadingReturnTitle,onCloseRequestedDetail:model.closeRequestedDeviceDetail)
+            DeviceModuleView(model: model.device, onOpenNetwork:{model.navigate(.network)},onOpenCleaning:{model.navigate(.cleaning)}, requestedDetail:$model.deviceDetail,requestedDetailReturnTitle:model.requestedReadingReturnTitle,onCloseRequestedDetail:model.closeRequestedDeviceDetail)
                 .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.top)
         } else if model.route == .cleaning {
-            SpaceCleaningModuleView(model:model.cleaning,onLegacyHistory:model.health.storage.receipts.isEmpty ? nil:{model.navigate(.health);model.health.showResults(kind:.files)})
+            SpaceCleaningModuleView(model:model.cleaning)
                 .workbenchPageCanvas()
                 .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.top)
         } else if model.route == .network {
@@ -144,9 +137,8 @@ struct WorkbenchRootView: View {
               WorkbenchScrollView {
                 Group {
                     switch model.route {
-                    case .overview: WorkbenchOverview(device: model.device, calendar: model.calendar, health:model.health,context:model.context,navigate:model.navigate,openHealth:model.openHealth,openDevice:model.openDeviceReading)
+                    case .overview: WorkbenchOverview(device: model.device, calendar: model.calendar,context:model.context,navigate:model.navigate,openDevice:model.openDeviceReading)
                     case .device: EmptyView()
-                    case .health: HealthCenterView(model:model.health,onReadDevice:model.openHealthReading,onOpenCleaning:{model.navigate(.cleaning)})
                     case .cleaning: EmptyView()
                     case .calendar: CalendarModuleView(model: model.calendar,context:model.context,returnToSettingsPrivacy:{model.navigate(.settings);model.settingsTab = .privacy})
                     case .network: EmptyView()
@@ -167,18 +159,15 @@ struct WorkbenchRootView: View {
                 .onReceive(model.calendar.$showSources.removeDuplicates()) {_ in if model.route == .calendar {resetToTop()}}
                 .onReceive(model.vault.$showingProtection.removeDuplicates()) {_ in if model.route == .vault {resetToTop()}}
                 .onReceive(model.cleaning.$screen.removeDuplicates()) {_ in if model.route == .cleaning {resetToTop()}}
-                .onReceive(model.health.$phase.removeDuplicates()) {_ in if model.route == .health {resetToTop()}}
-                .onReceive(model.health.$category.removeDuplicates()) {_ in if model.route == .health {resetToTop()}}
-                .onReceive(model.health.$resultKind.removeDuplicates()) {_ in if model.route == .health {resetToTop()}}
             }
         }
     }
-    private func sidebar(expanded: Bool) -> some View {
+    private var sidebar: some View {
         VStack(alignment:.leading,spacing:6) {
             if model.route == .settings {
                 Button {model.returnFromSettings()} label:{
                     HStack(spacing:10) {Image(systemName:"arrow.left").frame(width:18).accessibilityHidden(true);Text("返回方寸");Spacer(minLength:0)}
-                        .padding(.horizontal,12).frame(height:expanded ? 46:42)
+                        .padding(.horizontal,12).frame(height:42)
                         .contentShape(RoundedRectangle(cornerRadius:9))
                 }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 9)).foregroundStyle(palette.secondary)
                 ForEach(WorkbenchSettingsTab.allCases,id:\.self) {tab in
@@ -187,8 +176,8 @@ struct WorkbenchRootView: View {
                             Image(systemName:tab.symbol).font(.system(size:16,weight:.light)).frame(width:18)
                                 .foregroundStyle(model.settingsTab == tab ? palette.accent:palette.secondary)
                                 .accessibilityHidden(true)
-                            Text(tab.title).font(.system(size:expanded ? 13:12));Spacer(minLength:0)
-                        }.padding(.horizontal,12).frame(height:expanded ? 46:42)
+                            Text(tab.title).font(.system(size:12));Spacer(minLength:0)
+                        }.padding(.horizontal,12).frame(height:42)
                             .foregroundStyle(model.settingsTab == tab ? palette.text:palette.secondary)
                             .background {if model.settingsTab == tab {WorkbenchMaterialSurface(kind:.selected,radius:9)}}
                             .contentShape(RoundedRectangle(cornerRadius:9))
@@ -197,31 +186,31 @@ struct WorkbenchRootView: View {
                 }
                 Spacer(minLength:24)
             } else {
-                ForEach([WorkbenchRoute.overview,.device,.health,.cleaning,.calendar,.ai,.network,.vault],id:\.self) {route in navigation(route,expanded:expanded)}
-                navigation(.cards,expanded:expanded)
+                ForEach([WorkbenchRoute.overview,.device,.cleaning,.calendar,.ai,.network,.vault],id:\.self) {route in navigation(route)}
+                navigation(.cards)
                 Spacer(minLength:0)
                 Button {model.launcher()} label:{
                     HStack(spacing:10) {
                         Image(systemName:"command").font(.system(size:16,weight:.light)).frame(width:18)
                             .accessibilityHidden(true)
-                        Text("启动器").font(.system(size:expanded ? 13:12));Spacer(minLength:0)
-                    }.padding(.horizontal,12).frame(height:expanded ? 46:42)
+                        Text("启动器").font(.system(size:12));Spacer(minLength:0)
+                    }.padding(.horizontal,12).frame(height:42)
                         .contentShape(RoundedRectangle(cornerRadius:9))
                 }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 9)).foregroundStyle(palette.muted).accessibilityLabel("启动器").accessibilityIdentifier("navigation-launcher")
-                navigation(.settings,expanded:expanded)
+                navigation(.settings)
             }
         }.padding(.horizontal,12).padding(.top,22).padding(.bottom,15)
     }
-    private func navigation(_ route: WorkbenchRoute, expanded: Bool) -> some View {
-        Button { if route == .health {model.openHealth()} else if route == .ai {model.openUsageOverview()} else {model.navigate(route)} } label: {
+    private func navigation(_ route: WorkbenchRoute) -> some View {
+        Button { if route == .ai {model.openUsageOverview()} else {model.navigate(route)} } label: {
             HStack(spacing: 10) {
                 Image(systemName: route.symbol).font(.system(size: 16, weight: .light)).frame(width: 18)
                     .foregroundStyle(model.route == route ? palette.accent : palette.secondary)
                     .accessibilityHidden(true)
-                Text(route == .overview ? "首页" : route == .vault ? "私密空间" : route.title).font(.system(size: expanded ? 13 : 12))
+                Text(route == .overview ? "首页" : route == .vault ? "私密空间" : route.title).font(.system(size: 12))
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 12).frame(height: expanded ? 46 : 42)
+            .padding(.horizontal, 12).frame(height: 42)
             .foregroundStyle(model.route == route ? palette.text : palette.secondary)
             .background {
                 if model.route == route { WorkbenchMaterialSurface(kind: .selected, radius: 9) }

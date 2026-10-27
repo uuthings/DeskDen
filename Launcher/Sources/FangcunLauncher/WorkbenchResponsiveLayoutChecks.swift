@@ -16,7 +16,7 @@ enum WorkbenchResponsiveLayoutChecks {
             check(false, "responsive layout fixture has a mounted workbench")
             return (count, failures)
         }
-        guard !model.modals.isPresented, model.health.phase == .overview, !model.device.isSampling else {
+        guard !model.modals.isPresented, !model.device.isSampling else {
             check(false, "responsive layout fixture is idle with services disabled and no open modal")
             return (count, failures)
         }
@@ -28,79 +28,89 @@ enum WorkbenchResponsiveLayoutChecks {
         }
         // Alternate widths in the same hosting view. A stale initial 864 pt
         // state therefore fails the actual compact ratio and summary checks.
-        let sizes: [(window: NSSize, page: CGFloat, sidebar: CGFloat, ring: CGFloat, button: CGFloat)] = [
-            (.init(width: 1120, height: 758), 864, 184, 146, 126),
-            (.init(width: 960, height: 720), 736, 160, 126, 120),
-            (.init(width: 1728, height: 993), 1360, 248, 164, 126),
-            (.init(width: 1920, height: 1080), 1360, 264, 164, 126),
-            (.init(width: 960, height: 720), 736, 160, 126, 120)
+        let sizes: [(window: NSSize, page: CGFloat)] = [
+            (.init(width: 1120, height: 758), 864),
+            (.init(width: 960, height: 720), 704),
+            (.init(width: 1349, height: 900), 1093),
+            (.init(width: 1350, height: 900), 1094),
+            (.init(width: 1351, height: 900), 1095),
+            (.init(width: 1728, height: 993), 1360),
+            (.init(width: 1920, height: 1080), 1360),
+            (.init(width: 1120, height: 758), 864),
+            (.init(width: 960, height: 720), 704)
         ]
         var calendarWidths: [(page: CGFloat, month: CGFloat, side: CGFloat)] = []
         for sample in sizes {
             let label = "\(Int(sample.window.width))×\(Int(sample.window.height))"
             window.setContentSize(sample.window)
-            model.ai.showOverview(); model.navigate(.ai)
+            model.openUsageOverview()
             _ = await wait(window) {
-                guard let left = frame("fc.ai.overview.tokens", in: host), let right = frame("fc.ai.overview.models", in: host) else { return false }
-                return abs(left.width + right.width + 12 - sample.page) < 2
+                frame("fc.page.usage", in: host).map { abs($0.width - sample.page) < 2 } == true
             }
-            let left = frame("fc.ai.overview.tokens", in: host), right = frame("fc.ai.overview.models", in: host)
-            let sidebar = frame("workbench-sidebar", in: host)
-            check(sidebar.map { abs($0.width - sample.sidebar) < 1 } == true,
-                  "mounted shared navigation uses the balanced \(Int(sample.sidebar)) pt width in \(label)")
-            let ratio: CGFloat = sample.page < 800 ? 1.25 : 1.55
-            let expectedLeft = (sample.page - 12) * ratio / (1 + ratio)
-            check(left.map { abs($0.width - expectedLeft) < 2 } == true &&
-                  right.map { abs($0.width - (sample.page - 12 - expectedLeft)) < 2 } == true,
-                  "mounted AI Token/model columns use the frozen responsive widths in \(label)")
-            let total = frame("fc.ai.tokens.total", in: host), parts = frame("fc.ai.tokens.parts", in: host)
-            let summaryCorrect: Bool
-            if let total, let parts {
-                // Accessibility frames use AppKit screen coordinates: lower Y
-                // is below the total, unlike the screenshot's top-down origin.
-                summaryCorrect = sample.page < 800
-                    ? parts.maxY <= total.minY - 5 && abs(parts.minX - total.minX) < 2
-                    : parts.minY < total.maxY && total.minY < parts.maxY
-            } else { summaryCorrect = false }
-            check(summaryCorrect, "mounted AI token breakdown moves below its total only at compact width in \(label)")
-            print("DETAIL responsive AI \(label) columns=\(String(describing: left)) / \(String(describing: right)) total=\(String(describing: total)) parts=\(String(describing: parts))")
-
-            model.navigate(.health)
-            // Frozen care.css places the halo at inset:-7% on every side of
-            // the nominal ring. The combined accessibility element includes
-            // that 114% geometric envelope, rounded to AppKit screen pixels.
-            let haloInset: CGFloat = 0.07
-            let ringEnvelope = sample.ring * (1 + 2 * haloInset)
-            _ = await wait(window) {
-                frame("health-overview-score", in: host).map {
-                    abs($0.width - ringEnvelope) < 1 && abs($0.height - ringEnvelope) < 1
-                } == true
+            check(frame("fc.page.usage", in: host).map { abs($0.width - sample.page) < 2 } == true,
+                  "mounted usage overview follows the shared \(Int(sample.page)) pt content boundary in \(label)")
+            for route in WorkbenchRoute.allCases {
+                model.navigate(route)
+                _ = await wait(window) {
+                    frame("workbench-sidebar", in: host) != nil && frame("workbench-chrome", in: host) != nil
+                        && frame(route == .settings ? "settings-navigation-general" : "navigation-" + route.rawValue, in: host) != nil
+                }
+                let chrome = frame("workbench-chrome", in: host), sidebar = frame("workbench-sidebar", in: host)
+                let navigation = frames(prefix: route == .settings ? "settings-navigation-" : "navigation-", in: host)
+                let hostScreen = window.convertToScreen(host.convert(host.bounds, to: nil))
+                // SwiftUI exposes a containing AX group's children as its
+                // frame, so the chrome's accessibility height can be its 32 pt
+                // controls rather than the full surface. Measure the real
+                // content boundary below it, independent of the control glyphs.
+                let chromeHeight = sidebar.map { hostScreen.maxY - $0.maxY - 1 }
+                let chromeSurface = sidebar.map { CGRect(x: hostScreen.minX + 1, y: $0.maxY,
+                    width: hostScreen.width - 2, height: hostScreen.maxY - $0.maxY - 1) }
+                check(chromeHeight.map { abs($0 - 46) < 1 } == true
+                      && sidebar.map { abs($0.width - 184) < 1 && abs($0.minX - hostScreen.minX - 1) < 1 } == true
+                      && chromeSurface.flatMap { surface in chrome.map { surface.insetBy(dx: -0.5, dy: -0.5).contains($0) } } == true,
+                      "\(route.rawValue) preserves its 46 pt chrome and 184 pt sidebar across resize in \(label)")
+                let outerViewport = route == .cleaning ? nil : outerPageScrollView(in: host).map { $0.convert($0.bounds, to: host) }
+                print("DETAIL responsive shell \(route.rawValue) \(label) hostScreen=\(hostScreen) chromeAX=\(String(describing: chrome)) sidebarAX=\(String(describing: sidebar)) measuredChromeHeight=\(String(describing: chromeHeight)) outerViewport=\(String(describing: outerViewport))")
+                check(!navigation.isEmpty && navigation.allSatisfy { abs($0.height - 42) < 1 },
+                      "\(route.rawValue) keeps 42 pt navigation rows across resize in \(label)")
+                check(frame("navigation-health", in: host) == nil && !containsAccessibilityText("体检中心", in: host),
+                      "\(route.rawValue) exposes no obsolete health navigation or page in \(label)")
+                let version = "V" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")
+                check(accessibilityText("window-brand", in: host).contains(version),
+                      "\(route.rawValue) keeps the version's V prefix in the shared brand in \(label)")
             }
-            let ring = frame("health-overview-score", in: host), start = frame("health-start", in: host)
-            let workspace = frame("health-workspace", in: host)
-            let hostScreenBounds = window.convertToScreen(host.convert(host.bounds, to: nil))
-            let workspaceTop = workspace.map { hostScreenBounds.maxY - $0.maxY }
-            // Health is an independent module: use the shared page heading
-            // without the former 28 pt return row and its 12 pt gap.
-            let expectedWorkspaceTop: CGFloat = sample.page > 1200 ? 149 : sample.page < 800 ? 139 : 141
-            check(workspaceTop.map { abs($0 - expectedWorkspaceTop) < 1 } == true,
-                  "mounted independent health workspace starts at the shared \(Int(expectedWorkspaceTop)) pt top without a cross-module return row in \(label)")
-            check(ring.map { abs($0.width - ringEnvelope) < 1 && abs($0.height - ringEnvelope) < 1 } == true,
-                  "mounted health overview score keeps its \(Int(sample.ring)) pt nominal ring with the frozen 7%-per-side halo envelope in \(label)")
-            check(start.map { abs($0.width - sample.button) < 2 && abs($0.height - 32) < 1 } == true,
-                  "mounted health start action has the frozen minimum width and 32 pt height in \(label)")
-            let factor = frame("health-overview-factor-storage", in: host), value = frame("health-overview-value-storage", in: host)
-            let inset: CGFloat = sample.page < 800 ? 12 : 14
-            check(factor.flatMap { card in value.map { abs($0.minX - card.minX - inset) < 1.5 } } == true,
-                  "mounted health factor uses the frozen compact/regular inner inset in \(label)")
-            print("DETAIL responsive health \(label) workspaceTop=\(String(describing: workspaceTop)) ringNominal=\(sample.ring) haloInset=\(haloInset) expectedRingEnvelope=\(ringEnvelope) ring=\(String(describing: ring)) start=\(String(describing: start)) factor=\(String(describing: factor)) value=\(String(describing: value))")
 
             model.navigate(.overview)
-            _ = await wait(window) { frame("fc.home.agenda", in: host) != nil }
+            _ = await wait(window) {
+                guard let status = frame("home-device-summary", in: host), let metrics = frame("home-device-metrics", in: host),
+                      frame("home-memory-ring", in: host) != nil, frame("home-pressure-summary", in: host) != nil else { return false }
+                return sample.page < 760 ? abs(status.width - sample.page) < 2 && abs(metrics.width - sample.page) < 2
+                    : abs(status.width + metrics.width + 12 - sample.page) < 3
+            }
+            let status = frame("home-device-summary", in: host), metrics = frame("home-device-metrics", in: host)
+            let memoryRing = frame("home-memory-ring", in: host), pressure = frame("home-pressure-summary", in: host)
+            check(memoryRing.flatMap { ring in pressure.map { text in
+                ring.maxX + 12 <= text.minX && min(ring.maxY, text.maxY) - max(ring.minY, text.minY) > 24
+            } } == true, "home memory ring and pressure explanation remain beside each other without vertical stacking in \(label)")
+            check(status.flatMap { card in memoryRing.flatMap { ring in pressure.map { text in
+                card.insetBy(dx: -1, dy: -1).contains(ring) && card.insetBy(dx: -1, dy: -1).contains(text)
+            } } } == true, "home memory ring and explanation stay inside their actual card in \(label)")
+            if sample.page < 760 {
+                check(status.flatMap { top in metrics.map { bottom in
+                    abs(top.width - sample.page) < 2 && abs(bottom.width - sample.page) < 2
+                        && abs(top.minX - bottom.minX) < 1 && bottom.maxY <= top.minY - 10
+                } } == true, "compact home reflows its two summary cards into full-width nonoverlapping rows in \(label)")
+            } else {
+                check(status.flatMap { left in metrics.map { right in
+                    abs(left.maxY - right.maxY) < 1 && abs(right.minX - left.maxX - 12) < 1
+                        && abs(left.width + right.width + 12 - sample.page) < 3
+                } } == true, "home summary cards share a top edge and a 12 pt horizontal gap in \(label)")
+            }
+            print("DETAIL home-summary \(label) status=\(String(describing: status)) metrics=\(String(describing: metrics)) ring=\(String(describing: memoryRing)) pressure=\(String(describing: pressure))")
             let events = frame("fc.home.agenda.events", in: host), reminders = frame("fc.home.agenda.reminders", in: host)
-            let listHeight: CGFloat = sample.page > 1200 ? 160 : 112
+            let listHeight: CGFloat = 112
             check(events.map { abs($0.height - listHeight) < 1 } == true && reminders.map { abs($0.height - listHeight) < 1 } == true,
-                  "mounted home schedule and reminder scroll viewports keep their frozen independent height in \(label)")
+                  "mounted home schedule and reminder scroll viewports keep their independent 112 pt height in \(label)")
             if sample.page > 1200 {
                 let agenda = frame("fc.home.agenda", in: host)
                 check(agenda.flatMap { card in
@@ -151,8 +161,7 @@ enum WorkbenchResponsiveLayoutChecks {
         } else { check(false, "calendar width verification covers both normal and large windows") }
         let scrolling = await checkFullPageScrolling(model: model, window: window, host: host)
         count += scrolling.count; failures += scrolling.failures
-        check(WorkbenchShellMetrics(viewport: .init(width: 3840, height: 2160)).sidebarWidth == 280,
-              "ultrawide navigation has a 280 pt upper bound instead of consuming unlimited content width")
+        check(WorkbenchRoute(rawValue: "health") == nil, "the obsolete health route is removed from the navigation model")
         print("Responsive layout checks: \(count - failures)/\(count) passed")
         return (count, failures)
     }
@@ -173,12 +182,14 @@ enum WorkbenchResponsiveLayoutChecks {
             model.deviceDetail = originalDetail; model.ai.manualDraft = originalManualDraft
             model.ai.show(originalDestination); model.settingsTab = originalSettingsTab
             model.calendar.showSources = originalCalendarSources; model.vault.showingProtection = originalVaultProtection
-            model.health.showOverview(); model.navigate(originalRoute)
+            model.navigate(originalRoute)
             model.device.dashboardScrollOffset = originalDeviceOffset
             window.setFrame(originalFrame, display: false)
         }
-        let routes: [(WorkbenchRoute, String)] = [(.overview, "fc.page.home"), (.device, "fc.page.device"), (.health, "health-center"), (.calendar, "fc.page.calendar"), (.ai, "fc.page.ai"), (.network, "fc.page.network"), (.vault, "fc.page.vault"), (.cards, ""), (.settings, "fc.page.settings.general")]
-        let samples: [(NSSize, CGFloat)] = [(.init(width: 1120, height: 758), 184), (.init(width: 960, height: 720), 160), (.init(width: 1728, height: 993), 248)]
+        // Cleaning is a viewport-sized workspace with a fixed page header and
+        // footer. Its intentional card-internal scroll regions have separate checks.
+        let routes: [(WorkbenchRoute, String)] = [(.overview, "fc.page.home"), (.device, "fc.page.device"), (.calendar, "fc.page.calendar"), (.ai, "fc.page.usage"), (.network, "fc.page.network"), (.vault, "fc.page.vault"), (.cards, ""), (.settings, "fc.page.settings.general")]
+        let samples: [(NSSize, CGFloat)] = [(.init(width: 1120, height: 758), 184), (.init(width: 960, height: 720), 184), (.init(width: 1728, height: 993), 184)]
         for (size, sidebarWidth) in samples {
             window.setContentSize(size)
             let label = "\(Int(size.width))×\(Int(size.height))"
@@ -228,7 +239,7 @@ enum WorkbenchResponsiveLayoutChecks {
         } else { check(false, "device detail-reset fixture has its real outer scroll viewport") }
 
         model.deviceDetail = nil; model.ai.showOverview(); model.navigate(.ai)
-        _ = await wait(window) { frame("fc.page.ai", in: host) != nil && outerPageScrollView(in: host).map { scrollExtent($0) > 20 } == true }
+        _ = await wait(window) { frame("fc.page.usage", in: host) != nil && outerPageScrollView(in: host).map { scrollExtent($0) > 20 } == true }
         if let oldScroll = outerPageScrollView(in: host) {
             model.ai.manualDraft.note = "Unsaved scroll-regression draft"
             let draft = model.ai.manualDraft, aiIdentity = ObjectIdentifier(model.ai)
@@ -237,7 +248,9 @@ enum WorkbenchResponsiveLayoutChecks {
             check(startedAtBottom, "the real AI overview starts this regression at a nonzero bottom offset")
             let oldOffset = oldScroll.contentView.bounds.origin.y
             model.ai.show(.provider(.codex))
-            let reset = await wait(window) { frame("fc.page.ai.codex", in: host) != nil && outerPageScrollView(in: host).map(isAtTop) == true }
+            // The unified usage container owns the outer page AX identifier;
+            // use the actual provider quota card to identify the mounted detail.
+            let reset = await wait(window) { frame("fc.ai.detail.quota.codex", in: host) != nil && outerPageScrollView(in: host).map(isAtTop) == true }
             let detailScroll = outerPageScrollView(in: host)
             check(reset && detailScroll === oldScroll && window.contentView === host,
                   "opening Codex details resets the same mounted generic page viewport to the top")
@@ -246,7 +259,7 @@ enum WorkbenchResponsiveLayoutChecks {
             check(ObjectIdentifier(model.ai) == aiIdentity && model.ai.manualDraft == draft
                   && model.ai.selectedPeriod == selectedPeriod && model.ai.selectedProvider == selectedProvider,
                   "AI detail navigation preserves the same model, unsaved form draft and activity filters")
-            print("DETAIL ai-detail-scroll oldY=\(oldOffset) detailY=\(detailScroll?.contentView.bounds.origin.y ?? -1) detailExtent=\(detailScroll.map(scrollExtent) ?? -1)")
+            print("DETAIL ai-detail-scroll oldY=\(oldOffset) detailY=\(detailScroll?.contentView.bounds.origin.y ?? -1) detailExtent=\(detailScroll.map(scrollExtent) ?? -1) providerCard=\(String(describing: frame("fc.ai.detail.quota.codex", in: host))) sameScroll=\(detailScroll === oldScroll) sameHost=\(window.contentView === host)")
         } else { check(false, "AI detail-reset fixture has its real outer scroll viewport") }
 
         model.calendar.showSources = false; model.navigate(.calendar)
@@ -313,6 +326,22 @@ enum WorkbenchResponsiveLayoutChecks {
             if object.responds(to: NSSelectorFromString("accessibilityChildren")), let children = object.value(forKey: "accessibilityChildren") as? [NSObject] { pending.append(contentsOf: children) }
         }
         return false
+    }
+
+    private static func accessibilityText(_ identifier: String, in root: NSView) -> String {
+        var pending: [NSObject] = [root], seen = Set<ObjectIdentifier>(), result: [String] = []
+        while let object = pending.popLast(), seen.count < 8_192 {
+            guard seen.insert(ObjectIdentifier(object)).inserted else { continue }
+            if object.responds(to: NSSelectorFromString("accessibilityIdentifier")),
+               object.value(forKey: "accessibilityIdentifier") as? String == identifier {
+                for selector in ["accessibilityLabel", "accessibilityValue"] where object.responds(to: NSSelectorFromString(selector)) {
+                    if let text = object.value(forKey: selector) as? String { result.append(text) }
+                }
+            }
+            if let view = object as? NSView { pending.append(contentsOf: view.subviews) }
+            if object.responds(to: NSSelectorFromString("accessibilityChildren")), let children = object.value(forKey: "accessibilityChildren") as? [NSObject] { pending.append(contentsOf: children) }
+        }
+        return result.joined(separator: " ")
     }
 
     private static func wait(_ window: NSWindow, until condition: () -> Bool) async -> Bool {

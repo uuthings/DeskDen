@@ -4,28 +4,37 @@ import LauncherCore
 
 struct SpaceCleaningModuleView: View {
     @ObservedObject var model: SpaceCleaningModel
-    var onLegacyHistory: (() -> Void)? = nil
     @Environment(\.workbenchPalette) private var palette
+    @State private var measuredHeights: [SpaceCleaningMeasuredRegion: CGFloat] = [:]
+
+    private var isPreparing: Bool { [.start, .scope].contains(model.screen) && model.dialog == nil }
+    private func panelHeight(in viewport: CGFloat) -> CGFloat {
+        let available = max(0, viewport - (measuredHeights[.header] ?? 72) - (measuredHeights[.footer] ?? 36))
+        guard isPreparing, let document = measuredHeights[.homeDocument], let actions = measuredHeights[.homeActions] else { return available }
+        return min(available, document + actions + 12 + 28)
+    }
 
     var body: some View {
         GeometryReader { geometry in
-            let expanded = geometry.size.width >= 1_030 && geometry.size.height >= 724
-            let reconciliationHeight = model.isReconcilingHistory && model.screen != .history ? 44.0 : 0.0
-            let messageHeight = model.message == nil ? 0.0 : 54.0
-            let panelHeight = min(expanded ? 620.0 : 560.0, max(1, geometry.size.height - 104 - reconciliationHeight - messageHeight))
+            let height = panelHeight(in: geometry.size.height)
             VStack(alignment: .leading, spacing: 0) {
-                header
+                VStack(alignment: .leading, spacing: 0) {
+                header.fixedSize(horizontal: false, vertical: true)
                 if model.isReconcilingHistory && model.screen != .history {
                     HStack(spacing: 8) {
                         Text("正在核对历史项目").font(.system(size: 11)).foregroundStyle(palette.muted)
                         Button("停止核对", action: model.cancelHistoryVerification).buttonStyle(WBQuietButtonStyle())
-                    }.padding(.bottom, 12)
+                    }.padding(.bottom, 12).fixedSize(horizontal: false, vertical: true)
                 }
-                let compactHome = [.start, .scope].contains(model.screen) && model.dialog == nil
-                content(width: geometry.size.width, height: panelHeight, expanded: expanded)
-                    .frame(width: geometry.size.width, height: panelHeight, alignment: .top)
+                }.measureCleaningHeight(.header)
+                // Preparation uses its measured content height, bounded by the
+                // actual viewport. Other stages fill the available work area.
+                // Additional fields extend downward; the overview never shrinks.
+                content(width: geometry.size.width, height: height)
+                    .frame(width: geometry.size.width, height: height, alignment: .top)
+                VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 8) {
-                    if !compactHome {
+                    if !isPreparing {
                         Text(model.scopeSummary).lineLimit(1).truncationMode(.middle)
                         if model.screen == .results { Text(model.requiresRescan ? "· 需重新扫描" : "· 已检查") }
                     } else if let date = model.lastScanDate {
@@ -37,6 +46,7 @@ struct SpaceCleaningModuleView: View {
                     Button("覆盖范围与保留规则") { model.dialog = .rules }.buttonStyle(WBTextActionButtonStyle())
                         .disabled(model.isBusy).accessibilityIdentifier("space-cleaning-rules-link")
                 }.font(.system(size: 11)).foregroundStyle(palette.secondary).padding(.top, 12)
+                    .fixedSize(horizontal: false, vertical: true)
                 if let message = model.message {
                     HStack(alignment: .top, spacing: 8) {
                         Image(systemName: "info.circle")
@@ -44,13 +54,20 @@ struct SpaceCleaningModuleView: View {
                         Button { model.message = nil } label: { Image(systemName: "xmark") }
                             .buttonStyle(WBIconButtonStyle(size: 24)).accessibilityLabel("关闭提示")
                     }.font(.system(size: 11)).foregroundStyle(palette.secondary).padding(.top, 10)
+                        .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("space-cleaning-message")
                 }
+                }.measureCleaningHeight(.footer)
                 Spacer(minLength: 0)
             }.frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
         }.foregroundStyle(palette.text)
             .environment(\.workbenchScale, 1)
             .onAppear { model.refreshDisk() }
+            .onPreferenceChange(SpaceCleaningHeightPreference.self) { values in
+                for (region, value) in values where value.isFinite && value > 0 {
+                    if abs((measuredHeights[region] ?? 0) - value) > 0.25 { measuredHeights[region] = value }
+                }
+            }
             .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning")
     }
     private var subtitle: String {
@@ -86,22 +103,21 @@ struct SpaceCleaningModuleView: View {
             }
         }.help(capacityExplanation)
     }
-    @ViewBuilder private func content(width: CGFloat, height: CGFloat, expanded: Bool) -> some View {
+    @ViewBuilder private func content(width: CGFloat, height: CGFloat) -> some View {
         if let dialog = model.dialog, dialog != .confirm, !isPurpose(dialog) {
             SpaceCleaningSurface {
                 WorkbenchScrollView {
                     SpaceCleaningDialogContent(model: model, dialog: dialog)
                 }.scrollBounceBehavior(.basedOnSize)
-                Spacer(minLength: 0)
             }
         } else {
             switch model.screen {
-            case .start, .scope: home(width: width, height: height, expanded: expanded)
+            case .start, .scope: home(width: width, height: height)
             case .scanning: scanning(height: height)
             case .results: SpaceCleaningResultsView(model: model)
             case .processing: processing(height: height)
             case .completed: SpaceCleaningCompletionView(model: model)
-            case .history: SpaceCleaningHistoryView(model: model, onLegacyHistory: onLegacyHistory)
+            case .history: SpaceCleaningHistoryView(model: model)
             }
         }
     }
@@ -109,18 +125,28 @@ struct SpaceCleaningModuleView: View {
     private var editingScope: Bool { model.screen == .scope }
     private var displayedScope: CleaningScopeChoice { editingScope ? model.draftScope : model.scopeChoice }
     private var displayedLocations: [URL] { editingScope ? model.draftDirectories : model.customDirectories }
-    private func home(width: CGFloat, height: CGFloat, expanded: Bool) -> some View {
-        let heroHeight = model.scanMode == .largeFiles ? 112.0 : min(expanded ? 212.0 : 188.0, max(132, height - 376))
+    private func home(width: CGFloat, height: CGFloat) -> some View {
+        let documentViewport = max(0, height - (measuredHeights[.homeActions] ?? 32) - 12 - 28)
+        let overflowing = (measuredHeights[.homeDocument] ?? 0) > documentViewport + 1
         return SpaceCleaningSurface {
             VStack(alignment: .leading, spacing: 12) {
                 WorkbenchScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                storageOverview(width: width).frame(minHeight: heroHeight)
-                scanModeControls(expanded: expanded)
+                storageOverview(width: width)
+                scanModeControls
                 if model.scanMode == .largeFiles { largeFileControls }
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 14) {
-                        Text("扫描范围").font(.system(size: 12, weight: .medium))
+                        HStack(spacing: 8) {
+                            Text("扫描范围").font(.system(size: 12, weight: .medium))
+                            Text(displayedScope == .global ? "8 类常用位置" : "\(displayedLocations.count) 个位置")
+                                .font(.system(size: 11)).foregroundStyle(palette.muted)
+                            if overflowing {
+                                Label("向下滚动查看", systemImage: "arrow.down")
+                                    .font(.system(size: 11)).foregroundStyle(palette.muted)
+                                    .accessibilityIdentifier("space-cleaning-scope-scroll-hint")
+                            }
+                        }.lineLimit(1)
                         Spacer(minLength: 0)
                         HStack(spacing: 2) {
                             scopeButton("全局扫描", icon: "globe", selected: displayedScope == .global) {
@@ -133,14 +159,16 @@ struct SpaceCleaningModuleView: View {
                             .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.line))
                     }
                     if displayedScope == .custom {
-                        selectedLocations(width: width - 28, expanded: expanded)
+                        selectedLocations(width: width - 32)
                     } else {
-                        globalLocations(width: width - 28, expanded: expanded)
+                        globalLocations(width: width - 32)
                     }
                 }.accessibilityElement(children: .contain)
                     .accessibilityIdentifier(editingScope ? "space-cleaning-scope-editor" : "space-cleaning-scope-options")
-                }.padding(.trailing, 4)
-                }.scrollBounceBehavior(.basedOnSize).id(model.scanMode)
+                }.fixedSize(horizontal: false, vertical: true).padding(.trailing, 4)
+                    .measureCleaningHeight(.homeDocument)
+                }.scrollBounceBehavior(.basedOnSize)
+                    .accessibilityIdentifier("space-cleaning-home-scroll")
                 HStack(spacing: 10) {
                     Text(displayedScope == .global ? "未获权限的位置会在结果中说明" : "\(displayedLocations.count) 个位置 · 可在上方添加或移除")
                         .font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(2)
@@ -161,32 +189,35 @@ struct SpaceCleaningModuleView: View {
                         .buttonStyle(WBButtonStyle(primary: true))
                         .disabled(model.isBusy || model.largeFileRangeError != nil || (displayedScope == .custom && displayedLocations.isEmpty))
                         .accessibilityIdentifier("space-cleaning-start")
-                }.accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-home-actions")
+                }.fixedSize(horizontal: false, vertical: true)
+                    .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-home-actions")
+                    .measureCleaningHeight(.homeActions)
             }.padding(14)
         }
             .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-home-surface")
     }
-    private func scanModeControls(expanded: Bool) -> some View {
-        HStack(spacing: 12) {
+    private var scanModeControls: some View {
+        HStack(spacing: 8) {
             ForEach(SpaceCleaningScanMode.allCases, id: \.self) { mode in
                 Button { model.selectScanMode(mode) } label: {
-                    HStack(spacing: 10) {
+                    HStack(spacing: 8) {
                         Image(systemName: mode == .cleanup ? "sparkles" : "doc.text.magnifyingglass")
-                            .font(.system(size: 20, weight: .regular)).foregroundStyle(model.scanMode == mode ? palette.accent : palette.secondary)
-                            .frame(width: 28)
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(mode == .cleanup ? "普通清理" : "大文件扫描").font(.system(size: 12, weight: .medium))
-                            Text(mode == .cleanup ? "识别可重建缓存，逐项核对其余文件" : "按大小查找，所有结果由你选择")
-                                .font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(2)
-                        }.frame(maxWidth: .infinity, alignment: .leading)
-                        Image(systemName: model.scanMode == mode ? "checkmark.circle.fill" : "circle")
-                            .font(.system(size: 14)).foregroundStyle(model.scanMode == mode ? palette.accent : palette.muted)
-                    }.padding(.horizontal, 14).frame(maxWidth: .infinity).frame(height: expanded ? 84 : 76)
-                        .contentShape(RoundedRectangle(cornerRadius: 10))
-                }.buttonStyle(WBSelectableButtonStyle(selected: model.scanMode == mode, cornerRadius: 10))
+                            .font(.system(size: 14)).foregroundStyle(model.scanMode == mode ? palette.accent : palette.secondary)
+                            .frame(width: 16)
+                        Text(mode == .cleanup ? "普通清理" : "大文件扫描").font(.system(size: 12, weight: .medium))
+                        Image(systemName: "checkmark").font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(palette.accent).opacity(model.scanMode == mode ? 1 : 0)
+                    }.frame(width: 140, height: 32)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(palette.soft))
+                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(palette.controlBorder, lineWidth: 1))
+                        .contentShape(RoundedRectangle(cornerRadius: 8))
+                }.buttonStyle(WBSelectableButtonStyle(selected: model.scanMode == mode))
                     .accessibilityIdentifier("space-cleaning-mode-" + mode.rawValue)
                     .accessibilityValue(model.scanMode == mode ? "已选择" : "未选择")
             }
+            Text(model.scanMode == .cleanup ? "识别可重建缓存，逐项核对其余文件" : "按大小查找，所有结果由你选择")
+                .font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(2).padding(.leading, 4)
+            Spacer(minLength: 0)
         }.disabled(model.isBusy || editingScope)
     }
     private var diskUsed: UInt64? {
@@ -198,8 +229,8 @@ struct SpaceCleaningModuleView: View {
         return Double(used) / Double(total)
     }
     private func storageOverview(width: CGFloat) -> some View {
-        let size = model.scanMode == .largeFiles ? 112.0 : 132.0
-        return HStack(alignment: .center, spacing: width < 660 ? 20 : 30) {
+        let size = 132.0
+        return HStack(alignment: .center, spacing: 24) {
             ZStack {
                 Circle().stroke(palette.progressTrack, lineWidth: 8)
                 if let fraction = diskUsedFraction {
@@ -209,7 +240,7 @@ struct SpaceCleaningModuleView: View {
                 VStack(spacing: 5) {
                     HStack(alignment: .firstTextBaseline, spacing: 3) {
                         Text(diskUsedFraction.map { ($0 * 100).formatted(.number.precision(.fractionLength(1))) } ?? "—")
-                            .font(.system(size: model.scanMode == .largeFiles ? 28 : 31)).monospacedDigit()
+                            .font(.system(size: 31)).monospacedDigit()
                         if diskUsedFraction != nil { Text("%").font(.system(size: 12)).foregroundStyle(palette.secondary) }
                     }
                     Text(diskUsedFraction == nil ? "暂无容量读数" : "磁盘已用").font(.system(size: 11)).foregroundStyle(palette.muted)
@@ -221,19 +252,19 @@ struct SpaceCleaningModuleView: View {
             VStack(alignment: .leading, spacing: 0) {
                 Text(model.diskVolumeName ?? "当前用户目录所在卷").font(.system(size: 12, weight: .medium)).foregroundStyle(palette.muted)
                     .accessibilityIdentifier("space-cleaning-home-heading")
-                Text(model.scanMode == .largeFiles ? "找出大文件，核对用途后再整理" : "从缓存与闲置文件开始整理")
+                Text("查看空间占用，核对文件用途后再整理")
                     .font(.system(size: 12)).padding(.top, 4)
-                HStack(alignment: .top, spacing: width < 660 ? 20 : 30) {
+                HStack(alignment: .top, spacing: 24) {
                     storageValue("已用", value: diskUsed)
                     storageValue("可用", value: model.diskAvailable)
                     storageValue("总容量", value: model.diskTotal)
                 }.padding(.top, 14)
-                Text(model.scanMode == .largeFiles ? "扫描结果由你选择。" : "先扫描查看位置与用途，确认后再处理文件。")
+                Text("先扫描查看位置与用途，确认后再处理文件。")
                     .font(.system(size: 11)).foregroundStyle(palette.muted).padding(.top, 10)
             }.frame(maxWidth: 520, alignment: .leading)
                 .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-home-intro")
             Spacer(minLength: 0)
-        }.padding(.horizontal, width < 660 ? 4 : 20).help(capacityExplanation)
+        }.padding(.horizontal, 4).help(capacityExplanation)
     }
     private func storageValue(_ title: String, value: UInt64?) -> some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -243,50 +274,73 @@ struct SpaceCleaningModuleView: View {
             .accessibilityIdentifier("space-cleaning-disk-" + (title == "已用" ? "used" : title == "可用" ? "available" : "total"))
     }
     private var largeFileControls: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                ForEach(["100", "500"], id: \.self) { value in
-                    Button("≥ " + value + " MB") { model.setLargeFilePreset(value, unit: .mb) }.buttonStyle(WBButtonStyle(compact: true))
+        VStack(alignment: .leading, spacing: 8) {
+            // Only reflow when the complete set of standard-height controls no
+            // longer fits. The normal window keeps presets and range together.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 16) {
+                    largeFilePresets
+                    largeFileRange
+                    Spacer(minLength: 0)
                 }
-                Button("≥ 1 GB") { model.setLargeFilePreset("1", unit: .gb) }.buttonStyle(WBButtonStyle(compact: true))
-                Spacer(minLength: 0)
+                VStack(alignment: .leading, spacing: 8) {
+                    largeFilePresets
+                    largeFileRange
+                }
             }
-            HStack(spacing: 8) {
-                Text("大小范围").font(.system(size: 11)).foregroundStyle(palette.secondary)
-                sizeField("最小大小", value: $model.minimumFileSize)
-                    .accessibilityIdentifier("space-cleaning-minimum-size")
-                Text("至").font(.system(size: 11)).foregroundStyle(palette.muted)
-                sizeField("不限", value: $model.maximumFileSize).accessibilityLabel("最大文件大小，留空表示不限")
-                    .accessibilityIdentifier("space-cleaning-maximum-size")
-                WBSelect("文件大小单位", selection: $model.fileSizeUnit,
-                         options: CleaningFileSizeUnit.allCases.map { (value: $0, title: $0.rawValue) })
-                    .frame(width: 76, height: 32)
-                Spacer(minLength: 0)
-            }.controlSize(.regular).frame(minHeight: 32)
-            Text(model.largeFileRangeError ?? "按文件大小筛选；开发环境不展开。大小与磁盘占用分别显示，文件较大不代表可以删除。")
-                .font(.system(size: 11)).foregroundStyle(model.largeFileRangeError == nil ? palette.muted : palette.warning)
-                .fixedSize(horizontal: false, vertical: true)
+            if let error = model.largeFileRangeError {
+                Text(error).font(.system(size: 11)).foregroundStyle(palette.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("space-cleaning-size-error")
+            }
         }.disabled(model.isBusy || editingScope)
+            .help("按文件大小筛选；开发环境不展开。大小与磁盘占用分别显示，文件较大不代表可以删除。")
             .onChange(of: model.minimumFileSize) { _, _ in model.scanSettingsChanged() }
             .onChange(of: model.maximumFileSize) { _, _ in model.scanSettingsChanged() }
             .onChange(of: model.fileSizeUnit) { _, _ in model.scanSettingsChanged() }
             .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-large-file-options")
     }
+    private var largeFilePresets: some View {
+        HStack(spacing: 6) {
+            ForEach(["100", "500"], id: \.self) { value in
+                Button("≥ " + value + " MB") { model.setLargeFilePreset(value, unit: .mb) }
+                    .buttonStyle(WBButtonStyle())
+                    .accessibilityIdentifier("space-cleaning-preset-" + value)
+            }
+            Button("≥ 1 GB") { model.setLargeFilePreset("1", unit: .gb) }
+                .buttonStyle(WBButtonStyle())
+                .accessibilityIdentifier("space-cleaning-preset-1gb")
+        }.fixedSize()
+    }
+    private var largeFileRange: some View {
+        HStack(spacing: 8) {
+            Text("范围").font(.system(size: 11)).foregroundStyle(palette.secondary)
+            sizeField("最小大小", value: $model.minimumFileSize)
+                .accessibilityIdentifier("space-cleaning-minimum-size")
+            Text("—").font(.system(size: 11)).foregroundStyle(palette.muted)
+            sizeField("不限", value: $model.maximumFileSize).accessibilityLabel("最大文件大小，留空表示不限")
+                .accessibilityIdentifier("space-cleaning-maximum-size")
+            WBSelect("文件大小单位", selection: $model.fileSizeUnit,
+                     options: CleaningFileSizeUnit.allCases.map { (value: $0, title: $0.rawValue) })
+                .frame(width: 64, height: 32)
+                .accessibilityIdentifier("space-cleaning-size-unit")
+        }.fixedSize().controlSize(.regular)
+    }
     private func sizeField(_ title: String, value: Binding<String>) -> some View {
         TextField(title, text: value).textFieldStyle(.plain).font(.system(size: 12)).monospacedDigit()
-            .padding(.horizontal, 10).frame(width: 90, height: 32)
+            .padding(.horizontal, 10).frame(width: 76, height: 32)
             .background(WorkbenchMaterialSurface(kind: .control, radius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(palette.controlBorder, lineWidth: 1))
             .accessibilityLabel(title)
     }
-    private func globalLocations(width: CGFloat, expanded: Bool) -> some View {
+    private func globalLocations(width: CGFloat) -> some View {
         let locations: [(String, String, String, String)] = [
             ("downloads", "下载", "arrow.down.to.line", "安装包与下载文件"), ("desktop", "桌面", "desktopcomputer", "桌面文件与文件夹"),
             ("documents", "文稿", "doc.text", "文档与个人资料"), ("media", "图片与影音", "photo", "照片、视频与音乐"),
             ("caches", "应用缓存", "square.stack.3d.up", "核验可重建的缓存"), ("development", "开发与构建", "hammer", "检查构建缓存 · 保护依赖"),
             ("applications", "用户应用", "macwindow", "查看占用 · 保留应用"), ("archives", "归档与发布", "archivebox", "查看占用 · 保留原件")
         ]
-        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: width < 680 ? 2 : 4), spacing: 8) {
+        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: width < 560 ? 2 : 4), spacing: 8) {
             ForEach(locations, id: \.0) { id, title, icon, detail in
                 HStack(alignment: .center, spacing: 8) {
                     Image(systemName: icon).font(.system(size: 18, weight: .regular)).foregroundStyle(palette.secondary)
@@ -298,16 +352,16 @@ struct SpaceCleaningModuleView: View {
                         Text(detail).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(2)
                     }.frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-scope-copy-" + id)
-                }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, expanded ? 12 : 10).frame(height: expanded ? 80 : 72)
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).frame(height: 72)
                     .background(RoundedRectangle(cornerRadius: 8).fill(palette.soft))
                     .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-scope-tile-" + id)
             }
         }.accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-global-locations")
     }
-    private func selectedLocations(width: CGFloat, expanded: Bool) -> some View {
+    private func selectedLocations(width: CGFloat) -> some View {
         let columns = min(4, max(1, Int((width + 8) / 244)))
         let rows = Int(ceil(Double(displayedLocations.count) / Double(columns)))
-        let rowHeight = expanded ? 80.0 : 72.0
+        let rowHeight = 72.0
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(displayedLocations.isEmpty ? "添加想要检查的文件夹" : "已选 \(displayedLocations.count) 个位置" + (rows > 2 ? " · 向下滚动查看" : "")).font(.system(size: 11)).foregroundStyle(palette.muted)
@@ -478,4 +532,21 @@ struct SpaceCleaningProgressTrack: View {
 enum SpaceCleaningFormat {
     static func bytes(_ bytes: UInt64) -> String { ByteCountFormatter.string(fromByteCount: Int64(min(bytes, UInt64(Int64.max))), countStyle: .file) }
     static func date(_ date: Date) -> String { date.formatted(.dateTime.year().month().day().hour().minute()) }
+}
+
+
+private enum SpaceCleaningMeasuredRegion: Hashable { case header, footer, homeDocument, homeActions }
+private struct SpaceCleaningHeightPreference: PreferenceKey {
+    static let defaultValue: [SpaceCleaningMeasuredRegion: CGFloat] = [:]
+    static func reduce(value: inout [SpaceCleaningMeasuredRegion: CGFloat], nextValue: () -> [SpaceCleaningMeasuredRegion: CGFloat]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+private extension View {
+    func measureCleaningHeight(_ region: SpaceCleaningMeasuredRegion) -> some View {
+        background(GeometryReader { geometry in
+            Color.clear.preference(key: SpaceCleaningHeightPreference.self, value: [region: geometry.size.height])
+                .allowsHitTesting(false)
+        })
+    }
 }

@@ -34,7 +34,7 @@ enum SpaceCleaningDevelopmentPolicy {
         private struct Verdict { var reason: String? }
         private var directories: [String: Verdict] = [:]
         init() {}
-        mutating func reason(at url: URL, identity: StorageReviewFileIdentity? = nil) -> String? {
+        mutating func reason(at url: URL, identity: SpaceCleaningFileIdentity? = nil) -> String? {
             guard url.isFileURL else { return nil }
             if let reason = SpaceCleaningDevelopmentPolicy.namedReason(url.lastPathComponent) { return reason }
             if let verdict = directories[url.path] { return verdict.reason }

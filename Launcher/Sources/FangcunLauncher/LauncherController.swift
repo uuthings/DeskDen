@@ -291,7 +291,7 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
         return .terminateLater
     }
     /// Resolves existing drafts only. It never authorizes OS termination before
-    /// the health transaction and local notification barriers have completed.
+    /// the cleaning transaction and local notification barriers have completed.
     func resolveQuitDrafts() -> NSApplication.TerminateReply {
         if let workbenchController,workbenchController.model.modals.isPresented {
             workbenchController.present();return .terminateCancel

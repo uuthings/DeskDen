@@ -5,7 +5,7 @@ import LauncherCore
 struct DeviceModuleView: View {
     @ObservedObject var model: DeviceStatusModel
     var onOpenNetwork: () -> Void = {}
-    var onOpenHealth: () -> Void = {}
+    var onOpenCleaning: () -> Void = {}
     var onCloseRequestedDetail: () -> Void = {}
     var requestedDetailReturnTitle = "返回设备状态"
     var initialDetail: DeviceCardID? = nil
@@ -29,8 +29,8 @@ struct DeviceModuleView: View {
     @State private var gridHeight: CGFloat = 620
     @State private var contentWidth: CGFloat = 864
     private var s: DeviceSnapshot { model.snapshot }
-    init(model: DeviceStatusModel, onOpenNetwork: @escaping () -> Void = {}, onOpenHealth: @escaping () -> Void = {}, initialDetail: DeviceCardID? = nil, requestedDetail: Binding<DeviceCardID?> = .constant(nil), requestedDetailReturnTitle: String = "返回设备状态", onCloseRequestedDetail: @escaping () -> Void = {}) {
-        self.model = model; self.onOpenNetwork = onOpenNetwork; self.onOpenHealth = onOpenHealth
+    init(model: DeviceStatusModel, onOpenNetwork: @escaping () -> Void = {}, onOpenCleaning: @escaping () -> Void = {}, initialDetail: DeviceCardID? = nil, requestedDetail: Binding<DeviceCardID?> = .constant(nil), requestedDetailReturnTitle: String = "返回设备状态", onCloseRequestedDetail: @escaping () -> Void = {}) {
+        self.model = model; self.onOpenNetwork = onOpenNetwork; self.onOpenCleaning = onOpenCleaning
         self.initialDetail = initialDetail; self._requestedDetail = requestedDetail
         self.requestedDetailReturnTitle = requestedDetailReturnTitle; self.onCloseRequestedDetail = onCloseRequestedDetail
     }
@@ -123,7 +123,7 @@ struct DeviceModuleView: View {
             Button(action: closeDetail) { Label(detailWasRequested ? requestedDetailReturnTitle : "返回设备状态", systemImage: "arrow.left") }
                 .buttonStyle(WBButtonStyle(compact: true)).keyboardShortcut(.cancelAction).padding(.bottom, 12).accessibilityIdentifier("device-detail-back")
             WBPageHeader(title: card.title, subtitle: "\(s.deviceName) · \(s.chipName)") {
-                if card == .storage || card == .memory { Button { onOpenHealth() } label: { Label(card == .storage ? "前往体检中心" : "体检中心", systemImage: "heart.text.square") }.buttonStyle(WBButtonStyle(primary: card == .storage)).accessibilityIdentifier("device-detail-open-health") }
+                if card == .storage { Button { onOpenCleaning() } label: { Label("空间清理", systemImage: "internaldrive") }.buttonStyle(WBButtonStyle(primary: true)).accessibilityIdentifier("device-detail-open-cleaning") }
                 else if card == .thermal { Button { temperatureOpen = true } label: { Label("温度提醒", systemImage: "bell") }.buttonStyle(WBButtonStyle()) }
                 else if card == .processes { Button { model.refresh() } label: { Label("刷新", systemImage: "arrow.clockwise") }.buttonStyle(WBButtonStyle()) }
             }

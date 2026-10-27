@@ -119,15 +119,15 @@ private struct VaultLockedView:View {
                 Button(action:unlock){HStack{Spacer();if model.busy {ProgressView().controlSize(.small)}else{Label("解锁",systemImage:"lock.open")};Spacer()}}.buttonStyle(WBButtonStyle(primary:true)).disabled(model.busy || password.isEmpty)
                 if model.biometricEnabled {
                     if model.biometricAvailable {Button{password="";Task{_ = await model.unlockWithBiometrics()}}label:{Label("使用 Touch ID 解锁",systemImage:"touchid").frame(maxWidth:.infinity)}.buttonStyle(WBButtonStyle()).disabled(model.busy).padding(.top,8)}
-                    else if let reason=model.biometricUnavailableReason {Text(reason).font(.system(size:11)).foregroundStyle(palette.muted).multilineTextAlignment(.center).padding(.top,8)}
+                    else if let reason=model.biometricUnavailableReason {Text(reason).font(.system(size:11)).foregroundStyle(palette.muted).multilineTextAlignment(.center).lineLimit(nil).fixedSize(horizontal:false,vertical:true).padding(.top,8).accessibilityIdentifier("fc.vault.lock.biometric-reason")}
                 }
             } else {
                 Button{model.errorMessage=nil;model.sheet = .setup}label:{Label("设置独立密码",systemImage:"key").frame(maxWidth:.infinity)}.buttonStyle(WBButtonStyle(primary:true)).padding(.top,21)
             }
             if let error=model.errorMessage {Text(error).font(.system(size:11)).foregroundStyle(palette.critical).multilineTextAlignment(.center).fixedSize(horizontal:false,vertical:true).padding(.top,10)}
-            if let message=model.completionMessage {Text(message).font(.system(size:11)).foregroundStyle(palette.success).multilineTextAlignment(.center).padding(.top,10)}
+            if let message=model.completionMessage {Text(message).font(.system(size:11)).foregroundStyle(palette.success).multilineTextAlignment(.center).lineLimit(nil).fixedSize(horizontal:false,vertical:true).padding(.top,10)}
             HStack(spacing:16){Button("从备份恢复"){model.errorMessage=nil;model.sheet = .restore}.buttonStyle(WBQuietButtonStyle());if model.isConfigured {Button("忘记密码"){showForgot=true}.buttonStyle(WBQuietButtonStyle())}}.padding(.top,18)
-        }.frame(maxWidth:360).padding(.vertical,24)
+        }.frame(maxWidth:360).fixedSize(horizontal:false,vertical:true).padding(.vertical,24)
         .onAppear{focused=model.isConfigured}.task{await model.refreshBiometrics()}
         .modifier(VaultSensitiveState(model:model,clear:{password="";showForgot=false}))
         .workbenchModal(isPresented:$showForgot){WorkbenchDialogFrame(title:"忘记密码",dismiss:{showForgot=false}){Text("方寸不会保存或找回私密空间密码。若此前已开启 Touch ID，可在本机验证解锁；Touch ID 不能用于找回或修改遗忘的密码。你可以使用备份及其密码恢复；确认替换前会保留当前加密副本。").font(.system(size:12)).foregroundStyle(palette.secondary).lineSpacing(5)}actions:{Spacer();Button("知道了"){showForgot=false}.buttonStyle(WBButtonStyle(primary:true))}}

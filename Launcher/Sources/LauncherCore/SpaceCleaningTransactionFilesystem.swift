@@ -12,7 +12,7 @@ enum SpaceCleaningFilesystem {
     final class Directory {
         let descriptor: Int32
         let url: URL
-        let identity: StorageReviewFileIdentity
+        let identity: SpaceCleaningFileIdentity
         init(_ url: URL) throws {
             guard url.isFileURL else { throw Failure(message: "位置不是本机目录。") }
             var before = stat()
@@ -38,7 +38,7 @@ enum SpaceCleaningFilesystem {
             let actual = SpaceCleaningFilesystem.identity(info)
             return actual.device == identity.device && actual.inode == identity.inode && actual.mode == identity.mode
         }
-        func entry(_ name: String) -> StorageReviewFileIdentity? {
+        func entry(_ name: String) -> SpaceCleaningFileIdentity? {
             guard validName(name) else { return nil }
             var info = stat()
             guard name.withCString({ fstatat(descriptor, $0, &info, AT_SYMLINK_NOFOLLOW) }) == 0,
@@ -49,7 +49,7 @@ enum SpaceCleaningFilesystem {
 
     struct Node {
         var path: String
-        var identity: StorageReviewFileIdentity
+        var identity: SpaceCleaningFileIdentity
         var owner: UInt32
         var group: UInt32
         var flags: UInt32
@@ -65,7 +65,7 @@ enum SpaceCleaningFilesystem {
     /// lookup of a known Trash item while denying a new content open there.
     final class ObjectLease {
         let descriptor: Int32
-        init(_ url: URL, expected: StorageReviewFileIdentity) throws {
+        init(_ url: URL, expected: SpaceCleaningFileIdentity) throws {
             // lstat is metadata-only. Refuse a dataless object before any content
             // open could ask a File Provider to download it on our behalf.
             var before = stat()
@@ -91,14 +91,14 @@ enum SpaceCleaningFilesystem {
         !name.isEmpty && name != "." && name != ".." && !name.contains("/") && !name.contains("\0")
     }
     static func isCloudPlaceholder(flags: UInt32) -> Bool { SpaceCleaningScanner.isCloudPlaceholder(fileFlags: flags) }
-    static func identity(_ info: stat) -> StorageReviewFileIdentity {
+    static func identity(_ info: stat) -> SpaceCleaningFileIdentity {
         .init(device: UInt64(bitPattern: Int64(info.st_dev)), inode: UInt64(info.st_ino),
               sizeBytes: UInt64(max(0, info.st_size)), allocatedBytes: UInt64(max(0, info.st_blocks)) * 512,
               modifiedSeconds: Int64(info.st_mtimespec.tv_sec), modifiedNanoseconds: Int64(info.st_mtimespec.tv_nsec),
               changedSeconds: Int64(info.st_ctimespec.tv_sec), changedNanoseconds: Int64(info.st_ctimespec.tv_nsec),
               linkCount: UInt64(info.st_nlink), mode: UInt32(info.st_mode))
     }
-    static func capture(_ url: URL) -> StorageReviewFileIdentity? {
+    static func capture(_ url: URL) -> SpaceCleaningFileIdentity? {
         var info = stat()
         guard url.isFileURL, url.withUnsafeFileSystemRepresentation({ $0.map { lstat($0, &info) } ?? -1 }) == 0 else { return nil }
         return identity(info)
@@ -108,7 +108,7 @@ enum SpaceCleaningFilesystem {
         let result = url.withUnsafeFileSystemRepresentation { $0.map { lstat($0, &info) } ?? -1 }
         return result != 0 && errno == ENOENT
     }
-    static func sameDirectory(_ left: StorageReviewFileIdentity, _ right: StorageReviewFileIdentity) -> Bool {
+    static func sameDirectory(_ left: SpaceCleaningFileIdentity, _ right: SpaceCleaningFileIdentity) -> Bool {
         left.device == right.device && left.inode == right.inode && left.mode == right.mode && right.mode & UInt32(S_IFMT) == UInt32(S_IFDIR)
     }
     static func validateAncestors(_ candidate: SpaceCleaningCandidate) -> Bool {
@@ -125,7 +125,7 @@ enum SpaceCleaningFilesystem {
         }
         return true
     }
-    static func move(_ source: URL, to destination: URL, expected: StorageReviewFileIdentity) throws {
+    static func move(_ source: URL, to destination: URL, expected: SpaceCleaningFileIdentity) throws {
         let from = try Directory(source.deletingLastPathComponent())
         let to = try Directory(destination.deletingLastPathComponent())
         guard validName(source.lastPathComponent), validName(destination.lastPathComponent),
@@ -163,7 +163,7 @@ enum SpaceCleaningFilesystem {
 
     /// Reads complete content only for explicitly selected objects. Symbolic links
     /// are never followed for reading; package-local links are recorded as links.
-    static func snapshot(_ url: URL, expected: StorageReviewFileIdentity, allowRename: Bool,
+    static func snapshot(_ url: URL, expected: SpaceCleaningFileIdentity, allowRename: Bool,
                          isCancelled: () -> Bool, maximumNodes: Int = 100_000, lease suppliedLease: ObjectLease? = nil) throws -> Snapshot {
         guard !isCancelled() else { throw Failure(message: "操作已取消。") }
         let parent = try Directory(url.deletingLastPathComponent())

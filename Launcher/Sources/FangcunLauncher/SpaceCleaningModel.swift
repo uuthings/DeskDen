@@ -67,7 +67,7 @@ import Quartz
     private var operationDestination: CleaningScreen = .start
     private var scopePreferencesWritable = true
     private var task: Task<Void, Never>?
-    private var cancellation = StorageReviewCancellation()
+    private var cancellation = SpaceCleaningCancellation()
     private var generation = UUID()
     private var frozenForQuit = false
     private var previousScreen: CleaningScreen = .start
@@ -344,7 +344,7 @@ import Quartz
     func measureDirectorySize(_ id: UUID) {
         guard !isBusy, !frozenForQuit, let candidate = candidates[id], candidate.kind == .developmentEnvironment,
               candidate.isDirectory, candidate.group == .protected else { return }
-        cancellation = StorageReviewCancellation(); let token = cancellation
+        cancellation = SpaceCleaningCancellation(); let token = cancellation
         generation = UUID(); let run = generation
         measuringDirectoryID = id; directorySizes[id] = .init()
         task = Task { [weak self] in
@@ -402,7 +402,7 @@ import Quartz
         let scopes = selectedScopes(context)
         guard !scopes.isEmpty else { message = "请先选择要扫描的目录。"; return }
         generation = UUID(); let run = generation
-        cancellation = StorageReviewCancellation(); let token = cancellation
+        cancellation = SpaceCleaningCancellation(); let token = cancellation
         selectedIDs = []; confirmedIDs = []; detailID = nil; resultScrollID = nil; searchText = ""; onlySelected = false; resultTab = .recommended; items = []; recommendedIDs = []; automaticallySelectedIDs = []; candidates = [:]
         directorySizes = [:]; measuringDirectoryID = nil
         if scanMode == .largeFiles { resultTab = .reviewable; sortKey = .size; sortAscending = false }
@@ -448,7 +448,7 @@ import Quartz
     func confirmTestPurpose(_ id: UUID) {
         guard !isBusy, acknowledgement, dialog == .purpose(id), let candidate = candidates[id], candidate.canConfirmTestPurpose else { return }
         declarations.removeAll { $0.url == candidate.url }; declarations.append(.init(candidate: candidate))
-        let context = makeContext(); cancellation = StorageReviewCancellation(); let token = cancellation
+        let context = makeContext(); cancellation = SpaceCleaningCancellation(); let token = cancellation
         purposeReviewID = id
         task = Task { [weak self] in
             let fresh = await Task.detached(priority: .utility) {
@@ -561,7 +561,7 @@ import Quartz
         }
     }
     private func beginProcessing(count: Int) {
-        cancellation = StorageReviewCancellation(); selectedIDs = []; requiresRescan = true; detailID = nil
+        cancellation = SpaceCleaningCancellation(); selectedIDs = []; requiresRescan = true; detailID = nil
         currentBatch = nil; processingCompleted = 0; processingTotal = count; processingItem = "正在核验所选项目"; screen = .processing
     }
     private func finishProcessing(error: String?) {
@@ -581,7 +581,7 @@ import Quartz
         guard !isBusy, !frozenForQuit, historyError == nil, let store = historyStore else { return }
         let uncertain = records.filter { [.prepared, .isolated, .trashed, .deleting, .restoring].contains($0.state) }
         guard !uncertain.isEmpty else { return }
-        cancellation = StorageReviewCancellation(); isReconcilingHistory = true
+        cancellation = SpaceCleaningCancellation(); isReconcilingHistory = true
         let token = cancellation, persistence = SpaceCleaningPersistence(store: store, cancellation: cancellation)
         task = Task { [weak self] in
             for record in uncertain {
@@ -780,10 +780,10 @@ private final class SpaceCleaningRuntimeContext: @unchecked Sendable {
 
 private final class SpaceCleaningPersistence: @unchecked Sendable {
     let store: SpaceCleaningHistoryStore
-    let cancellation: StorageReviewCancellation
+    let cancellation: SpaceCleaningCancellation
     private let lock = NSLock()
     private var problem: String?
-    init(store: SpaceCleaningHistoryStore, cancellation: StorageReviewCancellation) { self.store = store; self.cancellation = cancellation }
+    init(store: SpaceCleaningHistoryStore, cancellation: SpaceCleaningCancellation) { self.store = store; self.cancellation = cancellation }
     var error: String? { lock.lock(); defer { lock.unlock() }; return problem }
     func record(_ record: SpaceCleaningRecord) throws {
         do { try store.record(record) }
