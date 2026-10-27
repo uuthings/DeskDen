@@ -8,9 +8,9 @@ Xcode's final build phase signs the embedded framework's four helpers inside-out
 
 Settings → General contains **Check for Updates** and **Automatically check for updates**. The application and menu-bar menus also offer a manual check. New installations use manual mode: displaying settings or starting the app does not initiate an updater request or an automatic-check permission prompt. Automatic checks are opt-in, run on Sparkle's daily schedule and persist using Sparkle's own preference key. Automatic downloading/installing and system-profile reporting are disabled. Installation remains an explicit user choice.
 
-The updater uses HTTPS, validates the signed feed and verifies the archive's Ed25519 signature before extraction. An Install & Relaunch request uses the same encrypted-write, editor-draft, health-transaction and notification shutdown barriers as a normal quit. Cancelling a save decision prevents termination. Checking for updates does not itself quit the app or change local data.
+The updater uses HTTPS, validates the signed feed and verifies the archive's Ed25519 signature before extraction. An Install & Relaunch request uses the same encrypted-write, editor-draft, cleaning-transaction and notification shutdown barriers as a normal quit. Cancelling a save decision prevents termination. Checking for updates does not itself quit the app or change local data.
 
-The feed address is `https://raw.githubusercontent.com/uuthings/DeskDen/main/updates/appcast.xml`. It lists the published, signed updates and their matching GitHub Release assets. Never label a failed feed request as “up to date.” The original 0.1.0 builds without Sparkle need a one-time manual installation of 0.2.0; later published versions can use the in-app updater. See the [installation and upgrade guide](install.md) before migrating an original-format Private Space.
+The feed address is `https://raw.githubusercontent.com/uuthings/DeskDen/main/updates/appcast.xml`. It lists the published, signed updates and their matching GitHub Release assets. Never label a failed feed request as “up to date.” The original 0.1.0 builds without Sparkle need a one-time manual installation of a current release; later published versions can use the in-app updater. See the [installation and upgrade guide](install.md) before migrating an original-format Private Space.
 
 ## Signing material
 
