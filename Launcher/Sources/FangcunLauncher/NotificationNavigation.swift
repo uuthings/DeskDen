@@ -66,7 +66,7 @@ import LauncherCore
             || model.modals.isPresented || workbench.presentationWindow?.attachedSheet != nil
             || model.confirmingQuit || model.calendar.editor != nil || model.ai.dialog != nil
             || model.ai.hasUnsavedPriceChanges
-            || model.usagePresentation.editor != nil
+            || model.usagePresentation.blocksNavigation
         if blocked {
             if revealBlocked {
                 if editorPanel != nil || overlay != nil || hasUnsavedLauncherChanges || pickerActive {show()}

@@ -418,7 +418,7 @@ struct WorkbenchTopEntryInput {
                 if let model = self.owner?.workbenchController?.model {
                     switch card {
                     case .codex, .claude:
-                        if !model.modals.isPresented, model.usagePresentation.editor == nil {
+                        if !model.modals.isPresented, !model.usagePresentation.blocksNavigation {
                             model.openUsageOverview()
                             if model.route == .ai { model.ai.show(.provider(card == .codex ? .codex : .claude)) }
                         }

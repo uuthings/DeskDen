@@ -28,6 +28,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     let calendar:CalendarModel
     let ai:AIUsageModel
     let providerUsage:ProviderUsageModel
+    let usageAppearance:UsagePresentationModel
     let providerBrowser:ProviderUsageBrowserBridge
     let usagePresentation=ProviderUsagePresentation()
     let vault:VaultModel
@@ -83,6 +84,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         self.owner=owner;self.startServices=startServices
         dataDirectory=owner.store.url.deletingLastPathComponent().appendingPathComponent("Workbench",isDirectory:true)
         preferenceStore=WorkbenchPreferenceStore(url:dataDirectory.appendingPathComponent("preferences.json"))
+        usageAppearance=UsagePresentationModel(dataDirectory:dataDirectory.appendingPathComponent("UsagePresentation",isDirectory:true))
         let deviceModel=device ?? DeviceStatusModel(dataDirectory:dataDirectory.appendingPathComponent("Device"))
         self.device=deviceModel
         self.health=health ?? HealthCenterModel(device:deviceModel,dataDirectory:dataDirectory.appendingPathComponent("Health"))
@@ -122,11 +124,11 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     }
     func openHealth() { navigate(.health) }
     func openUsageOverview() {
-        guard !modals.isPresented,usagePresentation.editor == nil else {revealWindow?();return}
+        guard !modals.isPresented,!usagePresentation.blocksNavigation else {revealWindow?();return}
         ai.showOverview();usagePresentation.selectedSourceID=nil;navigate(.ai)
     }
     func openProviderUsage(_ id:UUID) {
-        guard !modals.isPresented,usagePresentation.editor == nil else {revealWindow?();return}
+        guard !modals.isPresented,!usagePresentation.blocksNavigation else {revealWindow?();return}
         navigate(.ai);guard route == .ai else {return}
         ai.showOverview();usagePresentation.selectedSourceID=id
     }
