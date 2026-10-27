@@ -8,14 +8,9 @@
 
 连接包包含扩展文件和安装说明，不包含登录会话、账号配置或真实额度数据。仓库维护源码，不保存用户导出的连接包和本机注册文件。Chrome 应用商店分发属于单独的发布流程；当前安装方式为用户加载导出包中的扩展文件。
 
-扩展管理页和工具栏复用方寸当前的 Desk 图标。下列文件逐字节复制已有正式资产，不单独绘制另一套标识；源码路径均相对本 README：
+扩展管理页和工具栏采用方寸当前的 Desk 图标，并针对 Chrome 的固定 16 DIP 工具栏位置调整视觉大小。沿用 [`app-small.svg`](../../Artwork/AppIcons/Desk/app-small.svg) 的桌面几何、线条颜色和浅色渐变，主体放大至原来的 1.5 倍并缩小底板外侧留白；这四个扩展资产不再是 App PNG 的逐字节副本，不修改 App 原图。
 
-| 扩展文件 | 像素尺寸 | 正式资产来源 |
-| --- | --- | --- |
-| `icon-16.png` | 16 × 16 | [`icon_16x16.png`](../../Artwork/AppIcons/Desk/desk.iconset/icon_16x16.png) |
-| `icon-32.png` | 32 × 32 | [`desk-small-1x.png`](../../Resources/AppIcons/desk-small-1x.png) |
-| `icon-64.png` | 64 × 64 | [`desk-small.png`](../../Resources/AppIcons/desk-small.png) |
-| `icon-128.png` | 128 × 128 | [`icon_128x128.png`](../../Artwork/AppIcons/Desk/desk.iconset/icon_128x128.png) |
+在仓库根目录运行 `swift Launcher/scripts/prepare-connector-icons.swift`，从相同矢量几何直接生成 `icon-16.png`、`icon-32.png`、`icon-64.png`、`icon-128.png`。脚本核对源 SVG 指纹，源图改变时需先复核几何；每档独立栅格化，不放大已有 PNG。32 像素画布中的主体几何范围约为 24.4 × 20.0 像素，显示位置仍由 Chrome 决定。
 
 ## 安装与连接
 
