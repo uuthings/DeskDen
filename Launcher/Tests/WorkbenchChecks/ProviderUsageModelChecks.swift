@@ -153,12 +153,26 @@ private final class FixtureHTTPProtocol: URLProtocol {
         check(try Data(contentsOf: damaged.appendingPathComponent("provider-usage.json")) == bad, "damaged source bytes remain unchanged")
 
         let request = try ProviderUsageAPIClient.request(configuration: first, secret: "fixture&plus+key")
-        check(request.httpMethod == "POST" && request.url?.query == nil, "KiWi API uses fixed POST endpoint without URL credential")
+        check(request.httpMethod == "POST" && request.url?.absoluteString == "https://api.64clouds.com/v1/getServiceInfo" && request.url?.query == nil, "KiWi API uses fixed read-only POST endpoint without URL credential")
         check(String(data: request.httpBody!, encoding: .utf8) == "veid=101&api_key=fixture%26plus%2Bkey", "form encoding preserves credential separators")
         let response = Data("{\"error\":0,\"plan_monthly_data\":1073741824000,\"data_counter\":107374182400,\"monthly_data_multiplier\":2,\"data_next_reset\":1795000000}".utf8)
         let reading = try ProviderUsageAPIClient.decodeBandwagon(response, sourceID: first.id, now: clock.date)
         check(reading.limitBytes == 2_147_483_648_000 && reading.usedBytes == 214_748_364_800 && reading.usedPercent == 10, "multiplier applies to both plan and usage without changing percentage")
         check(Double(reading.limitBytes) / reading.displayUnit.divisor == 2000 && reading.resetsAt == Date(timeIntervalSince1970: 1_795_000_000), "provider binary-GB display and Unix reset are preserved")
+        for (multiplier, expectedLimit, expectedUsed) in [(0.5, UInt64(536_870_912_000), UInt64(53_687_091_200)),
+                                                         (1.0, UInt64(1_073_741_824_000), UInt64(107_374_182_400))] {
+            let fields: [String: Any] = ["error": 0, "plan_monthly_data": 1_073_741_824_000,
+                "data_counter": 107_374_182_400, "monthly_data_multiplier": multiplier, "data_next_reset": 1_795_000_000]
+            let body = try JSONSerialization.data(withJSONObject: fields)
+            let scaled = try ProviderUsageAPIClient.decodeBandwagon(body, sourceID: first.id, now: clock.date)
+            check(scaled.limitBytes == expectedLimit && scaled.usedBytes == expectedUsed && scaled.usedPercent == 10,
+                  "multiplier \(multiplier) preserves provider allowance, usage and percentage")
+            check(scaled.remaining == expectedLimit - expectedUsed, "multiplier \(multiplier) preserves remaining allowance")
+        }
+        let overage = Data("{\"error\":0,\"plan_monthly_data\":1073741824000,\"data_counter\":1181116006400,\"monthly_data_multiplier\":1,\"data_next_reset\":1795000000}".utf8)
+        let overageReading = try ProviderUsageAPIClient.decodeBandwagon(overage, sourceID: first.id, now: clock.date)
+        check(overageReading.remaining == 0 && overageReading.usedBytes == 1_181_116_006_400 && abs(overageReading.usedPercent - 110) < 0.000_001,
+              "over-quota provider reading preserves actual usage while remaining allowance stops at zero")
         for invalid in ["{}", "{\"error\":42}", "{\"error\":0,\"plan_monthly_data\":0,\"data_counter\":0,\"monthly_data_multiplier\":1,\"data_next_reset\":1}"] {
             do { _ = try ProviderUsageAPIClient.decodeBandwagon(Data(invalid.utf8), sourceID: first.id, now: clock.date); check(false, "invalid response rejects") }
             catch { check(true, "invalid or non-success provider response rejects") }
@@ -169,6 +183,51 @@ private final class FixtureHTTPProtocol: URLProtocol {
         let httpSession = URLSession(configuration: httpConfiguration)
         defer { httpSession.invalidateAndCancel() }
         let httpClient = ProviderUsageAPIClient(session: httpSession)
+        FixtureHTTPProtocol.state.set(200, headers: ["Content-Type": "application/json", "Content-Length": String(response.count)], body: response)
+        let fetchStartedAt = Date()
+        let fetched = try await httpClient.fetch(configuration: first, secret: "fixture-http-key")
+        check(fetched.sourceID == first.id && fetched.limitBytes == 2_147_483_648_000 && fetched.usedBytes == 214_748_364_800
+              && fetched.remaining == 1_932_735_283_200 && fetched.usedPercent == 10,
+              "HTTP 200 body reaches the authoritative quota decoder with correct source identity")
+        check(fetched.displayUnit == .binaryGB && fetched.resetsAt == Date(timeIntervalSince1970: 1_795_000_000)
+              && fetched.observedAt >= fetchStartedAt && fetched.observedAt <= Date(),
+              "HTTP success keeps provider units and reset instant with a fresh observation timestamp")
+
+        let httpCredentials = FixtureCredentials()
+        let httpModelDirectory = root.appendingPathComponent("http-model")
+        let httpModel = ProviderUsageModel(dataDirectory: httpModelDirectory, startServices: false, client: httpClient, credentials: httpCredentials)
+        check(await httpModel.save(first, secret: "fixture-http-saved-key"), "HTTP-verified source saves through the real API client and model")
+        let acceptedHTTPState = httpModel.state(for: first.id)
+        let acceptedHTTPCredential = httpModel.sources.first(where: { $0.id == first.id })?.credentialID
+        let httpTrafficEpoch = Date()
+        httpModel.receivePhysicalTraffic(.init(epoch: httpTrafficEpoch, received: 0, sent: 0))
+        httpModel.receivePhysicalTraffic(.init(epoch: httpTrafficEpoch, received: 300_000_000, sent: 200_000_000))
+        let providerFailure = Data("{\"error\":42,\"message\":\"fixture-only-provider-detail\"}".utf8)
+        FixtureHTTPProtocol.state.set(200, headers: ["Content-Type": "application/json"], body: providerFailure)
+        do { _ = try await httpClient.fetch(configuration: first, secret: "fixture-http-key"); check(false, "nonzero API error in HTTP 200 rejects") }
+        catch { check(error as? ProviderUsageFailure == .server(42), "nonzero API error stays a provider failure without guessed authentication semantics") }
+        httpModel.refresh(id: first.id)
+        await wait { !httpModel.refreshing.contains(first.id) }
+        let failedHTTPState = httpModel.state(for: first.id)
+        check(acceptedHTTPState.snapshot != nil && failedHTTPState.snapshot == acceptedHTTPState.snapshot
+              && failedHTTPState.refresh.lastSuccessAt == acceptedHTTPState.refresh.lastSuccessAt,
+              "provider JSON error retains the exact previous reading and successful observation time")
+        check(failedHTTPState.refresh.pendingBytes == 500_000_000 && failedHTTPState.refresh.failureCount == 1
+              && failedHTTPState.refresh.retryNotBefore.map({ $0 > Date() }) == true && !failedHTTPState.refresh.authenticationRequired,
+              "provider JSON error preserves accumulated activity and applies retry backoff without an authentication guess")
+        check(failedHTTPState.message != nil && failedHTTPState.message?.contains("fixture-only-provider-detail") == false,
+              "untrusted provider error message is not exposed in the saved user-facing error")
+        let httpPersisted = try String(contentsOf: httpModelDirectory.appendingPathComponent("provider-usage.json"), encoding: .utf8)
+        let persistedHTTPDocument = try ProviderUsageStore(url: httpModelDirectory.appendingPathComponent("provider-usage.json")).load()
+        check(persistedHTTPDocument.states[first.id]?.snapshot == acceptedHTTPState.snapshot
+              && !httpPersisted.contains("fixture-http-saved-key") && !httpPersisted.contains("fixture-only-provider-detail"),
+              "HTTP failure persists the last valid quota without credentials or raw provider messages")
+        check(!(await httpModel.save(first, secret: "fixture-http-rejected-replacement")), "provider JSON failure cannot replace an existing API connection")
+        let httpCredentialCount = await httpCredentials.count
+        check(acceptedHTTPCredential != nil && httpModel.sources.first(where: { $0.id == first.id })?.credentialID == acceptedHTTPCredential
+              && httpCredentialCount == 1, "failed HTTP revalidation preserves the original credential")
+        try await httpModel.prepareForQuit()
+
         for (status, expected) in [(401, ProviderUsageFailure.authentication), (403, .authentication), (429, .rateLimited(retryAfter: 3600)), (503, .server(503))] {
             FixtureHTTPProtocol.state.set(status, headers: ["Retry-After": "3600"])
             do { _ = try await httpClient.fetch(configuration: first, secret: "fixture-http-key"); check(false, "HTTP failure rejects") }

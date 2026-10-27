@@ -12,9 +12,21 @@ Service balances come from the provider. Local received/sent bytes are only an a
 
 ## Bandwagon VPS
 
-Add a source with a display name, VEID and API Key. A successful read is required before replacing the saved configuration or credential. The key is kept in the macOS Keychain; the JSON configuration only holds an opaque credential reference. Leaving the key blank while editing preserves the existing key.
+Add a source with a display name, VEID and API Key. A successful read is required when adding a VPS, changing its identity or replacing its credential. The key is kept in the macOS Keychain; the JSON configuration only holds an opaque credential reference. Leaving the key blank while editing the same instance preserves the existing key without querying it again.
+
+### Connect a VPS
+
+1. Open **用量与额度 → 配置用量 → 服务流量 → 新增服务流量**, then choose **搬瓦工**. The connection form also links to the [official services page](https://bandwagonhost.com/services).
+2. In the provider's services page, choose the intended VPS and open **Open KiwiVM → API → Show API Key**. Use its **VEID**, not the billing service/order number. Copy the existing key; **Reset API Key** replaces it and can break other integrations.
+3. Enter the VEID and API Key directly in Fangcun's secure connection form. A website or VPS password is not required. No browser extension is required, and the key should not be sent in a chat, screenshot or support report. This is the instance's provider-issued key, which may also permit management operations; Fangcun itself only calls the read endpoint below.
+4. Click **验证并保存**. The app queries the provider before saving anything. Compare the resulting consumed/total allowance with **KiwiVM → Main controls → Bandwidth usage**; allow for the two observations being taken at different times. The remaining allowance is the provider-adjusted total minus consumed usage, clamped to zero when exhausted.
+5. Check the next-reset timestamp and its displayed timezone, then refresh once and reopen Fangcun to check saved-connection continuity. Each additional VPS repeats this flow with its own key, allowance and reset timestamp.
+
+Editing only the name, icon, visibility or refresh policy while leaving the saved key unchanged uses **保存修改**. It does not claim that the credential was queried again. Enter a key to validate a new or replacement connection; failures retain the prior saved connection and reading.
 
 The client uses the fixed HTTPS `getServiceInfo` endpoint with a POST body. It reads `plan_monthly_data`, `data_counter`, `monthly_data_multiplier` and `data_next_reset`; the multiplier applies to both the allowance and counter. Values use the platform's binary GB convention. The application does not apply an additional upload/download multiplier. Reset timestamps are displayed in the selected workbench timezone, including daylight-saving changes.
+
+The authoritative API documentation is available under **KiwiVM → API** after signing in. It permits GET or POST parameters and defines the reset value as a Unix timestamp. `getServiceInfo` already includes the quota fields; `getLiveServiceInfo` adds VM status and may take up to 15 seconds, so it is not needed for quota queries. The reset detail shows the full date and timezone identifier with the UTC offset **at that reset instant**. It does not assume a fixed monthly reset day, the VPS location's timezone or the billing renewal date. A provider date shown without a time cannot by itself verify that instant.
 
 An API Key may have broader management permissions at the provider; this integration only implements the read operation. It does not modify the VPS, plan or billing settings. HTTP authentication failures pause automatic querying until reconfiguration. Rate limiting and temporary failures keep the previous reading and delay retrying.
 
@@ -47,3 +59,5 @@ Disabling automatic updates does not remove the source or its cache. Removing a 
 ## Developer checks
 
 Core tests cover quota parsing, persistence and refresh decisions. `Launcher/scripts/check-provider-usage.sh` runs isolated HTTP and model fixtures. The App's `--usage-ui-check` renders hidden native views with synthetic sources and checks layout, navigation and draft protection. `--mini-data-check` and `--mini-appearance-check` cover the shared Mini projections and layout. These checks do not use real credentials or install the connector.
+
+The Bandwagon fixtures exercise the full HTTP 200 → validation → save → refresh path, fractional and whole multipliers, exhausted allowances, provider JSON errors, preservation of old credentials/readings, and bounded failures. Native checks cover the connection form at narrow, normal and large widths in both appearances, as well as reset-time daylight-saving conversion. These fixtures do not establish a real account's API authorization. The initial key entry, live allowance comparison and saved-connection reopening are separate account acceptance steps.

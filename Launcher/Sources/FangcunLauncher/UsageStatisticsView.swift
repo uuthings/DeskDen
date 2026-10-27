@@ -26,6 +26,16 @@ enum ProviderUsageFormatting {
         if let date = snapshot.resetsAt { return resetDate(date, timeZone: timeZone) }
         return snapshot.resetDateText ?? "未提供"
     }
+    static func resetDetail(_ snapshot: ProviderUsageSnapshot, timeZone: TimeZone) -> String {
+        if let date = snapshot.resetsAt { return timestamp(date, timeZone: timeZone) }
+        if let date = snapshot.resetDateText { return date + " · 服务商日期，时区未提供" }
+        return "未提供"
+    }
+    static func resetTimeZoneDescription(_ date: Date, timeZone: TimeZone) -> String {
+        let offset = timeZone.secondsFromGMT(for: date), magnitude = abs(offset)
+        let utc = String(format: "UTC%@%02d:%02d", offset >= 0 ? "+" : "−", magnitude / 3600, (magnitude % 3600) / 60)
+        return timeZone.identifier + "（" + utc + "）"
+    }
 }
 
 /// Presentation state survives navigation attempts and participates in the
@@ -89,6 +99,16 @@ enum ProviderUsageFormatting {
         maximumHours = Self.number(source.refreshPolicy.maximumInterval / 3600)
     }
     static func number(_ value: Double) -> String { value.formatted(.number.locale(Locale(identifier: "en_US_POSIX")).grouping(.never).precision(.fractionLength(0...6))) }
+    var canKeepCredential: Bool {
+        existing && original.credentialID != nil && kind == original.kind
+            && resourceID.trimmingCharacters(in: .whitespacesAndNewlines) == original.resourceID
+    }
+    var credentialPlaceholder: String { canKeepCredential ? "留空保留现有凭据" : "填写此实例的 API Key" }
+    var verifiesCredential: Bool {
+        kind == .bandwagon && (!canKeepCredential || !secret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+    var saveTitle: String { verifiesCredential ? "验证并保存" : existing ? "保存修改" : "保存来源" }
+    var savingTitle: String { verifiesCredential ? "正在验证连接" : existing ? "正在保存修改" : "正在保存来源" }
     var hasChanges: Bool {
         !secret.isEmpty || cardAppearance != originalAppearance || kind != original.kind || name != original.name || resourceID != original.resourceID || enabled != original.enabled
         || thresholdMB != Self.number(Double(original.refreshPolicy.byteThreshold) / 1_000_000)
@@ -328,12 +348,23 @@ struct UsageStatisticsView: View {
             }
             WBCard(title: "周期与来源", spacing: 12) {
                 if let snapshot = state.snapshot {
-                    detailRow("下次重置", ProviderUsageFormatting.resetValue(snapshot, timeZone: context.dateContext.timeZone) + (snapshot.resetDateText != nil ? " · 服务商日期，时区未提供" : " · 跟随工作台时区"))
+                    detailRow("下次重置", ProviderUsageFormatting.resetDetail(snapshot, timeZone: context.dateContext.timeZone))
+                    if source.kind == .bandwagon, let reset = snapshot.resetsAt {
+                        Text("重置时刻来自平台时间戳，按 " + ProviderUsageFormatting.resetTimeZoneDescription(reset, timeZone: context.dateContext.timeZone) + " 显示；以每次查询结果为准。")
+                            .font(.system(size: 11)).foregroundStyle(palette.muted)
+                            .accessibilityIdentifier("fc.usage.bandwagon.reset-explanation")
+                    }
                     detailRow("计量来源", snapshot.sourceDescription)
                     detailRow("查询时间", ProviderUsageFormatting.timestamp(snapshot.observedAt, timeZone: context.dateContext.timeZone))
                     detailRow("单位口径", snapshot.displayUnit.explanation)
                 }
                 detailRow("连接方式", source.kind == .bandwagon ? "实例 API Key · 本机钥匙串" : "Chrome 网页助手 · 浏览器登录会话")
+                if source.kind == .bandwagon {
+                    detailRow("统计口径", "按服务商账单口径汇总")
+                    Text("总额与用量使用平台系数换算，不额外乘倍。本机流量仅触发更新，不从此余额中扣除。")
+                        .font(.system(size: 11)).foregroundStyle(palette.muted)
+                        .accessibilityIdentifier("fc.usage.bandwagon.accounting-explanation")
+                }
                 detailRow("统计截止", "平台未提供")
                 if let url = ProviderUsageExternalLinks.url(for: source) {
                     Button { NSWorkspace.shared.open(url) } label: { Label(ProviderUsageExternalLinks.title(for: source), systemImage: "arrow.up.right") }
@@ -421,10 +452,15 @@ private struct ProviderUsageEditorView: View {
                     UsageIconPicker(selection: $editor.cardAppearance.icon, appearance: appearance, serviceKind: editor.kind)
                     field(editor.kind == .bandwagon ? "实例编号 VEID" : "静态 ISP 订单编号") {
                         TextField(editor.kind == .bandwagon ? "KiwiVM 中的 VEID" : "订单详情中的编号", text: $editor.resourceID).textFieldStyle(ProviderUsageFieldStyle())
+                            .accessibilityLabel(editor.kind == .bandwagon ? "实例编号 VEID" : "静态 ISP 订单编号")
+                            .accessibilityIdentifier("fc.usage.editor.resource-id")
                     }
                     if editor.kind == .bandwagon {
-                        field("API Key") { SecureField(editor.existing ? "留空保留现有凭据" : "填写此实例的 API Key", text: $editor.secret).textFieldStyle(ProviderUsageFieldStyle()) }
-                        Text("在 KiwiVM 的 API 页面获取。保存前先验证查询，凭据只存入本机钥匙串。").font(.system(size: 11)).foregroundStyle(palette.muted)
+                        field("API Key") {
+                            SecureField(editor.credentialPlaceholder, text: $editor.secret).textFieldStyle(ProviderUsageFieldStyle())
+                                .accessibilityLabel("API Key").accessibilityIdentifier("fc.usage.editor.api-key")
+                        }
+                        bandwagonConnectionHelp
                     } else {
                         Text("使用 Chrome 网页助手连接现有 IPRoyal 登录；无需填写官方 API Token，也不需要修改 Google 登录方式。首次安装和流量读取仍需验证。").font(.system(size: 11)).foregroundStyle(palette.secondary)
                     }
@@ -441,16 +477,38 @@ private struct ProviderUsageEditorView: View {
                 }.padding(.vertical, 2)
             }.frame(maxHeight: 420).disabled(editor.saving)
         } actions: {
-            if editor.saving { ProgressView().controlSize(.small); Text("正在验证连接").font(.system(size: 11)).foregroundStyle(palette.muted) }
+            if editor.saving { ProgressView().controlSize(.small); Text(editor.savingTitle).font(.system(size: 11)).foregroundStyle(palette.muted) }
             Spacer()
             Button("取消", action: presentation.requestCloseEditor).buttonStyle(WBButtonStyle()).disabled(editor.saving)
-            Button(editor.kind == .bandwagon ? "验证并保存" : "保存来源") { save() }.buttonStyle(WBButtonStyle(primary: true)).disabled(editor.saving)
+                .accessibilityIdentifier("fc.usage.editor.cancel")
+            Button(editor.saveTitle) { save() }.buttonStyle(WBButtonStyle(primary: true)).disabled(editor.saving)
+                .accessibilityIdentifier("fc.usage.editor.save")
         }
         .onChange(of: editor.kind) { old, new in if editor.name == old.title { editor.name = new.title }; editor.secret = ""; editor.error = nil }
         .accessibilityIdentifier("fc.usage.editor")
     }
     private func field<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 6) { Text(title).font(.system(size: 12)); content() }
+    }
+    private var bandwagonConnectionHelp: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text("获取连接信息").font(.system(size: 12, weight: .medium))
+                Spacer(minLength: 4)
+                Button {
+                    NSWorkspace.shared.open(URL(string: "https://bandwagonhost.com/services")!)
+                } label: { Label("打开搬瓦工服务", systemImage: "arrow.up.right") }
+                    .buttonStyle(WBButtonStyle())
+                    .accessibilityIdentifier("fc.usage.editor.bandwagon-services")
+            }
+            Text("登录后选择目标 VPS，打开 Open KiwiVM → API → Show API Key，将此实例的 VEID 和现有 API Key 填入上方。")
+                .font(.system(size: 11)).foregroundStyle(palette.secondary)
+            Text("无需账号密码或浏览器连接器。请勿点击 Reset API Key。密钥只填在这里，不发送到聊天；验证成功后保存在本机钥匙串。")
+                .font(.system(size: 11)).foregroundStyle(palette.muted)
+        }.padding(12)
+            .background(WorkbenchMaterialSurface(kind: .control, radius: 8))
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("fc.usage.editor.bandwagon-help")
     }
     private func save() {
         guard !editor.saving else { return }
