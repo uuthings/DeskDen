@@ -8,18 +8,30 @@ if [[ "$build_configuration" != debug && "$build_configuration" != release ]]; t
     exit 2
 fi
 evidence_path="$app_path.evidence"
+connector_template_files=(
+    manifest.json extension-id.txt protocol.js protocol-isolated.js observer.js content.js
+    background.js popup.html popup.css popup.js install.command README.md prepare-kit.py
+)
 if [[ "$app_path" != /* ]] || [[ -e "$app_path" ]] || [[ -e "$evidence_path" ]]; then
     print -u2 'The output must be a new absolute path; existing candidates and evidence are preserved.'
     exit 2
 fi
 python3 ./scripts/check-signing-config.py
 python3 ./scripts/check-update-config.py
-python3 - "$evidence_path" "$build_configuration" <<'PY'
+python3 - "$evidence_path" "$build_configuration" "${connector_template_files[@]}" <<'PY'
 from pathlib import Path
 import datetime, hashlib, json, plistlib, sys
 
 root = Path.cwd()
 evidence = Path(sys.argv[1])
+connector_root = root / 'BrowserConnectors/IPRoyal'
+connector_files = sys.argv[3:]
+if connector_root.is_symlink() or connector_root.parent.is_symlink():
+    raise SystemExit('Connector template directories must not be symbolic links')
+for name in connector_files:
+    path = connector_root / name
+    if not path.is_file() or path.is_symlink():
+        raise SystemExit(f'Missing regular connector template: BrowserConnectors/IPRoyal/{name}')
 required = ['Info.plist', 'PanelLogo.png', 'AppIcon.icns', 'AppIcons/desk.icns', 'AppIcons/desk-small.png', 'AppIcons/desk-small-1x.png', 'AppIcons/desk-menubar.png', 'AppIcons/desk-menubar-1x.png', 'Workbench/ar-world.jpg',
             'Workbench/thunder-cabin.jpg', 'Workbench/qingbi-chenwu.jpg', 'Workbench/yuebai-yunhai.jpg',
             'Workbench/nuanxia-xuanshan.jpg', 'Workbench/claude.png', 'Workbench/chatgpt.png']
@@ -35,6 +47,7 @@ if qa_keys.intersection(info):
 if info.get('CFBundleExecutable') != 'FangcunLauncher':
     raise SystemExit('Unexpected production executable name')
 paths = [root / 'Package.swift', root / 'Signing/Fangcun.entitlements']
+paths.extend(connector_root / name for name in connector_files)
 for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('scripts', '*.swift'), ('Resources', '*')]:
     paths.extend(path for path in (root / directory).rglob(pattern) if path.is_file())
 paths.extend(path for path in [root / 'Package.resolved', root.parent / 'Fangcun.xcodeproj/project.pbxproj', root.parent / 'Fangcun.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', root.parent / 'updates/appcast.xml', root.parent / 'tools/prepare-update-feed.py', root.parent / 'tools/test-prepare-update-feed.py'] if path.is_file())
@@ -64,6 +77,10 @@ done
 for resource_name in ar-world.jpg thunder-cabin.jpg qingbi-chenwu.jpg yuebai-yunhai.jpg nuanxia-xuanshan.jpg claude.png chatgpt.png; do
     cp "$PWD/Resources/Workbench/$resource_name" "$app_path/Contents/Resources/Workbench/$resource_name"
 done
+mkdir -p "$app_path/Contents/Resources/BrowserConnectors/IPRoyal"
+for connector_resource in "${connector_template_files[@]}"; do
+    cp "$PWD/BrowserConnectors/IPRoyal/$connector_resource" "$app_path/Contents/Resources/BrowserConnectors/IPRoyal/$connector_resource"
+done
 python3 - "$app_path" "$binary_dir/FangcunLauncher" "$evidence_path" <<'PY'
 from pathlib import Path
 import hashlib, json, sys
@@ -76,12 +93,17 @@ PY
 python3 ./scripts/embed-sparkle.py "$app_path"
 codesign --force --sign - "$app_path"
 codesign --verify --deep --strict "$app_path"
-python3 - "$app_path" "$evidence_path" <<'PY'
+python3 - "$app_path" "$evidence_path" "${connector_template_files[@]}" <<'PY'
 from pathlib import Path
 import hashlib, json, os, plistlib, sys
 root, app, evidence = Path.cwd(), Path(sys.argv[1]), Path(sys.argv[2])
+connector_root = root / 'BrowserConnectors/IPRoyal'
+connector_files = sys.argv[3:]
+if connector_root.is_symlink() or connector_root.parent.is_symlink():
+    raise SystemExit('Connector template directory became a symbolic link')
 before = json.loads((evidence / 'source-inputs-before.json').read_text())
 paths = [root / 'Package.swift', root / 'Signing/Fangcun.entitlements']
+paths.extend(connector_root / name for name in connector_files)
 for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('scripts', '*.swift'), ('Resources', '*')]:
     paths.extend(path for path in (root / directory).rglob(pattern) if path.is_file())
 paths.extend(path for path in [root / 'Package.resolved', root.parent / 'Fangcun.xcodeproj/project.pbxproj', root.parent / 'Fangcun.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', root.parent / 'updates/appcast.xml', root.parent / 'tools/prepare-update-feed.py', root.parent / 'tools/test-prepare-update-feed.py'] if path.is_file())
@@ -97,8 +119,10 @@ after = dict(before, files=files)
 if before != after:
     raise SystemExit('Source inputs changed during the build; this candidate is not verified')
 resources = ['PanelLogo.png', 'AppIcon.icns', 'AppIcons/desk.icns', 'AppIcons/desk-small.png', 'AppIcons/desk-small-1x.png', 'AppIcons/desk-menubar.png', 'AppIcons/desk-menubar-1x.png', 'Workbench/ar-world.jpg', 'Workbench/thunder-cabin.jpg', 'Workbench/qingbi-chenwu.jpg', 'Workbench/yuebai-yunhai.jpg', 'Workbench/nuanxia-xuanshan.jpg', 'Workbench/claude.png', 'Workbench/chatgpt.png']
+connector_resources = ['BrowserConnectors/IPRoyal/' + name for name in connector_files]
 expected = {'Contents/Info.plist': root / 'Resources/Info.plist'}
 expected.update({'Contents/Resources/' + name: root / 'Resources' / name for name in resources})
+expected.update({'Contents/Resources/' + name: root / name for name in connector_resources})
 for name, source in expected.items():
     target = app / name
     if not target.is_file() or target.is_symlink() or target.read_bytes() != source.read_bytes():
@@ -108,7 +132,7 @@ qa_keys = {'FangcunDeviceAcceptance', 'FangcunDeviceAcceptanceProfile', 'Fangcun
 if qa_keys.intersection(info):
     raise SystemExit('The bundled Info.plist contains QA keys')
 actual_resources = {path.relative_to(app / 'Contents/Resources').as_posix() for path in (app / 'Contents/Resources').rglob('*') if path.is_file()}
-if actual_resources != set(resources):
+if actual_resources != set(resources + connector_resources):
     raise SystemExit('The production bundle resource set is incomplete or contains unexpected files')
 bundle = {}
 for path in sorted(app.rglob('*')):

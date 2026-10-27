@@ -142,6 +142,52 @@ import LauncherCore
             let fresh = ProviderUsageEditor(source: isp, existing: true)
             let restored = try fresh.configuration()
             check(!fresh.hasChanges && restored == isp, "existing connection round-trips without an artificial unsaved draft")
+            var connectedVPS = vps; connectedVPS.credentialID = UUID()
+            let vpsEditor = ProviderUsageEditor(source: connectedVPS, existing: true)
+            check(!vpsEditor.verifiesCredential && vpsEditor.saveTitle == "保存修改" && vpsEditor.savingTitle == "正在保存修改",
+                  "editing metadata with an unchanged saved key does not claim to verify the connection")
+            vpsEditor.secret = "  \n"
+            check(!vpsEditor.verifiesCredential, "whitespace-only credential edits preserve the existing-key save action")
+            vpsEditor.secret = "synthetic-replacement-value"
+            check(vpsEditor.verifiesCredential && vpsEditor.saveTitle == "验证并保存" && vpsEditor.savingTitle == "正在验证连接",
+                  "a replacement key explicitly changes the action to connection verification")
+            vpsEditor.secret = ""; vpsEditor.resourceID = "2002"
+            check(vpsEditor.verifiesCredential && !vpsEditor.canKeepCredential && vpsEditor.credentialPlaceholder == "填写此实例的 API Key",
+                  "changing the VPS identity requires a new verified connection and does not offer to keep the previous key")
+            let resetZone = TimeZone(identifier: "America/Los_Angeles")!
+            let summerReset = Date(timeIntervalSince1970: 1_783_036_800)
+            let winterReset = Date(timeIntervalSince1970: 1_798_761_600)
+            check(ProviderUsageFormatting.resetTimeZoneDescription(summerReset, timeZone: resetZone).hasSuffix("（UTC−07:00）")
+                  && ProviderUsageFormatting.resetTimeZoneDescription(winterReset, timeZone: resetZone).hasSuffix("（UTC−08:00）"),
+                  "reset timezone offsets follow the reset instant across daylight-saving changes")
+            check(ProviderUsageFormatting.resetDetail(document.states[isp.id]!.snapshot!, timeZone: resetZone) == "2026-11-25 · 服务商日期，时区未提供",
+                  "date-only provider reset values remain unchanged and do not acquire an invented timezone")
+            app.openProviderUsage(vps.id); await settle(host)
+            check(frame("fc.usage.bandwagon.reset-explanation", objects: objects(host)) != nil
+                  && frame("fc.usage.bandwagon.accounting-explanation", objects: objects(host)) != nil,
+                  "Bandwagon detail explains provider accounting and the timezone conversion")
+            if let output { check(save(host, to: output.appendingPathComponent("usage-bandwagon-detail.png")), "Bandwagon detail renders offscreen") }
+            app.usagePresentation.add(.bandwagon); await settle(host)
+            let connectionDraft = app.usagePresentation.editor!
+            check(connectionDraft.verifiesCredential && connectionDraft.saveTitle == "验证并保存", "new Bandwagon sources require verified credentials")
+            for light in [false, true] {
+                app.changeAppearance(light ? .light : .dark)
+                for width in [960, 1120, 1728] {
+                    window.setContentSize(.init(width: width, height: width == 1728 ? 993 : 758)); await settle(host)
+                    let controls = objects(host), bounds = window.convertToScreen(host.bounds)
+                    let saveFrame = frame("fc.usage.editor.save", objects: controls)
+                    check(saveFrame.map { abs($0.height - 32) < 1 && $0.minX >= bounds.minX && $0.maxX <= bounds.maxX && $0.minY >= bounds.minY && $0.maxY <= bounds.maxY } ?? false,
+                          "Bandwagon editor \(width)/\(light): verification remains a visible 32-point fixed-footer action")
+                    check(frame("fc.usage.editor.resource-id", objects: controls) != nil
+                          && frame("fc.usage.editor.api-key", objects: controls) != nil
+                          && frame("fc.usage.editor.bandwagon-services", objects: controls) != nil,
+                          "Bandwagon editor \(width)/\(light): instance, secure key and official setup entry remain available")
+                    check(!window.isVisible && !window.isKeyWindow && provider.refreshing.isEmpty,
+                          "Bandwagon editor \(width)/\(light): hidden checks do not query a live service or open the browser")
+                    if let output { check(save(host, to: output.appendingPathComponent("usage-bandwagon-editor-\(width)-\(light ? "light" : "dark").png")), "Bandwagon connection form renders offscreen") }
+                }
+            }
+            app.usagePresentation.discard(); await settle(host)
             app.openUsageOverview(); await settle(host)
             check(app.route == .ai && app.ai.destination == .overview && app.usagePresentation.selectedSourceID == nil, "unified overview returns without changing the legacy route identity")
             let pending = provider.state(for: missing.id)
