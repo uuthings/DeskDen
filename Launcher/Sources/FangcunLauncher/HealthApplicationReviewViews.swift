@@ -15,7 +15,7 @@ struct HealthApplicationCandidatesView: View {
                 Button("清空选择") { model.clearSelection() }.buttonStyle(WBButtonStyle(compact: true))
                     .disabled(model.selectedIDs.isEmpty).accessibilityIdentifier("health-app-clear-selection")
             }.frame(minHeight: 33).padding(.top, -3).padding(.bottom, 6)
-            ScrollView {
+            WorkbenchScrollView {
                 LazyVStack(spacing: 0) {
                     if model.sourceIsCurrent {
                         ForEach(model.candidates) { candidate in
@@ -104,7 +104,7 @@ struct HealthApplicationConfirmationView: View {
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }.padding(14).background(palette.soft, in: RoundedRectangle(cornerRadius: 11))
                     .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(palette.line, lineWidth: 1))
-                ScrollView {
+                WorkbenchScrollView {
                     VStack(spacing: 0) {
                         ForEach(plan.candidates) { candidate in
                             HStack(spacing: 12) {

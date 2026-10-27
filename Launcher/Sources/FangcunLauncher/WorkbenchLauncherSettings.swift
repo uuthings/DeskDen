@@ -132,11 +132,11 @@ struct WorkbenchBindingManager:View{
     @Environment(\.workbenchPalette) private var palette
     init(model:WorkbenchLauncherSettingsModel,dismiss:@escaping()->Void,inspection:WorkbenchBindingInspection?=nil){self.model=model;self.dismiss=dismiss;self.inspection=inspection}
     var body:some View{
-        WorkbenchDialogFrame(title:"按键绑定",dismiss:dismiss){
-            ScrollView{LazyVStack(spacing:0){ForEach(KeyboardLayout.keys,id:\.self){key in
+        WorkbenchDialogFrame(title:"按键绑定",dismiss:dismiss,maximumBodyHeight:380){
+            VStack(spacing:0){ForEach(KeyboardLayout.keys,id:\.self){key in
                 let binding=model.configuration.bindings[key]
                 HStack(spacing:12){Text(key).font(.system(size:12,weight:.medium)).frame(width:30,height:24).background(palette.soft,in:RoundedRectangle(cornerRadius:5));VStack(alignment:.leading,spacing:4){Text(binding?.title ?? "未绑定").font(.system(size:12)).lineLimit(1);if let binding{Text(binding.target.kind.title).font(.system(size:11)).foregroundStyle(palette.muted)}};Spacer();Button(binding == nil ? "绑定":"修改"){open(key)}.buttonStyle(WBButtonStyle(compact:true)).accessibilityIdentifier("fc.launcher.binding.manage.\(key)")}.frame(minHeight:58).overlay(alignment:.bottom){palette.line.frame(height:1)}
-            }}.background(WorkbenchOverlayScrollbars())}.frame(height:380)
+            }}
         }actions:{Text("38 个键位 · 已绑定 \(model.configuration.bindings.count)").font(.system(size:11)).foregroundStyle(palette.muted);Spacer();Button("完成",action:dismiss).buttonStyle(WBButtonStyle(primary:true)).keyboardShortcut(.defaultAction)}
             .workbenchModal(item:$editing,onRequestDismiss:{model.editorCloseRequest += 1}){request in WorkbenchBindingEditor(model:model,key:request.id,dismiss:{editing=nil},openAdvanced:{kind in editing=nil;dismiss();DispatchQueue.main.async{guard let owner=model.owner else{return};owner.show();owner.openEditor(request.id,kind:kind)}},inspection:inspection)}
             .onAppear{inspection?.openKey=open}.onDisappear{inspection?.openKey=nil;inspection?.clearEditor()}
@@ -197,7 +197,6 @@ private struct WorkbenchBindingEditor:View{
     @State private var pendingAdvanced=false
     @State private var confirmation:WorkbenchBindingConfirmation?
     @State private var shortcuts:[LaunchTarget]=[]
-    @State private var bodyHeight:CGFloat=320
     @Environment(\.workbenchPalette) private var palette
     init(model:WorkbenchLauncherSettingsModel,key:String,dismiss:@escaping()->Void,openAdvanced:@escaping(TargetKind)->Void,inspection:WorkbenchBindingInspection?=nil){
         self.model=model;self.key=key;self.dismiss=dismiss;self.openAdvanced=openAdvanced;self.inspection=inspection
@@ -210,8 +209,7 @@ private struct WorkbenchBindingEditor:View{
     private var draft:WorkbenchBindingDraft{drafts[kind] ?? WorkbenchBindingDraft(nil)}
     private var dirty:Bool{drafts.contains{entry in entry.value != WorkbenchBindingDraft(original?.target.kind == entry.key ? original:nil)}}
     var body:some View{
-        WorkbenchDialogFrame(title:"绑定按键 \(key)",dismiss:{requestClose()}){
-            ScrollView {
+        WorkbenchDialogFrame(title:"绑定按键 \(key)",dismiss:{requestClose()},maximumBodyHeight:470){
             VStack(alignment:.leading,spacing:16){
                 groupSelector
                 targetFields
@@ -219,9 +217,6 @@ private struct WorkbenchBindingEditor:View{
                 if moreOptions{advancedFields}
                 if let error=model.error{Text(error).font(.system(size:11)).foregroundStyle(palette.critical).fixedSize(horizontal:false,vertical:true)}
             }.disabled(model.pickerBusy).frame(maxWidth:.infinity,alignment:.leading).fixedSize(horizontal:false,vertical:true)
-                .background(GeometryReader{proxy in Color.clear.preference(key:WorkbenchBindingBodyHeight.self,value:proxy.size.height)})
-                .background(WorkbenchOverlayScrollbars())
-            }.frame(height:min(470,max(60,bodyHeight))).onPreferenceChange(WorkbenchBindingBodyHeight.self){bodyHeight=$0}
         }actions:{
             if original != nil{Button("移除绑定"){if model.save(nil,key:key){dismiss()}}.buttonStyle(WBButtonStyle(destructive:true,compact:true)).disabled(model.pickerBusy)}
             Spacer()
@@ -246,9 +241,9 @@ private struct WorkbenchBindingEditor:View{
         switch kind{
         case .app:
             field("搜索应用"){HStack(spacing:7){Image(systemName:"magnifyingglass").foregroundStyle(palette.muted);TextField("名称或首字母",text:$query).textFieldStyle(.plain)}.padding(.horizontal,10).frame(height:32).background(WorkbenchMaterialSurface(kind:.control,radius:8))}
-            ScrollView{LazyVStack(spacing:7){ForEach(model.filteredApplications(query)){target in
+            WorkbenchScrollView{LazyVStack(spacing:7){ForEach(model.filteredApplications(query)){target in
                 Button{var value=draft;value.selected=target;value.location=target.location;value.name=target.name;drafts[kind]=value;if !moreOptions{save()}}label:{HStack(spacing:8){WorkbenchBindingIcon(target:target).frame(width:18,height:18);Text(target.name).font(.system(size:12)).lineLimit(1);Spacer();if draft.selected?.id == target.id{Image(systemName:"checkmark").font(.system(size:11)).foregroundStyle(palette.accent)}}.padding(.horizontal,10).frame(height:32).frame(maxWidth:.infinity,alignment:.leading).background(WorkbenchMaterialSurface(kind:.control,radius:8))}.buttonStyle(WBSelectableButtonStyle(selected: draft.selected?.id == target.id, cornerRadius: 8, drawsSelection: false, showsBorder: false))
-            };if model.filteredApplications(query).isEmpty{Text("没有匹配的应用").font(.system(size:11)).foregroundStyle(palette.muted).padding(.vertical,20)}}.background(WorkbenchOverlayScrollbars())}.frame(height:200)
+            };if model.filteredApplications(query).isEmpty{Text("没有匹配的应用").font(.system(size:11)).foregroundStyle(palette.muted).padding(.vertical,20)}}}.frame(height:200)
             HStack{Button("选择应用…"){choose(.app)}.buttonStyle(WBButtonStyle(compact:true));Spacer();Button("刷新列表"){Task{await model.refreshApplications(force:true)}}.buttonStyle(WBQuietButtonStyle())}
         case .web:
             field("网址"){input("https://example.com",text:fieldBinding(\.location)).accessibilityIdentifier("fc.launcher.binding.url")}
@@ -329,8 +324,4 @@ private struct WorkbenchBindingMoveConfirmation:View {
 private struct WorkbenchBindingIcon:View{
     let target:LaunchTarget
     var body:some View{Group{if let data=target.iconData,let image=NSImage(data:data){Image(nsImage:image).resizable().scaledToFit()}else if target.kind.isFileSystem{Image(nsImage:NSWorkspace.shared.icon(forFile:target.location)).resizable().scaledToFit()}else{Image(systemName:target.kind.symbol).resizable().scaledToFit().padding(2)}}.accessibilityHidden(true)}
-}
-private struct WorkbenchBindingBodyHeight:PreferenceKey{
-    static let defaultValue:CGFloat=0
-    static func reduce(value:inout CGFloat,nextValue:()->CGFloat){value=max(value,nextValue())}
 }

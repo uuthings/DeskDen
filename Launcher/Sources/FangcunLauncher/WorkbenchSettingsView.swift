@@ -272,7 +272,7 @@ private struct WorkbenchMiniDisplaySettings: View {
             }
             if !providers.sources.isEmpty {
                 Text("服务额度").font(.system(size: 11, weight: .medium)).foregroundStyle(palette.muted)
-                ScrollView {
+                WorkbenchScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), alignment: .leading)], alignment: .leading, spacing: 12) {
                         ForEach(providers.sources) { source in cardToggle(.provider(source.id), title: source.name) }
                     }.padding(.vertical, 2)

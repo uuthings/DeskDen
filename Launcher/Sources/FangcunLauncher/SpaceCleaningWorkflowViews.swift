@@ -25,7 +25,7 @@ struct SpaceCleaningHistoryView: View {
                         .buttonStyle(WBButtonStyle(compact: true))
                 }
             }.frame(minHeight: 28).padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 10)
-            ScrollView {
+            WorkbenchScrollView {
                 LazyVStack(spacing: 8) {
                     if model.batches.isEmpty {
                         VStack(spacing: 10) {
@@ -36,7 +36,7 @@ struct SpaceCleaningHistoryView: View {
                         }.foregroundStyle(palette.muted).frame(maxWidth: .infinity).padding(.vertical, 70)
                     }
                     ForEach(model.batches) { batch in batchRow(batch) }
-                }.padding(.horizontal, 14).padding(.bottom, 2).background(WorkbenchOverlayScrollbars())
+                }.padding(.horizontal, 14).padding(.bottom, 2)
             }.scrollBounceBehavior(.basedOnSize)
             Label("移入废纸篓后仍占用空间；永久删除仅保留操作记录。", systemImage: "info.circle")
                 .font(.system(size: 11)).foregroundStyle(palette.muted)
@@ -190,7 +190,7 @@ struct SpaceCleaningCompletionView: View {
             if let batch = model.currentBatch {
                 completion(batch)
             } else {
-                ScrollView {
+                WorkbenchScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         completionHeading(title: "本次处理已结束", subtitle: "尚无已确认的成功处理记录。", symbol: "info.circle", needsAttention: true)
                         Text("本次原计划 \(model.processingTotal) 项，已核对 \(model.processingCompleted) 项。")
@@ -199,7 +199,6 @@ struct SpaceCleaningCompletionView: View {
                             .font(.system(size: 11)).foregroundStyle(palette.muted)
                     }.fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: 700, alignment: .leading).padding(24).frame(maxWidth: .infinity)
-                        .background(WorkbenchOverlayScrollbars())
                 }.scrollBounceBehavior(.basedOnSize)
                 completionActions(batch: nil)
             }
@@ -215,7 +214,7 @@ struct SpaceCleaningCompletionView: View {
         let pending = batch.items.filter { ![.trashed, .deleted, .restored].contains($0.state) }
         let title = attention > 0 ? "本次清理需要核对" : succeeded.isEmpty && unprocessed > 0 ? "清理已停止" : skipped > 0 || succeeded.isEmpty ? "本次清理已结束" : "清理完成"
         return VStack(spacing: 0) {
-            ScrollView {
+            WorkbenchScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     completionHeading(
                         title: title,
@@ -241,7 +240,6 @@ struct SpaceCleaningCompletionView: View {
                         }
                     }
                 }.frame(maxWidth: 700, alignment: .leading).padding(24).frame(maxWidth: .infinity)
-                    .background(WorkbenchOverlayScrollbars())
             }.scrollBounceBehavior(.basedOnSize)
             completionActions(batch: batch)
         }

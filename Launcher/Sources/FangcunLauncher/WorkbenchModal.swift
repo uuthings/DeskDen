@@ -44,7 +44,12 @@ private struct WorkbenchModalCoordinatorKey: EnvironmentKey {
     static let defaultValue: WorkbenchModalCoordinator? = nil
 }
 private struct WorkbenchModalParentKey: EnvironmentKey {static let defaultValue:UUID?=nil}
+private struct WorkbenchModalBodyLimitKey: EnvironmentKey { static let defaultValue: CGFloat = .infinity }
 extension EnvironmentValues {
+    fileprivate var workbenchModalBodyLimit: CGFloat {
+        get { self[WorkbenchModalBodyLimitKey.self] }
+        set { self[WorkbenchModalBodyLimitKey.self] = newValue }
+    }
     fileprivate var workbenchModalParent:UUID? {
         get {self[WorkbenchModalParentKey.self]}
         set {self[WorkbenchModalParentKey.self]=newValue}
@@ -66,6 +71,7 @@ struct WorkbenchModalHost: View {
                         .contentShape(Rectangle()).onTapGesture { coordinator.dismissTop() }
                     ForEach(coordinator.presentations) { item in
                     item.content
+                        .environment(\.workbenchModalBodyLimit, max(40, viewport.size.height - 48 - 140))
                         .frame(width: min(item.width, max(0, viewport.size.width - 48)))
                         .fixedSize(horizontal: false, vertical: true)
                         .background(WorkbenchMaterialSurface(kind: .panel, radius: 14))
@@ -156,6 +162,52 @@ extension View {
     }
 }
 
+/// Every workbench scroll region uses the same policy, including nested lists.
+/// The probe must be inside the document to configure the owning NSScrollView.
+struct WorkbenchScrollView<Content: View>: View {
+    private let axes: Axis.Set
+    private let showsIndicators: Bool
+    private let content: Content
+    init(_ axes: Axis.Set = .vertical, showsIndicators: Bool = true, @ViewBuilder content: () -> Content) {
+        self.axes = axes; self.showsIndicators = showsIndicators; self.content = content()
+    }
+    var body: some View {
+        ScrollView(axes, showsIndicators: showsIndicators) {
+            content.background(WorkbenchOverlayScrollbars())
+        }
+    }
+}
+
+/// The viewport fills the dialog width; reading gutters belong to its document.
+/// Short confirmations stay compact, while long forms keep header/actions fixed.
+struct WorkbenchDialogBody<Content: View>: View {
+    var maximumHeight: CGFloat = 480
+    @ViewBuilder var content: () -> Content
+    @Environment(\.workbenchModalBodyLimit) private var viewportLimit
+    @State private var measuredHeight: CGFloat = 0
+    var body: some View {
+        WorkbenchScrollView {
+            content().frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 18).padding(.bottom, 18)
+                .background(GeometryReader { geometry in
+                    Color.clear.preference(key: WorkbenchDialogBodyHeightKey.self, value: geometry.size.height)
+                        .allowsHitTesting(false)
+                })
+        }
+        .frame(height: min(maximumHeight, viewportLimit, max(36, measuredHeight > 0 ? measuredHeight : 60)))
+        .scrollBounceBehavior(.basedOnSize)
+        .onPreferenceChange(WorkbenchDialogBodyHeightKey.self) { height in
+            // Ignore transient default preferences during disabled/modal changes.
+            if height.isFinite, height > 0, abs(measuredHeight - height) > 0.25 { measuredHeight = height }
+        }
+    }
+}
+private struct WorkbenchDialogBodyHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
 /// Overlay scrollers never reserve document width. Keep the policy active
 /// across SwiftUI disabled/modal transitions and system scrollbar preferences.
 struct WorkbenchOverlayScrollbars: View {
@@ -206,5 +258,22 @@ private struct WorkbenchScrollbarConfigurationProbe: NSViewRepresentable {
             scroll.scrollerKnobStyle = light ? .dark : .light
             scroll.scrollerInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         }
+    }
+}
+
+struct WorkbenchDialogFrame<Content:View,Actions:View>:View {
+    let title:String
+    let dismiss:()->Void
+    var maximumBodyHeight: CGFloat = 480
+    @ViewBuilder let content:()->Content
+    @ViewBuilder let actions:()->Actions
+    @Environment(\.workbenchPalette) private var palette
+    var body:some View {
+        VStack(alignment:.leading,spacing:0) {
+            HStack {Text(title).font(.system(size:15,weight:.medium));Spacer();Button(action:dismiss){Image(systemName:"xmark")}.buttonStyle(WBIconButtonStyle(size:32)).accessibilityLabel("关闭"+title)}.padding(EdgeInsets(top:18,leading:18,bottom:13,trailing:18))
+            WorkbenchDialogBody(maximumHeight: maximumBodyHeight, content: content)
+            Rectangle().fill(palette.line).frame(height:1)
+            HStack(spacing:8){actions()}.padding(.horizontal,18).padding(.vertical,13)
+        }.foregroundStyle(palette.text).accessibilityElement(children:.contain).accessibilityLabel(title)
     }
 }

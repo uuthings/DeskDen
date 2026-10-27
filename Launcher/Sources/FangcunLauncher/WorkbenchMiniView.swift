@@ -376,7 +376,7 @@ struct WorkbenchMiniPanelView: View {
         }
     }
     private var configuration: some View {
-        ScrollView {
+        WorkbenchScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Text("显示内容").font(.system(size: 12, weight: .medium)); Spacer()

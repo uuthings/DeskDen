@@ -141,7 +141,7 @@ struct WorkbenchRootView: View {
         } else {
             ScrollViewReader {scroll in
               let resetToTop = { DispatchQueue.main.async {scroll.scrollTo("workbench-page-top",anchor:.top)} }
-              ScrollView {
+              WorkbenchScrollView {
                 Group {
                     switch model.route {
                     case .overview: WorkbenchOverview(device: model.device, calendar: model.calendar, health:model.health,context:model.context,navigate:model.navigate,openHealth:model.openHealth,openDevice:model.openDeviceReading)
@@ -158,7 +158,6 @@ struct WorkbenchRootView: View {
                 }
                 .workbenchPageCanvas()
                 .id("workbench-page-top")
-                .background(WorkbenchOverlayScrollbars())
               }.scrollContentBackground(.hidden).scrollBounceBehavior(.basedOnSize)
                 .coordinateSpace(name: WorkbenchPageScrollSpace.name)
                 .onChange(of:model.route) {_,_ in resetToTop()}

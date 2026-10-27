@@ -494,7 +494,7 @@ struct AIUsageModuleView: View {
             if summaries.isEmpty {
                 Text("暂无月度记录").aiText(12, color: palette.muted).padding(.vertical, 12)
             } else {
-                ScrollView {
+                WorkbenchScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(Array(summaries.reversed())) { summary in
                             HStack(spacing: 12) {
@@ -908,7 +908,7 @@ private struct AITokenTable: View {
         VStack(spacing: 0) {
             rowHeader
             if let scrollHeight {
-                ScrollView { LazyVStack(spacing: 0) { rows }.frame(maxWidth: .infinity) }.frame(height: scrollHeight)
+                WorkbenchScrollView { LazyVStack(spacing: 0) { rows }.frame(maxWidth: .infinity) }.frame(height: scrollHeight)
             } else { rows }
         }
     }
@@ -1219,10 +1219,6 @@ private struct AIUsageDialogContent: View {
         if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") { NSWorkspace.shared.open(url) }
     }
 }
-private struct AIDialogBodyHeightKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
-}
 private struct AIDialogShell<Content: View, Footer: View>: View {
     var title: String
     var close: () -> Void
@@ -1230,9 +1226,7 @@ private struct AIDialogShell<Content: View, Footer: View>: View {
     @ViewBuilder var footer: () -> Footer
     @Environment(\.workbenchPalette) private var palette
     @Environment(\.workbenchContentHeight) private var viewportHeight
-    @State private var measuredBodyHeight: CGFloat = 0
     private var maximumBodyHeight: CGFloat { viewportHeight > 0 ? max(180, min(600, viewportHeight - 140)) : 430 }
-    private var bodyHeight: CGFloat { min(maximumBodyHeight, max(36, measuredBodyHeight > 0 ? measuredBodyHeight : 60)) }
     var body: some View {
         VStack(spacing: 0) {
             HStack {
@@ -1242,19 +1236,7 @@ private struct AIDialogShell<Content: View, Footer: View>: View {
             }.padding(.horizontal, 18).padding(.top, 18).padding(.bottom, 13)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityElement(children: .contain).accessibilityIdentifier("fc.ai.dialog.header")
-            ScrollView {
-                content().frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 18).padding(.bottom, 18)
-                    .background(GeometryReader { geometry in Color.clear.preference(key: AIDialogBodyHeightKey.self, value: geometry.size.height).allowsHitTesting(false) })
-            }.frame(height: bodyHeight)
-                .scrollBounceBehavior(.basedOnSize)
-                .background(WorkbenchOverlayScrollbars())
-                .onPreferenceChange(AIDialogBodyHeightKey.self) { height in
-                    // Scrollbar probes and conditional siblings may emit the
-                    // default preference during a layout pass. They must not
-                    // replace a real content measurement with a zero viewport.
-                    if height.isFinite, height > 0, abs(measuredBodyHeight - height) > 0.25 { measuredBodyHeight = height }
-                }
+            WorkbenchDialogBody(maximumHeight: maximumBodyHeight, content: content)
                 .accessibilityElement(children: .contain).accessibilityIdentifier("fc.ai.dialog.body")
             HStack(spacing: 8) { Spacer(); footer() }.padding(.horizontal, 18).padding(.vertical, 13)
                 .fixedSize(horizontal: false, vertical: true)

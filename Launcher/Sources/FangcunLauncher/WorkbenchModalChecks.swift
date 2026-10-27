@@ -215,6 +215,8 @@ private struct ModalLifecycleEditor:View {
         if let output, let image = await capture(callout, size: CGSize(width: 628, height: 205)) {
             try? image.write(to: output.appendingPathComponent("chart-callout.png"))
         }
+        let scrolling = await WorkbenchDialogScrollChecks.run()
+        count += scrolling.count; failures += scrolling.failures
         print("Background appearance checks: \(count) checks, \(failures) failures")
         return failures
     }
