@@ -394,11 +394,20 @@ import LauncherCore
             await settle()
             check(controller.isQuickSummaryVisible && !ordinary.isVisible,
                   "the compact Mini can reopen while the canonical workbench remains closed")
-            owner.showWorkbenchFromTopEntry(originFrame: controller.islandPresentationFrame)
+            let miniHost = NSApp.windows.first { $0.windowNumber == controller.islandWindowNumber }?.contentView
+            check(model.context.settings.city == nil && miniHost.map { press("mini-open-context-date", in: $0) } == true,
+                  "the real Mini date entry responds before a city is configured")
             await settle()
             check(!controller.isQuickSummaryVisible && ordinary.isVisible && workbench.presentationWindow === ordinary
                   && ordinary.frame == expectedOrdinaryFrame && ordinary.contentView === originalContent && NSApp.activationPolicy() == .regular,
                   "expanding Mini restores the same positioned ordinary window, content and Dock target")
+            check(model.route == .overview && model.context.showWeather && model.modals.isPresented,
+                  "Mini context navigation opens the homepage city dialog in the canonical workbench")
+            let contextModalID = model.modals.top?.id
+            model.openContextSettings(); await settle()
+            check(model.modals.top?.id == contextModalID && model.modals.presentations.count == 1,
+                  "repeated context navigation retains the existing dialog and its draft")
+            model.context.closeSettings(); await settle()
             model.closeWindow?(); await waitUntil { !ordinary.isVisible }
             controller.setEnabled(false)
             poll(outside, at: 19); poll(top, at: 20); poll(top, at: 20.4)

@@ -123,6 +123,13 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         route=next;updateSamplingVisibility()
     }
     func openHealth() { navigate(.health) }
+    func openContextSettings() {
+        modals.prune()
+        guard !modals.isPresented, !usagePresentation.blocksNavigation, hostWindow?.attachedSheet == nil else {revealWindow?();return}
+        navigate(.overview)
+        guard route == .overview, !quitting else {return}
+        context.showWeather = true
+    }
     func openUsageOverview() {
         guard !modals.isPresented,!usagePresentation.blocksNavigation else {revealWindow?();return}
         ai.showOverview();usagePresentation.selectedSourceID=nil;navigate(.ai)

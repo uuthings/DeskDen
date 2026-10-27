@@ -60,7 +60,7 @@ import SwiftUI
                 }
             }
         }
-        for scenario in [Scenario.settings, .empty, .missing] {
+        for scenario in [Scenario.settings, .empty, .missing, .seconds] {
             let fixture = Fixture(width: 518, safeTop: 32, notchWidth: 220, light: false, opacity: 0.7, scenario: scenario)
             await fixture.settle()
             check(fixture.surface.bounds.height == 292 && !fixture.window.isVisible, "\(scenario.rawValue): alternate state retains panel height")
@@ -70,18 +70,33 @@ import SwiftUI
                 check(press("mini-toggle-codex", in: fixture.host), "configuration toggle is a native action")
                 await fixture.settle()
                 check(!fixture.state.preferences.visibleCards.contains(.codex), "native toggle updates the selected cards")
+                check(press("mini-show-seconds", in: fixture.host), "seconds display has a native settings action")
+                await fixture.settle()
+                check(fixture.state.preferences.showSeconds, "seconds display updates through the settings callback")
                 check(press("mini-restore", in: fixture.host), "configuration restores defaults")
                 await fixture.settle()
-                check(fixture.state.preferences.visibleCards == WorkbenchMiniCardID.builtIn, "restore reinstates the eight default cards")
+                check(fixture.state.preferences.visibleCards == WorkbenchMiniCardID.builtIn && !fixture.state.preferences.showSeconds, "restore reinstates the eight default cards and minute clock")
             } else if scenario == .empty {
                 check(press("mini-configure", in: fixture.host), "empty panel can enter editing")
                 await fixture.settle()
                 check(press("mini-show-configuration", in: fixture.host), "empty panel can open display settings")
                 await fixture.settle()
                 check(frame("mini-toggle-codex", objects: accessibilityObjects(fixture.host), fixture: fixture) != nil, "empty configuration remains recoverable")
-            } else {
+            } else if scenario == .missing {
                 let text = accessibilityObjects(fixture.host).flatMap { [string("accessibilityLabel",$0),string("accessibilityValue",$0)] }.joined(separator:" ")
                 check(!text.contains("32%") && !text.contains("16°C"), "missing sources never reuse successful fixture readings")
+            }
+            if scenario == .missing || scenario == .seconds {
+                let objects = accessibilityObjects(fixture.host)
+                if let header = frame("mini-header-date", objects: objects, fixture: fixture),
+                   let button = frame("mini-open-context-date", objects: objects, fixture: fixture) {
+                    check(header.insetBy(dx: -0.5, dy: -0.5).contains(button), "\(scenario.rawValue): the full clock button fits its notch-safe wing")
+                } else { check(false, "\(scenario.rawValue): the clock exposes measurable bounds") }
+                for identifier in ["mini-open-context-date", "mini-open-context-weather"] {
+                    let before = fixture.state.contextOpens
+                    check(press(identifier, in: fixture.host) && fixture.state.contextOpens == before + 1,
+                          "\(scenario.rawValue): \(identifier) opens context settings regardless of city availability")
+                }
             }
             if let output { check(await fixture.savePNG(to: output.appendingPathComponent("mini-\(scenario.rawValue).png")), "\(scenario.rawValue): alternate state renders offscreen") }
             fixture.close()
@@ -95,6 +110,7 @@ import SwiftUI
         check(press("mini-configure",in:navigation.host), "layout editing is reachable")
         await navigation.settle()
         let before=navigation.state.opened.count
+        check(!press("mini-open-context-date", in:navigation.host) && !press("mini-open-context-weather", in:navigation.host), "layout editing hides context navigation controls")
         _=press("mini-card-codex",in:navigation.host)
         check(navigation.state.opened.count == before,"editing a card never navigates away")
         check(customAction("后移", identifier:"mini-card-codex", in:navigation.host), "editing exposes a native reorder action")
@@ -108,10 +124,11 @@ import SwiftUI
         print("Mini appearance checks: \(count) checks, \(failures) failures")
         return (count,failures)
     }
-    private enum Scenario:String {case normal,settings,empty,missing}
+    private enum Scenario:String {case normal,settings,empty,missing,seconds}
     @MainActor private final class FixtureState:ObservableObject {
         @Published var preferences=WorkbenchTopEntryPreferences()
         var opened:[WorkbenchMiniCardID]=[]
+        var contextOpens = 0
     }
     private struct FixtureContent:View {
         @ObservedObject var state:FixtureState
@@ -125,8 +142,9 @@ import SwiftUI
         var body:some View {
             WorkbenchMiniPanelView(context:context,agenda:agenda,device:device,providers:providers,
                 preferences:state.preferences,safeTop:safeTop,notchWidth:notchWidth,error:nil,
-                open:{state.opened.append($0)},setVisible:{state.preferences.setCard($0,visible:$1)},
+                open:{state.opened.append($0)},openContext:{state.contextOpens += 1},setVisible:{state.preferences.setCard($0,visible:$1)},
                 setHeaderVisible:{state.preferences.showDate=$0;state.preferences.showWeather=$1},
+                setSeconds:{state.preferences.showSeconds=$0},
                 reorder:{state.preferences.moveCard($0,relativeTo:$1,after:$2)},restore:{state.preferences = .init()},
                 finishConfiguration:{},configuring:configuring)
         }
@@ -140,7 +158,8 @@ import SwiftUI
             Palette.workbenchTheme = .qingbiMist;Palette.isLight=light;Palette.glassOpacity=opacity
             let missing=scenario == .missing
             if scenario == .empty {state.preferences.visibleCards=[]}
-            let context=WorkbenchMiniContextData(time:"10:24",date:"10月25日 · 星期日",zone:"UTC−4",zoneHelp:"示例时区 · UTC−4",city:missing ? "未选择城市":"纽约",temperature:missing ? "—":"16°C",condition:missing ? "请先选择城市":"多云",symbol:missing ? "globe":"cloud.sun",weatherNote:nil,shortDate:"10月25日",weekday:"周日")
+            state.preferences.showSeconds = scenario == .seconds
+            let context=WorkbenchMiniContextData(time:scenario == .seconds ? "下午 10:24:56":"10:24",date:"10月25日 · 星期日",zone:"UTC−4",zoneHelp:"示例时区 · UTC−4",city:missing ? "未选择城市":"纽约",temperature:missing ? "—":"16°C",condition:missing ? "请先选择城市":"多云",symbol:missing ? "globe":"cloud.sun",weatherNote:nil,shortDate:"10月25日",weekday:"周日")
             let agenda=WorkbenchMiniAgendaData(event:nil,reminder:missing ? nil:.init(title:"整理下周计划",dateText:"10/26 · 09:00",note:nil),eventStatus:"日历未连接",reminderStatus:"暂无未完成待办")
             var device=WorkbenchMiniDeviceData()
             if !missing {

@@ -38,6 +38,26 @@ final class WorkbenchTopEntryTests: XCTestCase {
         let attributes = try FileManager.default.attributesOfItem(atPath: store.url.path)
         XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
     }
+    func testSecondsDefaultOffAndPersistWithoutChangingHeaderVisibility() throws {
+        var original = WorkbenchTopEntryPreferences()
+        original.showWeather = false
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(original)) as? [String: Any])
+        legacy.removeValue(forKey: "showSeconds")
+        let migrated = try JSONDecoder().decode(WorkbenchTopEntryPreferences.self, from: JSONSerialization.data(withJSONObject: legacy))
+        XCTAssertEqual(migrated, original)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = WorkbenchTopEntryStore(url: directory.appendingPathComponent("top-entry.json"))
+        var selected = migrated
+        selected.showSeconds = true
+        try store.save(selected)
+        XCTAssertEqual(try store.load(), selected)
+        selected.showDate = false
+        try store.save(selected)
+        XCTAssertTrue(try store.load().showSeconds, "Hiding the clock preserves its display preference.")
+        XCTAssertFalse(try store.load().showDate)
+        XCTAssertFalse(try store.load().showWeather)
+    }
     func testInvalidSectionsCannotReplaceSavedPreferences() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

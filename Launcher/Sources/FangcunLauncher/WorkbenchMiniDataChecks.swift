@@ -112,6 +112,11 @@ import LauncherCore
             let emptyContext=WorkbenchMiniContextData(context:context,now:now)
             check(emptyContext.time == "10:24" && emptyContext.zone == "UTC−4" && emptyContext.zoneHelp.contains("纽约"),"mini shares context clock and emits a compact offset with full zone help")
             check(emptyContext.city == "未选择城市" && emptyContext.symbol == "globe" && emptyContext.temperature == "—","no city leaves weather unavailable without an invented temperature")
+            let tick = now.addingTimeInterval(37)
+            check(WorkbenchMiniContextData(context:context,now:tick,showSeconds:true).time == "10:24:37" &&
+                  WorkbenchMiniContextData(context:context,now:tick).time == "10:24", "Mini seconds are optional and use the shared display timezone")
+            _=context.saveClock(zone:"America/New_York",twelveHour:true)
+            check(WorkbenchMiniContextData(context:context,now:tick,showSeconds:true).time == "上午 10:24:37", "Mini seconds preserve the selected 12-hour clock format")
             let city=WeatherCity(id:"mini:fixture",name:"上海",latitude:31.23,longitude:121.47,timeZoneIdentifier:"Asia/Shanghai")
             check(context.saveContext(city:city,zone:"city",twelveHour:false,temperatureUnit:.fahrenheit),"Mini context fixture uses the shared city and unit settings")
             for _ in 0..<60 where context.loadingWeather {try? await Task.sleep(for:.milliseconds(10))}

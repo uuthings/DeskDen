@@ -93,6 +93,7 @@ public struct WorkbenchTopEntryPreferences: Codable, Equatable, Sendable {
     public var visibleCards = WorkbenchMiniCardID.builtIn
     public var showDate = true
     public var showWeather = true
+    public var showSeconds = false
     /// Compatibility for callers that still expose the earlier four groups.
     public var visibleSections: [WorkbenchMiniSection] {
         get {
@@ -117,7 +118,7 @@ public struct WorkbenchTopEntryPreferences: Codable, Equatable, Sendable {
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, enabled, mode, visibleSections, cardOrder, visibleCards, showDate, showWeather
+        case schemaVersion, enabled, mode, visibleSections, cardOrder, visibleCards, showDate, showWeather, showSeconds
     }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -139,6 +140,7 @@ public struct WorkbenchTopEntryPreferences: Codable, Equatable, Sendable {
             showDate = try values.decode(Bool.self, forKey: .showDate)
             showWeather = try values.decode(Bool.self, forKey: .showWeather)
         }
+        showSeconds = try values.decodeIfPresent(Bool.self, forKey: .showSeconds) ?? false
         schemaVersion = 2
     }
     public func encode(to encoder: Encoder) throws {
@@ -150,6 +152,7 @@ public struct WorkbenchTopEntryPreferences: Codable, Equatable, Sendable {
         try values.encode(visibleCards, forKey: .visibleCards)
         try values.encode(showDate, forKey: .showDate)
         try values.encode(showWeather, forKey: .showWeather)
+        try values.encode(showSeconds, forKey: .showSeconds)
     }
     public func validate() throws {
         guard schemaVersion == 2 else { throw LauncherError.storage("顶部入口设置版本无法读取，原文件已保留。") }

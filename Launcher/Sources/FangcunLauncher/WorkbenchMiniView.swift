@@ -16,22 +16,25 @@ struct WorkbenchMiniView: View {
     let safeTop: CGFloat
     let notchWidth: CGFloat
     let open: (WorkbenchMiniCardID) -> Void
+    let openContext: () -> Void
     let finishConfiguration: () -> Void
 
     init(model: WorkbenchAppModel, controller: WorkbenchTopEntryController, openedAt: Date,
          safeTop: CGFloat, notchWidth: CGFloat, open: @escaping (WorkbenchMiniCardID) -> Void,
+         openContext: @escaping () -> Void,
          finishConfiguration: @escaping () -> Void) {
         self.model = model; self.controller = controller
         context = model.context; device = model.device; ai = model.ai; providerUsage = model.providerUsage
         _agendaProjection = StateObject(wrappedValue: WorkbenchMiniAgendaProjection(calendar: model.calendar, context: model.context))
         self.openedAt = openedAt; self.safeTop = safeTop; self.notchWidth = notchWidth
-        self.open = open; self.finishConfiguration = finishConfiguration
+        self.open = open; self.openContext = openContext; self.finishConfiguration = finishConfiguration
     }
 
     var body: some View {
-        TimelineView(.everyMinute) { timeline in
+        TimelineView(.periodic(from: Date(timeIntervalSinceReferenceDate: 0),
+                               by: controller.preferences.showDate && controller.preferences.showSeconds ? 1 : 60)) { timeline in
             WorkbenchMiniPanelView(
-                context: .init(context: context, now: timeline.date), agenda: agendaProjection.data,
+                context: .init(context: context, now: timeline.date, showSeconds: controller.preferences.showSeconds), agenda: agendaProjection.data,
                 device: .init(snapshot: device.snapshot, openedAt: openedAt, history: device.history,
                               summary: device.trafficSummary, budget: device.budget, unit: context.settings.temperatureUnit),
                 providers: AIProvider.allCases.map { provider in
@@ -42,8 +45,8 @@ struct WorkbenchMiniView: View {
                     WorkbenchMiniExternalProviderData(configuration: $0, state: providerUsage.state(for: $0.id),
                                                       now: timeline.date, calendar: context.dateContext.calendar)
                 }, preferences: controller.preferences, safeTop: safeTop, notchWidth: notchWidth,
-                error: controller.error, open: open, setVisible: controller.setMiniCard,
-                setHeaderVisible: controller.setMiniHeader, reorder: controller.moveMiniCard,
+                error: controller.error, open: open, openContext: openContext, setVisible: controller.setMiniCard,
+                setHeaderVisible: controller.setMiniHeader, setSeconds: controller.setMiniSeconds, reorder: controller.moveMiniCard,
                 restore: controller.restoreMiniSections, finishConfiguration: finishConfiguration
             )
             .onChange(of: timeline.date) { _, date in agendaProjection.update(now: date) }
@@ -66,8 +69,10 @@ struct WorkbenchMiniPanelView: View {
     var notchWidth: CGFloat
     var error: String?
     var open: (WorkbenchMiniCardID) -> Void
+    var openContext: () -> Void
     var setVisible: (WorkbenchMiniCardID, Bool) -> Void
     var setHeaderVisible: (Bool, Bool) -> Void
+    var setSeconds: (Bool) -> Void
     var reorder: (WorkbenchMiniCardID, WorkbenchMiniCardID, Bool) -> Void
     var restore: () -> Void
     var finishConfiguration: () -> Void
@@ -124,40 +129,52 @@ struct WorkbenchMiniPanelView: View {
     private func header(width: CGFloat, pages: Int, currentPage: Int) -> some View {
         let innerWidth = width - WorkbenchMiniLayout.horizontalInset * 2
         let wing = max(28, (width - notchWidth) / 2 - WorkbenchMiniLayout.horizontalInset - (notchWidth > 0 ? 8 : 4))
+        let compactPaging = wing < 160 && preferences.showDate && !editing && !configuring
         return HStack(spacing: 0) {
-            HStack(spacing: 6) {
+            HStack(spacing: compactPaging ? 4 : 6) {
                 if pages > 1 && !configuring {
                     HStack(spacing: 0) {
-                        Button { page = max(0, currentPage - 1) } label: { Image(systemName: "chevron.left").frame(width: 15, height: 28) }
+                        Button { page = max(0, currentPage - 1) } label: { Image(systemName: "chevron.left").frame(width: compactPaging ? 12 : 15, height: 28) }
                             .disabled(currentPage == 0).accessibilityLabel("上一页卡片").accessibilityIdentifier("mini-previous-page")
                             .onDrop(of: [UTType.plainText], delegate: MiniPageDropDelegate(enabled: editing && dragged != nil && currentPage > 0, turn: { page = currentPage - 1 }))
-                        Text(wing < 120 && pages > 9 ? "\(currentPage + 1)" : "\(currentPage + 1)/\(pages)")
+                        if !compactPaging { Text(wing < 120 && pages > 9 ? "\(currentPage + 1)" : "\(currentPage + 1)/\(pages)")
                             .font(.system(size: 11)).monospacedDigit().fixedSize().accessibilityLabel("第 \(currentPage + 1) 页，共 \(pages) 页")
-                        Button { page = min(pages - 1, currentPage + 1) } label: { Image(systemName: "chevron.right").frame(width: 15, height: 28) }
+                        }
+                        Button { page = min(pages - 1, currentPage + 1) } label: { Image(systemName: "chevron.right").frame(width: compactPaging ? 12 : 15, height: 28) }
                             .disabled(currentPage == pages - 1).accessibilityLabel("下一页卡片").accessibilityIdentifier("mini-next-page")
                             .onDrop(of: [UTType.plainText], delegate: MiniPageDropDelegate(enabled: editing && dragged != nil && currentPage < pages - 1, turn: { page = currentPage + 1 }))
-                    }.fixedSize()
+                    }.fixedSize().help("第 \(currentPage + 1) 页，共 \(pages) 页")
                 }
                 if editing || configuring {
                     Button(configuring ? "返回布局" : "显示内容") { configuring.toggle(); editing = true }
                         .font(.system(size: 11)).frame(height: 28).accessibilityIdentifier("mini-show-configuration")
-                } else {
-                    ViewThatFits(in: .horizontal) {
-                        dateHeader(detail: 2)
-                        dateHeader(detail: 1)
-                        dateHeader(detail: 0)
-                    }
-                }
+                } else if preferences.showDate {
+                    Button(action: openContext) {
+                        ViewThatFits(in: .horizontal) {
+                            dateHeader(detail: 2)
+                            dateHeader(detail: 1)
+                            dateHeader(detail: 0)
+                        }.frame(height: 28).contentShape(Rectangle())
+                    }.buttonStyle(WBTextActionButtonStyle())
+                        .help(context.date + " · " + context.zoneHelp + "\n打开首页的城市、天气与时间设置")
+                        .accessibilityLabel("城市、天气与时间设置，" + context.time + "，" + context.date)
+                        .accessibilityIdentifier("mini-open-context-date")
+                } else { Text("方寸").font(.system(size: 12)) }
             }.frame(width: wing, height: 28, alignment: .leading).clipped()
                 .accessibilityElement(children: .contain).accessibilityIdentifier("mini-header-date")
             Spacer(minLength: 0)
             HStack(spacing: 8) {
                 if preferences.showWeather && !editing && !configuring {
-                    ViewThatFits(in: .horizontal) {
-                        weatherHeader(detail: 2)
-                        weatherHeader(detail: 1)
-                        weatherHeader(detail: 0)
-                    }
+                    Button(action: openContext) {
+                        ViewThatFits(in: .horizontal) {
+                            weatherHeader(detail: 2)
+                            weatherHeader(detail: 1)
+                            weatherHeader(detail: 0)
+                        }.frame(height: 28).contentShape(Rectangle())
+                    }.buttonStyle(WBTextActionButtonStyle())
+                        .help([context.city, context.condition, context.weatherNote].compactMap { $0 }.joined(separator: " · ") + "\n打开首页的城市、天气与时间设置")
+                        .accessibilityLabel("城市、天气与时间设置，" + context.city + "，" + context.temperature + "，" + context.condition)
+                        .accessibilityIdentifier("mini-open-context-weather")
                 }
                 Button {
                     if editing || configuring { editing = false; configuring = false; dragged = nil; finishConfiguration() }
@@ -174,21 +191,18 @@ struct WorkbenchMiniPanelView: View {
     }
     private func dateHeader(detail: Int) -> some View {
         HStack(spacing: 7) {
-            if preferences.showDate {
-                Text(context.time).font(.system(size: 18, weight: .medium)).monospacedDigit()
-                if detail > 0 { Text(context.shortDate.isEmpty ? context.date : context.shortDate).font(.system(size: 11)).foregroundStyle(palette.secondary) }
-                if detail > 1 && !context.weekday.isEmpty { Text(context.weekday).font(.system(size: 11)).foregroundStyle(palette.secondary) }
-            } else { Text("方寸").font(.system(size: 12)) }
-        }.fixedSize().help(context.date + " · " + context.zoneHelp).accessibilityElement(children: .combine)
+            Text(context.time).monospacedDigit()
+            if detail > 0 { Text(context.shortDate.isEmpty ? context.date : context.shortDate).foregroundStyle(palette.secondary) }
+            if detail > 1 && !context.weekday.isEmpty { Text(context.weekday).foregroundStyle(palette.secondary) }
+        }.font(.system(size: 12)).fixedSize()
     }
     private func weatherHeader(detail: Int) -> some View {
         HStack(spacing: 5) {
-            if detail > 1 { Text(context.city).font(.system(size: 11)) }
-            Image(systemName: context.symbol).foregroundStyle(palette.accent).font(.system(size: 13))
-            Text(context.temperature).font(.system(size: 16)).monospacedDigit()
-            if detail > 0 { Text(context.condition).font(.system(size: 11)).foregroundStyle(palette.secondary) }
-        }.fixedSize().help([context.city, context.condition, context.weatherNote].compactMap { $0 }.joined(separator: " · "))
-            .accessibilityElement(children: .combine).accessibilityIdentifier("mini-header-weather")
+            if detail > 1 { Text(context.city) }
+            Image(systemName: context.symbol).foregroundStyle(palette.accent)
+            Text(context.temperature).monospacedDigit()
+            if detail > 0 { Text(context.condition).foregroundStyle(palette.secondary) }
+        }.font(.system(size: 12)).fixedSize().accessibilityIdentifier("mini-header-weather")
     }
 
     private func card(_ id: WorkbenchMiniCardID, capacity: Int) -> some View {
@@ -368,9 +382,11 @@ struct WorkbenchMiniPanelView: View {
                     Text("显示内容").font(.system(size: 12, weight: .medium)); Spacer()
                     Button("恢复默认", action: restore).font(.system(size: 11)).buttonStyle(.plain).clickableCursor().accessibilityIdentifier("mini-restore")
                 }
-                HStack(spacing: 16) {
+                LazyVGrid(columns: [.init(.adaptive(minimum: 100), alignment: .leading)], alignment: .leading, spacing: 8) {
                     Toggle("日期时间", isOn: Binding(get: { preferences.showDate }, set: { setHeaderVisible($0, preferences.showWeather) }))
                     Toggle("城市天气", isOn: Binding(get: { preferences.showWeather }, set: { setHeaderVisible(preferences.showDate, $0) }))
+                    Toggle("显示秒数", isOn: Binding(get: { preferences.showSeconds }, set: setSeconds))
+                        .disabled(!preferences.showDate).accessibilityIdentifier("mini-show-seconds")
                 }.font(.system(size: 11)).toggleStyle(.checkbox).clickableCursor()
                 LazyVGrid(columns: [.init(.adaptive(minimum: 145), spacing: 12)], alignment: .leading, spacing: 8) {
                     ForEach(available) { id in

@@ -216,7 +216,7 @@ struct WorkbenchTopEntryInput {
         var value = preferences
         value.cardOrder = WorkbenchMiniCardID.builtIn
         value.visibleCards = WorkbenchMiniCardID.builtIn
-        value.showDate = true; value.showWeather = true
+        value.showDate = true; value.showWeather = true; value.showSeconds = false
         save(value, dismiss: false)
     }
     var availableMiniCards: [WorkbenchMiniCardID] {
@@ -232,6 +232,10 @@ struct WorkbenchTopEntryInput {
     }
     func setMiniHeader(date: Bool, weather: Bool) {
         var value = preferences; value.showDate = date; value.showWeather = weather
+        save(value, dismiss: false)
+    }
+    func setMiniSeconds(_ visible: Bool) {
+        var value = preferences; value.showSeconds = visible
         save(value, dismiss: false)
     }
     func moveMiniCard(_ card: WorkbenchMiniCardID, target: WorkbenchMiniCardID, after: Bool) {
@@ -431,6 +435,11 @@ struct WorkbenchTopEntryInput {
                     }
                 }
                 self.owner?.showWorkbenchFromTopEntry(originFrame: self.islandPresentationFrame)
+            }, openContext: { [weak self] in
+                guard let self, let owner = self.owner else { return }
+                owner.showWorkbenchFromTopEntry(originFrame: self.islandPresentationFrame)
+                guard owner.workbenchController?.presentationWindow?.isVisible == true else { return }
+                model.openContextSettings()
             }, finishConfiguration: { [weak self] in self?.resizeMiniAfterConfiguration() }).nativeCheckAccessibility())
         islandSurface?.setContent(host)
     }
@@ -501,6 +510,8 @@ struct WorkbenchTopEntrySettingsRow: View {
                 HStack(spacing: 18) {
                     Toggle("日期时间", isOn: Binding(get: { controller.preferences.showDate }, set: { controller.setMiniHeader(date: $0, weather: controller.preferences.showWeather) }))
                     Toggle("城市天气", isOn: Binding(get: { controller.preferences.showWeather }, set: { controller.setMiniHeader(date: controller.preferences.showDate, weather: $0) }))
+                    Toggle("显示秒数", isOn: Binding(get: { controller.preferences.showSeconds }, set: controller.setMiniSeconds))
+                        .disabled(!controller.preferences.showDate).accessibilityIdentifier("settings-mini-show-seconds")
                     Spacer(minLength: 0)
                     Button("恢复默认", action: controller.restoreMiniSections).buttonStyle(.plain).clickableCursor()
                 }.font(.system(size: 11)).toggleStyle(.checkbox).clickableCursor().disabled(!controller.preferences.enabled)
