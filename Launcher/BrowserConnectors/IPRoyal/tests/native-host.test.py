@@ -124,13 +124,17 @@ class NativeChecks(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
         registered = self.fixture_registration()
         manifest = json.loads(registered.read_text())
-        self.assertEqual(manifest['path'], str(moved / 'native-host.command'))
+        launcher = self.root / 'Fixture Home/Library/Application Support/Fangcun/Connectors/IPRoyal/native-host.command'
+        self.assertEqual(manifest['path'], str(launcher))
+        self.assertEqual(launcher.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(launcher.read_bytes(), (moved / 'native-host.command').read_bytes())
         self.assertNotEqual(manifest['path'], old_path)
         self.assertEqual(manifest['allowed_origins'], [ORIGIN])
         self.assertEqual(manifest['name'], 'com.uuthings.fangcun.iproyal')
         self.assertEqual(manifest['type'], 'stdio')
         self.assertEqual(registered.stat().st_mode & 0o777, 0o600)
         self.assertEqual(list(registered.parent.glob('.fangcun-host.*')), [])
+        shutil.rmtree(moved)  # Installed launcher must not depend on the exported kit path.
         reply = subprocess.run([manifest['path'], ORIGIN], input=frame({'version':1,'type':'poll'}),
                                capture_output=True, timeout=10)
         self.assertEqual(reply.returncode, 0, reply.stderr.decode(errors='replace'))

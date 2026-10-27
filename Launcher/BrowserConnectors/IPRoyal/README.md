@@ -4,13 +4,13 @@
 
 ## 安装与连接
 
-1. 将方寸 App 放在准备长期使用的位置，在用量统计中导出连接包。将连接包保存在持久目录，不要放入临时目录。
+1. 将方寸 App 放在应用程序等准备长期使用的位置，在用量统计中导出连接包。连接包可放在文稿等便于查找的持久目录；不要把正在运行的 App 或连接包放入临时目录。
 2. 双击连接包的 `install.command`，阅读说明，输入 `INSTALL` 注册当前用户的本机连接文件。此操作由用户本人执行。
 3. 打开 Chrome 的扩展管理页，启用开发者模式，选择“加载已解压的扩展程序”，选择连接包的 `Extension` 文件夹。确认只请求 IPRoyal 控制台网站的访问权限。
 4. 在 Chrome 中自行登录 IPRoyal。已有 Google 登录可以继续使用；方寸和助手不会处理 Google 页面。
 5. 打开助手弹窗，选择“启用连接”。在方寸添加 IPRoyal 来源，填写订单编号，点击刷新。
 
-只有用户执行安装步骤后才会建立连接。导出连接包不会注册本机宿主、安装扩展或自动授予权限。移动连接包后，在新位置重新运行 `install.command`，并在 Chrome 扩展管理页重新加载新位置的 `Extension` 文件夹。移动 App 后须重新导出连接包并注册。不要删除仍在使用的连接包或配套 App。
+只有用户执行安装步骤后才会建立连接。导出连接包不会注册本机宿主、安装扩展或自动授予权限。安装时会将本机启动脚本放入方寸专用的应用支持目录，避免后台脚本直接读取「文稿」受到 macOS 隐私保护限制。移动连接包后，在 Chrome 扩展管理页重新加载新位置的 `Extension` 文件夹即可。移动 App 后须重新导出连接包并注册。不要删除仍在使用的连接包或配套 App。
 
 ## 数据范围
 
@@ -32,9 +32,11 @@
 
 Native Messaging 宿主为 `com.uuthings.fangcun.iproyal`，只接受该扩展来源；由导出包内包装程序启动方寸的独立宿主模式。只有字段白名单消息通过本机标准输入/输出。App 与宿主使用用户私有目录（0700）和原子消息文件（0600），拒绝符号链接、跨用户文件、超大消息及过期响应。
 
-关闭助手弹窗中的连接可停止工作；也可在 Chrome 移除扩展。需要移除本机注册时，用户可删除 `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.uuthings.fangcun.iproyal.json`，随后删除不再使用的连接包。不会影响 IPRoyal 账户。
+关闭助手弹窗中的连接可停止工作；也可在 Chrome 移除扩展。需要移除本机注册时，用户可删除 `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.uuthings.fangcun.iproyal.json`，随后删除不再使用的连接包及 `~/Library/Application Support/Fangcun/Connectors/IPRoyal/` 下的本机组件。不会影响 IPRoyal 账户。
 
 ## 开发验证与限制
+
+MAIN 与 ISOLATED 使用不同的校验脚本路径，避免浏览器跨执行环境去重导致模块缺失。`protocol-isolated.js` 与 `protocol.js` 内容保持一致，测试会检查两份校验器和装载顺序。
 
 `node --test tests/*.test.cjs` 验证白名单解析、来源/文档关联、过大响应、错误方法、错误订单和后台标签页生命周期。Swift 核心测试验证消息校验与受限邮箱协议。测试仅使用构造数据，不安装扩展、不注册 Native Messaging、不读取真实登录状态。
 

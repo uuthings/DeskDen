@@ -39,7 +39,7 @@
         "https://dashboard.iproyal.com/me/orders/*"
       ],
       "js": [
-        "protocol.js",
+        "protocol-isolated.js",
         "content.js"
       ],
       "world": "ISOLATED",
