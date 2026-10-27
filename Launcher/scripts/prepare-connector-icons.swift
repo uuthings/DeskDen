@@ -36,19 +36,19 @@ for pixels in [16, 32, 64, 128] {
     context.translateBy(x: 0, y: CGFloat(pixels))
     context.scaleBy(x: CGFloat(pixels) / 1024, y: -CGFloat(pixels) / 1024)
 
-    // Keep the same warm surface and corner shape, with a 1.5px inset at 32px.
+    // Use the entire square canvas for the warm tile; retain rounded corners.
     context.saveGState()
-    context.addPath(CGPath(roundedRect: CGRect(x: 48, y: 48, width: 928, height: 928),
+    context.addPath(CGPath(roundedRect: CGRect(x: 0, y: 0, width: 1024, height: 1024),
                            cornerWidth: 192, cornerHeight: 192, transform: nil))
     context.clip()
-    context.drawLinearGradient(surface, start: CGPoint(x: 512, y: 48),
-                               end: CGPoint(x: 512, y: 976), options: [])
+    context.drawLinearGradient(surface, start: CGPoint(x: 512, y: 0),
+                               end: CGPoint(x: 512, y: 1024), options: [])
     context.restoreGState()
 
-    // The source uses 1.06. A 1.5x optical enlargement yields a 24.4 x 20.0px
-    // mark on the 32px canvas while preserving its geometry and stroke ratio.
+    // The source uses 1.06. This yields a 30.0 x 24.5px mark on a 32px canvas,
+    // retaining one pixel of horizontal clearance without stretching the mark.
     context.translateBy(x: 512, y: 505)
-    context.scaleBy(x: 1.59, y: 1.59)
+    context.scaleBy(x: 1.95, y: 1.95)
     context.translateBy(x: -512, y: -505)
     context.setStrokeColor(stroke)
     context.setLineWidth(32)
