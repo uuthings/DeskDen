@@ -2,7 +2,7 @@
 
 ## Desktop outline
 
-The current icon is **桌面** (`desk`): a blue-gray work window and desk outline on a translucent cyan glass tile with restrained edge highlights. The outline geometry is unchanged. The Dock, Finder and application switcher use the same default artwork. In-app branding uses a separate optical-size drawing at 32 pt and below, with a slightly stronger glass fill for contrast; larger branding uses the main icon. The menu bar keeps its independent transparent monochrome template, with native 18 pt representations at 1x and 2x.
+The current icon is **桌面** (`desk`): a dark gray work window and desk outline on a light warm tile. The Dock, Finder and application switcher use the same default artwork. In-app branding uses a separate optical-size drawing at 32 pt and below; larger branding uses the main icon. The menu bar has an independent transparent monochrome template, with native 18 pt representations at 1x and 2x.
 
 `Desk/` keeps the editable SVG masters, ten approved standard iconset PNG representations, panel artwork and 1x/2x branding/template PNGs. These final raster sources are retained at their approved resolutions so packaging does not redraw or resample the design. The SVGs support future edits; any artwork change must include newly reviewed raster representations. No historical design gallery or personal screenshot is required to rebuild.
 
