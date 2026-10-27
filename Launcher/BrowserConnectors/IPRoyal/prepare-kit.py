@@ -9,7 +9,7 @@ import plistlib
 import shlex
 import shutil
 
-FILES = ('manifest.json', 'protocol.js', 'observer.js', 'content.js', 'background.js', 'popup.html', 'popup.css', 'popup.js')
+FILES = ('manifest.json', 'protocol.js', 'protocol-isolated.js', 'observer.js', 'content.js', 'background.js', 'popup.html', 'popup.css', 'popup.js')
 HOST = 'com.uuthings.fangcun.iproyal'
 
 def main():

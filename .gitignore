@@ -43,6 +43,7 @@
 !/Launcher/BrowserConnectors/IPRoyal/manifest.json
 !/Launcher/BrowserConnectors/IPRoyal/extension-id.txt
 !/Launcher/BrowserConnectors/IPRoyal/protocol.js
+!/Launcher/BrowserConnectors/IPRoyal/protocol-isolated.js
 !/Launcher/BrowserConnectors/IPRoyal/observer.js
 !/Launcher/BrowserConnectors/IPRoyal/content.js
 !/Launcher/BrowserConnectors/IPRoyal/background.js

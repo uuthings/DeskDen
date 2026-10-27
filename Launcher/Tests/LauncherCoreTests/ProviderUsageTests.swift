@@ -42,6 +42,20 @@ final class ProviderUsageTests: XCTestCase {
         XCTAssertTrue(state.isDue(at: now.addingTimeInterval(7200), policy: .init(), manual: true))
         XCTAssertEqual(state.pendingBytes, 2_000_000_000)
     }
+    func testManualRetryAfterRepairPreservesAutomaticBackoffAndServerLimits() {
+        var state = ProviderUsageRefreshState()
+        state.pendingBytes = 400_000_000
+        _ = state.begin(at: now)
+        state.failed(.unavailable("fixture connection interrupted"), at: now)
+        let retry = now.addingTimeInterval(1)
+        XCTAssertFalse(state.isDue(at: retry, policy: .init()))
+        XCTAssertTrue(state.isDue(at: retry, policy: .init(), manual: true))
+        XCTAssertEqual(state.pendingBytes, 400_000_000)
+        state.failed(.rateLimited(retryAfter: 3600), at: now)
+        XCTAssertFalse(state.isDue(at: retry, policy: .init(), manual: true))
+        state.reconnect()
+        XCTAssertFalse(state.isDue(at: retry, policy: .init(), manual: true))
+    }
     func testResetTriggersOnceAndPersistsItsIdentity() throws {
         let reset = now.addingTimeInterval(5000)
         var state = ProviderUsageRefreshState(); state.succeeded(at: now, acknowledgedBytes: 0)

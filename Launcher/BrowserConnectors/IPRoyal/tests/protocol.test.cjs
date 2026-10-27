@@ -9,6 +9,18 @@ test('manifest grants only dashboard and required bridge capabilities, stable pu
  const id=[...crypto.createHash('sha256').update(Buffer.from(m.key,'base64')).digest('hex').slice(0,32)].map(c=>String.fromCharCode(97+parseInt(c,16))).join('');
  assert.equal(id,load('extension-id.txt').trim());
 });
+test('each execution world loads its own protocol before consumers',()=>{
+ const m=JSON.parse(load('manifest.json')), seen=new Set();
+ assert.equal(load('protocol-isolated.js'),load('protocol.js'));
+ for(const script of m.content_scripts){
+  const context=vm.createContext({URL,Date});
+  for(const file of script.js){
+   assert.equal(seen.has(file),false,'script paths must be unique across execution worlds');seen.add(file);
+   if(file.startsWith('protocol'))vm.runInContext(load(file),context);
+   else assert.equal(typeof context.FangcunIPRoyalProtocol?.observation,'function',script.world+' consumer requires its own validator');
+  }
+ }
+});
 test('quota schema rejects invalid types, inconsistency and overflows without inventing zero',()=>{
  assert.equal(P.quota({gb_limit:400,gb_used:397.073,gb_balance:2.927}),true);
  for(const bad of [{gb_limit:100,gb_used:0,gb_balance:0},{gb_limit:0,gb_used:0,gb_balance:0},{gb_limit:100,gb_used:'1',gb_balance:99},{gb_limit:100,gb_used:NaN,gb_balance:99},{gb_limit:Infinity,gb_used:1,gb_balance:2},{gb_limit:100,gb_used:1,gb_balance:99,token:'fixture-not-a-credential'}])assert.equal(P.quota(bad),false);

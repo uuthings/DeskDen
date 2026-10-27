@@ -39,9 +39,9 @@ public struct ProviderUsageRefreshState: Codable, Equatable, Sendable {
         pendingBytes = Self.add(pendingBytes, Self.add(counter.received - old.received, counter.sent - old.sent))
     }
     public func isDue(at now: Date, policy: ProviderUsageRefreshPolicy, manual: Bool = false, resetAt: Date? = nil) -> Bool {
-        guard !authenticationRequired, retryNotBefore.map({ now >= $0 }) ?? true,
-              rateLimitUntil.map({ now >= $0 }) ?? true else { return false }
+        guard !authenticationRequired, rateLimitUntil.map({ now >= $0 }) ?? true else { return false }
         if manual { return true }
+        guard retryNotBefore.map({ now >= $0 }) ?? true else { return false }
         guard let success = lastSuccessAt else {
             return (lastAttemptAt.map({ now.timeIntervalSince($0) >= policy.minimumInterval }) ?? true) || retryNotBefore != nil
         }
