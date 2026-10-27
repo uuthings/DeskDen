@@ -204,6 +204,16 @@ import LauncherCore
                 check(manifest?["allowed_origins"] as? [String] == [ProviderUsageBrowserProtocol.extensionOrigin], "bundled exporter restricts its native host to the exact extension")
                 check(FileManager.default.isExecutableFile(atPath: kit.appendingPathComponent("native-host.command").path)
                     && FileManager.default.fileExists(atPath: kit.appendingPathComponent("Extension/manifest.json").path), "bundled exporter includes an executable wrapper and extension resources")
+                let extensionManifest = try JSONSerialization.jsonObject(with: Data(contentsOf: kit.appendingPathComponent("Extension/manifest.json"))) as? [String: Any]
+                let icons = extensionManifest?["icons"] as? [String: String] ?? [:]
+                let action = extensionManifest?["action"] as? [String: Any]
+                let actionIcons = action?["default_icon"] as? [String: String] ?? [:]
+                check(!icons.isEmpty && !actionIcons.isEmpty && Set(icons.values).union(actionIcons.values).allSatisfy {
+                    guard let template = ProviderUsageBrowserBridge.templateURL,
+                          let exported = try? Data(contentsOf: kit.appendingPathComponent("Extension/" + $0)),
+                          let original = try? Data(contentsOf: template.appendingPathComponent($0)) else { return false }
+                    return exported == original
+                }, "bundled exporter preserves every manifest and toolbar icon")
                 let before = try Data(contentsOf: kit.appendingPathComponent("README.md"))
                 do {
                     _ = try ProviderUsageBrowserBridge.exportConnectionKit(to: folder, applicationURL: Bundle.main.bundleURL, bridgeDirectory: folder)

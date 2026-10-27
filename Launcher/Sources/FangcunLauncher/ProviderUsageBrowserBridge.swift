@@ -59,7 +59,8 @@ final class ProviderUsageBrowserBridge {
         do {
             let extensionDirectory = target.appendingPathComponent("Extension", isDirectory: true)
             try manager.createDirectory(at: extensionDirectory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
-            let files = ["manifest.json", "protocol.js", "protocol-isolated.js", "observer.js", "content.js", "background.js", "popup.html", "popup.css", "popup.js"]
+            let files = ["manifest.json", "protocol.js", "protocol-isolated.js", "observer.js", "content.js", "background.js", "popup.html", "popup.css", "popup.js",
+                         "icon-16.png", "icon-32.png", "icon-64.png", "icon-128.png"]
             for file in files {
                 let source = templateURL.appendingPathComponent(file)
                 guard try source.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]).isRegularFile == true,

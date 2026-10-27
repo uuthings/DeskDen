@@ -2,6 +2,21 @@
 
 此连接器将 IPRoyal **静态 ISP 订单**的总额度、已用量、余额和原始重置日期同步到本机方寸。只支持 Google Chrome。方寸控制查询周期和流量触发阈值，助手不自行轮询服务商额度。
 
+## 源码与可选连接包
+
+连接器源码与方寸在同一仓库的 `Launcher/BrowserConnectors/IPRoyal` 目录维护，并纳入仓库的精确公开范围。需要连接 IPRoyal 时，再从 App 的用量统计中导出可选连接包；未使用 IPRoyal 的用户无需安装。搬瓦工通过服务商 API 查询额度，不需要这个浏览器连接器。
+
+连接包包含扩展文件和安装说明，不包含登录会话、账号配置或真实额度数据。仓库维护源码，不保存用户导出的连接包和本机注册文件。Chrome 应用商店分发属于单独的发布流程；当前安装方式为用户加载导出包中的扩展文件。
+
+扩展管理页和工具栏复用方寸当前的 Desk 图标。下列文件逐字节复制已有正式资产，不单独绘制另一套标识；源码路径均相对本 README：
+
+| 扩展文件 | 像素尺寸 | 正式资产来源 |
+| --- | --- | --- |
+| `icon-16.png` | 16 × 16 | [`icon_16x16.png`](../../Artwork/AppIcons/Desk/desk.iconset/icon_16x16.png) |
+| `icon-32.png` | 32 × 32 | [`desk-small-1x.png`](../../Resources/AppIcons/desk-small-1x.png) |
+| `icon-64.png` | 64 × 64 | [`desk-small.png`](../../Resources/AppIcons/desk-small.png) |
+| `icon-128.png` | 128 × 128 | [`icon_128x128.png`](../../Artwork/AppIcons/Desk/desk.iconset/icon_128x128.png) |
+
 ## 安装与连接
 
 1. 将方寸 App 放在应用程序等准备长期使用的位置，在用量统计中导出连接包。连接包可放在文稿等便于查找的持久目录；不要把正在运行的 App 或连接包放入临时目录。

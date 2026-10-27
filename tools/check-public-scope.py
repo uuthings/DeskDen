@@ -17,7 +17,7 @@ ALLOWED = [
     r"Launcher/Sources/(?:FangcunLauncher|LauncherCore)/[A-Za-z0-9_]+\.swift",
     r"Launcher/Tests/(?:LauncherCoreTests|WorkbenchChecks)/[A-Za-z0-9_]+\.swift",
     r"Launcher/scripts/[a-z0-9-]+\.(?:sh|py|swift)",
-    r"Launcher/BrowserConnectors/IPRoyal/(?:manifest\.json|extension-id\.txt|(?:protocol(?:-isolated)?|observer|content|background|popup)\.js|popup\.(?:html|css)|README\.md|install\.command|prepare-kit\.py|tests/(?:protocol\.test\.cjs|native-host\.test\.py))",
+    r"Launcher/BrowserConnectors/IPRoyal/(?:manifest\.json|extension-id\.txt|(?:protocol(?:-isolated)?|observer|content|background|popup)\.js|popup\.(?:html|css)|icon-(?:16|32|64|128)\.png|README\.md|install\.command|prepare-kit\.py|tests/(?:protocol\.test\.cjs|native-host\.test\.py))",
     r"Launcher/Signing/Fangcun\.entitlements",
     r"Launcher/Resources/(?:Info\.plist|AppIcon\.icns|PanelLogo\.png)",
     r"Launcher/Resources/Workbench/(?:(?:ar-world|thunder-cabin|qingbi-chenwu|yuebai-yunhai|nuanxia-xuanshan)\.jpg|(?:chatgpt|claude)\.png)",
