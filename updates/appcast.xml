@@ -9,6 +9,32 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
         <description>Official signed software updates for Fangcun.</description>
         <language>zh-CN</language>
         <item>
+            <title>0.3.0</title>
+            <pubDate>Tue, 27 Oct 2026 18:01:08 +0000</pubDate>
+            <sparkle:version>4</sparkle:version>
+            <sparkle:shortVersionString>0.3.0</sparkle:shortVersionString>
+            <sparkle:fullReleaseNotesLink>https://github.com/uuthings/DeskDen/releases/tag/v0.3.0</sparkle:fullReleaseNotesLink>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="plain-text"><![CDATA[空间清理
+支持大文件范围扫描，完善结果复核与清理记录，移除独立体检中心。
+
+用量与额度
+统一 AI 与服务流量卡片，支持搬瓦工 API 查询和可选 IPRoyal Chrome 连接器。
+
+顶部 Mini 与天气
+可配置并排列信息卡片，增加城市设置入口、可选秒数和温度单位设置。
+
+布局修复
+固定顶栏和侧栏尺寸，修复窗口放大、清理模式切换及空卡片布局问题，统一弹窗滚动与交互反馈。
+
+升级前请留意
+使用私密空间时，建议先在旧版导出加密备份。新版保存编辑后使用格式 3，旧版不能读取；最初格式启用 Touch ID 也可能触发迁移，请继续使用新版。
+
+IPRoyal 连接器需另行安装并保持官方控制台登录。服务额度存在更新延迟；网络监控仍统计总流量。
+]]></description>
+            <enclosure url="https://github.com/uuthings/DeskDen/releases/download/v0.3.0/Fangcun-0.3.0-macos-universal.zip" length="25621581" type="application/octet-stream" sparkle:edSignature="xqsgV3bU5n3MjzzEGCrt2CexKqPdmDoOv9jTKk3VDKwORXhYcc4rVSFuK3QG+oInBrWUkH9S3YW9WKullKFUBQ=="/>
+        </item>
+        <item>
             <title>0.2.0</title>
             <pubDate>Fri, 23 Oct 2026 03:49:31 +0000</pubDate>
             <sparkle:version>3</sparkle:version>
@@ -32,6 +58,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: RtjDt3F9RJAhB3HQfC2O6opvSrI4WxEosUL3t9WxJbpLhUi5YZUQjq6fJLENicE5nKLuV4SG86TG4BwoYLyrCw==
-length: 2071
+edSignature: PdmTEUmF48Q7SkB40LKoROk9/0T6+l4aYLdydxd5Y1N95rE03t4b+x8cSWV2Ue8jtUq0Vqix9S3D4HalYbd2AA==
+length: 3737
 -->
