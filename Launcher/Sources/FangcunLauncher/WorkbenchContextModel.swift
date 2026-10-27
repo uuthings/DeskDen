@@ -223,16 +223,27 @@ struct WorkbenchDiscardConfirmation: View {
 struct WorkbenchDialogFrame<Content:View,Actions:View>:View {
     let title:String
     let dismiss:()->Void
+    var scrollsContent = false
     @ViewBuilder let content:()->Content
     @ViewBuilder let actions:()->Actions
     @Environment(\.workbenchPalette) private var palette
     var body:some View {
         VStack(alignment:.leading,spacing:0) {
             HStack {Text(title).font(.system(size:15,weight:.medium));Spacer();Button(action:dismiss){Image(systemName:"xmark")}.buttonStyle(WBIconButtonStyle(size:32)).accessibilityLabel("关闭"+title)}.padding(EdgeInsets(top:18,leading:18,bottom:13,trailing:18))
-            content().padding(.horizontal,18).padding(.bottom,18)
+            if scrollsContent {
+                ScrollView {
+                    paddedContent.background(WorkbenchOverlayScrollbars())
+                }.frame(maxHeight:480).scrollBounceBehavior(.basedOnSize)
+            } else {
+                paddedContent
+            }
             Rectangle().fill(palette.line).frame(height:1)
             HStack(spacing:8){actions()}.padding(.horizontal,18).padding(.vertical,13)
         }.foregroundStyle(palette.text).accessibilityElement(children:.contain).accessibilityLabel(title)
+    }
+    // Reading gutters belong to the document so its scrollbar stays at the dialog edge.
+    private var paddedContent:some View {
+        content().padding(.horizontal,18).padding(.bottom,18)
     }
 }
 
@@ -326,8 +337,8 @@ struct WorkbenchWeatherDialog:View {
     private var city:WeatherCity? {draft.city}
     private var cleanQuery:String {query.trimmingCharacters(in:.whitespacesAndNewlines)}
     var body:some View {
-        WorkbenchDialogFrame(title:"城市、天气与时间",dismiss:requestDismiss) {
-            ScrollView { VStack(alignment:.leading,spacing:14) {
+        WorkbenchDialogFrame(title:"城市、天气与时间",dismiss:requestDismiss,scrollsContent:true) {
+            VStack(alignment:.leading,spacing:14) {
                 HStack(spacing:8) {
                     Image(systemName:"magnifyingglass").foregroundStyle(palette.muted)
                     TextField("搜索城市、拼音或英文名称",text:$query).textFieldStyle(.plain).onSubmit {search(immediate:true)}
@@ -372,7 +383,7 @@ struct WorkbenchWeatherDialog:View {
                 timeAndUnits
                 if let error=model.error {Text(error).font(.system(size:11)).foregroundStyle(palette.critical)}
                 HStack {Text("天气按所选城市查询");Spacer();Link("Open-Meteo · GeoNames",destination:URL(string:"https://open-meteo.com/")!)}.font(.system(size:10)).foregroundStyle(palette.muted)
-            }.padding(.trailing,10).background(WorkbenchOverlayScrollbars()) }.frame(maxHeight:480).scrollBounceBehavior(.basedOnSize)
+            }
         } actions:{
             if city != nil {Button("清除城市"){draft.city=nil;preview=nil;weatherTask?.cancel()}.buttonStyle(WBButtonStyle())}
             Spacer();Button("取消",action:requestDismiss).buttonStyle(WBButtonStyle())
