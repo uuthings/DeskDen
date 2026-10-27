@@ -40,6 +40,10 @@
 /Launcher/BrowserConnectors/*
 !/Launcher/BrowserConnectors/IPRoyal/
 /Launcher/BrowserConnectors/IPRoyal/*
+!/Launcher/BrowserConnectors/IPRoyal/icon-16.png
+!/Launcher/BrowserConnectors/IPRoyal/icon-32.png
+!/Launcher/BrowserConnectors/IPRoyal/icon-64.png
+!/Launcher/BrowserConnectors/IPRoyal/icon-128.png
 !/Launcher/BrowserConnectors/IPRoyal/manifest.json
 !/Launcher/BrowserConnectors/IPRoyal/extension-id.txt
 !/Launcher/BrowserConnectors/IPRoyal/protocol.js

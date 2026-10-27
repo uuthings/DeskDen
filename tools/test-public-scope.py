@@ -53,7 +53,7 @@ class PublicGateTests(unittest.TestCase):
 
     def test_browser_connector_has_an_exact_source_scope(self):
         prefix = "Launcher/BrowserConnectors/IPRoyal/"
-        for name in ["manifest.json", "extension-id.txt", "protocol.js", "observer.js", "content.js", "background.js",
+        for name in ["manifest.json", "extension-id.txt", "protocol.js", "protocol-isolated.js", "observer.js", "content.js", "background.js",
                      "popup.js", "popup.html", "popup.css", "README.md", "install.command", "prepare-kit.py",
                      "tests/protocol.test.cjs", "tests/native-host.test.py"]:
             self.write(prefix + name, "public fixture\n")
@@ -64,6 +64,27 @@ class PublicGateTests(unittest.TestCase):
             self.git("add", prefix + name)
             self.assertNotEqual(self.check("--staged").returncode, 0)
             self.git("rm", "--cached", prefix + name)
+
+    def test_browser_connector_icons_have_an_exact_public_scope(self):
+        prefix = "Launcher/BrowserConnectors/IPRoyal/"
+        for size in [16, 32, 64, 128]:
+            path = prefix + f"icon-{size}.png"
+            target = self.repo / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / path, target)
+            self.git("add", path)
+        result = self.check("--staged")
+        self.assertEqual(result.returncode, 0, result.stdout.decode())
+
+        for name in ["icon-48.png", "icon-256.png", "icon-32@2x.png",
+                     "icons/icon-32.png", "private-preview.png"]:
+            with self.subTest(path=name):
+                target = self.repo / prefix / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / prefix / "icon-32.png", target)
+                self.git("add", prefix + name)
+                self.assertNotEqual(self.check("--staged").returncode, 0)
+                self.git("rm", "--cached", "-q", prefix + name)
 
     def test_public_signing_metadata_is_allowed(self):
         self.write("README.md", "Team: ABCD123456\nCertificate SHA-1: 0123456789012345678901234567890123456789\n")

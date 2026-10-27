@@ -13,13 +13,25 @@
   "host_permissions": [
     "https://dashboard.iproyal.com/*"
   ],
+  "icons": {
+    "16": "icon-16.png",
+    "32": "icon-32.png",
+    "64": "icon-64.png",
+    "128": "icon-128.png"
+  },
   "background": {
     "service_worker": "background.js",
     "type": "module"
   },
   "action": {
     "default_title": "方寸 IPRoyal 连接",
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon-16.png",
+      "32": "icon-32.png",
+      "64": "icon-64.png",
+      "128": "icon-128.png"
+    }
   },
   "content_scripts": [
     {

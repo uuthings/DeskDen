@@ -103,6 +103,9 @@ class NativeChecks(unittest.TestCase):
         result = subprocess.run([manifest['path'],ORIGIN],input=frame({'version':1,'type':'poll'}),capture_output=True,timeout=10)
         self.assertEqual(json.loads(result.stdout[4:]),{'version':1,'type':'idle'})
         self.assertTrue((kit/'Extension/manifest.json').is_file())
+        extension = json.loads((kit/'Extension/manifest.json').read_text())
+        for icon in set(extension['icons'].values()) | set(extension['action']['default_icon'].values()):
+            self.assertEqual((kit/'Extension'/icon).read_bytes(), (SOURCE/icon).read_bytes())
         self.assertFalse((self.root/'Library').exists())
         duplicate = subprocess.run([sys.executable,str(SOURCE/'prepare-kit.py'),'--app',str(app),'--bridge-directory',str(self.root/'bridge'),'--output',str(kit)],capture_output=True)
         self.assertNotEqual(duplicate.returncode,0)
