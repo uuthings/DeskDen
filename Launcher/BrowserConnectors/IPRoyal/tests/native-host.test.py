@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise native framing and kit preparation using fixture App/data only."""
 import json
+import os
 from pathlib import Path
 import plistlib
 import shutil
@@ -28,6 +29,28 @@ class NativeChecks(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix='fangcun-native-fixture-')
         self.root = Path(self.temp.name).resolve()
     def tearDown(self): self.temp.cleanup()
+
+    def prepare_fixture_kit(self):
+        app = self.root / "Fixture's App.app"
+        mac = app / 'Contents/MacOS'; mac.mkdir(parents=True)
+        shutil.copy2(EXE, mac / 'Fixture')
+        (app / 'Contents/Info.plist').write_bytes(plistlib.dumps({'CFBundleExecutable':'Fixture','CFBundleIdentifier':'test.fixture'}))
+        kit = self.root / 'Prepared Kit'
+        subprocess.run([sys.executable, str(SOURCE / 'prepare-kit.py'), '--app', str(app),
+                        '--bridge-directory', str(self.root / 'bridge'), '--output', str(kit)],
+                       check=True, capture_output=True, timeout=10)
+        return kit
+
+    def install_fixture(self, kit, answer='INSTALL\n'):
+        # HOME is deliberately isolated: these checks must never register with real Chrome.
+        environment = os.environ.copy()
+        environment['HOME'] = str(self.root / 'Fixture Home')
+        return subprocess.run(['/bin/sh', str(kit / 'install.command')], input=answer.encode(),
+                              env=environment, capture_output=True, timeout=10)
+
+    def fixture_registration(self):
+        return self.root / 'Fixture Home/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.uuthings.fangcun.iproyal.json'
+
     def test_poll_frame_and_private_heartbeat(self):
         box = self.root/'mailbox'
         result = run(EXE, box, frame({'version':1,'type':'poll'}))
@@ -84,5 +107,47 @@ class NativeChecks(unittest.TestCase):
         duplicate = subprocess.run([sys.executable,str(SOURCE/'prepare-kit.py'),'--app',str(app),'--bridge-directory',str(self.root/'bridge'),'--output',str(kit)],capture_output=True)
         self.assertNotEqual(duplicate.returncode,0)
         subprocess.run(['/bin/sh','-n',str(kit/'install.command')],check=True,capture_output=True)
+
+    def test_install_cancel_leaves_no_registration(self):
+        kit = self.prepare_fixture_kit()
+        result = self.install_fixture(kit, 'CANCEL\n')
+        self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
+        self.assertFalse(self.fixture_registration().exists())
+        self.assertFalse(self.fixture_registration().parent.exists())
+
+    def test_install_uses_relocated_kit_path(self):
+        kit = self.prepare_fixture_kit()
+        old_path = json.loads((kit / 'com.uuthings.fangcun.iproyal.json').read_text())['path']
+        moved = self.root / "常用工具's Moved Kit"
+        kit.rename(moved)
+        result = self.install_fixture(moved)
+        self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
+        registered = self.fixture_registration()
+        manifest = json.loads(registered.read_text())
+        self.assertEqual(manifest['path'], str(moved / 'native-host.command'))
+        self.assertNotEqual(manifest['path'], old_path)
+        self.assertEqual(manifest['allowed_origins'], [ORIGIN])
+        self.assertEqual(manifest['name'], 'com.uuthings.fangcun.iproyal')
+        self.assertEqual(manifest['type'], 'stdio')
+        self.assertEqual(registered.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(list(registered.parent.glob('.fangcun-host.*')), [])
+        reply = subprocess.run([manifest['path'], ORIGIN], input=frame({'version':1,'type':'poll'}),
+                               capture_output=True, timeout=10)
+        self.assertEqual(reply.returncode, 0, reply.stderr.decode(errors='replace'))
+        self.assertEqual(json.loads(reply.stdout[4:]), {'version':1,'type':'idle'})
+
+    def test_invalid_install_preserves_existing_registration(self):
+        kit = self.prepare_fixture_kit()
+        registered = self.fixture_registration()
+        registered.parent.mkdir(parents=True)
+        existing = b'{"name":"com.uuthings.fangcun.iproyal","path":"previous-fixture-host","type":"stdio"}\n'
+        registered.write_bytes(existing)
+        registered.chmod(0o600)
+        (kit / 'com.uuthings.fangcun.iproyal.json').write_text('{"name":')
+        result = self.install_fixture(kit)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(registered.read_bytes(), existing)
+        self.assertEqual(registered.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(list(registered.parent.glob('.fangcun-host.*')), [])
 
 if __name__ == '__main__': unittest.main()
