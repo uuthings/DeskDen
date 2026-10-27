@@ -119,7 +119,7 @@ import LauncherCore
                   "canonical top entry is actually visible on the active Space and listed by WindowServer")
             check(ordinary.collectionBehavior.contains(.fullScreenPrimary) && ordinary.level == .normal,
                   "canonical top entry keeps normal window level and native full-screen support")
-            check(model.hostWindow === ordinary && model.vault.hostWindow === ordinary && model.health.hostWindow === ordinary
+            check(model.hostWindow === ordinary && model.vault.hostWindow === ordinary
                   && model.modals.hostWindow === ordinary && ordinary.contentView === originalContent && ordinary.frame == originalFrame,
                   "top entry preserves one content tree, model, sheet hosts and saved ordinary geometry")
             let ordinaryIdentity = ObjectIdentifier(ordinary), contentIdentity = ordinary.contentView.map(ObjectIdentifier.init)

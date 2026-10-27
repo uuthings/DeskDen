@@ -15,7 +15,7 @@ public struct SpaceCleaningTreeProof: Codable, Equatable, Sendable {
     public var sha256: String
     public var entryCount: Int
     public var logicalBytes: UInt64
-    public var rootIdentity: StorageReviewFileIdentity
+    public var rootIdentity: SpaceCleaningFileIdentity
     public var isValid: Bool {
         sha256.utf8.count == 64 && sha256.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) } && (1...100_000).contains(entryCount)
     }
@@ -365,7 +365,7 @@ public final class SpaceCleaningHistoryStore: @unchecked Sendable {
     private let fileURL: URL
     private let lock = NSLock()
     private var values: [UUID: SpaceCleaningRecord] = [:]
-    private var fileIdentity: StorageReviewFileIdentity?
+    private var fileIdentity: SpaceCleaningFileIdentity?
     public init(fileURL: URL) throws {
         guard fileURL.isFileURL else { throw SpaceCleaningFilesystem.Failure(message: "清理记录位置无效。") }
         self.fileURL = fileURL

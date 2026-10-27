@@ -35,7 +35,7 @@ import LauncherCore
         }
         let samples: [(size: NSSize, pageWidth: CGFloat)] = [
             (.init(width: 1120, height: 758), 864),
-            (.init(width: 960, height: 720), 736),
+            (.init(width: 960, height: 720), 704),
             (.init(width: 1728, height: 993), 1360)
         ]
         for sample in samples {
@@ -86,17 +86,26 @@ import LauncherCore
                 let cards = identifiers.compactMap { frame($0, in: host) }
                 let expectedWidth = (sample.pageWidth - CGFloat(identifiers.count - 1) * 12) / CGFloat(identifiers.count)
                 check(cards.count == identifiers.count && cards.allSatisfy { abs($0.width - expectedWidth) < 1.5 },
-                      "mounted \(route.rawValue) detail cards share the frozen equal columns in \(label)")
+                      "mounted \(route.rawValue) detail cards share equal columns at the stable shell insets in \(label)")
                 let top = cards.first?.maxY, bottom = cards.first?.minY
                 check(cards.count == identifiers.count && cards.allSatisfy { card in
                     top.map { abs(card.maxY - $0) < 1 } == true && bottom.map { abs(card.minY - $0) < 1 } == true
                 }, "mounted \(route.rawValue) card surfaces stretch to identical top and bottom edges in \(label)")
-                // This service-disabled fixture has the same one-line content
-                // structure as the frozen card. Real longer values can grow;
-                // the production layout uses a minimum, never a fixed height.
-                let expectedHeight: CGFloat = route == .storage ? 218.0625 : 128.25
-                check(cards.count == identifiers.count && cards.allSatisfy { abs($0.height - expectedHeight) < 1 },
-                      "mounted \(route.rawValue) one-line card surfaces retain the frozen \(expectedHeight) pt absolute height in \(label)")
+                // Storage includes the machine's actual mounted-volume rows,
+                // so it may naturally exceed its design minimum. Verify every
+                // text descendant remains inside the equal-height surfaces.
+                if route == .storage {
+                    check(cards.count == identifiers.count && cards.allSatisfy { $0.height >= 218 },
+                          "mounted storage cards preserve their readable minimum while allowing real volume rows to grow in \(label)")
+                    check(identifiers.allSatisfy { identifier in
+                        guard let surface = frame(identifier, in: host) else { return false }
+                        let texts = descendantTextFrames(identifier, in: host)
+                        return !texts.isEmpty && texts.allSatisfy { surface.insetBy(dx: -1, dy: -1).contains($0) }
+                    }, "mounted storage card text remains inside its surface without clipping in \(label)")
+                } else {
+                    check(cards.count == identifiers.count && cards.allSatisfy { abs($0.height - 128.25) < 1 },
+                          "mounted \(route.rawValue) cards keep the same compact reading height across window sizes in \(label)")
+                }
                 print("DETAIL device-detail \(route.rawValue) \(label) surfaces=\(cards)")
                 if route == .cpu {
                     let lowerIdentifiers = ["fc.device.detail.card.cpu-processor", "fc.device.detail.card.cpu-processes"]
@@ -138,10 +147,14 @@ import LauncherCore
                     print("DETAIL device-profile-core \(label) nativeGlyphHeight=\(nativeGlyphHeight("核心构成", size: 11)) core=\(String(describing: core)) hardware=\(String(describing: hardware))")
                 }
             }
+            model.deviceDetail = .storage; model.navigate(.device)
+            _ = await wait(window) { frame("device-detail-open-cleaning", in: host) != nil && frame("fc.page.device.storage", in: host) != nil }
+            check(frame("device-detail-open-cleaning", in: host).map { abs($0.height - 32) < 1 } == true,
+                  "mounted storage detail exposes its 32 pt space-cleaning action in \(label)")
             model.deviceDetail = .memory; model.navigate(.device)
-            _ = await wait(window) { frame("device-detail-open-health", in: host) != nil && frame("fc.page.device.memory", in: host) != nil }
-            check(frame("device-detail-open-health", in: host).map { abs($0.height - 32) < 1 } == true,
-                  "mounted memory detail exposes its 32 pt health-center action in \(label)")
+            _ = await wait(window) { frame("fc.page.device.memory", in: host) != nil }
+            check(frame("device-detail-open-cleaning", in: host) == nil,
+                  "mounted memory detail has no unrelated space-cleaning action in \(label)")
             model.deviceDetail = .network; model.navigate(.device)
             _ = await wait(window) { frame("device-network-interface-picker", in: host) != nil }
             let picker = frame("device-network-interface-picker", in: host)
@@ -166,6 +179,34 @@ import LauncherCore
             try? await Task.sleep(for: .milliseconds(10))
         } while ContinuousClock.now < deadline
         return condition()
+    }
+    private static func descendantTextFrames(_ identifier: String, in root: NSView) -> [NSRect] {
+        var pending: [NSObject] = [root], seen = Set<ObjectIdentifier>()
+        while let object = pending.popLast(), seen.count < 8_192 {
+            guard seen.insert(ObjectIdentifier(object)).inserted else { continue }
+            if object.responds(to: NSSelectorFromString("accessibilityIdentifier")),
+               object.value(forKey: "accessibilityIdentifier") as? String == identifier {
+                var children = accessibilityChildren(object), childSeen = Set<ObjectIdentifier>(), result: [NSRect] = []
+                while let child = children.popLast(), childSeen.count < 2_048 {
+                    guard childSeen.insert(ObjectIdentifier(child)).inserted else { continue }
+                    if child.responds(to: NSSelectorFromString("accessibilityRole")),
+                       child.value(forKey: "accessibilityRole") as? String == NSAccessibility.Role.staticText.rawValue,
+                       child.responds(to: NSSelectorFromString("accessibilityFrame")),
+                       let rect = (child.value(forKey: "accessibilityFrame") as? NSValue)?.rectValue,
+                       rect.width > 0, rect.height > 0 { result.append(rect) }
+                    children.append(contentsOf: accessibilityChildren(child))
+                }
+                return result
+            }
+            pending.append(contentsOf: accessibilityChildren(object))
+        }
+        return []
+    }
+    private static func accessibilityChildren(_ object: NSObject) -> [NSObject] {
+        var result: [NSObject] = (object as? NSView)?.subviews ?? []
+        if object.responds(to: NSSelectorFromString("accessibilityChildren")),
+           let children = object.value(forKey: "accessibilityChildren") as? [NSObject] { result.append(contentsOf: children) }
+        return result
     }
     private static func nativeGlyphHeight(_ text: String, size: CGFloat) -> CGFloat {
         ceil((text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: size)]).height)

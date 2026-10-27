@@ -578,10 +578,6 @@ enum NativeChecks {
         count += dateInputChecks.count;failures += dateInputChecks.failures
         let aiNativeChecks=await AIUsageNativeChecks.run()
         count += aiNativeChecks.count;failures += aiNativeChecks.failures
-        let healthChecks=await HealthCenterNativeChecks.run()
-        count += healthChecks.count;failures += healthChecks.failures
-        let healthApplicationChecks=await HealthApplicationReviewChecks.run()
-        count += healthApplicationChecks.count;failures += healthApplicationChecks.failures
         let notificationChecks=await NotificationNavigationChecks.run()
         count += notificationChecks.count;failures += notificationChecks.failures
         let launcherShortcutChecks=LauncherShortcutChecks.run()
@@ -590,8 +586,6 @@ enum NativeChecks {
         count += launcherPresentationChecks.count;failures += launcherPresentationChecks.failures
         let launcherSettingsChecks=await WorkbenchLauncherSettingsChecks.run()
         count += launcherSettingsChecks.count;failures += launcherSettingsChecks.failures
-        let storageServiceChecks=await StorageReviewServiceChecks.run()
-        count += storageServiceChecks.count;failures += storageServiceChecks.failures
         let cleaningModelChecks=await SpaceCleaningModelChecks.run()
         count += cleaningModelChecks.count;failures += cleaningModelChecks.failures
         let cleaningNativeChecks=await SpaceCleaningNativeChecks.run()

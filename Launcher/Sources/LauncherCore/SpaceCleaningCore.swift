@@ -33,16 +33,16 @@ public struct SpaceCleaningScope: Identifiable, Codable, Equatable, Sendable {
 }
 public struct SpaceCleaningPathIdentity: Codable, Equatable, Sendable {
     public var url: URL
-    public var identity: StorageReviewFileIdentity
-    public init(url: URL, identity: StorageReviewFileIdentity) { self.url = url; self.identity = identity }
+    public var identity: SpaceCleaningFileIdentity
+    public init(url: URL, identity: SpaceCleaningFileIdentity) { self.url = url; self.identity = identity }
 }
 /// A declaration is bound to the exact reviewed object, including package contents.
 /// Its existence does not override release protection, running applications or unsafe entries.
 public struct SpaceCleaningTestDeclaration: Codable, Equatable, Sendable {
     public var url: URL
-    public var identity: StorageReviewFileIdentity
+    public var identity: SpaceCleaningFileIdentity
     public var treeFingerprint: String?
-    public init(url: URL, identity: StorageReviewFileIdentity, treeFingerprint: String?) {
+    public init(url: URL, identity: SpaceCleaningFileIdentity, treeFingerprint: String?) {
         self.url = url; self.identity = identity; self.treeFingerprint = treeFingerprint
     }
     public init(candidate: SpaceCleaningCandidate) {
@@ -86,8 +86,8 @@ public struct SpaceCleaningCandidate: Identifiable, Codable, Equatable, Sendable
     public var scopeID: UUID
     public var url: URL
     public var rootURL: URL
-    public var rootIdentity: StorageReviewFileIdentity
-    public var identity: StorageReviewFileIdentity
+    public var rootIdentity: SpaceCleaningFileIdentity
+    public var identity: SpaceCleaningFileIdentity
     public var ancestorIdentities: [SpaceCleaningPathIdentity]
     public var kind: SpaceCleaningKind
     public var group: SpaceCleaningGroup
@@ -115,7 +115,7 @@ public struct SpaceCleaningCandidate: Identifiable, Codable, Equatable, Sendable
             (group == .rebuildable && kind == .oldDiagnostic)
     }
     public init(id: UUID = UUID(), scopeID: UUID = UUID(), url: URL, rootURL: URL,
-                rootIdentity: StorageReviewFileIdentity, identity: StorageReviewFileIdentity,
+                rootIdentity: SpaceCleaningFileIdentity, identity: SpaceCleaningFileIdentity,
                 ancestorIdentities: [SpaceCleaningPathIdentity] = [], kind: SpaceCleaningKind,
                 group: SpaceCleaningGroup, title: String, reason: String, impact: String,
                 logicalBytes: UInt64, allocatedBytes: UInt64, isDirectory: Bool,
@@ -348,13 +348,13 @@ public enum SpaceCleaningScanner {
         return 0
         #endif
     }
-    public static func captureIdentity(at url: URL) -> StorageReviewFileIdentity? {
+    public static func captureIdentity(at url: URL) -> SpaceCleaningFileIdentity? {
         guard url.isFileURL else { return nil }
         var value = stat()
         guard url.withUnsafeFileSystemRepresentation({ $0.map { lstat($0, &value) } ?? -1 }) == 0 else { return nil }
         return identity(value)
     }
-    fileprivate static func identity(_ value: stat) -> StorageReviewFileIdentity? {
+    fileprivate static func identity(_ value: stat) -> SpaceCleaningFileIdentity? {
         guard value.st_size >= 0, value.st_blocks >= 0 else { return nil }
         #if canImport(Darwin)
         let modified = value.st_mtimespec, changed = value.st_ctimespec
@@ -369,9 +369,9 @@ public enum SpaceCleaningScanner {
                      linkCount: UInt64(value.st_nlink), mode: UInt32(value.st_mode))
     }
     fileprivate static func contains(_ path: String, in root: String) -> Bool { path == root || path.hasPrefix(root + "/") }
-    fileprivate static func isDirectory(_ value: StorageReviewFileIdentity) -> Bool { value.mode & UInt32(S_IFMT) == UInt32(S_IFDIR) }
-    fileprivate static func isRegular(_ value: StorageReviewFileIdentity) -> Bool { value.mode & UInt32(S_IFMT) == UInt32(S_IFREG) }
-    fileprivate static func isSymbolicLink(_ value: StorageReviewFileIdentity) -> Bool { value.mode & UInt32(S_IFMT) == UInt32(S_IFLNK) }
+    fileprivate static func isDirectory(_ value: SpaceCleaningFileIdentity) -> Bool { value.mode & UInt32(S_IFMT) == UInt32(S_IFDIR) }
+    fileprivate static func isRegular(_ value: SpaceCleaningFileIdentity) -> Bool { value.mode & UInt32(S_IFMT) == UInt32(S_IFREG) }
+    fileprivate static func isSymbolicLink(_ value: SpaceCleaningFileIdentity) -> Bool { value.mode & UInt32(S_IFMT) == UInt32(S_IFLNK) }
 }
 
 struct SpaceCleaningMetadataReader {
@@ -413,15 +413,15 @@ private final class Worker {
     var completedItems = 0
     struct PendingCandidate {
         let url: URL
-        let identity: StorageReviewFileIdentity
+        let identity: SpaceCleaningFileIdentity
         let scope: SpaceCleaningScope
         let root: URL
-        let rootIdentity: StorageReviewFileIdentity
+        let rootIdentity: SpaceCleaningFileIdentity
         let ancestors: [SpaceCleaningPathIdentity]
     }
     var pendingCandidates: [PendingCandidate] = []
     private var developmentLookup = SpaceCleaningDevelopmentPolicy.Lookup()
-    private func developmentReason(_ url: URL, identity: StorageReviewFileIdentity? = nil) -> String? {
+    private func developmentReason(_ url: URL, identity: SpaceCleaningFileIdentity? = nil) -> String? {
         developmentLookup.reason(at: url, identity: identity)
     }
 
@@ -532,7 +532,7 @@ private final class Worker {
         return classification.group == .rebuildable ? 0 : 1
     }
 
-    func walk(_ scope: SpaceCleaningScope, directory: URL, root: URL, rootIdentity: StorageReviewFileIdentity,
+    func walk(_ scope: SpaceCleaningScope, directory: URL, root: URL, rootIdentity: SpaceCleaningFileIdentity,
               ancestors: [SpaceCleaningPathIdentity], depth: Int) {
         // Iteration avoids retaining a maximum-sized sibling array at every recursion depth.
         var pending: [(URL, [SpaceCleaningPathIdentity], Int)] = [(directory, ancestors, depth)]
@@ -561,7 +561,7 @@ private final class Worker {
         }
     }
 
-    func discoverReleaseArchives(_ scope: SpaceCleaningScope, root: URL, rootIdentity: StorageReviewFileIdentity) {
+    func discoverReleaseArchives(_ scope: SpaceCleaningScope, root: URL, rootIdentity: SpaceCleaningFileIdentity) {
         guard let children = readChildren(root, scope: scope) else { return }
         for appFolder in children {
             guard visit(appFolder, scope: scope) else { break }
@@ -586,8 +586,8 @@ private final class Worker {
     struct Classification { var kind: SpaceCleaningKind; var group: SpaceCleaningGroup; var reason: String; var impact: String; var testable = false }
     struct Measurement { var logical: UInt64 = 0; var allocated: UInt64 = 0; var fingerprint: String?; var complete = true; var unsafe = false; var releaseContent = false; var cloudContent = false; var developmentContent = false }
 
-    func makeCandidate(_ url: URL, identity: StorageReviewFileIdentity, scope: SpaceCleaningScope, root: URL,
-                       rootIdentity: StorageReviewFileIdentity, ancestors: [SpaceCleaningPathIdentity]) -> SpaceCleaningCandidate? {
+    func makeCandidate(_ url: URL, identity: SpaceCleaningFileIdentity, scope: SpaceCleaningScope, root: URL,
+                       rootIdentity: SpaceCleaningFileIdentity, ancestors: [SpaceCleaningPathIdentity]) -> SpaceCleaningCandidate? {
         let directory = Scanner.isDirectory(identity)
         if !directory && !Scanner.isSymbolicLink(identity), !visitedFiles.insert(identity.fileKey).inserted {
             issue(scope, url, .duplicate, "同一文件身份已记录，不重复计算容量。"); return nil
@@ -649,7 +649,7 @@ private final class Worker {
                      canConfirmTestPurpose: classification.testable, treeFingerprint: measurement.fingerprint, sizeIsComplete: measurement.complete)
     }
 
-    func classify(_ url: URL, identity: StorageReviewFileIdentity) -> Classification {
+    func classify(_ url: URL, identity: SpaceCleaningFileIdentity) -> Classification {
         if Scanner.isSymbolicLink(identity) { return .init(kind: .symbolicLink, group: .protected, reason: "符号链接默认保留，未跟随目标。", impact: "链接大小不代表目标占用。") }
         if cloudPlaceholder(url) { return .init(kind: .cloudPlaceholder, group: .protected, reason: "云端内容尚未下载到本机，本次保留。", impact: "不触发下载，不计入本机可清理容量。") }
         if let reason = developmentReason(url, identity: identity) {
@@ -700,11 +700,11 @@ private final class Worker {
         return .init(kind: .personalFile, group: .review, reason: "自选范围中的文件，需要人工复核。", impact: "文件名和修改时间不代表可安全删除。")
     }
 
-    func measure(_ root: URL, rootIdentity: StorageReviewFileIdentity, scope: SpaceCleaningScope, allowBundleLinks: Bool,
+    func measure(_ root: URL, rootIdentity: SpaceCleaningFileIdentity, scope: SpaceCleaningScope, allowBundleLinks: Bool,
                  protectedBudget: Bool) -> Measurement {
         var result = Measurement(), hash = SHA256()
         var pending: [(URL, Int)] = [(root, 0)]
-        var identities: [(URL, StorageReviewFileIdentity)] = []
+        var identities: [(URL, SpaceCleaningFileIdentity)] = []
         var localSeen: Set<String> = []
         let generated = cacheKind(root) == .derivedData
         let strongRoot = isStrongReleaseProtected(root)
@@ -774,7 +774,7 @@ private final class Worker {
         return result
     }
 
-    func shouldAggregate(_ url: URL, scope: SpaceCleaningScope, identity: StorageReviewFileIdentity) -> Bool {
+    func shouldAggregate(_ url: URL, scope: SpaceCleaningScope, identity: SpaceCleaningFileIdentity) -> Bool {
         if developmentReason(url, identity: identity) != nil { return true }
         if isPackage(url) || isReleaseProtected(url) { return true }
         if options.mode == .largeFiles { return false }

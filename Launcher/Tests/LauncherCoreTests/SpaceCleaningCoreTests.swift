@@ -3,6 +3,23 @@ import Darwin
 @testable import LauncherCore
 
 final class SpaceCleaningCoreTests: XCTestCase {
+    func testFileIdentityKeepsPersistedSchemaAndStrictRenameChecks() throws {
+        let originalJSON = #"{"device":1,"inode":2,"sizeBytes":4096,"allocatedBytes":8192,"modifiedSeconds":1700000000,"modifiedNanoseconds":7,"changedSeconds":1700000001,"changedNanoseconds":9,"linkCount":1,"mode":33152}"#.data(using: .utf8)!
+        let identity = try JSONDecoder().decode(SpaceCleaningFileIdentity.self, from: originalJSON)
+        let encoded = try JSONEncoder().encode(identity)
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: originalJSON) as? NSDictionary,
+                       try JSONSerialization.jsonObject(with: encoded) as? NSDictionary)
+        var renamed = identity
+        renamed.changedSeconds += 1; renamed.allocatedBytes = 4096
+        XCTAssertTrue(identity.matchesMovedResource(renamed))
+        var replaced = renamed; replaced.inode += 1
+        XCTAssertFalse(identity.matchesMovedResource(replaced))
+        var changed = renamed; changed.modifiedNanoseconds += 1
+        XCTAssertFalse(identity.matchesMovedResource(changed))
+        var hardLinked = renamed; hardLinked.linkCount += 1
+        XCTAssertFalse(identity.matchesMovedResource(hardLinked))
+    }
+
     func testDevelopmentBoundariesAreVisibleButNeverEnumerated() throws {
         try fixture { home in
             let paths = ["Developer/Project/node_modules", "Developer/Project/.git", "Developer/Project/.venv", "Developer/Project/venv", "Developer/custom-environment"]

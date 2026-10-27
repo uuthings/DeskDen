@@ -15,7 +15,7 @@ final class SpaceCleaningDirectorySizeTests: XCTestCase {
         try Data(repeating: 1, count: bytes).write(to: url)
         return url
     }
-    private func identity(_ url: URL) throws -> StorageReviewFileIdentity { try XCTUnwrap(SpaceCleaningScanner.captureIdentity(at: url)) }
+    private func identity(_ url: URL) throws -> SpaceCleaningFileIdentity { try XCTUnwrap(SpaceCleaningScanner.captureIdentity(at: url)) }
 
     func testCompleteMeasurementDeduplicatesHardLinksAndNeverFollowsSymlinks() throws {
         try fixture { root in

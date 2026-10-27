@@ -523,7 +523,7 @@ private struct CalendarDisplayPreferences:Codable {
     }
     /// Only this provider's namespaced local notifications are removed. EventKit
     /// reminder alarms remain owned by Reminders and are never touched here.
-    /// Freeze before awaiting any health/file transaction. EventKit, activation,
+    /// Freeze before awaiting a cleaning file transaction. EventKit, activation,
     /// day-change and in-flight refreshes cannot create a replacement plan.
     func freezeOwnNotificationsForQuit() {
         ownNotificationsSuspendedForQuit=true

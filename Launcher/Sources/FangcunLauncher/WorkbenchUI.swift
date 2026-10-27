@@ -206,13 +206,12 @@ struct WBPageHeader<Trailing:View>:View {
     let subtitle:String
     let trailing:Trailing
     @Environment(\.workbenchPalette) private var palette
-    @Environment(\.workbenchDeviceExpanded) private var expanded
     init(title:String,subtitle:String,@ViewBuilder trailing:()->Trailing) { self.title=title;self.subtitle=subtitle;self.trailing=trailing() }
     var body: some View {
         HStack(alignment:.center,spacing:16) {
             VStack(alignment:.leading,spacing:6) {
-                Text(title).font(.system(size:expanded ? 22:20,weight:.medium)).foregroundStyle(palette.text).frame(height:26,alignment:.leading)
-                Text(subtitle).font(.system(size:12)).foregroundStyle(palette.secondary).frame(minHeight:17.4,alignment:.leading).frame(height:18,alignment:.leading)
+                Text(title).font(.system(size:20,weight:.medium)).foregroundStyle(palette.text).lineLimit(1).truncationMode(.tail).frame(height:26,alignment:.leading).help(title)
+                Text(subtitle).font(.system(size:12)).foregroundStyle(palette.secondary).lineLimit(1).truncationMode(.tail).frame(height:18,alignment:.leading).help(subtitle)
             }
             Spacer(minLength:12);trailing
         }.frame(minHeight:54).padding(.bottom,18)

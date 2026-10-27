@@ -232,7 +232,7 @@ struct UsageStatisticsView: View {
                             .buttonStyle(WBButtonStyle(compact: true)).accessibilityIdentifier("fc.usage.tokens")
                     }
                     if !appearance.isCollapsed(.ai) {
-                        if visibleAI.isEmpty { emptyGroup("还没有显示的 AI 卡片", group: .ai) }
+                        if visibleAI.isEmpty { emptyGroup(.ai) }
                         else {
                             UsageCardGrid {
                                 ForEach(visibleAI) { provider in
@@ -251,7 +251,7 @@ struct UsageStatisticsView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     groupHeader(.service, title: "服务流量", count: visibleServices.count, summary: serviceSummary) { EmptyView() }
                     if !appearance.isCollapsed(.service) {
-                        if visibleServices.isEmpty { emptyGroup("连接每笔订单或每台服务器，查看独立额度", group: .service) }
+                        if visibleServices.isEmpty { emptyGroup(.service) }
                         else {
                             UsageCardGrid {
                                 ForEach(visibleServices) { source in
@@ -321,10 +321,19 @@ struct UsageStatisticsView: View {
             trailing()
         }.frame(minHeight: 28)
     }
-    private func emptyGroup(_ title: String, group: UsageCardGroup) -> some View {
-        WBCard(spacing: 10) {
-            Text(title).font(.system(size: 12)).foregroundStyle(palette.secondary)
-            Button(group == .ai ? "配置 AI 卡片" : "添加服务流量") { presentation.configure(group) }.buttonStyle(WBButtonStyle(compact: true))
+    private func emptyGroup(_ group: UsageCardGroup) -> some View {
+        let hiddenServices = group == .service && !model.sources.isEmpty
+        return UsageCardGrid {
+            Button { presentation.configure(group) } label: {
+                UsageEmptySourceCard(
+                    title: group == .ai ? "显示 AI 用量" : hiddenServices ? "显示服务流量" : "添加服务流量",
+                    description: group == .ai ? "选择要显示的 AI 来源，查看额度与重置时间。"
+                        : hiddenServices ? "已连接的来源均已隐藏，可在配置中重新显示。"
+                        : "连接订单或服务器，分别查看剩余额度与重置周期。",
+                    actionTitle: group == .ai ? "配置 AI 卡片" : hiddenServices ? "配置服务卡片" : "添加用量来源",
+                    symbol: group == .ai ? "sparkles" : "network")
+            }.buttonStyle(ClickablePlainButtonStyle())
+                .accessibilityIdentifier("fc.usage.empty." + group.rawValue)
         }
     }
     private func detail(_ source: ProviderUsageConfiguration) -> some View {

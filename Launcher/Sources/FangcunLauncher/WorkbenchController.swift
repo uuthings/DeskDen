@@ -21,7 +21,6 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     let dataDirectory:URL
     let preferenceStore:WorkbenchPreferenceStore
     let device:DeviceStatusModel
-    let health:HealthCenterModel
     let cleaning:SpaceCleaningModel
     let context:WorkbenchContextModel
     let modals=WorkbenchModalCoordinator()
@@ -80,14 +79,13 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     private(set) var miniContextVisible=false
     private let startServices:Bool
     private var quitPreparationTask:Task<Void,Never>?
-    init(owner:LauncherController,calendar:CalendarModel?=nil,ai:AIUsageModel?=nil,device:DeviceStatusModel?=nil,health:HealthCenterModel?=nil,cleaning:SpaceCleaningModel?=nil,providerUsage:ProviderUsageModel?=nil,startServices:Bool=true) {
+    init(owner:LauncherController,calendar:CalendarModel?=nil,ai:AIUsageModel?=nil,device:DeviceStatusModel?=nil,cleaning:SpaceCleaningModel?=nil,providerUsage:ProviderUsageModel?=nil,startServices:Bool=true) {
         self.owner=owner;self.startServices=startServices
         dataDirectory=owner.store.url.deletingLastPathComponent().appendingPathComponent("Workbench",isDirectory:true)
         preferenceStore=WorkbenchPreferenceStore(url:dataDirectory.appendingPathComponent("preferences.json"))
         usageAppearance=UsagePresentationModel(dataDirectory:dataDirectory.appendingPathComponent("UsagePresentation",isDirectory:true))
         let deviceModel=device ?? DeviceStatusModel(dataDirectory:dataDirectory.appendingPathComponent("Device"))
         self.device=deviceModel
-        self.health=health ?? HealthCenterModel(device:deviceModel,dataDirectory:dataDirectory.appendingPathComponent("Health"))
         self.cleaning=cleaning ?? SpaceCleaningModel(dataDirectory:dataDirectory.appendingPathComponent("SpaceCleaning"))
         context=WorkbenchContextModel(dataDirectory:dataDirectory.appendingPathComponent("Context"))
         self.calendar=calendar ?? CalendarModel(dataDirectory:dataDirectory.appendingPathComponent("Calendar"))
@@ -122,7 +120,6 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         if next == .settings, route != .settings {settingsReturnRoute=route}
         route=next;updateSamplingVisibility()
     }
-    func openHealth() { navigate(.health) }
     func openContextSettings() {
         modals.prune()
         guard !modals.isPresented, !usagePresentation.blocksNavigation, hostWindow?.attachedSheet == nil else {revealWindow?();return}
@@ -152,11 +149,6 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         }
         if let hostWindow {panel.beginSheetModal(for:hostWindow,completionHandler:finish)} else {finish(panel.runModal())}
     }
-    func openHealthReading(_ factor:DeviceHealthFactor) {
-        readingReturnRoute = .health
-        switch factor {case .storage:deviceDetail = .storage;case .memory:deviceDetail = .memory;case .thermal,.battery:deviceDetail = .thermal}
-        navigate(.device)
-    }
     func openDeviceReading(_ detail:DeviceCardID) {readingReturnRoute=route;deviceDetail=detail;navigate(.device)}
     var requestedReadingReturnTitle:String {"返回"+(readingReturnRoute?.title ?? "设备状态")}
     func closeRequestedDeviceDetail() {
@@ -176,7 +168,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         cleaning.reduceMotion=reduceMotion
         guard startServices else {return}
         context.setVisible(miniContextVisible || (windowVisible && [.overview,.calendar].contains(route)))
-        device.setWindowVisible(windowVisible && [.overview,.device,.health,.cleaning,.network].contains(route))
+        device.setWindowVisible(windowVisible && [.overview,.device,.cleaning,.network].contains(route))
         device.setWidgetsVisible(preferences.cards.contains(where:{$0.visible && $0.id == .device}) || (windowVisible && route == .cards))
     }
     func syncAppearance() {
@@ -235,7 +227,6 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
             defer {self.quitPreparationTask=nil}
             do {
                 await self.cleaning.prepareForQuit()
-                await self.health.prepareForQuit()
                 try await self.calendar.suspendOwnNotificationsForQuit()
                 try await self.device.prepareForQuit()
                 try await self.ai.prepareForQuit()
@@ -247,7 +238,6 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
                 // is not evidence that termination was cancelled.
             } catch {
                 self.calendar.resumeOwnNotificationsAfterCancelledQuit()
-                self.health.resumeAfterCancelledQuit()
                 self.cleaning.resumeAfterCancelledQuit()
                 self.device.resumeAfterCancelledQuit()
                 self.ai.resumeAfterCancelledQuit()
@@ -319,7 +309,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         struct Report:Codable {var format="fangcun-function-audit";var date:Date;var entries:[WorkbenchAuditEntry]}
         do {let encoder=JSONEncoder();encoder.outputFormatting=[.prettyPrinted,.sortedKeys];encoder.dateEncodingStrategy = .iso8601;try encoder.encode(Report(date:Date(),entries:auditEntries)).write(to:url,options:.atomic);toast="功能审计已导出。"} catch {message="导出失败：\(error.localizedDescription)"}
     }
-    func shutdown() {modals.clear();context.stop();health.cancelAll();cleaning.cancelAll();vault.lock(reason:"退出方寸");device.stop();widgets.hideAll();owner?.settingsWindowController?.stopEmbedding()}
+    func shutdown() {modals.clear();context.stop();cleaning.cancelAll();vault.lock(reason:"退出方寸");device.stop();widgets.hideAll();owner?.settingsWindowController?.stopEmbedding()}
 }
 
 @MainActor final class WorkbenchWindowController:NSWindowController,NSWindowDelegate {
@@ -379,7 +369,6 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         window.animationBehavior = .none
         self.model.hostWindow=window
         self.model.vault.hostWindow=window
-        self.model.health.hostWindow=window
         self.model.cleaning.hostWindow=window
         self.model.modals.hostWindow=window
         window.center();if autosavesFrame {window.setFrameAutosaveName(Bundle.main.object(forInfoDictionaryKey:"FangcunDeviceAcceptance") as? Bool == true ? "FangcunDeviceAcceptance" : "FangcunWorkbench")}
@@ -598,7 +587,6 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         target.contentView = hostingView
         model.hostWindow = target
         model.vault.hostWindow = target
-        model.health.hostWindow = target
         model.cleaning.hostWindow = target
         model.modals.hostWindow = target
     }

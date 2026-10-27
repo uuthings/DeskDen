@@ -4,7 +4,6 @@ import LauncherCore
 
 struct SpaceCleaningHistoryView: View {
     @ObservedObject var model: SpaceCleaningModel
-    var onLegacyHistory: (() -> Void)?
     @Environment(\.workbenchPalette) private var palette
     @State private var expandedBatch: UUID?
 
@@ -18,10 +17,6 @@ struct SpaceCleaningHistoryView: View {
                     .font(.system(size: 11)).foregroundStyle(palette.secondary)
                 if model.isReconcilingHistory {
                     Button("停止核对", action: model.cancelHistoryVerification)
-                        .buttonStyle(WBButtonStyle(compact: true))
-                }
-                if let onLegacyHistory {
-                    Button("早期处理记录", action: onLegacyHistory)
                         .buttonStyle(WBButtonStyle(compact: true))
                 }
             }.frame(minHeight: 28).padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 10)

@@ -23,7 +23,7 @@ public struct SpaceCleaningDirectorySize: Equatable, Sendable {
 /// or changes protection. Totals cover regular files, deduplicating hard links;
 /// symlink targets and filesystem metadata are not counted as reclaimable space.
 public enum SpaceCleaningDirectorySizeScanner {
-    public static func measure(directory: URL, expectedIdentity: StorageReviewFileIdentity,
+    public static func measure(directory: URL, expectedIdentity: SpaceCleaningFileIdentity,
                                maximumEntries: Int = 100_000, maximumDepth: Int = 32,
                                isCancelled: () -> Bool = { false },
                                progress: (SpaceCleaningDirectorySize) -> Void = { _ in }) -> SpaceCleaningDirectorySize {
@@ -43,7 +43,7 @@ public enum SpaceCleaningDirectorySizeScanner {
                 lastProgress = now; progress(result)
             }
         }
-        func walk(_ descriptor: Int32, at url: URL, expected: StorageReviewFileIdentity, depth: Int) {
+        func walk(_ descriptor: Int32, at url: URL, expected: SpaceCleaningFileIdentity, depth: Int) {
             guard !stopped, !cancelled() else { close(descriptor); return }
             var opened = stat()
             guard fstat(descriptor, &opened) == 0, identity(opened) == expected,
@@ -137,7 +137,7 @@ public enum SpaceCleaningDirectorySizeScanner {
         false
         #endif
     }
-    private static func identity(_ value: stat) -> StorageReviewFileIdentity {
+    private static func identity(_ value: stat) -> SpaceCleaningFileIdentity {
         #if canImport(Darwin)
         let modified = value.st_mtimespec, changed = value.st_ctimespec
         #else
