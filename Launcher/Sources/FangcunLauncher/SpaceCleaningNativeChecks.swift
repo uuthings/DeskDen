@@ -185,8 +185,27 @@ import LauncherCore
                       "\(name) cleaning preserves the production sidebar width")
                 check(host.bounds.size == size, "\(name) cleaning keeps the native viewport size")
                 for result in homeLayoutChecks(in: host) { check(result.0, "\(name) global home " + result.1) }
+                if name != "compact" {
+                    for result in scopeTileLayoutChecks(in: host) { check(result.0, "\(name) global home " + result.1) }
+                }
                 try capture(host: host, name: "start-\(name)", output: output)
             }
+            cleaning.selectScanMode(.largeFiles)
+            for (name, size) in sizes {
+                window.setContentSize(size)
+                _ = await settle(window) { exists("space-cleaning-large-file-options", in: host) }
+                for result in homeLayoutChecks(in: host) { check(result.0, "\(name) large-file home " + result.1) }
+                check(enabled("space-cleaning-start", in: host) == true && cleaning.items.isEmpty,
+                      "\(name) large-file setup keeps scanning explicit and its primary action available")
+                try capture(host: host, name: "large-file-home-" + name, output: output)
+            }
+            cleaning.selectScanMode(.cleanup)
+            window.setContentSize(NSSize(width: 1120, height: 758))
+            owner.configuration.settings.workbenchAppearance = .light; app.syncAppearance()
+            _ = await settle(window) { exists("space-cleaning-start", in: host) }
+            for result in homeLayoutChecks(in: host) { check(result.0, "light home " + result.1) }
+            try capture(host: host, name: "start-light", output: output)
+            owner.configuration.settings.workbenchAppearance = .dark; app.syncAppearance()
             cleaning.editScope(custom: true)
             cleaning.addDraftDirectories([home.appendingPathComponent("Downloads")]); cleaning.applyScope()
             for (name, size) in sizes {
@@ -502,6 +521,11 @@ import LauncherCore
                       "\(name) batch permanent deletion is a visible styled button")
                 try capture(host: host, name: "history-expanded-" + name, output: output)
             }
+            window.setContentSize(NSSize(width: 1120, height: 758))
+            owner.configuration.settings.workbenchAppearance = .light; app.syncAppearance()
+            _ = await settle(window) { exists("space-cleaning-history-item-" + record.id.uuidString, in: host) }
+            try capture(host: host, name: "history-light", output: output)
+            owner.configuration.settings.workbenchAppearance = .dark; app.syncAppearance()
             check(clickBackground("space-cleaning-history-purge-" + batch.id.uuidString, in: host),
                   "the batch purge button responds across its background")
             _ = await settle(window) { cleaning.dialog == .purge(batch.id) }
@@ -615,6 +639,17 @@ import LauncherCore
         guard let before, let after, before.count == after.count else { return false }
         let changed = zip(before, after).filter { abs(Int($0) - Int($1)) > 2 }.count
         print("DETAIL production hover \(identifier) changedBytes=\(changed) expectsSurface=\(expectedChange) stable=\(afterFrame == rect)")
+        if expectedChange && changed < 12 {
+            let screenTop = NSScreen.screens.first?.frame.maxY ?? 0
+            let point = CGPoint(x: rect.midX, y: screenTop - rect.midY)
+            let above = CGWindowListCopyWindowInfo([.optionOnScreenAboveWindow, .excludeDesktopElements], CGWindowID(window.windowNumber)) as? [[String: Any]] ?? []
+            let covering = above.filter { info in
+                guard let bounds = info[kCGWindowBounds as String] as? [String: Any],
+                      let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return false }
+                return frame.contains(point)
+            }
+            print("DETAIL hover target=\(rect) visibleScreen=\(String(describing: window.screen?.visibleFrame)) active=\(NSApp.isActive) coveringWindows=\(covering.count)")
+        }
         return (expectedChange ? changed >= 12 : changed < 12) && afterFrame == rect
     }
     /// Dispatch a real mouse press in the control's trailing padding. Never
@@ -691,6 +726,10 @@ import LauncherCore
             (separate, "keeps the two choices and remember checkbox from overlapping"),
             (frames.count == controls.count && frames.allSatisfy { abs($0.midY - frames[0].midY) < 2 },
              "keeps the remember checkbox on the same row as both deletion methods"),
+            (action.map { abs($0.height - 32) < 1 && $0.width >= 144 } ?? false,
+             "keeps the full cleanup caption in a stable standard-height button"),
+            (action.flatMap { button in frames.first.map { abs(button.midY - $0.midY) < 2 } } ?? false,
+             "aligns the cleanup button with the method controls"),
             (actionVisible, "keeps the active cleanup or confirmation button fully visible")
         ]
     }
@@ -705,14 +744,38 @@ import LauncherCore
         let surface = frame("space-cleaning-home-surface", in: host)
         let module = frame("space-cleaning", in: host)
         let start = frame("space-cleaning-start", in: host)
+        let occupancy = frame("space-cleaning-disk-occupancy", in: host)
+        let intro = frame("space-cleaning-home-intro", in: host)
         let buttonContained = module.flatMap { outer in start.map { outer.insetBy(dx: -1, dy: -1).contains($0) } } ?? false
         return [
             (homeRulesStayWithCard(in: host), "keeps the rules link within 35 pt of the card"),
             (surface.flatMap { card in module.map { card.height >= min(360, $0.height * 0.65) } } ?? false,
              "gives the scan preparation card useful vertical space"),
             (buttonContained, "keeps the scan button inside the visible module"),
-            (frame("space-cleaning-home-heading", in: host).map { $0.height >= 44 } ?? false,
-             "keeps both lines of the home heading visible")
+            // The accessibility bounds may omit the ring's outer padding;
+            // both the 112-point and 132-point layouts must remain readable.
+            (occupancy.flatMap { ring in surface.map { $0.contains(ring) && ring.width >= 96 && ring.width <= 133 } } ?? false,
+             "keeps the actual disk occupancy ring inside the preparation card"),
+            (occupancy.flatMap { ring in intro.map { $0.minX > ring.maxX && !$0.intersects(ring) } } ?? false,
+             "separates the storage readouts from the occupancy ring")
+        ]
+    }
+    private static func scopeTileLayoutChecks(in host: NSView) -> [(Bool, String)] {
+        let names = ["downloads", "desktop", "documents", "media", "caches", "development", "applications", "archives"]
+        let tiles = names.compactMap { frame("space-cleaning-scope-tile-" + $0, in: host) }
+        let icons = names.compactMap { frame("space-cleaning-scope-icon-" + $0, in: host) }
+        let copies = names.compactMap { frame("space-cleaning-scope-copy-" + $0, in: host) }
+        return [
+            (tiles.count == 8 && tiles.allSatisfy { abs($0.width - tiles[0].width) < 1 && abs($0.height - tiles[0].height) < 1 && $0.height >= 72 },
+             "uses eight equal scope cards with room for their subtitles"),
+            // SwiftUI reports each SF Symbol's painted bounds, not the outer
+            // layout frame. Different symbols retain their own aspect ratios.
+            (icons.count == 8 && tiles.count == 8 && icons.allSatisfy { $0.width >= 12 && $0.width <= 28 && $0.height >= 16 && $0.height <= 28 } &&
+             names.indices.allSatisfy { abs((icons[$0].midX - tiles[$0].minX) - (icons[0].midX - tiles[0].minX)) < 1 },
+             "keeps all eight glyphs bounded and centered in a common icon column"),
+            (tiles.count == 8 && icons.count == 8 && copies.count == 8 && names.indices.allSatisfy {
+                abs(icons[$0].midY - tiles[$0].midY) < 1 && copies[$0].minX >= icons[$0].maxX + 7 && tiles[$0].contains(icons[$0])
+            }, "centers every scope icon beside a separate left-aligned text column")
         ]
     }
     private static func selectionAligned(item: UUID, in host: NSView) -> Bool {

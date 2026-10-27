@@ -4,13 +4,23 @@ import LauncherCore
 struct SpaceCleaningResultsView: View {
     @ObservedObject var model: SpaceCleaningModel
     @Environment(\.workbenchPalette) private var palette
-    @Environment(\.workbenchScale) private var displayScale
     private let columnGap: CGFloat = 12
     private let typeWidth: CGFloat = 86
     private let dateWidth: CGFloat = 110
     private let sizeWidth: CGFloat = 112
+    private let methodOptionWidth: CGFloat = 106
+    private let rememberMethodWidth: CGFloat = 104
     private var confirming: Bool { model.dialog == .confirm }
     @State private var availableWidth: CGFloat = 864
+
+    // Reserve for the full result set, so selecting items and switching
+    // methods never changes the width of the trailing action group.
+    private var cleanupButtonWidth: CGFloat {
+        max(144, 104 + CGFloat(String(max(1, model.items.count)).count) * 8)
+    }
+    private var methodActionsWidth: CGFloat {
+        methodOptionWidth * 2 + 6 + rememberMethodWidth + cleanupButtonWidth + 24
+    }
 
     var body: some View {
         VStack(spacing: 12) {
@@ -45,16 +55,16 @@ struct SpaceCleaningResultsView: View {
     }
     private var summary: some View {
         HStack(alignment: .center, spacing: 24) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(model.scanMode == .largeFiles ? "大文件扫描结果" : "扫描结果").font(.system(size: 18, weight: .medium))
+            VStack(alignment: .leading, spacing: 6) {
+                Text(model.scanMode == .largeFiles ? "大文件扫描结果" : "扫描结果").font(.system(size: 12, weight: .semibold))
                 Text(model.reportSummary).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(2)
             }.frame(maxWidth: .infinity, alignment: .leading)
             VStack(alignment: .trailing, spacing: 5) {
                 Text(SpaceCleaningFormat.bytes((model.scanMode == .largeFiles ? model.reviewableItems : model.recommendedItems).reduce(0) { $0 &+ $1.allocatedBytes }))
-                    .font(.system(size: 27, weight: .medium)).monospacedDigit()
+                    .font(.system(size: 24, weight: .medium)).monospacedDigit()
                 Text(model.scanMode == .largeFiles ? "这些文件的磁盘占用" : "建议项目磁盘占用").font(.system(size: 11)).foregroundStyle(palette.muted)
             }
-        }.padding(14).padding(.vertical, 4)
+        }.padding(14)
     }
     private var controls: some View {
         HStack(spacing: 18) {
@@ -267,20 +277,20 @@ struct SpaceCleaningResultsView: View {
             if confirming { permanentConfirmation }
             else { selectionActions }
         }.background(WorkbenchMaterialSurface(radius: 15))
+            .environment(\.workbenchScale, 1)
             .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-selection-footer")
     }
     private var selectionActions: some View {
         Group {
-            if availableWidth >= 800 {
+            if availableWidth >= methodActionsWidth + 236 + 16 + 28 {
                 HStack(spacing: 16) {
-                    selectionSummary.fixedSize(horizontal: true, vertical: false)
-                    Spacer(minLength: 0)
-                    methodActions.fixedSize(horizontal: true, vertical: false)
+                    selectionSummary.frame(maxWidth: .infinity, alignment: .leading)
+                    methodActions
                 }
             } else {
                 VStack(alignment: .leading, spacing: 12) {
                     selectionSummary.frame(maxWidth: .infinity, alignment: .leading)
-                    methodActions
+                    methodActions.frame(maxWidth: .infinity, alignment: .trailing)
                 }
             }
         }.padding(14)
@@ -289,27 +299,34 @@ struct SpaceCleaningResultsView: View {
         HStack(spacing: 12) {
             methodSelector
             rememberMethodToggle
-            Spacer(minLength: 0)
             cleanupButton
-        }.accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-method-actions")
+        }.frame(width: methodActionsWidth, height: 32)
+            .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-method-actions")
     }
     private var selectionSummary: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
-                Text(model.selectedCount == 0 ? "尚未选择文件" : "已选 \(model.selectedCount) 项 · 占用 \(SpaceCleaningFormat.bytes(model.selectedAllocatedBytes))")
-                    .font(.system(size: 12, weight: .medium))
-                if model.selectedCount > 0 {
+            Text(model.selectedCount == 0 ? "尚未选择文件" : "已选 \(model.selectedCount) 项 · 占用 \(SpaceCleaningFormat.bytes(model.selectedAllocatedBytes))")
+                .font(.system(size: 12, weight: .medium)).monospacedDigit().lineLimit(1)
+            HStack(spacing: 8) {
+                Text(model.method == .trash ? "废纸篓内可恢复" : "永久删除无法恢复")
+                    .font(.system(size: 11)).foregroundStyle(model.method == .trash ? palette.muted : palette.warning)
+                    .frame(width: 110, alignment: .leading)
+                HStack(spacing: 10) {
                     Button(model.onlySelected ? "返回分类" : "查看已选") { model.toggleSelectedFilter() }
                         .buttonStyle(WBTextActionButtonStyle()).font(.system(size: 11)).foregroundStyle(palette.accent)
                         .disabled(model.isBusy || confirming)
+                        .accessibilityIdentifier("space-cleaning-view-selected")
                     Button("取消选择", action: model.clearSelection)
                         .buttonStyle(WBTextActionButtonStyle()).font(.system(size: 11)).foregroundStyle(palette.muted)
                         .disabled(model.isBusy || confirming)
-                }
+                        .accessibilityIdentifier("space-cleaning-clear-selection")
+                }.fixedSize().opacity(model.selectedCount > 0 ? 1 : 0)
+                    .disabled(model.selectedCount == 0)
+                    .allowsHitTesting(model.selectedCount > 0)
+                    .accessibilityHidden(model.selectedCount == 0)
             }
-            Text(model.method == .trash ? "移入废纸篓，可从清理记录恢复" : "永久删除将释放占用，无法恢复")
-                .font(.system(size: 11)).foregroundStyle(model.method == .trash ? palette.muted : palette.warning)
         }.fixedSize(horizontal: false, vertical: true)
+            .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-selection-summary")
     }
     private var methodSelector: some View {
         HStack(spacing: 2) {
@@ -329,7 +346,7 @@ struct SpaceCleaningResultsView: View {
                 Image(systemName: icon).font(.system(size: 12))
                 Text(title).font(.system(size: 11, weight: selected ? .medium : .regular))
             }.foregroundStyle(selected ? color : palette.secondary)
-                .padding(.horizontal, 10).frame(width: 106, height: 28)
+                .padding(.horizontal, 10).frame(width: methodOptionWidth, height: 28)
                 .contentShape(RoundedRectangle(cornerRadius: 6))
         }.buttonStyle(WBSelectableButtonStyle(selected: selected, cornerRadius: 6, tint: color))
             .accessibilityValue(selected ? "已选择" : "未选择")
@@ -338,17 +355,15 @@ struct SpaceCleaningResultsView: View {
     private var rememberMethodToggle: some View {
         Toggle("记住处理方式", isOn: Binding(get: { model.rememberMethod }, set: model.setRememberMethod))
             .toggleStyle(.checkbox).font(.system(size: 11)).foregroundStyle(palette.secondary)
-            .fixedSize().clickableCursor().disabled(model.isBusy || confirming)
+            .fixedSize().frame(width: rememberMethodWidth, alignment: .leading)
+            .clickableCursor().disabled(model.isBusy || confirming)
             .accessibilityIdentifier("space-cleaning-remember-method")
     }
     private var cleanupButton: some View {
-        // Reserve the longest caption at the current result-count capacity.
-        // Selection changes and switching deletion methods keep the whole
-        // action group anchored, including its method and remember controls.
-        let labelWidth = max(110, CGFloat(String(max(1, model.items.count)).count) * 8 + 70) * displayScale
-        return Button(action: model.requestCleanup) {
-            Text(model.method == .trash ? "清理 \(model.selectedCount) 项" : "永久删除 \(model.selectedCount) 项")
-                .monospacedDigit().lineLimit(1).frame(width: labelWidth, alignment: .center)
+        Button(action: model.requestCleanup) {
+            Text(model.method == .trash ? "移入废纸篓 \(model.selectedCount) 项" : "永久删除 \(model.selectedCount) 项")
+                .monospacedDigit().lineLimit(1)
+                .frame(width: cleanupButtonWidth - 22, alignment: .center)
         }.buttonStyle(WBButtonStyle(primary: model.method == .trash, destructive: model.method == .permanent))
             .fixedSize().disabled(!model.canProcess).accessibilityIdentifier("space-cleaning-cleanup")
     }
