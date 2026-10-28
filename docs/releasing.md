@@ -54,6 +54,24 @@ Independent `notarytool submit` uploads of an App or ZIP do not replace Organize
 
 DMG/PKG signing and notarization have independent container records, which are not claimed as Organizer history. Generate checksums only after all packaging, signing and stapling changes; verify the final distributed bytes.
 
+## Installers and update artifacts
+
+For subsequent direct-distribution releases, provide a drag-install DMG containing the App and an `Applications` link. Declare the manual installer, updater artifact, public checksum manifest and release notes before preparing a release. Sparkle supports DMG as well as ZIP: the same verified DMG may serve both installation and updating. Separate ZIP update artifacts remain supported when deliberately selected and tested; ZIP is a valid distribution format, but generating an update ZIP alone does not satisfy the DMG first-install delivery requirement.
+
+To prepare a DMG from an existing durable Organizer release without rebuilding or changing that release:
+
+```sh
+python3 tools/prepare-dmg.py --release-directory "$ORIGINAL_RELEASE_ARCHIVE" \
+  --output "$NEW_PERSISTENT_SUPPLEMENT_DIRECTORY" \
+  --identity "$EXISTING_DEVELOPER_ID_CERTIFICATE_SHA1"
+```
+
+Use a unique directory under the product's `ReleaseSupplements/` directory, outside Git and caches. The tool checks the original metadata, Organizer submission and exported App, preserves its bytes, links and permissions, signs only the new DMG, then mounts it read-only to verify its contents. It never builds or re-signs the App, submits notarization, modifies feeds, uploads assets or creates a Release. The resulting state is **signed, awaiting container notarization**, not ready for publication. Its preparation checksum describes the pre-stapling file.
+
+Complete the separately authorized container notarization and stapling steps before publishing. Keep the submitted input unchanged and staple a separate copy; record the final container's checksum, signature and ticket checks. Test the Finder installation and launch experience separately from read-only mounting. If the DMG will also serve the updater, validate the actual old-version download, replacement and relaunch; a new version reporting “up to date” does not prove that upgrade path.
+
+For a historical supplement, keep the original App, ZIP, signed feed, metadata and publication dates intact. Record the original source commit/version/Build and the newly created supplement's own preparation/publication date. Adding an installer does not retroactively make a local-only version a historically published release. Do not overwrite an existing asset or mark unperformed installation/update checks as passed.
+
 ## Durable records
 
 Store each version/candidate outside Git and outside build caches. The default product archive root is `~/Library/Application Support/` followed by the product name and `ReleaseArchives/`. Maintain a version index.
