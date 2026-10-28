@@ -302,8 +302,10 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
         }
         if let workbenchController,!workbenchController.model.vault.flush() {
             workbenchController.present(route:.vault)
-            let alert=NSAlert();alert.messageText="私密资料尚未写入磁盘";alert.informativeText="当前加密草稿仍在内存中。可以返回重试保存，或放弃本次未保存的修改并退出。"
-            alert.addButton(withTitle:"返回重试");alert.addButton(withTitle:"放弃未保存修改并退出")
+            let passwordChangePending=workbenchController.model.vault.hasPendingPasswordChange
+            let alert=NSAlert();alert.messageText=passwordChangePending ? "密码更改尚未完成":"私密资料尚未写入磁盘"
+            alert.informativeText=passwordChangePending ? "密码更改的加密资料已保留在本机。可以返回重试，或退出后在下次打开时继续恢复；完成后请使用新密码解锁。":"当前加密草稿仍在内存中。可以返回重试保存，或放弃本次未保存的修改并退出。"
+            alert.addButton(withTitle:"返回重试");alert.addButton(withTitle:passwordChangePending ? "退出后继续恢复":"放弃未保存修改并退出")
             return presentQuitDraftAlert(alert) == .alertSecondButtonReturn ? .terminateNow:.terminateCancel
         }
         guard hasUnsavedLauncherChanges else { return .terminateNow }

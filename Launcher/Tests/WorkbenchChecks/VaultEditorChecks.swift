@@ -71,8 +71,81 @@ import LauncherCore
         }catch{check(false,"native rich text validates and encrypts: \(error.localizedDescription)")}
         editor.string="";editor.undoManager?.removeAllActions();controller.detach()
         check(editor.string.isEmpty && editor.undoManager?.canUndo == false && controller.editor == nil,"native plaintext, format undo, and editor reference can be cleared on lock")
+        checkClipboard(check)
         print("Vault editor checks: \(total-failures)/\(total) passed")
         exit(failures == 0 ? 0:1)
+    }
+
+    @MainActor private static func checkClipboard(_ check:(Bool,String)->Void) {
+        let pasteboard=NSPasteboard.withUniqueName()
+        defer {pasteboard.clearContents();pasteboard.releaseGlobally()}
+        var scheduled:[@MainActor ()->Void]=[],delays:[TimeInterval]=[],cancellations=0
+        let clipboard=VaultClipboard(pasteboard:pasteboard,schedule:{delay,action in
+            delays.append(delay);scheduled.append(action)
+            return {cancellations += 1}
+        })
+        let editor=VaultClipboardTextView(frame:NSRect(x:0,y:0,width:400,height:100))
+        editor.clipboard=clipboard;editor.isRichText=true;editor.isEditable=true;editor.allowsUndo=false
+        let privateText="Synthetic private text 🔐"
+        editor.textStorage?.setAttributedString(NSAttributedString(string:privateText,attributes:[.font:NSFont.boldSystemFont(ofSize:18),.foregroundColor:NSColor.systemBlue]))
+        editor.setSelectedRange(NSRange(location:0,length:(privateText as NSString).length))
+        editor.copy(nil)
+        check(pasteboard.string(forType:.string) == privateText,"production copy writes the complete Unicode selection to an isolated clipboard")
+        check(pasteboard.types?.contains(VaultClipboard.concealedType) == true && pasteboard.types?.contains(VaultClipboard.transientType) == true,
+              "private copies are marked confidential and transient before publication")
+        let rich=pasteboard.data(forType:.rtf).flatMap{try? NSAttributedString(data:$0,options:[.documentType:NSAttributedString.DocumentType.rtf],documentAttributes:nil)}
+        let font=rich?.attribute(.font,at:0,effectiveRange:nil) as? NSFont
+        check(rich?.string == privateText && font?.pointSize == 18 && font.map{NSFontManager.shared.traits(of:$0).contains(.boldFontMask)} == true,
+              "private copy preserves the native rich-text representation")
+        check(delays == [180],"the clipboard cleanup deadline is three minutes")
+        scheduled[0]()
+        check(pasteboard.pasteboardItems?.isEmpty != false,"the cleanup deadline removes the clipboard data still owned by this copy")
+
+        editor.copy(nil);let staleDeadline=scheduled.last!
+        editor.setSelectedRange(NSRange(location:0,length:9));editor.copy(nil)
+        let latestDeadline=scheduled.last!,latestCount=pasteboard.changeCount
+        staleDeadline()
+        check(pasteboard.changeCount == latestCount && pasteboard.string(forType:.string) == "Synthetic",
+              "a cancelled earlier deadline cannot erase a newer private copy")
+        latestDeadline()
+        check(pasteboard.pasteboardItems?.isEmpty != false && cancellations>=3,"a repeated private copy cancels the old timer and gets its own deadline")
+
+        editor.copy(nil);let replacedDeadline=scheduled.last!
+        pasteboard.clearContents();pasteboard.setString("Synthetic later public copy",forType:.string)
+        let replacementCount=pasteboard.changeCount
+        replacedDeadline();clipboard.clearOwnedContents()
+        check(pasteboard.changeCount == replacementCount && pasteboard.string(forType:.string) == "Synthetic later public copy",
+              "deadline and lock cleanup both preserve a later copy from another source")
+
+        editor.copy(nil);let lockDeadline=scheduled.last!
+        clipboard.clearOwnedContents()
+        check(pasteboard.pasteboardItems?.isEmpty != false,"locking immediately clears private clipboard content")
+        pasteboard.setString("Synthetic copy after lock",forType:.string);let afterLockCount=pasteboard.changeCount
+        lockDeadline()
+        check(pasteboard.changeCount == afterLockCount && pasteboard.string(forType:.string) == "Synthetic copy after lock",
+              "a deadline invalidated by locking cannot clear a subsequent copy")
+
+        editor.string="Synthetic cut text";editor.setSelectedRange(NSRange(location:0,length:9));editor.cut(nil)
+        check(editor.string == " cut text" && pasteboard.string(forType:.string) == "Synthetic",
+              "production cut copies privately and deletes only the selected text")
+        check(pasteboard.types?.contains(VaultClipboard.concealedType) == true,"cut uses the same confidential clipboard path")
+        clipboard.clearOwnedContents()
+        editor.setSelectedRange(NSRange(location:0,length:0));pasteboard.setString("Keep unrelated clipboard",forType:.string)
+        let emptySelectionCount=pasteboard.changeCount;editor.copy(nil);editor.cut(nil)
+        check(pasteboard.changeCount == emptySelectionCount && editor.string == " cut text","copy and cut with no selection leave text and unrelated clipboard data intact")
+
+        let field=NSTextField(),secure=NSSecureTextField()
+        let fieldEditor=VaultClipboard.privateFieldEditor(for:field) as? VaultClipboardTextView
+        check(fieldEditor?.isFieldEditor == true && VaultClipboard.privateFieldEditor(for:secure) == nil && VaultClipboard.privateFieldEditor(for:NSView()) == nil,
+              "private title and category fields use the protected field editor while secure fields retain their native editor")
+        fieldEditor?.clipboard=clipboard;fieldEditor?.string="Synthetic category";fieldEditor?.setSelectedRange(NSRange(location:0,length:18));fieldEditor?.copy(nil)
+        check(pasteboard.string(forType:.string) == "Synthetic category" && pasteboard.types?.contains(VaultClipboard.transientType) == true,
+              "the shared native field editor protects title and category copying")
+        VaultClipboard.shared.clearPrivateSession()
+        check(fieldEditor?.string.isEmpty == true && fieldEditor?.undoManager?.canUndo != true,
+              "locking clears cached private field-editor text even when it is not the active responder")
+        fieldEditor?.clipboard = .shared;clipboard.clearOwnedContents()
+        editor.string=""
     }
 }
 @MainActor private final class IsolatedEditor:NSTextView {

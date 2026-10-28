@@ -859,6 +859,10 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         ordinaryWindowSessionActive=false;updateDockParticipation()
         model.vault.lock(reason:"关闭工作台");model.setWindowVisible(false);launcher?.settingsWindowController?.stopEmbedding()
     }
+    func windowWillReturnFieldEditor(_ sender:NSWindow,to client:Any?)->Any? {
+        guard model.route == .vault || model.vault.sheet != nil else {return nil}
+        return VaultClipboard.privateFieldEditor(for:client)
+    }
     func windowDidResignKey(_ notification:Notification) {launcher?.settingsWindowController?.cancelEmbeddedRecording()}
     func windowDidBecomeKey(_ notification: Notification) {
         if isTopEntryPresented, notification.object as? NSWindow === window {

@@ -2,6 +2,7 @@ import Foundation
 import CryptoKit
 import CommonCrypto
 import Security
+import Darwin
 
 public enum PrivateDocumentCategory:String,Codable,CaseIterable,Sendable {case unclassified,work,personal
     public var title:String {switch self {case .unclassified:"未分类";case .work:"工作";case .personal:"个人"}}
@@ -139,6 +140,7 @@ public struct VaultContents:Codable,Equatable,Sendable {
 }
 public enum VaultFailure:LocalizedError,Equatable {
     case weakPassword,passwordTooLong,invalidData,incorrectPassword,randomFailure,notConfigured,tooLarge
+    case unchangedPassword,passwordChangePending,passwordChangeSourceChanged
     public var errorDescription:String? {
         switch self {
         case .weakPassword:"密码至少需要 8 个字符。"
@@ -148,6 +150,9 @@ public enum VaultFailure:LocalizedError,Equatable {
         case .randomFailure:"无法生成安全随机数，请重试。"
         case .notConfigured:"尚未建立私密资料库。"
         case .tooLarge:"私密资料超过支持的大小。"
+        case .unchangedPassword:"新密码与当前密码相同，无需更改。"
+        case .passwordChangePending:"密码更改尚未完成，请先恢复密码更改；恢复完成后使用新密码解锁。"
+        case .passwordChangeSourceChanged:"密码更改期间资料文件发生变化，已停止替换；现有文件和恢复记录已保留。"
         }
     }
 }
@@ -225,17 +230,63 @@ public enum VaultCryptography {
         guard result==kCCSuccess else {throw VaultFailure.invalidData}
         let key=SymmetricKey(data:derived);derived.resetBytes(in:0..<derived.count);return key
     }
+    /// Historical payloads are preserved byte for byte, including their schema.
+    /// Only an authentication failure means that a history uses another password;
+    /// malformed envelopes and other failures abort the whole password change.
+    fileprivate static func reencryptHistory(_ data:Data,password:String,key:SymmetricKey,salt:Data) throws -> VaultEnvelope? {
+        let envelope=try decodeEnvelope(data)
+        let oldKey=try derive(password:password,salt:envelope.salt)
+        let box=try AES.GCM.SealedBox(combined:envelope.sealed)
+        var plaintext:Data
+        do {plaintext=try AES.GCM.open(box,using:oldKey,authenticating:associatedData)}
+        catch CryptoKitError.authenticationFailure {return nil}
+        defer {plaintext.resetBytes(in:0..<plaintext.count)}
+        let replacement=try AES.GCM.seal(plaintext,using:key,authenticating:associatedData)
+        guard let combined=replacement.combined else {throw VaultFailure.invalidData}
+        return VaultEnvelope(rounds:rounds,salt:salt,sealed:combined)
+    }
 }
+
+public struct VaultPasswordChangeResult:Equatable,Sendable {
+    public let reencryptedBackupCount:Int
+    /// These authenticated-envelope files did not open with the old password.
+    /// They remain unchanged; changing one vault password must not delete them.
+    public let retainedOtherPasswordBackups:[String]
+}
+
+/// A prepared change contains ciphertext and file digests, never a password,
+/// plaintext, or encryption key. Preparation may safely run off the main actor;
+/// callers must recheck their session before committing it.
+public struct VaultPasswordChange:Codable,Sendable {
+    fileprivate struct Target:Codable,Sendable {
+        let name:String
+        let originalDigest:Data
+        let replacement:Data?
+    }
+    fileprivate let schema:Int
+    fileprivate let vaultName:String
+    fileprivate let targets:[Target]
+    public var result:VaultPasswordChangeResult {
+        .init(reencryptedBackupCount:targets.filter{$0.name != vaultName && $0.replacement != nil}.count,
+              retainedOtherPasswordBackups:targets.filter{$0.replacement == nil}.map(\.name))
+    }
+}
+
 public struct VaultFileStore:Sendable {
     public let url:URL
     public init(url:URL) {self.url=url}
+    private var passwordChangeURL:URL {url.appendingPathExtension("password-change")}
+    public var isPendingPasswordChange:Bool {FileManager.default.fileExists(atPath:passwordChangeURL.path)}
+    private static let maximumPasswordChangeSize=256_000_000
     public func read() throws -> Data {
+        guard !isPendingPasswordChange else {throw VaultFailure.passwordChangePending}
         guard FileManager.default.fileExists(atPath:url.path) else {throw VaultFailure.notConfigured}
         let attributes=try FileManager.default.attributesOfItem(atPath:url.path)
         guard (attributes[.size] as? NSNumber)?.uint64Value ?? UInt64.max <= 24_000_000 else {throw VaultFailure.tooLarge}
         let data=try Data(contentsOf:url);_=try VaultCryptography.decodeEnvelope(data);return data
     }
     public func write(_ envelope:VaultEnvelope,preservePrevious:Bool=true) throws {
+        guard !isPendingPasswordChange else {throw VaultFailure.passwordChangePending}
         let data=try VaultCryptography.encoded(envelope),manager=FileManager.default
         try manager.createDirectory(at:url.deletingLastPathComponent(),withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
         if preservePrevious,manager.fileExists(atPath:url.path) {
@@ -246,6 +297,7 @@ public struct VaultFileStore:Sendable {
     }
     /// Preserve the displaced encrypted database before an explicitly confirmed restore.
     public func restore(_ envelope:VaultEnvelope) throws -> URL? {
+        guard !isPendingPasswordChange else {throw VaultFailure.passwordChangePending}
         let manager=FileManager.default
         var preserved:URL?
         if manager.fileExists(atPath:url.path) {
@@ -254,4 +306,148 @@ public struct VaultFileStore:Sendable {
         }
         try write(envelope,preservePrevious:false);return preserved
     }
+
+    public func preparePasswordChange(currentPassword:String,newPassword:String) throws -> VaultPasswordChange {
+        guard !isPendingPasswordChange else {throw VaultFailure.passwordChangePending}
+        guard currentPassword != newPassword else {throw VaultFailure.unchangedPassword}
+        let currentData=try read()
+        let current=try VaultCryptography.unlock(data:currentData,password:currentPassword)
+        let changed=try VaultCryptography.create(contents:current.contents,password:newPassword)
+        let names=try managedNames()
+        guard names.count<=1000 else {throw VaultFailure.tooLarge}
+        var targets:[VaultPasswordChange.Target]=[]
+        for name in names {
+            let original=try readManagedFile(named:name)
+            let replacement:Data?
+            if name == url.lastPathComponent {
+                guard original == currentData else {throw VaultFailure.passwordChangeSourceChanged}
+                replacement=try VaultCryptography.encoded(changed.envelope)
+            } else if let envelope=try VaultCryptography.reencryptHistory(original,password:currentPassword,key:changed.key,salt:changed.envelope.salt) {
+                replacement=try VaultCryptography.encoded(envelope)
+            } else {replacement=nil}
+            targets.append(.init(name:name,originalDigest:Self.digest(original),replacement:replacement))
+        }
+        let change=VaultPasswordChange(schema:1,vaultName:url.lastPathComponent,targets:targets)
+        try validate(change)
+        guard !isPendingPasswordChange else {throw VaultFailure.passwordChangePending}
+        return change
+    }
+
+    /// The journal stores only replacement ciphertext. Histories commit first,
+    /// the primary vault last. A failure after journaling requires explicit
+    /// forward recovery, never an ordinary autosave or an old-key rollback.
+    @discardableResult public func commitPasswordChange(_ change:VaultPasswordChange) throws -> VaultPasswordChangeResult {
+        guard !isPendingPasswordChange else {throw VaultFailure.passwordChangePending}
+        try validate(change)
+        try verifySources(change,allowReplaced:false)
+        try removeAbandonedPasswordChangeWrites()
+        let encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys]
+        let journal=try encoder.encode(change)
+        guard journal.count<=Self.maximumPasswordChangeSize else {throw VaultFailure.tooLarge}
+        try writePrivate(journal,to:passwordChangeURL,exclusive:true)
+        return try finishPasswordChange(change)
+    }
+
+    /// Call before opening a vault after an interrupted change. No password is
+    /// needed: the durable journal already contains only new-password ciphertext.
+    /// Success means that all app-managed old-password histories were replaced
+    /// and the journal was removed. The new password now opens the main vault.
+    @discardableResult public func recoverPasswordChange() throws -> VaultPasswordChangeResult? {
+        try removeAbandonedPasswordChangeWrites()
+        guard isPendingPasswordChange else {return nil}
+        let attributes=try FileManager.default.attributesOfItem(atPath:passwordChangeURL.path)
+        guard attributes[.type] as? FileAttributeType == .typeRegular,
+              let size=attributes[.size] as? NSNumber,size.uint64Value<=UInt64(Self.maximumPasswordChangeSize) else {throw VaultFailure.invalidData}
+        let journal=try Data(contentsOf:passwordChangeURL)
+        guard journal.count<=Self.maximumPasswordChangeSize else {throw VaultFailure.tooLarge}
+        let change=try JSONDecoder().decode(VaultPasswordChange.self,from:journal)
+        try validate(change)
+        return try finishPasswordChange(change)
+    }
+
+    private func finishPasswordChange(_ change:VaultPasswordChange) throws -> VaultPasswordChangeResult {
+        try verifySources(change,allowReplaced:true)
+        // Always leave the main vault until every recoverable history is safe.
+        let ordered=change.targets.filter{$0.name != change.vaultName}+change.targets.filter{$0.name == change.vaultName}
+        for target in ordered {
+            guard let replacement=target.replacement else {continue}
+            let current=try readManagedFile(named:target.name)
+            guard Self.digest(current) == target.originalDigest || current == replacement else {throw VaultFailure.passwordChangeSourceChanged}
+            if current != replacement {try writePrivate(replacement,to:url.deletingLastPathComponent().appendingPathComponent(target.name))}
+        }
+        guard try managedNames() == change.targets.map(\.name).sorted() else {throw VaultFailure.passwordChangeSourceChanged}
+        for target in change.targets {
+            let current=try readManagedFile(named:target.name)
+            guard target.replacement.map({$0 == current}) ?? (Self.digest(current) == target.originalDigest) else {throw VaultFailure.passwordChangeSourceChanged}
+        }
+        try FileManager.default.removeItem(at:passwordChangeURL)
+        guard !isPendingPasswordChange else {throw VaultFailure.passwordChangePending}
+        return change.result
+    }
+
+    private func validate(_ change:VaultPasswordChange) throws {
+        let names=change.targets.map(\.name)
+        guard change.schema == 1,change.vaultName == url.lastPathComponent,
+              !change.targets.isEmpty,change.targets.count<=1000,Set(names).count == names.count,
+              change.targets.contains(where:{$0.name == change.vaultName && $0.replacement != nil}),
+              change.targets.allSatisfy({isManagedName($0.name) && $0.originalDigest.count == 32}) else {throw VaultFailure.invalidData}
+        for target in change.targets {if let replacement=target.replacement {_=try VaultCryptography.decodeEnvelope(replacement)}}
+    }
+    private func verifySources(_ change:VaultPasswordChange,allowReplaced:Bool) throws {
+        guard try managedNames() == change.targets.map(\.name).sorted() else {throw VaultFailure.passwordChangeSourceChanged}
+        for target in change.targets {
+            let original=try readManagedFile(named:target.name)
+            guard Self.digest(original) == target.originalDigest || (allowReplaced && target.replacement == original) else {throw VaultFailure.passwordChangeSourceChanged}
+        }
+    }
+    private func managedNames() throws -> [String] {
+        let names=try FileManager.default.contentsOfDirectory(atPath:url.deletingLastPathComponent().path).filter(isManagedName).sorted()
+        guard names.contains(url.lastPathComponent) else {throw VaultFailure.notConfigured}
+        return names
+    }
+    private func isManagedName(_ name:String) -> Bool {
+        if name == url.lastPathComponent || name == url.lastPathComponent+".previous" {return true}
+        let prefix="vault-before-restore-",suffix=".deskdenvault"
+        guard name.hasPrefix(prefix),name.hasSuffix(suffix),name.count>prefix.count+suffix.count else {return false}
+        return UUID(uuidString:String(name.dropFirst(prefix.count).dropLast(suffix.count))) != nil
+    }
+    private func readManagedFile(named name:String) throws -> Data {
+        guard isManagedName(name) else {throw VaultFailure.invalidData}
+        let candidate=url.deletingLastPathComponent().appendingPathComponent(name)
+        let attributes=try FileManager.default.attributesOfItem(atPath:candidate.path)
+        guard attributes[.type] as? FileAttributeType == .typeRegular,
+              let size=attributes[.size] as? NSNumber,size.uint64Value<=24_000_000 else {throw VaultFailure.invalidData}
+        let data=try Data(contentsOf:candidate);_=try VaultCryptography.decodeEnvelope(data);return data
+    }
+    private func writePrivate(_ data:Data,to destination:URL,exclusive:Bool=false) throws {
+        let manager=FileManager.default,parent=url.deletingLastPathComponent()
+        let temporary=parent.appendingPathComponent(passwordChangeURL.lastPathComponent+"-staging-"+UUID().uuidString)
+        guard manager.createFile(atPath:temporary.path,contents:nil,attributes:[.posixPermissions:0o600]) else {throw CocoaError(.fileWriteNoPermission)}
+        defer {try? manager.removeItem(at:temporary)}
+        let handle=try FileHandle(forWritingTo:temporary)
+        do {try handle.write(contentsOf:data);try handle.synchronize();try handle.close()}
+        catch {try? handle.close();throw error}
+        // Publish the complete journal without replacing another pending change.
+        // Its temporary hard link is removed by defer or the next recovery.
+        let status=exclusive ? Darwin.link(temporary.path,destination.path):Darwin.rename(temporary.path,destination.path)
+        guard status == 0 else {
+            if exclusive,errno == EEXIST {throw VaultFailure.passwordChangePending}
+            throw POSIXError(POSIXErrorCode(rawValue:errno) ?? .EIO)
+        }
+    }
+    /// An interrupted atomic write contains only newly encrypted bytes. Remove
+    /// its precisely named temporary file before a later change can retire that
+    /// password too; never accumulate forgotten ciphertext outside the journal.
+    private func removeAbandonedPasswordChangeWrites() throws {
+        let manager=FileManager.default,parent=url.deletingLastPathComponent()
+        guard manager.fileExists(atPath:parent.path) else {return}
+        let prefix=passwordChangeURL.lastPathComponent+"-staging-"
+        for name in try manager.contentsOfDirectory(atPath:parent.path) where name.hasPrefix(prefix) && UUID(uuidString:String(name.dropFirst(prefix.count))) != nil {
+            let abandoned=parent.appendingPathComponent(name)
+            let attributes=try manager.attributesOfItem(atPath:abandoned.path)
+            guard attributes[.type] as? FileAttributeType == .typeRegular else {throw VaultFailure.invalidData}
+            try manager.removeItem(at:abandoned)
+        }
+    }
+    private static func digest(_ data:Data) -> Data {Data(SHA256.hash(data:data))}
 }

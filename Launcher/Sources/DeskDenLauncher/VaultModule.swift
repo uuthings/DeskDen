@@ -44,6 +44,7 @@ struct VaultRestorePreview:Identifiable {
     private let store:VaultFileStore
     private let protectionURL:URL
     private let biometrics:any VaultBiometricStore
+    private let clipboard:VaultClipboard
     private var biometricOperationInFlight=false
     private var protectionProtected=false
     private var key:SymmetricKey?
@@ -62,12 +63,19 @@ struct VaultRestorePreview:Identifiable {
     /// The shell can supply its window without retaining it. Activity elsewhere does not reset this vault's idle timer.
     weak var hostWindow:NSWindow?
 
-    init(dataDirectory:URL,protectedDataAvailable:@escaping ()->Bool = { NSApp.isProtectedDataAvailable },biometrics:(any VaultBiometricStore)?=nil) {
+    init(dataDirectory:URL,protectedDataAvailable:@escaping ()->Bool = { NSApp.isProtectedDataAvailable },biometrics:(any VaultBiometricStore)?=nil,clipboard:VaultClipboard?=nil) {
         vaultDataURL=dataDirectory.appendingPathComponent("private.deskdenvault")
         store=VaultFileStore(url:vaultDataURL)
         protectionURL=dataDirectory.appendingPathComponent("protection.json")
         self.protectedDataAvailable=protectedDataAvailable
         self.biometrics=biometrics ?? VaultKeychainBiometrics(vaultURL:vaultDataURL)
+        self.clipboard=clipboard ?? .shared
+        do {
+            if try store.recoverPasswordChange() != nil {lockReason="上次密码更改已完成，请使用新密码解锁"}
+        } catch {
+            hasPendingSave=true;saveStatus="密码更改尚未完成"
+            errorMessage="密码更改尚未完成，加密资料已保留。请重试保存，完成后使用新密码解锁。\n\(error.localizedDescription)"
+        }
         isConfigured=FileManager.default.fileExists(atPath:vaultDataURL.path)
         if FileManager.default.fileExists(atPath:protectionURL.path) {
             do {
@@ -93,8 +101,9 @@ struct VaultRestorePreview:Identifiable {
     }
     isolated deinit { saveTask?.cancel(); idleTask?.cancel(); if let activityMonitor { NSEvent.removeMonitor(activityMonitor) } }
     var selectedDocument:PrivateDocument? { documents.first { $0.id == selectedID } }
-    var completionMessage:String? { !isUnlocked && (lockReason.hasPrefix("密码已更改") || lockReason.hasPrefix("备份已恢复")) ? lockReason:nil }
+    var completionMessage:String? { !isUnlocked && (lockReason.hasPrefix("密码已更改") || lockReason.hasPrefix("上次密码更改已完成") || lockReason.hasPrefix("备份已恢复")) ? lockReason:nil }
     var canChangeProtectionPreferences:Bool { !protectionProtected }
+    var hasPendingPasswordChange:Bool {store.isPendingPasswordChange}
     func recordActivity() { lastActivityUptime=ProcessInfo.processInfo.systemUptime }
     func registerPlaintextClearer(id:UUID,_ clear:@escaping ()->Void) { plaintextClearers[id]=clear }
     func removePlaintextClearer(id:UUID) { plaintextClearers.removeValue(forKey:id) }
@@ -246,6 +255,24 @@ struct VaultRestorePreview:Identifiable {
     }
     @discardableResult func flush() -> Bool {
         saveTask?.cancel(); saveTask=nil
+        if store.isPendingPasswordChange {
+            // A password transaction owns the disk until it has completed. An
+            // ordinary retry must never recreate an old-password revision.
+            guard pendingEnvelope == nil else {
+                errorMessage="密码更改与待保存资料发生冲突，原加密资料已保留，请先完成密码更改。"
+                return false
+            }
+            do {
+                _=try store.recoverPasswordChange()
+                hasPendingSave=false;isConfigured=true;saveStatus="所有更改已保存";errorMessage=nil
+                lockReason="密码已更改，请使用新密码重新解锁"
+                if isUnlocked {lock(reason:lockReason)}
+            } catch {
+                hasPendingSave=true;saveStatus="密码更改尚未完成"
+                errorMessage="密码更改尚未完成，加密资料已保留。请重试保存，完成后使用新密码解锁。\n\(error.localizedDescription)"
+                return false
+            }
+        }
         guard let pendingEnvelope else { return true }
         do {
             try store.write(pendingEnvelope); self.pendingEnvelope=nil; hasPendingSave=false;openedPayloadVersion=3
@@ -260,6 +287,7 @@ struct VaultRestorePreview:Identifiable {
         let hadPrivateInput=isUnlocked || sheet != nil || !plaintextClearers.isEmpty
         generation += 1
         biometrics.cancel()
+        clipboard.clearPrivateSession()
         _=flush()
         isUnlocked=false; busy=false; key=nil; salt=nil; documents=[];categories=[];categoryFilter="all"; selectedID=nil
         restoreData=nil; restorePreview=nil; restoreSourceName=nil; sheet=nil
@@ -279,19 +307,31 @@ struct VaultRestorePreview:Identifiable {
         guard flush() else { return false }
         busy=true; errorMessage=nil; generation += 1; let token=generation
         do {
-            let data=try store.read(),contents=VaultContents(documents:documents,categories:categories)
-            let changed=try await Task.detached(priority:.userInitiated) {
-                _=try VaultCryptography.unlock(data:data,password:current)
-                return try VaultCryptography.create(contents:contents,password:new)
+            let store=store
+            let change=try await Task.detached(priority:.userInitiated) {
+                try store.preparePasswordChange(currentPassword:current,newPassword:new)
             }.value
             guard token == generation,isUnlocked else { return false }
             guard requireProtectedData() else { return false }
             if biometricEnabled {try await biometrics.remove();guard token == generation,isUnlocked,requireProtectedData() else{return false};try persistBiometricPreference(false)}
-            pendingEnvelope=changed.envelope; hasPendingSave=true
-            let saved=flush()
-            lock(reason:saved ? "密码已更改，请重新解锁":"新密码资料尚未写入磁盘，请重试保存；保存后使用新密码")
-            return saved
-        } catch { if token == generation { busy=false; errorMessage=error.localizedDescription }; return false }
+            _=try store.commitPasswordChange(change)
+            lock(reason:"密码已更改，本机对应历史副本已更新，请重新解锁")
+            return true
+        } catch {
+            if token == generation {
+                if store.isPendingPasswordChange {
+                    hasPendingSave=true
+                    lock(reason:"密码更改尚未完成，请重试保存；完成后使用新密码")
+                    // lock also retries encrypted writes. A transient error may
+                    // already be resolved without retaining any plaintext.
+                    if !store.isPendingPasswordChange {
+                        lockReason="密码已更改，本机对应历史副本已更新，请重新解锁"
+                        return true
+                    }
+                } else {busy=false;errorMessage=error.localizedDescription}
+            }
+            return false
+        }
     }
     func refreshBiometrics() async {
         biometricUnavailableReason=await biometrics.refreshAvailability()
@@ -606,4 +646,111 @@ private enum VaultBiometricFailure:LocalizedError {
 private final class VaultAuthenticationContext:@unchecked Sendable {
     let value:LAContext
     init(_ value:LAContext) {self.value=value}
+}
+
+/// Keeps only ownership metadata, never a second copy of the private text.
+/// A later clipboard write always takes precedence over our cleanup deadline.
+@MainActor final class VaultClipboard {
+    typealias Scheduler = (TimeInterval, @escaping @MainActor () -> Void) -> (() -> Void)
+    static let retention:TimeInterval=180
+    static let concealedType=NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
+    static let transientType=NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
+    private static let ownerType=NSPasteboard.PasteboardType("local.deskden.vault.clipboard-owner")
+    static let shared=VaultClipboard(pasteboard:.general)
+    let pasteboard:NSPasteboard
+    private let schedule:Scheduler
+    private var ownedChangeCount:Int?
+    private var ownedToken:String?
+    private var generation=0
+    private var cancelCleanup:(()->Void)?
+    private var fieldEditor:VaultClipboardTextView?
+    private func privateFieldEditor()->VaultClipboardTextView {
+        if let fieldEditor {return fieldEditor}
+        let editor=VaultClipboardTextView()
+        editor.clipboard=self;editor.isFieldEditor=true;editor.isRichText=false;editor.importsGraphics=false
+        fieldEditor=editor
+        return editor
+    }
+
+    init(pasteboard:NSPasteboard,schedule:Scheduler?=nil) {
+        self.pasteboard=pasteboard
+        self.schedule=schedule ?? { delay,action in
+            let task=Task { @MainActor in
+                try? await Task.sleep(for:.seconds(delay))
+                guard !Task.isCancelled else {return}
+                action()
+            }
+            return {task.cancel()}
+        }
+    }
+    isolated deinit {cancelCleanup?()}
+
+    /// Secure fields keep AppKit's secure editor and its copy restrictions.
+    static func privateFieldEditor(for client:Any?)->NSTextView? {
+        guard client is NSTextField,!(client is NSSecureTextField) else {return nil}
+        return shared.privateFieldEditor()
+    }
+
+    @discardableResult func publishSelection(from source:NSPasteboard)->Bool {
+        let token=UUID().uuidString
+        let items=(source.pasteboardItems ?? []).map { original in
+            let item=NSPasteboardItem()
+            for type in original.types {if let data=original.data(forType:type) {item.setData(data,forType:type)}}
+            item.setData(Data(),forType:Self.concealedType)
+            item.setData(Data(),forType:Self.transientType)
+            item.setString(token,forType:Self.ownerType)
+            return item
+        }
+        guard !items.isEmpty else {return false}
+        generation += 1;let currentGeneration=generation
+        cancelCleanup?();cancelCleanup=nil;ownedChangeCount=nil;ownedToken=nil
+        // Prepare the actual destination before publishing any representations,
+        // so the plaintext is never first written with cross-device availability.
+        pasteboard.prepareForNewContents(with:.currentHostOnly)
+        guard pasteboard.writeObjects(items) else {pasteboard.clearContents();return false}
+        ownedChangeCount=pasteboard.changeCount;ownedToken=token
+        cancelCleanup=schedule(Self.retention) { [weak self] in
+            guard let self,self.generation == currentGeneration else {return}
+            self.clearOwnedContents()
+        }
+        return true
+    }
+
+    func clearOwnedContents() {
+        generation += 1;cancelCleanup?();cancelCleanup=nil
+        defer {ownedChangeCount=nil;ownedToken=nil}
+        guard let count=ownedChangeCount,let token=ownedToken,
+              pasteboard.changeCount == count,pasteboard.string(forType:Self.ownerType) == token else {return}
+        pasteboard.clearContents()
+    }
+
+    /// Locking clears the cached native editor even after it stopped being the
+    /// window's first responder. Clipboard expiry must not alter active edits.
+    func clearPrivateSession() {
+        clearOwnedContents()
+        if let fieldEditor {
+            fieldEditor.unmarkText();fieldEditor.string=""
+            fieldEditor.setSelectedRange(NSRange(location:0,length:0))
+            fieldEditor.undoManager?.removeAllActions()
+        }
+    }
+}
+
+/// Shared by the rich body editor and the private page's native field editor.
+/// AppKit creates all native text representations on an isolated pasteboard;
+/// only the fully marked, device-local result reaches the user's clipboard.
+@MainActor class VaultClipboardTextView:NSTextView {
+    var clipboard=VaultClipboard.shared
+    override func copy(_ sender:Any?) {_=copyPrivateSelection()}
+    override func cut(_ sender:Any?) {
+        guard isEditable,copyPrivateSelection() else {return}
+        delete(sender)
+    }
+    @discardableResult func copyPrivateSelection()->Bool {
+        guard selectedRanges.contains(where:{$0.rangeValue.length>0}) else {return false}
+        let staging=NSPasteboard.withUniqueName()
+        defer {staging.clearContents();staging.releaseGlobally()}
+        guard super.writeSelection(to:staging,types:writablePasteboardTypes) else {return false}
+        return clipboard.publishSelection(from:staging)
+    }
 }
