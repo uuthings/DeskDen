@@ -27,12 +27,12 @@ struct WorkbenchOverview:View {
             WBPageHeader(title:"首页",subtitle:"常用之物，皆在方寸之间") {contextHeader}
             VStack(spacing:12) {
                 if stacksSummaryCards {
-                    VStack(spacing: 12) { statusCard; deviceCard }
+                    VStack(spacing: 12) { statusCard; deviceCards }
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     HStack(alignment: .top, spacing: 12) {
                         statusCard.frame(maxWidth: .infinity)
-                        deviceCard.frame(width: deviceSummaryWidth)
+                        deviceCards.frame(width: deviceSummaryWidth)
                     }.fixedSize(horizontal: false, vertical: true)
                 }
                 agenda
@@ -59,7 +59,7 @@ struct WorkbenchOverview:View {
                 VStack(alignment: .leading, spacing: 16) { memoryRing(memory, tone: tone); statusSummary(pressure) }
             }
         }
-        .padding(14).frame(minHeight: 269).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .padding(14).frame(minHeight: stacksSummaryCards ? 269 : 342).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         .background(WorkbenchMaterialSurface(radius: 15))
         .accessibilityElement(children: .contain).accessibilityIdentifier("home-device-summary")
     }
@@ -87,6 +87,7 @@ struct WorkbenchOverview:View {
                 .font(.system(size: 20, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
             Text(pressure == .normal ? "macOS 会利用空闲内存缓存。无需因占用较高而主动退出应用。" : pressure == .unknown ? "设备读数可用后，将显示实际内存压力与占用。" : "可在设备状态查看内存与进程读数，再决定是否结束不再使用的应用。")
                 .font(.system(size: 12)).foregroundStyle(palette.secondary).lineSpacing(4).fixedSize(horizontal: false, vertical: true)
+            memoryUsage
             HStack(spacing: 8) {
                 Button { navigate(.cleaning) } label: { Label("空间清理", systemImage: "internaldrive") }
                     .buttonStyle(WBButtonStyle(primary: true)).accessibilityIdentifier("home-open-cleaning")
@@ -95,39 +96,69 @@ struct WorkbenchOverview:View {
         }.frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .contain).accessibilityIdentifier("home-pressure-summary")
     }
+    private var memoryUsage: some View {
+        let memory = device.snapshot.memory
+        return VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("运行内存").font(.system(size: 11)).foregroundStyle(palette.secondary)
+                Spacer(minLength: 0)
+                Text(memory.map { String(format: "%.0f%%", $0.percent) } ?? "—")
+                    .font(.system(size: 12, weight: .medium)).monospacedDigit()
+            }
+            WBProgress(value: (memory?.percent ?? 0) / 100, color: DeviceAppearance.pressure(memory?.pressure, palette: palette), height: 6)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("运行内存已用比例")
+                .accessibilityValue(memory.map { String(format: "%.0f%%", $0.percent) } ?? "读数不可用")
+                .accessibilityIdentifier("home-memory-progress")
+            Text(memory.map { DeviceFormat.capacity($0.used) + " / " + DeviceFormat.capacity($0.total) + " 已用" } ?? "等待有效内存采样")
+                .font(.system(size: 11)).foregroundStyle(palette.muted).monospacedDigit()
+        }.padding(.vertical, 2)
+            .accessibilityElement(children: .contain).accessibilityIdentifier("home-memory-usage")
+    }
+    private var deviceCards: some View {
+        VStack(spacing: 12) { deviceCard; networkCard }
+            .accessibilityElement(children: .contain).accessibilityIdentifier("home-device-stack")
+    }
     private var deviceCard:some View {
         let s=device.snapshot
-        return VStack(alignment:.leading,spacing:0) {
-            HStack(spacing:7){Image(systemName:"laptopcomputer").font(.system(size:16,weight:.light)).foregroundStyle(palette.secondary);Text("这台 Mac").font(.system(size:12,weight:.medium));Spacer();Button{navigate(.device)}label:{Image(systemName:"arrow.up.right")}.buttonStyle(WBIconButtonStyle(size:28)).accessibilityLabel("查看设备状态").accessibilityIdentifier("home-device-detail")}.frame(height:22).padding(.bottom,10)
-            VStack(alignment:.leading,spacing:compact ? 4:0) {
-                if compact {Text(s.deviceName).font(.system(size:15,weight:.medium));deviceIdentity(s)}
-                else {HStack(alignment:.firstTextBaseline,spacing:9){Text(s.deviceName).font(.system(size:expanded ? 18:15,weight:.medium)).lineLimit(1);deviceIdentity(s)}}
-            }.padding(.bottom,expanded ? 24:14).padding(.top,expanded ? 9:0)
-            VStack(alignment: .leading, spacing: 12) {
-                Button { openDevice(.thermal) } label: {
-                    DeviceTemperatureReadings(snapshot: s, size: compact ? 23 : 25)
-                        .contentShape(Rectangle())
-                }.buttonStyle(ClickablePlainButtonStyle())
-                    .accessibilityIdentifier("home-temperature-readout")
+        return WBActionCard(title: "散热与电池", symbol: "laptopcomputer", identifier: "home-device-detail", actionLabel: "查看设备散热与供电", contentIdentifier: "home-device-metrics", minimumHeight: 208) { openDevice(.thermal) } content: {
+            Text(s.deviceName + " · " + s.chipName).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
+            VStack(alignment: .leading, spacing: 10) {
+                DeviceTemperatureReadings(snapshot: s, size: 23)
+                    .accessibilityElement(children: .combine).accessibilityIdentifier("home-temperature-readout")
                     .help(s.unavailableReasons["temperature"] ?? "查看温度与散热详情")
-                Button { openDevice(.thermal) } label: {
-                    DeviceFanRows(snapshot: s, paired: true).contentShape(Rectangle())
-                }.buttonStyle(ClickablePlainButtonStyle())
-                    .accessibilityIdentifier("home-fan-readout")
+                DeviceFanRows(snapshot: s, paired: true)
+                    .accessibilityElement(children: .combine).accessibilityIdentifier("home-fan-readout")
                     .help(s.unavailableReasons["fan"] ?? "查看风扇与散热详情")
-                Text("系统热状态：" + DeviceFormat.thermal(s.thermalState))
-                    .font(.system(size: 11)).foregroundStyle(palette.muted)
-            }.frame(maxHeight:.infinity,alignment:.top)
-            Rectangle().fill(palette.line).frame(height:1).padding(.top,expanded ? 22:15).padding(.bottom,expanded ? 16:12)
-            HStack(alignment:.center,spacing:12) {
-                Button{openDevice(.thermal)}label:{VStack(alignment:.leading,spacing:4){Label(s.battery.map{String(format:"%.0f%%",$0.percent)} ?? "—",systemImage:s.battery?.isPluggedIn == true ? "battery.100.bolt":"battery.100").font(.system(size:12));Text(s.battery.map{$0.isPluggedIn ? "已连接电源":"使用电池"} ?? "电源读数不可用").font(.system(size:11)).foregroundStyle(palette.muted)}}.buttonStyle(ClickablePlainButtonStyle())
-                Spacer(minLength:0)
-                Button{navigate(.network)}label:{VStack(alignment:.trailing,spacing:4){Text("↓ "+DeviceFormat.rate(s.network.downloadBytesPerSecond)+"  ·  ↑ "+DeviceFormat.rate(s.network.uploadBytesPerSecond)).font(.system(size:compact ? 10:11)).lineLimit(1).minimumScaleFactor(0.8);Text(todayTraffic).font(.system(size:11)).foregroundStyle(palette.muted)}}.buttonStyle(ClickablePlainButtonStyle())
             }
-        }.padding(14).frame(minHeight:expanded ? 310:compact ? 288:269).frame(maxHeight:.infinity).background(WorkbenchMaterialSurface(radius:15))
-            .accessibilityElement(children: .contain).accessibilityIdentifier("home-device-metrics")
+            HStack(spacing: 8) {
+                Label(s.battery.map { String(format: "%.0f%%", $0.percent) } ?? "—", systemImage: s.battery?.isPluggedIn == true ? "battery.100.bolt" : "battery.100")
+                    .font(.system(size: 12, weight: .medium)).monospacedDigit()
+                    .accessibilityIdentifier("home-battery-percent")
+                Text(s.battery.map { $0.isCharging ? "正在充电" : $0.isPluggedIn ? "已连接电源" : "使用电池" } ?? "电源读数不可用")
+                    .font(.system(size: 11)).foregroundStyle(palette.muted)
+                Spacer(minLength: 0)
+                Text(DeviceFormat.thermal(s.thermalState)).font(.system(size: 11)).foregroundStyle(palette.muted)
+            }.padding(.top, 2)
+        }
     }
-    private func deviceIdentity(_ s:DeviceSnapshot)->some View {Text(s.chipName+" · "+DeviceFormat.capacity(s.memory?.total)).font(.system(size:11)).foregroundStyle(palette.muted).lineLimit(1).minimumScaleFactor(0.8)}
+    private var networkCard: some View {
+        let network = device.snapshot.network
+        return WBActionCard(title: "实时网络", symbol: "network", identifier: "home-network-detail", actionLabel: "查看网络监控", minimumHeight: 122) { navigate(.network) } content: {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                networkReading("下载", symbol: "arrow.down", value: network.downloadBytesPerSecond)
+                Spacer(minLength: 0)
+                networkReading("上传", symbol: "arrow.up", value: network.uploadBytesPerSecond)
+            }.accessibilityElement(children: .combine).accessibilityIdentifier("home-network-speed")
+            Text(todayTraffic).font(.system(size: 11)).foregroundStyle(palette.muted)
+        }
+    }
+    private func networkReading(_ title: String, symbol: String, value: Double?) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label(title, systemImage: symbol).font(.system(size: 11)).foregroundStyle(palette.secondary)
+            Text(DeviceFormat.rate(value)).font(.system(size: 17, weight: .medium)).monospacedDigit().lineLimit(1)
+        }
+    }
     private var todayTraffic:String {let summary=device.trafficSummary(period:.day,scope:.all);return "今日已记录 "+(summary.coveredSeconds>0 ? DeviceTrafficDisplay.adaptive(summary.totalBytes):"—")}
     private var agenda:some View {
         VStack(alignment:.leading,spacing:0) {
@@ -136,9 +167,9 @@ struct WorkbenchOverview:View {
                 Text(displayCalendar.isDateInToday(day) ? "今天的安排":"\(displayCalendar.component(.month,from:day)) 月 \(displayCalendar.component(.day,from:day)) 日的安排").font(.system(size:12,weight:.medium))
                 if !compact {Text("\(events.count) 项日程 · \(reminders.filter{!$0.isCompleted}.count) 项待办").font(.system(size:11)).foregroundStyle(palette.muted).padding(.leading,6)}
                 Spacer(minLength:0)
-                Button{calendar.selectDay(day);calendar.openNewReminder()}label:{Image(systemName:"plus")}.buttonStyle(WBIconButtonStyle(size:28)).accessibilityLabel("新建提醒")
-                Button{calendar.selectDay(day);navigate(.calendar)}label:{Label("打开日历",systemImage:"arrow.up.right")}.buttonStyle(WBQuietButtonStyle())
-            }.frame(height:22).padding(.bottom,10)
+                Button{calendar.selectDay(day);calendar.openNewReminder()}label:{Image(systemName:"plus")}.buttonStyle(WBButtonStyle(compact:true)).accessibilityLabel("新建提醒")
+                Button{calendar.selectDay(day);navigate(.calendar)}label:{Label("打开日历",systemImage:"arrow.up.right")}.buttonStyle(WBButtonStyle(compact:true)).accessibilityIdentifier("home-open-calendar")
+            }.frame(height:28).padding(.bottom,10)
             weekStrip.padding(.bottom,expanded ? 16:12)
             HStack(alignment:.top,spacing:expanded ? 32:compact ? 18:24) {
                 planColumn(title:"日程",subtitle:"\(events.count) 项",items:events.map(CalendarAgendaEntry.event),empty:"这一天没有日程，留一点从容的时间。")
@@ -224,35 +255,38 @@ struct WorkbenchHomeContextHeader: View {
     private var weatherContextButton:some View {
         Button{context.showWeather=true}label:{
             HStack(spacing:10) {
-                Image(systemName:context.settings.city == nil ? "globe":weatherSymbol(context.weather?.snapshot?.weatherCode,isDay:context.weather?.snapshot?.isDay))
-                    .font(.system(size:compact ? 30:34,weight:.light)).foregroundStyle(palette.secondary)
+                Image(systemName:context.settings.city == nil ? "cloud.sun":weatherSymbol(context.weather?.snapshot?.weatherCode,isDay:context.weather?.snapshot?.isDay))
+                    .font(.system(size:context.settings.city == nil ? 23 : compact ? 28:30,weight:.light)).foregroundStyle(palette.secondary)
                 VStack(alignment:.leading,spacing:4) {
                     HStack(alignment:.firstTextBaseline,spacing:8) {
-                        Text(context.temperature(context.weather?.snapshot?.temperatureCelsius))
-                            .font(.system(size:compact ? 27:30,weight:.medium)).monospacedDigit()
-                            .accessibilityIdentifier("home-weather-temperature")
-                        Text(context.weatherStatusTitle).font(.system(size:12,weight:.medium)).foregroundStyle(palette.secondary)
+                        if let temperature=context.weather?.snapshot?.temperatureCelsius {
+                            Text(context.temperature(temperature))
+                                .font(.system(size:compact ? 24:27,weight:.medium)).monospacedDigit()
+                                .accessibilityIdentifier("home-weather-temperature")
+                        }
+                        Text(context.settings.city == nil ? "添加城市":context.weatherStatusTitle)
+                            .font(.system(size:12,weight:.medium)).foregroundStyle(palette.secondary)
                             .lineLimit(1).accessibilityIdentifier("home-weather-condition")
                     }
                     HStack(spacing:4) {
-                        Text((context.settings.city?.name ?? "选择城市")+(context.weather?.freshness == .stale ? " · 上次天气已过期":""))
+                        Text((context.settings.city?.name ?? "设置天气与当地时间")+(context.weather?.freshness == .stale ? " · 天气已过期":""))
                         Image(systemName:"chevron.down").font(.system(size:9))
                     }.font(.system(size:11)).foregroundStyle(palette.muted)
                 }
             }.frame(minHeight:52).contentShape(Rectangle())
-        }.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel("城市、天气与时间，"+context.weatherStatusTitle+"，"+context.temperature(context.weather?.snapshot?.temperatureCelsius))
+        }.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel(context.settings.city == nil ? "添加城市，设置天气与当地时间":"城市、天气与时间，"+context.weatherStatusTitle+"，"+context.temperature(context.weather?.snapshot?.temperatureCelsius))
             .accessibilityIdentifier("home-weather-settings")
     }
     private var clockContextButton:some View {
         TimelineView(.periodic(from:.now,by:1)) {timeline in
             Button{context.showClock=true}label:{
                 HStack(spacing:compact ? 8:14) {
-                    Text(context.time(timeline.date,seconds:true)).font(.system(size:compact ? 25:30,weight:.regular)).monospacedDigit()
+                    Text(context.time(timeline.date,seconds:true)).font(.system(size:compact ? 24:28,weight:.regular)).monospacedDigit()
                     VStack(alignment:.leading,spacing:3) {
                         if let date=try? context.dateContext.display(at:timeline.date) {
                             Text("\(displayCalendar.component(.month,from:timeline.date)) 月 \(displayCalendar.component(.day,from:timeline.date)) 日  "+date.weekdayText).font(.system(size:compact ? 11:12)).foregroundStyle(palette.secondary)
                         }
-                        HStack(spacing:4){Text(WorkbenchContextModel.zoneTitle(context.dateContext.timeZoneIdentifier,at:timeline.date));Image(systemName:"chevron.down").font(.system(size:9))}.font(.system(size:11)).foregroundStyle(palette.muted)
+                        HStack(spacing:4){Text(context.locationTitle+" · "+WorkbenchContextModel.utcOffset(context.effectiveTimeZoneIdentifier,at:timeline.date));Image(systemName:"chevron.down").font(.system(size:9))}.font(.system(size:11)).foregroundStyle(palette.muted)
                     }
                 }.padding(.leading,10).frame(minHeight:46).contentShape(Rectangle())
             }.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel("城市、天气与时间")

@@ -241,6 +241,7 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
     private var scale: CGFloat = 1
     private var host: NSHostingView<AnyView>?
     private var hover = false
+    private var bodyClickPending = false
     private var area: NSTrackingArea?
     private let actionButton = DeviceCardActionButton(), styleButton = DeviceCardActionButton()
     override var isFlipped: Bool { true }
@@ -254,11 +255,15 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
             button.bezelStyle = .inline; button.target = self; addSubview(button)
         }
         actionButton.action = #selector(activate); styleButton.action = #selector(style)
-        setAccessibilityElement(false); setAccessibilityLabel(id.title + "卡片"); setAccessibilityIdentifier("fc.device.card.\(id.rawValue)")
+        setAccessibilityElement(true); setAccessibilityRole(.button)
+        setAccessibilityLabel(id.title + "卡片"); setAccessibilityIdentifier("fc.device.card.\(id.rawValue)")
+        ButtonCursorPolicy.shared.register(self)
     }
     required init?(coder: NSCoder) { fatalError() }
     func update(preference: DeviceCardPreference, snapshot: DeviceSnapshot, history: [DeviceHistoryPoint], trafficSummary: DeviceTrafficSummary, budget: DeviceTrafficBudget, editing: Bool, light: Bool, expanded: Bool = false, scale: CGFloat = 1, theme: LauncherTheme = .arWorld, opacity: Double = 0.70) {
+        if self.editing != editing { bodyClickPending = false }
         self.editing = editing; self.scale = scale
+        setAccessibilityRole(editing ? .group : .button)
         let content = AnyView(DeviceCardContent(card: preference, snapshot: snapshot, history: history, editing: editing, trafficSummary: trafficSummary, budget: budget, expanded: expanded)
             .environment(\.workbenchTheme, theme).environment(\.workbenchOpacity, opacity).preferredColorScheme(light ? .light : .dark))
         if let host { host.rootView = content }
@@ -296,11 +301,11 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
         guard bounds.contains(local) else { return nil }
         if edge(at: local) != nil { return self }
         for button in [actionButton, styleButton] where !button.isHidden && button.frame.contains(local) { return button }
-        return editing ? self : super.hitTest(point)
+        return self
     }
     override func resetCursorRects() {
         let edge = 7 * scale, corner = 8 * scale
-        guard editing else { addCursorRect(bounds, cursor: .arrow); return }
+        guard editing else { addCursorRect(bounds, cursor: ButtonCursorPolicy.shared.cursor); return }
         addCursorRect(bounds.insetBy(dx: edge, dy: edge), cursor: .openHand)
         addCursorRect(NSRect(x: corner, y: 0, width: max(0,bounds.width - 2 * corner), height: edge), cursor: .resizeUpDown)
         addCursorRect(NSRect(x: corner, y: bounds.height - edge, width: max(0,bounds.width - 2 * corner), height: edge), cursor: .resizeUpDown)
@@ -317,16 +322,31 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
         guard let image = NSImage(systemSymbolName:name,accessibilityDescription:nil)?.withSymbolConfiguration(.init(pointSize:15,weight:.medium)) else {return .crosshair}
         return NSCursor(image:image,hotSpot:CGPoint(x:image.size.width/2,y:image.size.height/2))
     }
-    override func mouseDown(with event: NSEvent) { window?.makeFirstResponder(self); guard editing else { return }; grid?.begin(id: id, event: event, edge: edge(at: convert(event.locationInWindow, from: nil))) }
-    override func mouseDragged(with event: NSEvent) { grid?.move(event: event) }
-    override func mouseUp(with event: NSEvent) { grid?.end(event: event) }
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        if editing { grid?.begin(id: id, event: event, edge: edge(at: convert(event.locationInWindow, from: nil))) }
+        else { bodyClickPending = true }
+    }
+    override func mouseDragged(with event: NSEvent) {
+        if editing { grid?.move(event: event) } else { bodyClickPending = false }
+    }
+    override func mouseUp(with event: NSEvent) {
+        if editing { grid?.end(event: event); return }
+        let activate = bodyClickPending && bounds.contains(convert(event.locationInWindow, from: nil))
+        bodyClickPending = false
+        if activate { grid?.activate(id) }
+    }
+    override func accessibilityPerformPress() -> Bool {
+        guard !editing, !isGhost, grid != nil else { return false }
+        grid?.activate(id); return true
+    }
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { grid?.cancelInteraction(); return }
         if editing && event.modifierFlags.contains(.option), [123,124,125,126].contains(event.keyCode) {
             if event.modifierFlags.contains(.shift) { grid?.keyboardResize(id, horizontal: event.keyCode == 123 || event.keyCode == 124, growing: event.keyCode == 124 || event.keyCode == 125) }
             else { grid?.keyboardMove(id, forward: event.keyCode == 124 || event.keyCode == 125) }; return
         }
-        if event.keyCode == 36 && !editing { grid?.activate(id); return }; super.keyDown(with: event)
+        if [36, 49].contains(event.keyCode) && !editing { grid?.activate(id); return }; super.keyDown(with: event)
     }
     override func updateTrackingAreas() {
         if let area { removeTrackingArea(area) }
