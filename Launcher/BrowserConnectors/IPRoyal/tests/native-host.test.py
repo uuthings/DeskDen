@@ -26,7 +26,7 @@ def run(exe, root, data, origin=ORIGIN):
 
 class NativeChecks(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix='fangcun-native-fixture-')
+        self.temp = tempfile.TemporaryDirectory(prefix='deskden-native-fixture-')
         self.root = Path(self.temp.name).resolve()
     def tearDown(self): self.temp.cleanup()
 
@@ -41,15 +41,15 @@ class NativeChecks(unittest.TestCase):
                        check=True, capture_output=True, timeout=10)
         return kit
 
-    def install_fixture(self, kit, answer='INSTALL\n'):
+    def install_fixture(self, kit, answer='INSTALL\n', arguments=()):
         # HOME is deliberately isolated: these checks must never register with real Chrome.
         environment = os.environ.copy()
         environment['HOME'] = str(self.root / 'Fixture Home')
-        return subprocess.run(['/bin/sh', str(kit / 'install.command')], input=answer.encode(),
+        return subprocess.run(['/bin/sh', str(kit / 'install.command'), *arguments], input=answer.encode(),
                               env=environment, capture_output=True, timeout=10)
 
     def fixture_registration(self):
-        return self.root / 'Fixture Home/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.uuthings.fangcun.iproyal.json'
+        return self.root / 'Fixture Home/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.uuthings.deskden.iproyal.json'
 
     def test_poll_frame_and_private_heartbeat(self):
         box = self.root/'mailbox'
@@ -97,7 +97,7 @@ class NativeChecks(unittest.TestCase):
         (app/'Contents/Info.plist').write_bytes(plistlib.dumps({'CFBundleExecutable':'Fixture','CFBundleIdentifier':'test.fixture'}))
         kit = self.root/'Prepared Kit'
         subprocess.run([sys.executable,str(SOURCE/'prepare-kit.py'),'--app',str(app),'--bridge-directory',str(self.root/'bridge'),'--output',str(kit)], check=True, capture_output=True)
-        manifest = json.loads((kit/'com.uuthings.fangcun.iproyal.json').read_text())
+        manifest = json.loads((kit/'com.uuthings.deskden.iproyal.json').read_text())
         self.assertEqual(manifest['allowed_origins'],[ORIGIN])
         self.assertEqual(manifest['path'],str(kit/'native-host.command'))
         result = subprocess.run([manifest['path'],ORIGIN],input=frame({'version':1,'type':'poll'}),capture_output=True,timeout=10)
@@ -120,23 +120,23 @@ class NativeChecks(unittest.TestCase):
 
     def test_install_uses_relocated_kit_path(self):
         kit = self.prepare_fixture_kit()
-        old_path = json.loads((kit / 'com.uuthings.fangcun.iproyal.json').read_text())['path']
+        old_path = json.loads((kit / 'com.uuthings.deskden.iproyal.json').read_text())['path']
         moved = self.root / "常用工具's Moved Kit"
         kit.rename(moved)
         result = self.install_fixture(moved)
         self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
         registered = self.fixture_registration()
         manifest = json.loads(registered.read_text())
-        launcher = self.root / 'Fixture Home/Library/Application Support/Fangcun/Connectors/IPRoyal/native-host.command'
+        launcher = self.root / 'Fixture Home/Library/Application Support/DeskDen/Connectors/IPRoyal/native-host.command'
         self.assertEqual(manifest['path'], str(launcher))
         self.assertEqual(launcher.stat().st_mode & 0o777, 0o700)
         self.assertEqual(launcher.read_bytes(), (moved / 'native-host.command').read_bytes())
         self.assertNotEqual(manifest['path'], old_path)
         self.assertEqual(manifest['allowed_origins'], [ORIGIN])
-        self.assertEqual(manifest['name'], 'com.uuthings.fangcun.iproyal')
+        self.assertEqual(manifest['name'], 'com.uuthings.deskden.iproyal')
         self.assertEqual(manifest['type'], 'stdio')
         self.assertEqual(registered.stat().st_mode & 0o777, 0o600)
-        self.assertEqual(list(registered.parent.glob('.fangcun-host.*')), [])
+        self.assertEqual(list(registered.parent.glob('.deskden-host.*')), [])
         shutil.rmtree(moved)  # Installed launcher must not depend on the exported kit path.
         reply = subprocess.run([manifest['path'], ORIGIN], input=frame({'version':1,'type':'poll'}),
                                capture_output=True, timeout=10)
@@ -147,14 +147,66 @@ class NativeChecks(unittest.TestCase):
         kit = self.prepare_fixture_kit()
         registered = self.fixture_registration()
         registered.parent.mkdir(parents=True)
-        existing = b'{"name":"com.uuthings.fangcun.iproyal","path":"previous-fixture-host","type":"stdio"}\n'
+        existing = b'{"name":"com.uuthings.deskden.iproyal","path":"previous-fixture-host","type":"stdio"}\n'
         registered.write_bytes(existing)
         registered.chmod(0o600)
-        (kit / 'com.uuthings.fangcun.iproyal.json').write_text('{"name":')
+        (kit / 'com.uuthings.deskden.iproyal.json').write_text('{"name":')
         result = self.install_fixture(kit)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(registered.read_bytes(), existing)
         self.assertEqual(registered.stat().st_mode & 0o777, 0o600)
-        self.assertEqual(list(registered.parent.glob('.fangcun-host.*')), [])
+        self.assertEqual(list(registered.parent.glob('.deskden-host.*')), [])
+
+    def generic_fixture(self, version='0.3.0', profile=False):
+        app = self.root / "DeskDen's $literal (fixture).app"
+        mac = app / 'Contents/MacOS'; mac.mkdir(parents=True)
+        shutil.copy2(EXE, mac / 'DeskDenLauncher')
+        info = {'CFBundleExecutable': 'DeskDenLauncher', 'CFBundleShortVersionString': version}
+        if profile:
+            info.update(DeskDenDeviceAcceptance=True, DeskDenDeviceAcceptanceProfile='FixtureProfile')
+        (app / 'Contents/Info.plist').write_bytes(plistlib.dumps(info))
+        resource = app / 'Contents/Resources/BrowserConnectors/IPRoyal'
+        resource.mkdir(parents=True)
+        shutil.copy2(SOURCE / 'manifest.json', resource / 'manifest.json')
+        kit = self.root / 'Generic Kit'; (kit / 'Extension').mkdir(parents=True)
+        shutil.copy2(SOURCE / 'manifest.json', kit / 'Extension/manifest.json')
+        shutil.copy2(SOURCE / 'install.command', kit / 'install.command')
+        return app, kit
+
+    def test_generic_install_creates_local_configuration_and_quotes_paths(self):
+        app, kit = self.generic_fixture(profile=True)
+        result = self.install_fixture(kit, arguments=('--app', str(app)))
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        host = json.loads(self.fixture_registration().read_text())
+        self.assertEqual(host['name'], 'com.uuthings.deskden.iproyal')
+        self.assertEqual(host['allowed_origins'], [ORIGIN])
+        reply = subprocess.run([host['path'], ORIGIN], input=frame({'version':1,'type':'poll'}), capture_output=True, timeout=10)
+        self.assertEqual(reply.stderr, b'')
+        self.assertEqual(json.loads(reply.stdout[4:]), {'version':1,'type':'idle'})
+        self.assertTrue((self.root / 'Fixture Home/Library/Application Support/DeskDen/TestProfiles/FixtureProfile/Workbench/ProviderUsage/BrowserBridge/heartbeat.json').is_file())
+        self.assertFalse((kit / 'native-host.command').exists())
+        self.assertFalse((kit / 'com.uuthings.deskden.iproyal.json').exists())
+
+    def test_generic_cancel_and_unsupported_app_do_not_register(self):
+        app, kit = self.generic_fixture()
+        result = self.install_fixture(kit, 'CANCEL\n', ('--app', str(app)))
+        self.assertEqual(result.returncode, 0)
+        self.assertFalse(self.fixture_registration().exists())
+        info_path = app / 'Contents/Info.plist'
+        info = plistlib.loads(info_path.read_bytes()); info['CFBundleShortVersionString'] = '0.2.0'
+        info_path.write_bytes(plistlib.dumps(info))
+        result = self.install_fixture(kit, arguments=('--app', str(app)))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.fixture_registration().exists())
+
+    def test_generic_custom_bridge_directory(self):
+        app, kit = self.generic_fixture()
+        bridge = self.root / "Custom's bridge $literal"
+        result = self.install_fixture(kit, arguments=('--app', str(app), '--bridge-directory', str(bridge)))
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        host = json.loads(self.fixture_registration().read_text())
+        reply = subprocess.run([host['path'], ORIGIN], input=frame({'version':1,'type':'poll'}), capture_output=True, timeout=10)
+        self.assertEqual(json.loads(reply.stdout[4:]), {'version':1,'type':'idle'})
+        self.assertTrue((bridge / 'heartbeat.json').exists())
 
 if __name__ == '__main__': unittest.main()

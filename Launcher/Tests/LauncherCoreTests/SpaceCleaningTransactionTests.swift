@@ -95,7 +95,7 @@ final class SpaceCleaningTransactionTests: XCTestCase {
         }
     }
     private func fixture(directory: Bool = false, app: Bool = false, nested: Bool = false, run: (Fixture) throws -> Void) throws {
-        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("Fangcun-SpaceTransaction-" + UUID().uuidString)
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("DeskDen-SpaceTransaction-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
         let home = try XCTUnwrap(SpaceCleaningScanner.canonicalURL(temporary))
         defer { try? FileManager.default.removeItem(at: home) }

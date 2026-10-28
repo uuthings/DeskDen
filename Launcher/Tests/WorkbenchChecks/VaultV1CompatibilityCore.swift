@@ -59,9 +59,9 @@ public struct VaultEnvelope:Codable,Sendable {
     public let rounds:UInt32
     public let salt:Data
     public let sealed:Data
-    public init(rounds:UInt32,salt:Data,sealed:Data) {format="fangcun-encrypted-vault";version=1;self.rounds=rounds;self.salt=salt;self.sealed=sealed}
+    public init(rounds:UInt32,salt:Data,sealed:Data) {format="deskden-encrypted-vault";version=1;self.rounds=rounds;self.salt=salt;self.sealed=sealed}
     public func validate() throws {
-        guard format=="fangcun-encrypted-vault",version==1,rounds==310_000,salt.count==16,sealed.count>=28,sealed.count<=16_777_216 else {throw VaultFailure.invalidData}
+        guard format=="deskden-encrypted-vault",version==1,rounds==310_000,salt.count==16,sealed.count>=28,sealed.count<=16_777_216 else {throw VaultFailure.invalidData}
     }
 }
 public struct UnlockedVault:Sendable {
@@ -71,7 +71,7 @@ public struct UnlockedVault:Sendable {
 }
 public enum VaultCryptography {
     public static let rounds:UInt32=310_000
-    private static let associatedData=Data("fangcun-encrypted-vault:1:pbkdf2-sha256-310000".utf8)
+    private static let associatedData=Data("deskden-encrypted-vault:1:pbkdf2-sha256-310000".utf8)
     public static func create(contents:VaultContents,password:String) throws -> UnlockedVault {
         guard password.count>=8 else {throw VaultFailure.weakPassword}
         var salt=Data(count:16)
@@ -145,7 +145,7 @@ public struct VaultFileStore:Sendable {
         let manager=FileManager.default
         var preserved:URL?
         if manager.fileExists(atPath:url.path) {
-            let copy=url.deletingLastPathComponent().appendingPathComponent("vault-before-restore-\(UUID().uuidString).fangcunvault")
+            let copy=url.deletingLastPathComponent().appendingPathComponent("vault-before-restore-\(UUID().uuidString).deskdenvault")
             try manager.copyItem(at:url,to:copy);try manager.setAttributes([.posixPermissions:0o600],ofItemAtPath:copy.path);preserved=copy
         }
         try write(envelope,preservePrevious:false);return preserved

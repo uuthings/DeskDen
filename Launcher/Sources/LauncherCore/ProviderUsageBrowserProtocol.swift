@@ -5,7 +5,7 @@ public enum ProviderUsageBrowserProtocol {
     public static let version = 1
     public static let maximumMessageBytes = 16_384
     public static let maximumPendingRequests = 16
-    public static let hostName = "com.uuthings.fangcun.iproyal"
+    public static let hostName = "com.uuthings.deskden.iproyal"
     public static let extensionID = "dbgielekmbgphidnnfidmlobjmdblagf"
     public static let extensionOrigin = "chrome-extension://" + extensionID + "/"
     public static func validOrderID(_ value: String) -> Bool {

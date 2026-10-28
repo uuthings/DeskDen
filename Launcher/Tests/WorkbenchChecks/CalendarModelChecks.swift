@@ -5,7 +5,7 @@ import LauncherCore
 @main struct CalendarModelChecks {
     @MainActor static func main() async {
         _=NSApplication.shared; NSApp.setActivationPolicy(.prohibited)
-        let directory=FileManager.default.temporaryDirectory.appendingPathComponent("fangcun-calendar-model-checks-\(UUID().uuidString)")
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent("deskden-calendar-model-checks-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at:directory) }
         var failures=0,checks=0
         func check(_ condition:Bool,_ message:String) { checks += 1; if !condition { failures += 1 }; print("\(condition ? "PASS":"FAIL") \(message)") }

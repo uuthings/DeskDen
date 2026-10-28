@@ -5,7 +5,7 @@ import XCTest
 final class WorkbenchPreferenceTests: XCTestCase {
     private var directory: URL!
     override func setUpWithError() throws {
-        directory = FileManager.default.temporaryDirectory.appendingPathComponent("fangcun-workbench-preferences-\(UUID().uuidString)")
+        directory = FileManager.default.temporaryDirectory.appendingPathComponent("deskden-workbench-preferences-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     }
     override func tearDownWithError() throws { if let directory { try FileManager.default.removeItem(at: directory) } }

@@ -5,7 +5,7 @@ final class ReminderTests:XCTestCase {
     private var utc:Calendar { var calendar=Calendar(identifier:.gregorian); calendar.timeZone=TimeZone(secondsFromGMT:0)!; return calendar }
     private func date(_ year:Int,_ month:Int,_ day:Int,_ hour:Int = 12,_ minute:Int = 0) -> Date { utc.date(from:DateComponents(year:year,month:month,day:day,hour:hour,minute:minute))! }
     private func due(_ day:Int,hour:Int? = nil,minute:Int? = nil) -> ReminderDue { ReminderDue(year:2026,month:10,day:day,hour:hour,minute:minute,timeZoneIdentifier:"GMT") }
-    private func directory() throws -> URL { let url=FileManager.default.temporaryDirectory.appendingPathComponent("fangcun-reminder-test-\(UUID().uuidString)"); try FileManager.default.createDirectory(at:url,withIntermediateDirectories:true); return url }
+    private func directory() throws -> URL { let url=FileManager.default.temporaryDirectory.appendingPathComponent("deskden-reminder-test-\(UUID().uuidString)"); try FileManager.default.createDirectory(at:url,withIntermediateDirectories:true); return url }
 
     func testCivilDateRejectsInvalidLeapDayAndIncompleteTime() throws {
         XCTAssertThrowsError(try ReminderDue(year:2025,month:2,day:29).validate())

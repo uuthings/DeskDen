@@ -8,7 +8,7 @@ import LauncherCore
 @main struct VaultV5ModelChecks {
     @MainActor static func main() async {
         _=NSApplication.shared; NSApp.setActivationPolicy(.prohibited)
-        let directory=FileManager.default.temporaryDirectory.appendingPathComponent("fangcun-vault-v5-checks-\(UUID().uuidString)")
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent("deskden-vault-v5-checks-\(UUID().uuidString)")
         defer {try? FileManager.default.removeItem(at:directory)}
         var checks=0,failures=0
         func check(_ condition:Bool,_ message:String){checks += 1;if !condition {failures += 1};print("\(condition ? "PASS":"FAIL") \(message)")}
@@ -44,7 +44,7 @@ import LauncherCore
             model.changeIdleMinutes(2)
             let invalidPreferenceBytes=try Data(contentsOf:preferenceURL)
             check(model.idleMinutes == 10 && invalidPreferenceBytes == preferenceBytes,"unsupported idle value changes neither memory nor disk")
-            let lockedExport=directory.appendingPathComponent("locked-export.fangcunvault")
+            let lockedExport=directory.appendingPathComponent("locked-export.deskdenvault")
             check(model.exportBackup(to:lockedExport),"locked vault exports its existing ciphertext")
             check(try Data(contentsOf:lockedExport) == Data(contentsOf:model.vaultDataURL),"locked export is byte-identical encrypted data with no invented document count")
             model.requestPasswordChange()
@@ -92,7 +92,7 @@ import LauncherCore
             let contents=VaultContents(documents:[PrivateDocument(title:"Legacy synthetic",body:"Legacy preserved body")])
             let created=try VaultCryptography.create(contents:contents,password:password)
             let legacyData=try variant(created,category:nil)
-            let legacyDirectory=directory.appendingPathComponent("legacy"),legacyStore=VaultFileStore(url:legacyDirectory.appendingPathComponent("private.fangcunvault"))
+            let legacyDirectory=directory.appendingPathComponent("legacy"),legacyStore=VaultFileStore(url:legacyDirectory.appendingPathComponent("private.deskdenvault"))
             try legacyStore.write(VaultCryptography.decodeEnvelope(legacyData))
             let legacy=VaultModel(dataDirectory:legacyDirectory,protectedDataAvailable:{true})
             check(await legacy.unlock(password:password),"pre-category encrypted data remains readable")
@@ -102,7 +102,7 @@ import LauncherCore
             check(legacy.selectedDocument?.category == .personal && legacy.selectedDocument?.body == "Legacy preserved body","legacy migration preserves body and explicit new category")
             legacy.lock(reason:"test complete")
 
-            let unknownDirectory=directory.appendingPathComponent("future-category"),unknownStore=VaultFileStore(url:unknownDirectory.appendingPathComponent("private.fangcunvault"))
+            let unknownDirectory=directory.appendingPathComponent("future-category"),unknownStore=VaultFileStore(url:unknownDirectory.appendingPathComponent("private.deskdenvault"))
             let unknownData=try variant(created,category:"future-category")
             try unknownStore.write(VaultCryptography.decodeEnvelope(unknownData))
             let unknown=VaultModel(dataDirectory:unknownDirectory,protectedDataAvailable:{true})
@@ -175,7 +175,7 @@ import LauncherCore
             check(!navigation.selectCategory("missing-group") && navigation.categoryFilter == "all" && navigation.selectedID == alphaID,
                   "an unknown category cannot change the current filter or selected document")
             navigation.updateBody("Synthetic encrypted draft retained on failed category navigation")
-            let navigationBefore=try Data(contentsOf:navigation.vaultDataURL),preservedNavigation=directory.appendingPathComponent("preserved-category-navigation.fangcunvault")
+            let navigationBefore=try Data(contentsOf:navigation.vaultDataURL),preservedNavigation=directory.appendingPathComponent("preserved-category-navigation.deskdenvault")
             try FileManager.default.moveItem(at:navigation.vaultDataURL,to:preservedNavigation)
             try FileManager.default.createDirectory(at:navigation.vaultDataURL,withIntermediateDirectories:false)
             check(!navigation.selectCategory("work") && navigation.categoryFilter == "all" && navigation.selectedID == alphaID && navigation.hasPendingSave,
@@ -272,7 +272,7 @@ import LauncherCore
         var documents=object["documents"] as! [[String:Any]]
         documents[0]["category"]=category;object["documents"]=documents
         let plaintext=try JSONSerialization.data(withJSONObject:object)
-        let box=try AES.GCM.seal(plaintext,using:vault.key,authenticating:Data("fangcun-encrypted-vault:1:pbkdf2-sha256-310000".utf8))
+        let box=try AES.GCM.seal(plaintext,using:vault.key,authenticating:Data("deskden-encrypted-vault:1:pbkdf2-sha256-310000".utf8))
         return try VaultCryptography.encoded(VaultEnvelope(rounds:VaultCryptography.rounds,salt:vault.envelope.salt,sealed:box.combined!))
     }
 }

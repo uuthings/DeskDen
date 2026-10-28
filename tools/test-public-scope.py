@@ -164,7 +164,7 @@ class PublicGateTests(unittest.TestCase):
                 self.git("rm", "--cached", "-q", extra)
 
     def test_only_reviewed_entitlement_template_is_public(self):
-        path = "Launcher/Signing/Fangcun.entitlements"
+        path = "Launcher/Signing/DeskDen.entitlements"
         self.write(path, (ROOT / path).read_text())
         self.git("add", path)
         self.assertEqual(self.check("--staged").returncode, 0)

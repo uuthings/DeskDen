@@ -21,7 +21,7 @@
 
 App 最低运行系统为 macOS 14；从源码构建需要 **Xcode 27.0（Swift 6.4）或兼容的新版本**。当前正式构建与 CI 固定使用 Xcode 27.0，运行验证环境为 Apple Silicon，其他硬件与较早系统需单独验证。工程使用系统框架、本地 Swift Package，以及固定版本的 Sparkle 2.10.0 更新框架；初次构建需要联网解析依赖。
 
-打开 `Fangcun.xcodeproj`，选择 `Fangcun` scheme 和当前 Mac。命令行与验证说明见 [开发指南](Launcher/README.md)；正式分发遵循 [发布流程](docs/releasing.md)。
+打开 `DeskDen.xcodeproj`，选择 `DeskDen` scheme 和当前 Mac。命令行与验证说明见 [开发指南](Launcher/README.md)；正式分发遵循 [发布流程](docs/releasing.md)。
 
 ## 使用与数据
 

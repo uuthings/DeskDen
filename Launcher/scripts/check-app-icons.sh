@@ -1,10 +1,10 @@
 #!/bin/zsh
 set -euo pipefail
 task_root="${0:A:h:h}"
-check_dir="$(mktemp -d "${TMPDIR:-/tmp}/fangcun-app-icon-checks.XXXXXX")"
+check_dir="$(mktemp -d "${TMPDIR:-/tmp}/deskden-app-icon-checks.XXXXXX")"
 trap 'rm -rf "$check_dir"' EXIT
 swiftc -swift-version 6 -parse-as-library \
-  "$task_root/Sources/FangcunLauncher/ApplicationIconController.swift" \
+  "$task_root/Sources/DeskDenLauncher/ApplicationIconController.swift" \
   "$task_root/Tests/WorkbenchChecks/ApplicationIconChecks.swift" \
   -o "$check_dir/application-icon-checks"
 "$check_dir/application-icon-checks" "$task_root"
@@ -46,7 +46,7 @@ print('PASS all three unchanged wallpaper PNG originals and production JPEG SHA-
 build = (root / 'scripts/build-local.sh').read_text()
 for name in ['ar-world', 'thunder-cabin', 'qingbi-chenwu', 'yuebai-yunhai', 'nuanxia-xuanshan']:
     assert build.count(name + '.jpg') == 3, name + ' must be required, copied and verified by the local build'
-project = (root.parent / 'Fangcun.xcodeproj/project.pbxproj').read_text()
+project = (root.parent / 'DeskDen.xcodeproj/project.pbxproj').read_text()
 assert 'lastKnownFileType = folder; path = "Launcher/Resources/Workbench";' in project
 print('PASS local build resource contracts and the Xcode resource folder include all five theme backgrounds')
 PY

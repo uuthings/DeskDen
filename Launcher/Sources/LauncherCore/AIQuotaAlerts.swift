@@ -42,7 +42,7 @@ public struct AIQuotaAlertEvent: Equatable, Identifiable, Sendable {
     public var usedPercent: Double
     public var observedAt: Date
     public var source: AIQuotaSource
-    public var id: String { "fangcun-ai:" + window.id + ":" + String(level.rawValue) }
+    public var id: String { "deskden-ai:" + window.id + ":" + String(level.rawValue) }
     public var provider: AIProvider { window.provider }
 }
 

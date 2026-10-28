@@ -1,6 +1,6 @@
 const test=require('node:test'), assert=require('node:assert/strict'), vm=require('node:vm'), fs=require('node:fs'), path=require('node:path'), crypto=require('node:crypto');
 const root=path.join(__dirname,'..'), load=n=>fs.readFileSync(path.join(root,n),'utf8');
-function protocol(){const c=vm.createContext({URL,Date});vm.runInContext(load('protocol.js'),c);return c.FangcunIPRoyalProtocol;}
+function protocol(){const c=vm.createContext({URL,Date});vm.runInContext(load('protocol.js'),c);return c.DeskDenIPRoyalProtocol;}
 const P=protocol();
 test('manifest grants only dashboard and required bridge capabilities, stable public identity',()=>{
  const m=JSON.parse(load('manifest.json'));assert.deepEqual(m.permissions,['storage','alarms','nativeMessaging']);
@@ -17,7 +17,7 @@ test('each execution world loads its own protocol before consumers',()=>{
   for(const file of script.js){
    assert.equal(seen.has(file),false,'script paths must be unique across execution worlds');seen.add(file);
    if(file.startsWith('protocol'))vm.runInContext(load(file),context);
-   else assert.equal(typeof context.FangcunIPRoyalProtocol?.observation,'function',script.world+' consumer requires its own validator');
+   else assert.equal(typeof context.DeskDenIPRoyalProtocol?.observation,'function',script.world+' consumer requires its own validator');
   }
  }
 });
@@ -37,7 +37,7 @@ function observer(body,status=200,options={}){
  postMessage:v=>emitted.push(v),addEventListener:(n,fn)=>{(listeners[n]??=[]).push(fn)},fetch:()=>options.fetchPromise??Promise.resolve(new Response(body,{status,headers:options.headers}))};
  c.window=c;c.top=c;c.XMLHttpRequest=function(){this.listeners={};};c.XMLHttpRequest.prototype={open(){},send(){},addEventListener(n,f){(this.listeners[n]??=[]).push(f);},emit(n){for(const f of this.listeners[n]??[])f.call(this);}};
  vm.createContext(c);vm.runInContext(load('protocol.js'),c);vm.runInContext(load('observer.js'),c);
- vm.runInContext(`globalThis.bindEvent={source:window,origin:location.origin,data:{channel:'fangcun-iproyal-quota',version:1,type:'bind',generation:'00000000-0000-4000-8000-000000000001'}}`,c);
+ vm.runInContext(`globalThis.bindEvent={source:window,origin:location.origin,data:{channel:'deskden-iproyal-quota',version:1,type:'bind',generation:'00000000-0000-4000-8000-000000000001'}}`,c);
  const bind=()=>{for(const fn of listeners.message)fn(c.bindEvent);};if(options.bound!==false)bind();return{c,emitted,bind};
 }
 const settle=()=>new Promise(r=>setTimeout(r,30));

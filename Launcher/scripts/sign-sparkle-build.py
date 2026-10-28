@@ -108,7 +108,7 @@ def sign_build_product(context):
                          'officialEntitlementPolicyVerified': True})
     # --deep is verification only. Every nested signing action above is explicit.
     subprocess.run(['/usr/bin/codesign', '--verify', '--deep', '--strict', '--all-architectures', str(framework)], check=True)
-    receipt = {'schema': 'fangcun.sparkle-build-signing/1', 'sparkleVersion': PINNED_VERSION,
+    receipt = {'schema': 'deskden.sparkle-build-signing/1', 'sparkleVersion': PINNED_VERSION,
                'adHocDebug': context['adhoc'], 'buildProductOnly': True, 'helpers': receipts}
     context['receipt'].parent.mkdir(parents=True, exist_ok=True)
     context['receipt'].write_text(json.dumps(receipt, indent=2) + '\n')

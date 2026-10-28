@@ -16,18 +16,18 @@ python3 - "$verification_dir" <<'PY'
 from pathlib import Path
 import hashlib, json, sys
 root = Path.cwd()
-paths = [root / 'Package.swift', root / 'Signing/Fangcun.entitlements']
+paths = [root / 'Package.swift', root / 'Signing/DeskDen.entitlements']
 for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('scripts', '*.swift'), ('Resources', '*')]:
     paths.extend(path for path in (root / directory).rglob(pattern) if path.is_file())
-paths.extend(path for path in [root / 'Package.resolved', root.parent / 'Fangcun.xcodeproj/project.pbxproj', root.parent / 'Fangcun.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', root.parent / 'updates/appcast.xml', root.parent / 'tools/prepare-update-feed.py', root.parent / 'tools/test-prepare-update-feed.py'] if path.is_file())
-paths.extend((root.parent / 'Fangcun.xcodeproj/xcshareddata/xcschemes').glob('*.xcscheme'))
+paths.extend(path for path in [root / 'Package.resolved', root.parent / 'DeskDen.xcodeproj/project.pbxproj', root.parent / 'DeskDen.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', root.parent / 'updates/appcast.xml', root.parent / 'tools/prepare-update-feed.py', root.parent / 'tools/test-prepare-update-feed.py'] if path.is_file())
+paths.extend((root.parent / 'DeskDen.xcodeproj/xcshareddata/xcschemes').glob('*.xcscheme'))
 files = {}
 for path in sorted(set(paths)):
     if path.is_symlink():
         raise SystemExit('Verification inputs must not be symbolic links: ' + str(path.relative_to(root.parent)))
     data = path.read_bytes()
     files[path.relative_to(root.parent).as_posix()] = {'sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data)}
-(Path(sys.argv[1]) / 'source-inputs-before.json').write_text(json.dumps({'schema': 'fangcun.verification-inputs/1', 'files': files}, ensure_ascii=False, indent=2) + '\n')
+(Path(sys.argv[1]) / 'source-inputs-before.json').write_text(json.dumps({'schema': 'deskden.verification-inputs/1', 'files': files}, ensure_ascii=False, indent=2) + '\n')
 PY
 python3 ./scripts/check-signing-config.py > "$verification_dir/signing-config-checks.log" 2>&1
 python3 ./scripts/check-update-config.py > "$verification_dir/update-config-checks.log" 2>&1
@@ -37,12 +37,12 @@ swift test > "$verification_dir/core-tests.log" 2>&1
 # Full mounted workbench and expanded AI checks are DEBUG-only. Keep their result
 # separate from the production Release executable instead of reporting 0/0 as coverage.
 ./scripts/build-local.sh "$verification_dir/Debug/方寸.app" debug > "$verification_dir/debug-build.log" 2>&1
-"$verification_dir/Debug/方寸.app/Contents/MacOS/FangcunLauncher" --self-check > "$verification_dir/debug-native-checks.log" 2>&1
-"$verification_dir/Debug/方寸.app/Contents/MacOS/FangcunLauncher" --device-check > "$verification_dir/debug-device-module-checks.log" 2>&1
+"$verification_dir/Debug/方寸.app/Contents/MacOS/DeskDenLauncher" --self-check > "$verification_dir/debug-native-checks.log" 2>&1
+"$verification_dir/Debug/方寸.app/Contents/MacOS/DeskDenLauncher" --device-check > "$verification_dir/debug-device-module-checks.log" 2>&1
 ./scripts/build-local.sh "$verification_dir/Release/方寸.app" release > "$verification_dir/build.log" 2>&1
-"$verification_dir/Release/方寸.app/Contents/MacOS/FangcunLauncher" --self-check > "$verification_dir/native-checks.log" 2>&1
-"$verification_dir/Release/方寸.app/Contents/MacOS/FangcunLauncher" --device-check > "$verification_dir/device-module-checks.log" 2>&1
-"$verification_dir/Release/方寸.app/Contents/MacOS/FangcunLauncher" --form-check > "$verification_dir/form-checks.log" 2>&1
+"$verification_dir/Release/方寸.app/Contents/MacOS/DeskDenLauncher" --self-check > "$verification_dir/native-checks.log" 2>&1
+"$verification_dir/Release/方寸.app/Contents/MacOS/DeskDenLauncher" --device-check > "$verification_dir/device-module-checks.log" 2>&1
+"$verification_dir/Release/方寸.app/Contents/MacOS/DeskDenLauncher" --form-check > "$verification_dir/form-checks.log" 2>&1
 zsh ./scripts/check-device-monitoring.sh > "$verification_dir/device-monitoring-checks.log" 2>&1
 zsh ./scripts/check-calendar-model.sh > "$verification_dir/calendar-model-checks.log" 2>&1
 zsh ./scripts/check-vault-model.sh > "$verification_dir/vault-model-checks.log" 2>&1
@@ -55,18 +55,18 @@ from pathlib import Path
 import hashlib, json, os, re, sys
 verification = Path(sys.argv[1])
 source = Path.cwd()
-paths = [source / 'Package.swift', source / 'Signing/Fangcun.entitlements']
+paths = [source / 'Package.swift', source / 'Signing/DeskDen.entitlements']
 for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('scripts', '*.swift'), ('Resources', '*')]:
     paths.extend(path for path in (source / directory).rglob(pattern) if path.is_file())
-paths.extend(path for path in [source / 'Package.resolved', source.parent / 'Fangcun.xcodeproj/project.pbxproj', source.parent / 'Fangcun.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', source.parent / 'updates/appcast.xml', source.parent / 'tools/prepare-update-feed.py', source.parent / 'tools/test-prepare-update-feed.py'] if path.is_file())
-paths.extend((source.parent / 'Fangcun.xcodeproj/xcshareddata/xcschemes').glob('*.xcscheme'))
+paths.extend(path for path in [source / 'Package.resolved', source.parent / 'DeskDen.xcodeproj/project.pbxproj', source.parent / 'DeskDen.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', source.parent / 'updates/appcast.xml', source.parent / 'tools/prepare-update-feed.py', source.parent / 'tools/test-prepare-update-feed.py'] if path.is_file())
+paths.extend((source.parent / 'DeskDen.xcodeproj/xcshareddata/xcschemes').glob('*.xcscheme'))
 files = {}
 for path in sorted(set(paths)):
     if path.is_symlink():
         raise SystemExit('Verification input became a symbolic link: ' + str(path.relative_to(source.parent)))
     data = path.read_bytes()
     files[path.relative_to(source.parent).as_posix()] = {'sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data)}
-after = {'schema': 'fangcun.verification-inputs/1', 'files': files}
+after = {'schema': 'deskden.verification-inputs/1', 'files': files}
 (verification / 'source-inputs-after.json').write_text(json.dumps(after, ensure_ascii=False, indent=2) + '\n')
 if after != json.loads((verification / 'source-inputs-before.json').read_text()):
     raise SystemExit('Source inputs changed between checks; Debug and Release results do not describe one frozen input set')
@@ -112,7 +112,7 @@ def checked_log(name):
         raise SystemExit('Skipped XCTest cases: ' + name)
     return text
 
-summary = {'schema': 'fangcun.local-verification/1', 'sourceInputsUnchanged': True, 'core': {}, 'debug': [], 'release': [], 'models': [], 'configuration': []}
+summary = {'schema': 'deskden.local-verification/1', 'sourceInputsUnchanged': True, 'core': {}, 'debug': [], 'release': [], 'models': [], 'configuration': []}
 core = checked_log('core-tests.log')
 core_counts = re.findall(r'^\s*Executed (\d+) tests?, with (\d+) failures\b', core, re.MULTILINE)
 if not core_counts or int(core_counts[-1][0]) <= 0 or int(core_counts[-1][1]) != 0:

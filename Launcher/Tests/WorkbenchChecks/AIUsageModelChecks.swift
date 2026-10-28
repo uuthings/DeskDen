@@ -24,7 +24,7 @@ import LauncherCore
     @MainActor static func main() async throws {
         _ = NSApplication.shared; NSApp.setActivationPolicy(.prohibited)
         let fm = FileManager.default
-        let root = fm.temporaryDirectory.appendingPathComponent("fangcun-ai-model-checks-\(UUID().uuidString)")
+        let root = fm.temporaryDirectory.appendingPathComponent("deskden-ai-model-checks-\(UUID().uuidString)")
         defer { try? fm.removeItem(at: root) }
         var failures = 0, checks = 0
         func check(_ value: Bool, _ message: String) { checks += 1; if !value { failures += 1 }; print("\(value ? "PASS" : "FAIL") \(message)") }

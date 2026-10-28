@@ -263,7 +263,7 @@ public struct ReminderNotification:Equatable, Sendable {
     public init(id:String,title:String,notes:String,due:ReminderDue) { self.id=id; self.title=title; self.notes=notes; self.due=due }
 }
 public enum ReminderNotificationPlan {
-    public static let prefix = "fangcun.local-reminder."
+    public static let prefix = "deskden.local-reminder."
     public static func pending(_ items:[ReminderItem], now:Date = Date(), limit:Int = 60) -> [ReminderNotification] {
         items.filter { $0.origin == .local && $0.notificationsEnabled && !$0.isCompleted && $0.due?.hasTime == true && ($0.due?.date ?? .distantPast) > now }
             .sorted { $0.due!.date! < $1.due!.date! }.prefix(max(0,limit)).map { ReminderNotification(id:prefix+$0.id,title:$0.title,notes:$0.notes,due:$0.due!) }

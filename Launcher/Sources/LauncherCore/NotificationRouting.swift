@@ -2,7 +2,7 @@ import Foundation
 
 /// Only these app-owned destinations can be selected by a notification. The
 /// payload never carries a URL, executable action or a request to complete data.
-public enum FangcunNotificationTarget:Equatable,Sendable {
+public enum DeskDenNotificationTarget:Equatable,Sendable {
     case reminder(String?)
     case ai(AIProvider?)
     case networkBudget
@@ -11,7 +11,7 @@ public enum FangcunNotificationTarget:Equatable,Sendable {
 
     public static func decode(fields:[String:String],requestIdentifier:String = "")->Self? {
         guard requestIdentifier.count <= 2048 else {return nil}
-        if let route=fields["fangcunRoute"] {
+        if let route=fields["deskdenRoute"] {
             switch route {
             case "calendar":return .reminder(validIdentifier(fields["reminderID"]))
             case "ai":return .ai(fields["provider"].flatMap(AIProvider.init(rawValue:)))
@@ -26,7 +26,7 @@ public enum FangcunNotificationTarget:Equatable,Sendable {
         }
         // Historical device alerts had no detail metadata. Open their module
         // rather than guessing whether they referred to temperature or traffic.
-        if requestIdentifier.hasPrefix("fangcun-device-") {return .device}
+        if requestIdentifier.hasPrefix("deskden-device-") {return .device}
         return nil
     }
     private static func validIdentifier(_ value:String?)->String? {
@@ -38,7 +38,7 @@ public enum FangcunNotificationTarget:Equatable,Sendable {
 
 /// Background operation needs the same service owner regardless of which
 /// interface, if any, is shown at launch.
-public enum FangcunStartupPresentation:Equatable,Sendable {
+public enum DeskDenStartupPresentation:Equatable,Sendable {
     case background,launcher,workbench
     public init(arguments:[String]) {
         if arguments.contains("--background") {self = .background}

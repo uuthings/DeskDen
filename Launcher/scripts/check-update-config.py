@@ -28,7 +28,7 @@ SPARKLE_VERSION = "2.10.0"
 # Public commit resolved from the official 2.10.0 tag, not a local checkout path.
 SPARKLE_REVISION = "eef1a539a373c1f1a320624b1130fc5de7b2e100"
 FEED_URL = "https://raw.githubusercontent.com/uuthings/DeskDen/main/updates/appcast.xml"
-SOURCE_FILES = ["Launcher/Sources/FangcunLauncher/" + name for name in
+SOURCE_FILES = ["Launcher/Sources/DeskDenLauncher/" + name for name in
                 ("AppUpdateController.swift", "WorkbenchUpdateSettings.swift")]
 SIGNING_SCRIPT = "Launcher/scripts/sign-sparkle-build.py"
 SIGNING_PHASE_NAME = "Sign embedded Sparkle helpers"
@@ -36,11 +36,11 @@ SIGNING_INPUT = "$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/Sparkle.framework
 SIGNING_OUTPUT = "$(DERIVED_FILE_DIR)/sparkle-nested-signing.json"
 SIGNING_COMMAND = 'exec /usr/bin/python3 "$SRCROOT/Launcher/scripts/sign-sparkle-build.py"\n'
 LOCK_FILES = ("Launcher/Package.resolved",
-              "Fangcun.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved")
+              "DeskDen.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved")
 CHANNEL = {
-    "title": "Fangcun updates",
+    "title": "DeskDen updates",
     "link": "https://github.com/uuthings/DeskDen",
-    "description": "Signed updates for Fangcun. No public update has been published.",
+    "description": "Signed updates for DeskDen. No public update has been published.",
     "language": "zh-CN",
 }
 SPARKLE_NAMESPACE = "{http://www.andymatuschak.org/xml-namespaces/sparkle}"
@@ -124,7 +124,7 @@ def manifest_errors(source):
     errors = []
     if declarations.count((SPARKLE_URL, SPARKLE_VERSION)) != 1 or clean.count('"' + SPARKLE_URL + '"') != 1:
         errors.append("SwiftPM must declare exactly one official exact Sparkle 2.10.0 dependency")
-    targets = re.findall(r'\.executableTarget\(\s*name:\s*"FangcunLauncher"\s*,\s*dependencies:\s*\[(.*?)\]\s*\)', clean, flags=re.S)
+    targets = re.findall(r'\.executableTarget\(\s*name:\s*"DeskDenLauncher"\s*,\s*dependencies:\s*\[(.*?)\]\s*\)', clean, flags=re.S)
     if len(targets) != 1 or len(re.findall(r'\.product\(\s*name:\s*"Sparkle"\s*,\s*package:\s*"Sparkle"\s*\)', targets[0])) != 1:
         errors.append("SwiftPM native executable must link the Sparkle product exactly once")
     return errors
@@ -164,9 +164,9 @@ def project_errors(project):
         if root.get("isa") != "PBXProject":
             return ["Xcode root must be its actual project object"]
         targets = [objects[key] for key in root["targets"] if objects[key].get("isa") == "PBXNativeTarget"
-                   and objects[key].get("name") == "Fangcun"]
+                   and objects[key].get("name") == "DeskDen"]
         if len(targets) != 1 or targets[0].get("productType") != "com.apple.product-type.application":
-            return ["Xcode must resolve one Fangcun application target"]
+            return ["Xcode must resolve one DeskDen application target"]
         target = targets[0]
         phases = [objects[key] for key in target["buildPhases"]]
         compiled = [objects[key].get("fileRef") for phase in phases if phase.get("isa") == "PBXSourcesBuildPhase" for key in phase["files"]]
@@ -347,7 +347,7 @@ def run_fixtures(check):
     for key in ("SUEnableAutomaticChecks", "SUAutomaticallyUpdate", "SUAllowsAutomaticUpdates", "SUVerifyUpdateBeforeExtraction", "SURequireSignedFeed"):
         changed = deepcopy(info); del changed[key]
         check(bool(configuration_errors(changed)), "configuration rejects missing explicit " + key)
-    manifest = '.package(url: "' + SPARKLE_URL + '", exact: "2.10.0")\n.executableTarget(name: "FangcunLauncher", dependencies: ["LauncherCore", .product(name: "Sparkle", package: "Sparkle")])'
+    manifest = '.package(url: "' + SPARKLE_URL + '", exact: "2.10.0")\n.executableTarget(name: "DeskDenLauncher", dependencies: ["LauncherCore", .product(name: "Sparkle", package: "Sparkle")])'
     check(not manifest_errors(manifest), "a synthetic fixed dependency and executable link pass the manifest policy")
     for name, changed in [("version range", manifest.replace("exact:", "from:")), ("different release", manifest.replace("2.10.0", "2.9.0")),
                           ("untrusted repository", manifest.replace(SPARKLE_URL, "https://example.invalid/Sparkle")),
@@ -365,7 +365,7 @@ def run_fixtures(check):
     changed = deepcopy(lock); changed["pins"] *= 2
     check(bool(lock_errors(changed, changed)), "locks reject duplicate identities")
     objects = {"project": {"isa": "PBXProject", "targets": ["target"], "packageReferences": ["package"]},
-               "target": {"isa": "PBXNativeTarget", "name": "Fangcun", "productType": "com.apple.product-type.application", "buildPhases": ["sources", "frameworks", "signing"], "packageProductDependencies": ["product"], "buildConfigurationList": "configs"},
+               "target": {"isa": "PBXNativeTarget", "name": "DeskDen", "productType": "com.apple.product-type.application", "buildPhases": ["sources", "frameworks", "signing"], "packageProductDependencies": ["product"], "buildConfigurationList": "configs"},
                "sources": {"isa": "PBXSourcesBuildPhase", "files": ["compile0", "compile1"]},
                "frameworks": {"isa": "PBXFrameworksBuildPhase", "files": ["link"]},
                "signing": {"isa": "PBXShellScriptBuildPhase", "name": SIGNING_PHASE_NAME, "shellPath": "/bin/sh", "shellScript": SIGNING_COMMAND,
@@ -403,8 +403,8 @@ def run_fixtures(check):
         check(bool(project_errors(changed)), "Xcode rejects " + name)
     signing_context = runpy.run_path(str(ROOT / SIGNING_SCRIPT))["build_context"]
     environment = {"ACTION": "build", "XCODE_VERSION_ACTUAL": "2700", "CODE_SIGNING_ALLOWED": "YES",
-                   "TARGET_BUILD_DIR": "/test/Build/Products/Release", "WRAPPER_NAME": "Fangcun.app",
-                   "FRAMEWORKS_FOLDER_PATH": "Fangcun.app/Contents/Frameworks", "DERIVED_FILE_DIR": "/test/Build/Derived",
+                   "TARGET_BUILD_DIR": "/test/Build/Products/Release", "WRAPPER_NAME": "DeskDen.app",
+                   "FRAMEWORKS_FOLDER_PATH": "DeskDen.app/Contents/Frameworks", "DERIVED_FILE_DIR": "/test/Build/Derived",
                    "EXPANDED_CODE_SIGN_IDENTITY": "a" * 40, "EXPANDED_CODE_SIGN_IDENTITY_NAME": "Developer ID Application: Synthetic Maintainer",
                    "DEVELOPMENT_TEAM": "97K37J92QD", "CONFIGURATION": "Release"}
     check(signing_context(environment) is not None, "helper signing accepts a synthetic Xcode build product without accessing a signing key")
@@ -457,7 +457,7 @@ def run_fixtures(check):
             '<sparkle:shortVersionString>0.1.1</sparkle:shortVersionString>'
             '<sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>'
             '<description><![CDATA[Public release notes.]]></description>'
-            '<enclosure url="https://github.com/uuthings/DeskDen/releases/download/v0.1.1/Fangcun-0.1.1.zip" '
+            '<enclosure url="https://github.com/uuthings/DeskDen/releases/download/v0.1.1/DeskDen-0.1.1.zip" '
             'length="4096" type="application/octet-stream" sparkle:edSignature="' + archive_signature + '"/></item>')
 
     def release_feed(contents):
@@ -466,13 +466,13 @@ def run_fixtures(check):
     check(not feed_errors(signed_fixture(release_feed(item))), "a structurally valid future release passes the same feed policy")
     legacy = item.replace('<sparkle:version>3</sparkle:version>', '').replace('<sparkle:shortVersionString>0.1.1</sparkle:shortVersionString>', '').replace('<enclosure ', '<enclosure sparkle:version="3" sparkle:shortVersionString="0.1.1" ')
     check(not feed_errors(signed_fixture(release_feed(legacy))), "valid legacy enclosure version attributes remain compatible")
-    delta = '<sparkle:deltas><enclosure url="https://github.com/uuthings/DeskDen/releases/download/v0.1.1/Fangcun-3-2.delta" length="2048" type="application/octet-stream" sparkle:deltaFrom="2" sparkle:edSignature="' + archive_signature + '"/></sparkle:deltas>'
+    delta = '<sparkle:deltas><enclosure url="https://github.com/uuthings/DeskDen/releases/download/v0.1.1/DeskDen-3-2.delta" length="2048" type="application/octet-stream" sparkle:deltaFrom="2" sparkle:edSignature="' + archive_signature + '"/></sparkle:deltas>'
     check(not feed_errors(signed_fixture(release_feed(item.replace('</item>', delta + '</item>')))), "a future release with a valid signed delta also passes structural policy")
     for name, changed in [
         ("HTTP download", item.replace('https://github.com', 'http://github.com')),
         ("local download", item.replace('https://github.com', 'https://127.0.0.1')),
         ("fictional download", item.replace('https://github.com', 'https://example.invalid')),
-        ("placeholder download", item.replace('Fangcun-0.1.1.zip', 'YOUR_ARCHIVE.zip')),
+        ("placeholder download", item.replace('DeskDen-0.1.1.zip', 'YOUR_ARCHIVE.zip')),
         ("missing Build", item.replace('<sparkle:version>3</sparkle:version>', '')),
         ("placeholder Build", item.replace('<sparkle:version>3</sparkle:version>', '<sparkle:version>YOUR_VERSION</sparkle:version>')),
         ("empty short version", item.replace('<sparkle:shortVersionString>0.1.1</sparkle:shortVersionString>', '<sparkle:shortVersionString/>')),
@@ -509,7 +509,7 @@ def main(dependencies_only=False):
     policy(manifest_errors(read_regular(ROOT / "Launcher/Package.swift").decode()), "SwiftPM pins and links official Sparkle 2.10.0")
     first, second = (json.loads(read_regular(ROOT / path)) for path in LOCK_FILES)
     policy(lock_errors(first, second), "SwiftPM and Xcode locks contain identical reviewed dependency pins")
-    project_path = ROOT / "Fangcun.xcodeproj/project.pbxproj"
+    project_path = ROOT / "DeskDen.xcodeproj/project.pbxproj"
     read_regular(project_path)
     project = json.loads(subprocess.check_output(["/usr/bin/plutil", "-convert", "json", "-o", "-", str(project_path)]))
     policy(project_errors(project), "Xcode compiles both update sources once and links the fixed Sparkle product once")

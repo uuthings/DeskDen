@@ -1,7 +1,7 @@
 #!/bin/zsh
 set -euo pipefail
 task_root="${0:A:h:h}"
-check_dir="$(mktemp -d "${TMPDIR:-/tmp}/fangcun-vault-compatibility-build.XXXXXX")"
+check_dir="$(mktemp -d "${TMPDIR:-/tmp}/deskden-vault-compatibility-build.XXXXXX")"
 trap 'rm -rf "$check_dir"' EXIT
 # Exact released VaultCore.swift from source commit
 # 564d5c141c161454181cc0390317b4d3fb3cfb8a, frozen as a regression fixture.
@@ -15,6 +15,6 @@ swiftc -swift-version 6 -emit-library -emit-module -module-name LauncherCore \
   -emit-module-path "$check_dir/LauncherCore.swiftmodule" -o "$check_dir/libLauncherCore.dylib"
 swiftc -swift-version 6 -parse-as-library -I "$check_dir" -L "$check_dir" -lLauncherCore -lVaultV1Compatibility \
   -Xlinker -rpath -Xlinker "$check_dir" \
-  "$task_root/Sources/FangcunLauncher/VaultModule.swift" \
+  "$task_root/Sources/DeskDenLauncher/VaultModule.swift" \
   "$task_root/Tests/WorkbenchChecks/VaultFormatCompatibilityChecks.swift" -o "$check_dir/vault-compatibility-checks"
 "$check_dir/vault-compatibility-checks"

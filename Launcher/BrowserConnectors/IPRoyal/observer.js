@@ -2,19 +2,19 @@
 (() => {
   'use strict';
   if (window !== window.top || location.origin !== 'https://dashboard.iproyal.com') return;
-  const P = globalThis.FangcunIPRoyalProtocol;
+  const P = globalThis.DeskDenIPRoyalProtocol;
   const send = window.postMessage.bind(window), originalFetch = window.fetch;
   let generation = null;
   const pending = [];
   const deliver = (route,captured,payload) => {
     if ((captured && captured !== generation) || P.pageOrder(location.href) !== route.orderID) return;
     if (!generation) { if (pending.length < 3) pending.push({route,payload}); return; }
-    send({channel:'fangcun-iproyal-quota',version:1,generation,orderID:route.orderID,...payload},location.origin);
+    send({channel:'deskden-iproyal-quota',version:1,generation,orderID:route.orderID,...payload},location.origin);
   };
   window.addEventListener('message', event => {
     const v = event.data;
     if (event.source !== window || event.origin !== location.origin ||
-        !P.keys(v, ['channel','version','type','generation']) || v.channel !== 'fangcun-iproyal-quota' ||
+        !P.keys(v, ['channel','version','type','generation']) || v.channel !== 'deskden-iproyal-quota' ||
         v.version !== 1 || v.type !== 'bind' || !P.uuid(v.generation)) return;
     if (generation === null) {
       generation = v.generation;

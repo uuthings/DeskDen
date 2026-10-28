@@ -49,7 +49,7 @@ final class LauncherShortcutTests:XCTestCase {
         XCTAssertThrowsError(try configuration.validate())
     }
     func testInvalidRecordedShortcutCannotReplaceSavedConfiguration() throws {
-        let directory=FileManager.default.temporaryDirectory.appendingPathComponent("fangcun-launcher-hotkey-\(UUID().uuidString)")
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent("deskden-launcher-hotkey-\(UUID().uuidString)")
         defer {try? FileManager.default.removeItem(at:directory)}
         let store=ConfigurationStore(url:directory.appendingPathComponent("configuration.json"))
         var configuration=LauncherConfiguration();try store.save(configuration)

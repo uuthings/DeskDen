@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
-ENTITLEMENTS_PATH = "Launcher/Signing/Fangcun.entitlements"
+ENTITLEMENTS_PATH = "Launcher/Signing/DeskDen.entitlements"
 OWN_GROUP = "$(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)"
 EXPECTED_ENTITLEMENTS = {
     "com.apple.application-identifier": OWN_GROUP,
@@ -24,7 +24,7 @@ def policy_errors(entitlements, debug, release):
     for name, settings in [("Debug", debug), ("Release", release)]:
         if settings.get("CODE_SIGN_STYLE") != "Manual":
             errors.append(name + " must preserve manual signing")
-        if settings.get("PRODUCT_BUNDLE_IDENTIFIER") != "local.fangcun.launcher":
+        if settings.get("PRODUCT_BUNDLE_IDENTIFIER") != "local.deskden.launcher":
             errors.append(name + " must preserve the installed Bundle ID")
         if settings.get("PROVISIONING_PROFILE_SPECIFIER", "") or settings.get("PROVISIONING_PROFILE", ""):
             errors.append(name + " must not commit a local provisioning profile selector or UUID")
@@ -52,11 +52,11 @@ def main():
     check(template.is_file() and not template.is_symlink(), "the public entitlement template is one regular source file")
     entitlements = plistlib.loads(template.read_bytes())
     project = json.loads(subprocess.check_output([
-        "/usr/bin/plutil", "-convert", "json", "-o", "-", str(ROOT / "Fangcun.xcodeproj/project.pbxproj")
+        "/usr/bin/plutil", "-convert", "json", "-o", "-", str(ROOT / "DeskDen.xcodeproj/project.pbxproj")
     ]))
     objects = project["objects"]
-    targets = [value for value in objects.values() if value.get("isa") == "PBXNativeTarget" and value.get("name") == "Fangcun"]
-    check(len(targets) == 1, "the signing check resolves the actual Fangcun application target")
+    targets = [value for value in objects.values() if value.get("isa") == "PBXNativeTarget" and value.get("name") == "DeskDen"]
+    check(len(targets) == 1, "the signing check resolves the actual DeskDen application target")
     target = targets[0]
     configs = {objects[identifier]["name"]: objects[identifier]["buildSettings"] for identifier in objects[target["buildConfigurationList"]]["buildConfigurations"]}
     debug, release = configs["Debug"], configs["Release"]
@@ -71,7 +71,7 @@ def main():
     check(len(entitlement_refs) == 1, "Xcode exposes exactly one reviewed entitlement source reference")
     resource_refs = {objects[build]["fileRef"] for phase in target["buildPhases"] if objects[phase].get("isa") == "PBXResourcesBuildPhase" for build in objects[phase]["files"]}
     check(not set(entitlement_refs).intersection(resource_refs), "the entitlement template is not copied as an application resource")
-    diagnostic = "Launcher/Sources/FangcunLauncher/VaultSigningChecks.swift"
+    diagnostic = "Launcher/Sources/DeskDenLauncher/VaultSigningChecks.swift"
     diagnostic_refs = {identifier for identifier, value in refs.items() if value.get("path") == diagnostic}
     compiled_refs = [objects[build]["fileRef"] for phase in target["buildPhases"] if objects[phase].get("isa") == "PBXSourcesBuildPhase" for build in objects[phase]["files"]]
     check(len(diagnostic_refs) == 1 and sum(reference in diagnostic_refs for reference in compiled_refs) == 1, "the read-only signing diagnostic is compiled exactly once by the native target")
@@ -81,7 +81,7 @@ def main():
     check('codesign --force --sign - "$app_path"' in local_build and "codesign --force --sign - --entitlements" not in local_build and 'embedded.provisionprofile' not in local_build, "SwiftPM local previews retain ad-hoc signing without a profile or restricted template")
     for filename in ["build-local.sh", "verify-local.sh"]:
         source = (ROOT / "Launcher/scripts" / filename).read_text()
-        check(source.count("/ 'Signing/Fangcun.entitlements'") == 2 and source.count("('scripts', '*.py')") == 2, filename + " freezes the template and Python checks before and after verification")
+        check(source.count("/ 'Signing/DeskDen.entitlements'") == 2 and source.count("('scripts', '*.py')") == 2, filename + " freezes the template and Python checks before and after verification")
 
     # Negative configuration fixtures prove that policy drift is rejected, not
     # merely that today's successful configuration is parseable.

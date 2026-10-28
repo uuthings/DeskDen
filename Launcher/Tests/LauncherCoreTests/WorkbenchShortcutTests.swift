@@ -19,7 +19,7 @@ final class WorkbenchShortcutTests: XCTestCase {
         settings.removeValue(forKey: "workbenchHotKey")
         object["settings"] = settings
         let bytes = try JSONSerialization.data(withJSONObject: object)
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("fangcun-workbench-shortcut-\(UUID().uuidString)")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("deskden-workbench-shortcut-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let store = ConfigurationStore(url: directory.appendingPathComponent("configuration.json"))
@@ -67,7 +67,7 @@ final class WorkbenchShortcutTests: XCTestCase {
     }
 
     func testInvalidWorkbenchCombinationCannotReplaceSavedBytes() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("fangcun-workbench-shortcut-validation-\(UUID().uuidString)")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("deskden-workbench-shortcut-validation-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = ConfigurationStore(url: directory.appendingPathComponent("configuration.json"))
         var configuration = LauncherConfiguration()

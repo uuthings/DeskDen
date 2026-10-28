@@ -6,7 +6,7 @@ Use **DeskDen** for English product names, Release titles and new downloadable f
 
 Finish changes and verification, set the source version and Build, and record the actual Git commit, Xcode/SDK versions and build arguments. Use a distinct directory for each candidate; retain old apps and designs. An ordinary commit does not authorize version changes, tags, pushes or Releases.
 
-Reuse the existing Bundle ID, team and valid Developer ID. Signing keys stay in the local Keychain. Each new build needs signing and notarization; never re-sign an already notarized exported app.
+Use the configured Bundle ID and reuse the existing team and valid Developer ID. Signing keys stay in the local Keychain. Each new build needs signing and notarization; never re-sign an already notarized exported app.
 
 Private Space's optional Touch ID requires an Apple-authorized provisioning profile for the existing app identifier and its own Keychain access group. Configure the matching app identifier, team identifier and Keychain group entitlements in the signed build, and embed the matching profile. Do not substitute an ad-hoc signature or an unprotected Keychain item. Local development builds without this authorization keep password unlock and explicitly report Touch ID as unavailable. Profiles, credentials and private keys are not source files.
 
@@ -14,19 +14,19 @@ Private Space's optional Touch ID requires an Apple-authorized provisioning prof
 
 `Launcher/scripts/build-local.sh` remains an ad-hoc SwiftPM preview builder for both Debug and Release. It does not apply restricted entitlements, embed a profile, or enable Touch ID. The Xcode Debug target also remains ad-hoc with no restricted entitlement template. Password unlock remains available in these previews.
 
-The Xcode Release target uses `Launcher/Signing/Fangcun.entitlements`. It contains only the app identifier, team identifier and the app's own default Keychain group, expanded from the matching profile's `AppIdentifierPrefix` and the unchanged Bundle ID `local.fangcun.launcher`. It requests no shared App Groups or additional Keychain groups. The existing manual Developer ID signing style and team remain unchanged.
+The Xcode Release target uses `Launcher/Signing/DeskDen.entitlements`. It contains only the app identifier, team identifier and the app's own default Keychain group, expanded from the matching profile's `AppIdentifierPrefix` and the configured Bundle ID `local.deskden.launcher`. It requests no shared App Groups or additional Keychain groups. The existing manual Developer ID signing style and team remain unchanged.
 
 Before building an authorized local preview:
 
 1. In the existing Apple Developer team, register or select the explicit macOS App ID for the existing Bundle ID, then obtain a Developer ID provisioning profile authorizing its own default Keychain group and the existing Developer ID Application certificate. A template or self-asserted entitlement cannot replace this Apple authorization. Do not create a new certificate just to obtain a profile.
 2. Download and install the profile locally. Keep profiles, credentials, certificate private keys and account sessions outside Git. Do not commit a profile name, UUID, machine path or private `.xcconfig`.
-3. Select the installed profile by a local `PROVISIONING_PROFILE_SPECIFIER` build override. The repository deliberately leaves this setting empty. For example, set `FANGCUN_LOCAL_PROFILE` locally to the installed profile's display name, then build without uploading:
+3. Select the installed profile by a local `PROVISIONING_PROFILE_SPECIFIER` build override. The repository deliberately leaves this setting empty. For example, set `DESKDEN_LOCAL_PROFILE` locally to the installed profile's display name, then build without uploading:
 
 ```sh
-FANGCUN_PREVIEW_BUILD="$PWD/build/authorized-preview-$(date -u +%Y%m%dT%H%M%SZ)"
-xcodebuild -project Fangcun.xcodeproj -scheme Fangcun -configuration Release \
-  -destination 'generic/platform=macOS' -derivedDataPath "$FANGCUN_PREVIEW_BUILD" \
-  build PROVISIONING_PROFILE_SPECIFIER="$FANGCUN_LOCAL_PROFILE" CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO
+DESKDEN_PREVIEW_BUILD="$PWD/build/authorized-preview-$(date -u +%Y%m%dT%H%M%SZ)"
+xcodebuild -project DeskDen.xcodeproj -scheme DeskDen -configuration Release \
+  -destination 'generic/platform=macOS' -derivedDataPath "$DESKDEN_PREVIEW_BUILD" \
+  build PROVISIONING_PROFILE_SPECIFIER="$DESKDEN_LOCAL_PROFILE" CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO
 ```
 
 A properly signed result includes `Contents/embedded.provisionprofile` and expanded matching app identifier, team and Keychain group entitlements. The build must fail if the selected profile does not authorize them; do not bypass this with unrestricted groups or weakened storage. Building a local preview does not authorize Archive, notarization, uploading or publication.
@@ -34,7 +34,7 @@ A properly signed result includes `Contents/embedded.provisionprofile` and expan
 The read-only diagnostic can verify the resulting executable without opening the app or vault:
 
 ```sh
-"$FANGCUN_PREVIEW_BUILD/Build/Products/Release/方寸.app/Contents/MacOS/FangcunLauncher" --vault-signing-check
+"$DESKDEN_PREVIEW_BUILD/Build/Products/Release/方寸.app/Contents/MacOS/DeskDenLauncher" --vault-signing-check
 ```
 
 Its JSON reports `signingStatus` separately from `hardwareStatus`. Exit 0 means that signing/profile preflight and the system's no-interaction Keychain metadata authorization succeeded. Touch ID hardware may still be unavailable; this is reported independently. Missing authorization exits 1 and keeps Touch ID unavailable. The diagnostic never enrolls, authenticates, reads a vault key or changes Keychain data. Real enrollment is a separate, explicit action by the user in Private Space.

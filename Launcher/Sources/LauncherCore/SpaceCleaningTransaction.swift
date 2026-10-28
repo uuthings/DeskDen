@@ -62,7 +62,7 @@ public struct SpaceCleaningRecord: Identifiable, Codable, Equatable, Sendable {
               ![.trashed, .deleting, .restoring].contains(state) || locationURL != nil,
               state != .restored || restoredURL != nil else { throw SpaceCleaningFilesystem.Failure(message: "空间清理记录无效，原记录已保留。") }
         if let isolationURL {
-            guard isolationURL.lastPathComponent.hasPrefix(".fangcun-cleaning-"), isolationURL.lastPathComponent.contains(id.uuidString) else {
+            guard isolationURL.lastPathComponent.hasPrefix(".deskden-cleaning-"), isolationURL.lastPathComponent.contains(id.uuidString) else {
                 throw SpaceCleaningFilesystem.Failure(message: "隔离位置记录无效，未操作文件。")
             }
         }
@@ -98,7 +98,7 @@ public enum SpaceCleaningTransaction {
                   SpaceCleaningFilesystem.capture(candidate.url) == candidate.identity else { throw SpaceCleaningFilesystem.Failure(message: "内容核验后项目或父目录已变化。") }
             if let reason = validatePolicy(candidate) { throw SpaceCleaningFilesystem.Failure(message: reason) }
             record.proof = selected.proof
-            let isolation = candidate.url.deletingLastPathComponent().appendingPathComponent(".fangcun-cleaning-" + record.id.uuidString, isDirectory: true)
+            let isolation = candidate.url.deletingLastPathComponent().appendingPathComponent(".deskden-cleaning-" + record.id.uuidString, isDirectory: true)
             record.isolationURL = isolation
             // Persist both locations before creating or moving anything, including
             // the narrow crash window between the atomic rename and its receipt.
@@ -223,7 +223,7 @@ public enum SpaceCleaningTransaction {
             }
             // A fresh unique directory in the same Trash parent avoids moving
             // across volumes and never touches any unrelated Trash entries.
-            let isolation = source.deletingLastPathComponent().appendingPathComponent(".fangcun-cleaning-" + record.id.uuidString + "-" + UUID().uuidString, isDirectory: true)
+            let isolation = source.deletingLastPathComponent().appendingPathComponent(".deskden-cleaning-" + record.id.uuidString + "-" + UUID().uuidString, isDirectory: true)
             record.previousTrashURL = source
             record.isolationURL = isolation; record.locationURL = isolation.appendingPathComponent(source.lastPathComponent)
             record.state = .prepared; record.explanation = "已记录本批次项目永久删除意图。"; record.updatedAt = Date()

@@ -22,10 +22,10 @@ DeskDen（方寸）要求 **macOS 14 或更高版本**。正式下载包同时�
 
 ## 校验下载
 
-从同一 Release 下载 `SHA256SUMS-DeskDen.txt`，在下载目录执行：
+从同一 Release 下载 `SHA256SUMS.txt`，在下载目录执行：
 
 ```sh
-shasum -a 256 -c SHA256SUMS-DeskDen.txt
+shasum -a 256 -c SHA256SUMS.txt --ignore-missing
 ```
 
 校验值确认文件与清单一致，不单独证明来源。App 的系统签名与公证检查仍应保留；不要通过移除隔离标记或停用 Gatekeeper 绕过系统检查。如下载失败或签名提示异常，请通过 [Issues](https://github.com/uuthings/DeskDen/issues) 反馈。
