@@ -552,12 +552,13 @@ private struct ProviderBrowserSetupView: View {
             VStack(alignment: .leading, spacing: 13) {
                 Text("在 Chrome 中继续使用 Google 登录").font(.system(size: 13, weight: .medium))
                 Text("浏览器助手只在 IPRoyal 控制台读取订单额度，再交给本机方寸。不会读取 Google 页面、密码、Cookie 或 API Token。").font(.system(size: 12)).foregroundStyle(palette.secondary)
-                Text("1. 导出连接包，按包内说明安装本机连接和 Chrome 扩展。\n2. 在 Chrome 中登录 IPRoyal，打开静态 ISP 订单。\n3. 在方寸添加订单编号，执行首次查询并核对额度。").font(.system(size: 12)).lineSpacing(5)
+                Text("1. 点击「安装本机连接」，由方寸为当前用户注册 Chrome 连接，无需打开安装脚本。\n2. 导出连接包，在 Chrome 扩展管理页启用开发者模式，并加载包内 Extension 文件夹。\n3. 在 Chrome 登录 IPRoyal、打开静态 ISP 订单，并在扩展弹窗启用连接。\n4. 在方寸添加订单编号，执行首次查询并核对额度。").font(.system(size: 12)).lineSpacing(5)
+                Text("安装本机连接只写入当前用户的连接配置，不需要管理员权限；移动方寸 App 后请再次安装。").font(.system(size: 11)).foregroundStyle(palette.muted)
                 Text("登录状态由服务商决定。浏览器关闭或会话失效时，自动查询可能暂停；重新登录后可继续更新，最后有效读数和查询时间会保留。").font(.system(size: 11)).foregroundStyle(palette.muted)
                 if let message { Text(message).font(.system(size: 11)).foregroundStyle(palette.secondary) }
             }
         } actions: {
-            Button("在 Chrome 中打开") {
+            Button("打开 IPRoyal") {
                 guard let chrome = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome") else {
                     message = "未找到 Google Chrome。请先安装 Chrome，再按连接包说明启用助手。"; return
                 }
@@ -566,7 +567,9 @@ private struct ProviderBrowserSetupView: View {
                 }
             }.buttonStyle(WBButtonStyle())
             Spacer()
-            Button("导出连接包") { app.exportProviderBrowserKit { message = $0 } }.buttonStyle(WBButtonStyle(primary: true))
+            Button("导出连接包") { app.exportProviderBrowserKit { message = $0 } }.buttonStyle(WBButtonStyle())
+            Button("安装本机连接") { message = app.installProviderBrowserHost() }.buttonStyle(WBButtonStyle(primary: true))
+                .accessibilityIdentifier("fc.usage.browser.install-host")
         }
     }
 }

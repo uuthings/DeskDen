@@ -49,7 +49,7 @@ def main():
         host_path = output / (HOST + '.json')
         host_path.write_text(json.dumps(host, ensure_ascii=False, indent=2) + '\n')
         host_path.chmod(0o600)
-        for name in ('install.command', 'README.md'):
+        for name in ('install.command', 'README.md', 'INSTALL.md'):
             shutil.copyfile(source / name, output / name)
             (output / name).chmod(0o700 if name.endswith('.command') else 0o600)
     except Exception:

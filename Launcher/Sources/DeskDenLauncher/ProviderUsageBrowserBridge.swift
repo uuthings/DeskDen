@@ -45,6 +45,46 @@ final class ProviderUsageBrowserBridge {
         return url.flatMap { FileManager.default.fileExists(atPath: $0.appendingPathComponent("manifest.json").path) ? $0 : nil }
     }
 
+    /// Invoked only by the explicit setup action in the App. The generated
+    /// launcher belongs to this user and never needs opening through Finder.
+    @discardableResult
+    static func installNativeHost(applicationURL: URL, bridgeDirectory: URL,
+                                  applicationSupportDirectory: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]) throws -> URL {
+        let manager = FileManager.default
+        guard applicationURL.isFileURL, applicationURL.pathExtension == "app", bridgeDirectory.isFileURL,
+              applicationSupportDirectory.isFileURL, let bundle = Bundle(url: applicationURL), let executable = bundle.executableURL,
+              manager.isExecutableFile(atPath: executable.path),
+              manager.fileExists(atPath: applicationURL.appendingPathComponent("Contents/Resources/BrowserConnectors/IPRoyal/manifest.json").path) else {
+            throw ProviderUsageFailure.unavailable("请将完整的方寸 App 放入应用程序后，再安装本机连接。")
+        }
+        let hostDirectory = applicationSupportDirectory.appendingPathComponent("Google/Chrome/NativeMessagingHosts", isDirectory: true)
+        let runtimeDirectory = applicationSupportDirectory.appendingPathComponent("DeskDen/Connectors/IPRoyal", isDirectory: true)
+        let launcher = runtimeDirectory.appendingPathComponent("native-host.command")
+        let manifestURL = hostDirectory.appendingPathComponent(ProviderUsageBrowserProtocol.hostName + ".json")
+        // Refuse links and unexpected filesystem objects before creating or
+        // replacing any connector-owned content, including missing ancestors.
+        for target in [hostDirectory, runtimeDirectory, launcher, manifestURL] {
+            var item = target
+            while item.path != applicationSupportDirectory.path && item.path != "/" {
+                if let attributes = try? manager.attributesOfItem(atPath: item.path) {
+                    let isFile = item == launcher || item == manifestURL
+                    guard attributes[.type] as? FileAttributeType == (isFile ? .typeRegular : .typeDirectory) else {
+                        throw ProviderUsageFailure.unavailable("本机连接目录包含符号链接或非预期文件，已停止安装。")
+                    }
+                }
+                item.deleteLastPathComponent()
+            }
+        }
+        try manager.createDirectory(at: hostDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try manager.createDirectory(at: runtimeDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let command = "#!/bin/sh\nexec " + shellQuote(executable.path) + " --provider-usage-browser-host --provider-usage-browser-directory " + shellQuote(bridgeDirectory.path) + " \"$@\"\n"
+        let manifest: [String: Any] = ["name": ProviderUsageBrowserProtocol.hostName, "description": "DeskDen IPRoyal Connector",
+            "path": launcher.path, "type": "stdio", "allowed_origins": [ProviderUsageBrowserProtocol.extensionOrigin]]
+        try writeKit(Data(command.utf8), to: launcher, permissions: 0o700)
+        try writeKit(JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys]), to: manifestURL, permissions: 0o600)
+        return manifestURL
+    }
+
     /// Prepare a reviewable local kit. Exporting does not register a host or install an extension.
     @discardableResult
     static func exportConnectionKit(to directory: URL, applicationURL: URL, bridgeDirectory: URL) throws -> URL {
@@ -74,7 +114,7 @@ final class ProviderUsageBrowserBridge {
                 "path": wrapper.path, "type": "stdio", "allowed_origins": [ProviderUsageBrowserProtocol.extensionOrigin]]
             try writeKit(JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys]),
                          to: target.appendingPathComponent(ProviderUsageBrowserProtocol.hostName + ".json"), permissions: 0o600)
-            for file in ["install.command", "README.md"] {
+            for file in ["install.command", "README.md", "INSTALL.md"] {
                 try manager.copyItem(at: templateURL.appendingPathComponent(file), to: target.appendingPathComponent(file))
                 try manager.setAttributes([.posixPermissions: file.hasSuffix(".command") ? 0o700 : 0o600], ofItemAtPath: target.appendingPathComponent(file).path)
             }

@@ -10,7 +10,7 @@ fi
 evidence_path="$app_path.evidence"
 connector_template_files=(
     manifest.json extension-id.txt protocol.js protocol-isolated.js observer.js content.js
-    background.js popup.html popup.css popup.js install.command README.md prepare-kit.py
+    background.js popup.html popup.css popup.js install.command README.md INSTALL.md prepare-kit.py
     icon-16.png icon-32.png icon-64.png icon-128.png
 )
 if [[ "$app_path" != /* ]] || [[ -e "$app_path" ]] || [[ -e "$evidence_path" ]]; then

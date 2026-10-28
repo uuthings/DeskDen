@@ -5,12 +5,18 @@ Optional Chrome connector for DeskDen on macOS. Requires DeskDen 0.3.0 or later 
 ## 安装
 
 1. 先安装 DeskDen（方寸）。将本连接包解压到准备长期保留的目录，例如「文稿 / DeskDen Connectors」；不要直接从 ZIP 或临时目录使用。
-2. 双击 `install.command`，选择已安装的方寸 App，阅读说明后输入 `INSTALL`。本机连接配置此时才会生成，不需要管理员权限。若系统要求确认脚本来源，请核对本包来自 DeskDen 官方 Release。
+2. 打开方寸的 IPRoyal 连接说明，若有「安装本机连接」，直接点击，由 App 注册当前用户的连接，不需要双击 `install.command`，也不需要管理员权限。旧版没有此按钮时，按下节通过终端运行官方安装脚本。
 3. 在 Chrome 打开 `chrome://extensions`，启用「开发者模式」，点击「加载已解压的扩展程序」，选择本包的 `Extension` 文件夹。
 4. 在 Chrome 自行登录 IPRoyal，然后在扩展弹窗点击「启用连接」。账号、密码、验证码和登录会话均留在浏览器。
 5. 在方寸「用量与额度」添加 IPRoyal 来源、填写订单编号并刷新。查询的是服务商额度，可能存在统计延迟，不是实时网速。
 
-移动 App 后重新运行安装程序；移动本连接包后，在 Chrome 重新加载新位置的 `Extension` 文件夹。正在使用时请保留扩展文件。
+移动 App 后再次安装本机连接；移动本连接包后，在 Chrome 重新加载新位置的 `Extension` 文件夹。正在使用时请保留扩展文件。
+
+### 旧版 App 的安装方式
+
+下载的 `install.command` 是脚本，双击时可能出现「Apple 无法验证」；App 已公证并不等于包内的独立脚本也通过公证。先确认连接包来自 DeskDen 官方 Release，并按安装指南核对校验值，再用文本编辑器查看脚本。
+
+打开「终端」，输入 `/bin/sh` 和一个空格，将连接包里的 `install.command` 拖入终端以填入其完整路径，按回车。按提示选择已安装的方寸 App，阅读说明后输入 `INSTALL`。此方式不删除文件的隔离标记，也不关闭系统安全检查；不要执行来源不明的脚本。
 
 ## 包含与权限
 
