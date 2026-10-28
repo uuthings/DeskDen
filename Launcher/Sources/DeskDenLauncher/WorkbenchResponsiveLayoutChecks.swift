@@ -79,6 +79,9 @@ enum WorkbenchResponsiveLayoutChecks {
                 let version = "v" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")
                 check(accessibilityText("window-brand", in: host).contains(version),
                       "\(route.rawValue) keeps the version's lowercase v prefix in the shared brand in \(label)")
+                let globalContext=frame("home-weather-settings",in:host)
+                check(chromeSurface.flatMap{surface in globalContext.map{surface.insetBy(dx:-1,dy:-1).contains($0)}} == true,
+                      "\(route.rawValue) keeps the selected city's date, time and weather in the shared chrome in \(label)")
                 if route == .settings && model.settingsTab == .general {
                     check(accessibilityText("updates-current-version", in: host).contains("方寸 " + version),
                           "software update settings show the same lowercase version prefix in \(label)")
@@ -87,49 +90,37 @@ enum WorkbenchResponsiveLayoutChecks {
 
             model.navigate(.overview)
             _ = await wait(window) {
-                guard let status = frame("home-device-summary", in: host), let metrics = frame("home-device-stack", in: host),
-                      frame("home-memory-ring", in: host) != nil, frame("home-pressure-summary", in: host) != nil else { return false }
-                return sample.page < 760 ? abs(status.width - sample.page) < 2 && abs(metrics.width - sample.page) < 2
-                    : abs(status.width + metrics.width + 12 - sample.page) < 3
+                frame("home-device-summary",in:host) != nil && frame("home-device-detail",in:host) != nil
+                    && frame("home-network-detail",in:host) != nil && frame("home-storage-progress",in:host) != nil
+                    && frame("home-memory-progress",in:host) != nil
             }
-            let status = frame("home-device-summary", in: host), metrics = frame("home-device-stack", in: host)
-            let memoryRing = frame("home-memory-ring", in: host), pressure = frame("home-pressure-summary", in: host)
-            let thermalCard = frame("home-device-detail", in: host), networkCard = frame("home-network-detail", in: host)
-            let thermalText = accessibilityText("home-device-detail", in: host)
-            let networkText = accessibilityText("home-network-detail", in: host)
-            check(thermalCard.flatMap { card in metrics.map { $0.insetBy(dx: -1, dy: -1).contains(card) } } == true
-                  && thermalText.contains("CPU 温度") && thermalText.contains("GPU 温度") && thermalText.contains("风扇")
-                  && frame("home-storage-readout", in: host) == nil && frame("home-memory-readout", in: host) == nil,
-                  "home thermal card fits its column and exposes its actual temperature and fan labels without repeated storage in \(label)")
-            check(thermalCard.flatMap { thermal in networkCard.map { network in
-                network.maxY <= thermal.minY - 10 && abs(thermal.minX - network.minX) < 1 && abs(thermal.width - network.width) < 1
-            } } == true && networkText.contains("下载") && networkText.contains("上传"),
-                  "home network card stays separate below thermal readings and exposes both live directions in \(label)")
-            check(frame("home-memory-usage", in: host).flatMap { usage in status.map { $0.contains(usage) } } == true
-                  && frame("home-network-detail", in: host) != nil,
-                  "home retains its runtime memory bar and a separate realtime network destination in \(label)")
-            check(memoryRing.flatMap { ring in pressure.map { text in
-                ring.maxX + 12 <= text.minX && min(ring.maxY, text.maxY) - max(ring.minY, text.minY) > 24
-            } } == true, "home memory ring and pressure explanation remain beside each other without vertical stacking in \(label)")
-            check(status.flatMap { card in memoryRing.flatMap { ring in pressure.map { text in
-                card.insetBy(dx: -1, dy: -1).contains(ring) && card.insetBy(dx: -1, dy: -1).contains(text)
-            } } } == true, "home memory ring and explanation stay inside their actual card in \(label)")
-            if sample.page < 760 {
-                check(status.flatMap { top in metrics.map { bottom in
-                    abs(top.width - sample.page) < 2 && abs(bottom.width - sample.page) < 2
-                        && abs(top.minX - bottom.minX) < 1 && bottom.maxY <= top.minY - 10
-                } } == true, "compact home reflows its two summary cards into full-width nonoverlapping rows in \(label)")
-            } else {
-                check(status.flatMap { left in metrics.map { right in
-                    abs(left.maxY - right.maxY) < 1 && abs(right.minX - left.maxX - 12) < 1
-                        && abs(left.width + right.width + 12 - sample.page) < 3
-                } } == true, "home summary cards share a top edge and a 12 pt horizontal gap in \(label)")
-            }
-            print("DETAIL home-summary \(label) status=\(String(describing: status)) metrics=\(String(describing: metrics)) ring=\(String(describing: memoryRing)) pressure=\(String(describing: pressure))")
+            let status=frame("home-device-summary",in:host),thermal=frame("home-device-detail",in:host),network=frame("home-network-detail",in:host)
+            let storage=frame("home-storage-usage",in:host),memory=frame("home-memory-usage",in:host)
+            check(status.flatMap { card in storage.flatMap { disk in memory.map { ram in
+                card.insetBy(dx:-1,dy:-1).contains(disk) && card.insetBy(dx:-1,dy:-1).contains(ram)
+            } } } == true && frame("home-storage-progress",in:host) != nil && frame("home-memory-progress",in:host) != nil,
+                  "home retains real disk capacity and runtime memory with distinct percentage bars in \(label)")
+            check(status.flatMap { left in thermal.flatMap { middle in network.map { right in
+                abs(left.maxY-middle.maxY)<1 && abs(middle.maxY-right.maxY)<1
+                    && abs(middle.minX-left.maxX-12)<1 && abs(right.minX-middle.maxX-12)<1
+                    && abs(left.width+middle.width+right.width+24-sample.page)<3
+                    && max(left.height,max(middle.height,right.height))<=224
+            } } } == true,
+                  "home disk-memory, thermal-power and realtime-network summaries form a compact three-column row in \(label)")
+            let thermalText=accessibilityText("home-device-detail",in:host),networkText=accessibilityText("home-network-detail",in:host)
+            check(thermalText.contains("CPU 温度") && thermalText.contains("GPU 温度") && thermalText.contains("风扇")
+                  && networkText.contains("下载") && networkText.contains("上传"),
+                  "home detail cards retain their real thermal, battery and live network labels in \(label)")
+            print("DETAIL home-summary \(label) capacity=\(String(describing:status)) thermal=\(String(describing:thermal)) network=\(String(describing:network))")
             let events = frame("fc.home.agenda.events", in: host), reminders = frame("fc.home.agenda.reminders", in: host)
             let listHeight: CGFloat = 112
             check(events.map { abs($0.height - listHeight) < 1 } == true && reminders.map { abs($0.height - listHeight) < 1 } == true,
                   "mounted home schedule and reminder scroll viewports keep their independent 112 pt height in \(label)")
+            if sample.window.width == 1120 && sample.window.height == 758 {
+                let visible=window.convertToScreen(host.bounds)
+                check(events.map{visible.intersection($0).height>=80} == true && reminders.map{visible.intersection($0).height>=80} == true,
+                      "the default home window exposes at least eighty points of both agenda lists before scrolling")
+            }
             if sample.page > 1200 {
                 let agenda = frame("fc.home.agenda", in: host)
                 check(agenda.flatMap { card in

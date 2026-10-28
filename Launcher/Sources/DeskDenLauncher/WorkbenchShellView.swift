@@ -107,12 +107,12 @@ struct WorkbenchRootView: View {
             HStack(spacing: 8) {
                 WorkbenchBrandMark(pointSize: 25)
                 Text("方寸").font(.system(size: 12, weight: .medium))
-                Text("·").font(.system(size: 11)).foregroundStyle(palette.muted)
-                Text("v\(Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—").font(.system(size: 11)))")
-                    .font(.system(size: 8)).foregroundStyle(palette.muted)
+                (Text("v").font(.system(size:10)).kerning(0.8) + Text(Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String ?? "—").font(.system(size:11)))
+                    .foregroundStyle(palette.muted)
             }.padding(.leading, 4).frame(height: 32)
                 .accessibilityElement(children: .combine).accessibilityIdentifier("window-brand")
-            Spacer(minLength: 12)
+            Spacer(minLength: 8)
+            WorkbenchTopBarContext(context:model.context).layoutPriority(1)
             if model.isTopEntryPresentation {
                 Button { model.keepInOrdinaryWindow?() } label: { Label("留在窗口", systemImage: "macwindow") }
                     .buttonStyle(WBQuietButtonStyle()).help("转为普通窗口，切换应用时按系统窗口顺序显示")
@@ -167,7 +167,7 @@ struct WorkbenchRootView: View {
         VStack(alignment:.leading,spacing:6) {
             if model.route == .settings {
                 Button {model.returnFromSettings()} label:{
-                    HStack(spacing:10) {Image(systemName:"arrow.left").frame(width:18).accessibilityHidden(true);Text("返回方寸");Spacer(minLength:0)}
+                    HStack(spacing:10) {Image(systemName:"arrow.left").frame(width:18).accessibilityHidden(true);Text("返回" + model.settingsReturnRoute.title);Spacer(minLength:0)}
                         .padding(.horizontal,12).frame(height:42)
                         .contentShape(RoundedRectangle(cornerRadius:9))
                 }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 9)).foregroundStyle(palette.secondary)

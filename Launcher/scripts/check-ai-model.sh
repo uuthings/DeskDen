@@ -5,6 +5,7 @@ check_dir="$(mktemp -d "${TMPDIR:-/tmp}/deskden-ai-build.XXXXXX")"
 trap 'rm -rf "$check_dir"' EXIT
 swiftc -swift-version 6 -emit-library -emit-module -module-name LauncherCore \
   "$task_root/Sources/LauncherCore/AIUsageCore.swift" \
+  "$task_root/Sources/LauncherCore/ProtectedAtomicFile.swift" \
   "$task_root/Sources/LauncherCore/AIQuotaAlerts.swift" \
   "$task_root/Sources/LauncherCore/AITokenLedger.swift" \
   "$task_root/Sources/LauncherCore/AITokenMonthlyHistory.swift" \

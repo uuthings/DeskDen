@@ -66,6 +66,75 @@ import LauncherCore
         let membershipReload = AIUsageModel(dataDirectory: membershipBase, startServices: false, notifications: FixtureAIQuotaNotifications())
         check(membershipReload.quotaHistory.last?.accountPlan == .pro && membershipReload.quotaHistory.last?.shortWindow == nil,
               "quota history persists actual membership metadata without manufacturing a five-hour window")
+        check(membershipModel.setDeclaredPlan(.plus, provider: .codex), "membership preference saves independently of metering")
+        await refresh(membershipModel)
+        let preferredSummary = membershipModel.providerSummaries.first { $0.provider == .codex }
+        check(preferredSummary?.effectiveAccountPlan == .pro && preferredSummary?.accountPlanIsDeclared == false && membershipModel.quotaHistory.allSatisfy { $0.accountPlan == .pro },
+              "real source membership wins over a declared preference without changing historical quota metadata")
+
+        let syncBase = try fixture("claude-statusline-sync")
+        let settingsDirectory = syncBase.appendingPathComponent("Claude settings")
+        try fm.createDirectory(at: settingsDirectory, withIntermediateDirectories: true)
+        let settingsURL = settingsDirectory.appendingPathComponent("settings.json")
+        let originalSettings = try JSONSerialization.data(withJSONObject: ["permissions": ["allow": ["fixture-only"]], "theme": "fixture-theme"])
+        try originalSettings.write(to: settingsURL)
+        let executable = syncBase.appendingPathComponent("Fangcun with ' space")
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executable)
+        try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let syncModel = AIUsageModel(dataDirectory: syncBase, startServices: false, notifications: FixtureAIQuotaNotifications(),
+                                     claudeSettingsDirectory: settingsDirectory, statusLineExecutableURL: executable)
+        check(syncModel.enableClaudeQuotaSync(), "explicit quota sync installs into an isolated Claude settings fixture")
+        await refresh(syncModel)
+        let installedSettings = try JSONSerialization.jsonObject(with: Data(contentsOf: settingsURL)) as! [String: Any]
+        let command = (installedSettings["statusLine"] as? [String: Any])?["command"] as? String ?? ""
+        check(installedSettings["theme"] as? String == "fixture-theme" && (installedSettings["permissions"] as? [String: Any])?["allow"] as? [String] == ["fixture-only"] && command.contains("'\"'\"'") && command.contains(ClaudeQuotaStatusLineHost.argument),
+              "sync preserves unrelated settings and safely quotes executable and output paths")
+        let waitingSummary = syncModel.providerSummaries.first { $0.provider == .claude }
+        check(waitingSummary?.state == .unavailable && waitingSummary?.snapshot == nil && syncModel.claudeQuotaSyncMessage != nil,
+              "configured sync waits for a real Claude response without fabricating a connected quota or read failure")
+        check(syncModel.enableClaudeQuotaSync(), "re-enabling the same status-line command is idempotent")
+        let outputURL = file(syncBase, "claude-quota.json")
+        let payload = try JSONSerialization.data(withJSONObject: ["rate_limits": ["five_hour": ["used_percentage": 13, "resets_at": reset.timeIntervalSince1970],
+            "seven_day": ["used_percentage": 27, "resets_at": reset.timeIntervalSince1970]],
+            "context_window": ["used_percentage": 99], "prompt": "DISCARDED_FIXTURE_SENTINEL", "credential": "DISCARDED_FIXTURE_SENTINEL"])
+        let rendered = try ClaudeQuotaStatusLineHost.consume(payload, outputURL: outputURL, now: now)
+        let sanitized = try Data(contentsOf: outputURL), sanitizedText = String(decoding: sanitized, as: UTF8.self)
+        check(rendered == "5h: 13% · 7d: 27%" && !sanitizedText.contains("SENTINEL") && !sanitizedText.contains("context_window") && !sanitizedText.contains("credential"),
+              "native status-line host retains only documented quota windows and never context, prompt or credential fields")
+        check(syncModel.setDeclaredPlan(.max, provider: .claude), "Claude membership can be explicitly marked as a display preference")
+        await refresh(syncModel)
+        let syncedSummary = syncModel.providerSummaries.first { $0.provider == .claude }
+        check(syncedSummary?.state == .ready && syncedSummary?.snapshot?.source == .claudeStatusLine && syncedSummary?.effectiveAccountPlan == .max && syncedSummary?.accountPlanIsDeclared == true && syncedSummary?.snapshot?.accountPlan == nil && syncModel.quotaHistory.allSatisfy { $0.accountPlan == nil },
+              "live status-line fixture reaches quota summary while user-declared membership remains outside history")
+        let unavailable = try ClaudeQuotaStatusLineHost.consume(Data("{\"rate_limits\":{}}".utf8), outputURL: outputURL, now: now)
+        let afterUnavailable = try Data(contentsOf: outputURL)
+        check(unavailable == "额度暂不可用" && sanitized == afterUnavailable, "missing official windows preserve the last real snapshot instead of writing zero or erasing history")
+        syncModel.removeQuotaFile(for: .claude)
+        check(syncModel.configuration(for: .claude).quotaPath == nil && syncModel.claudeQuotaSyncMessage == nil,
+              "removing the quota file connection also clears the obsolete sync-success notice")
+        let existingStatus = try JSONSerialization.data(withJSONObject: ["statusLine": ["type": "command", "command": "fixture-existing-command"], "theme": "fixture-theme"])
+        try existingStatus.write(to: settingsURL)
+        check(!syncModel.enableClaudeQuotaSync(), "a pre-existing different Claude status line is never replaced")
+        let retainedStatus = try Data(contentsOf: settingsURL)
+        check(existingStatus == retainedStatus && syncModel.errorMessage?.contains("已有状态栏") == true,
+              "status-line conflict preserves exact settings bytes and explains the manual alternative")
+        let rollbackDirectory = syncBase.appendingPathComponent("rollback-settings")
+        try fm.createDirectory(at: rollbackDirectory, withIntermediateDirectories: true)
+        let rollbackURL = rollbackDirectory.appendingPathComponent("settings.json")
+        try originalSettings.write(to: rollbackURL)
+        let receipt = try ClaudeQuotaSyncInstaller.install(settingsDirectory: rollbackDirectory, executableURL: executable, quotaURL: outputURL)
+        try receipt.rollback()
+        let rolledBack = try Data(contentsOf: rollbackURL)
+        check(rolledBack == originalSettings, "a failed source save can roll back only the exact status-line settings written by the installer")
+        let oversized = Data(repeating: 32, count: ClaudeQuotaStatusLineHost.maximumInputBytes + 1)
+        do { try ClaudeQuotaStatusLineHost.consume(oversized, outputURL: outputURL, now: now); check(false, "oversized status-line payload is rejected") }
+        catch { check(true, "oversized status-line payload is rejected") }
+        let symlinkDirectory = syncBase.appendingPathComponent("symlink-output")
+        try fm.createDirectory(at: symlinkDirectory, withIntermediateDirectories: true)
+        let symlinkURL = symlinkDirectory.appendingPathComponent("claude-quota.json")
+        try fm.createSymbolicLink(at: symlinkURL, withDestinationURL: outputURL)
+        do { try ClaudeQuotaStatusLineHost.consume(payload, outputURL: symlinkURL, now: now); check(false, "status-line host refuses a symlink output") }
+        catch { check(true, "status-line host refuses a symlink output") }
 
         let manualBase = try fixture("manual-with-automatic-reading-disabled")
         let trapSessions = manualBase.appendingPathComponent("disabled-session-trap")
@@ -275,7 +344,9 @@ import LauncherCore
         let navigationModel = AIUsageModel(dataDirectory: freshBase, startServices: false, notifications: FixtureAIQuotaNotifications())
         navigationModel.openSources(fromSettingsPrivacy: true)
         navigationModel.show(.provider(.codex))
+        check(navigationModel.backTitle(overviewTitle: "用量与额度") == "返回来源管理", "AI back labels name the actual immediate parent")
         check(!navigationModel.goBack() && navigationModel.destination == .sources, "nested AI routes restore their immediate source")
+        check(navigationModel.backTitle(overviewTitle: "用量与额度") == "返回隐私与锁定", "external AI source navigation keeps its Settings privacy parent label")
         check(navigationModel.goBack() && navigationModel.destination == .overview, "privacy-source entry retains external return context")
         navigationModel.present(.manual, provider: .claude); navigationModel.manualDraft.note = "unsaved fixture"
         navigationModel.requestDismissDialog()

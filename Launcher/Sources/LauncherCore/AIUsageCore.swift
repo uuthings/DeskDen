@@ -17,10 +17,10 @@ public enum AIQuotaSource: String, Codable, Sendable {
         switch self { case .localSession: "Codex 本地会话额度"; case .claudeStatusLine: "Claude 官方状态栏读数"; case .imported: "用户导入的额度读数"; case .manual: "用户手动记录" }
     }
 }
-/// Only names directly exposed by the metering source are retained. A generic
-/// Pro name does not establish a usage multiplier or a billing price.
+/// Plan names may come from metering or an explicitly marked user preference.
+/// A generic Pro name does not establish a multiplier or billing price.
 public enum AIAccountPlan: String, Codable, Sendable {
-    case free, go, plus, pro, prolite, promax, team, business, enterprise, edu
+    case free, go, plus, pro, prolite, promax, max, team, business, enterprise, edu
     public var title: String {
         switch self {
         case .free: "Free"
@@ -29,6 +29,7 @@ public enum AIAccountPlan: String, Codable, Sendable {
         case .pro: "Pro"
         case .prolite: "Pro Lite"
         case .promax: "Pro Max"
+        case .max: "Max"
         case .team: "Team"
         case .business: "Business"
         case .enterprise: "Enterprise"
@@ -115,14 +116,27 @@ public struct AIProviderSummary: Identifiable, Sendable {
     public var state: AIUsageState
     public var snapshot: AIQuotaSnapshot?
     public var detail: String
+    /// Display preference only; never changes quota observations or history.
+    public var declaredPlan: AIAccountPlan?
     public var id: String { provider.rawValue }
     public var title: String { provider.title }
     public var shortWindow: AIQuotaWindow? { snapshot?.shortWindow }
     public var weeklyWindow: AIQuotaWindow? { snapshot?.weeklyWindow }
     public var updatedAt: Date? { snapshot?.observedAt }
     public var sourceDescription: String { snapshot?.source.title ?? "尚无有效额度读数" }
-    public var accountPlanDescription: String { snapshot?.accountPlan?.title ?? "来源未提供会员信息" }
-    public init(provider: AIProvider, state: AIUsageState, snapshot: AIQuotaSnapshot?, detail: String) { self.provider = provider; self.state = state; self.snapshot = snapshot; self.detail = detail }
+    public var effectiveAccountPlan: AIAccountPlan? { snapshot?.accountPlan ?? declaredPlan }
+    public var accountPlanIsDeclared: Bool { snapshot?.accountPlan == nil && declaredPlan != nil }
+    public var accountPlanDescription: String {
+        guard let plan = effectiveAccountPlan else { return "来源未提供会员信息" }
+        return plan.title + (accountPlanIsDeclared ? "（用户设置）" : "")
+    }
+    public var hasNoFiveHourLimit: Bool {
+        provider == .codex && [.pro, .prolite, .promax].contains(effectiveAccountPlan)
+            && snapshot?.availableWindows.contains(where: { $0.durationMinutes == 300 }) != true
+    }
+    public init(provider: AIProvider, state: AIUsageState, snapshot: AIQuotaSnapshot?, detail: String, declaredPlan: AIAccountPlan? = nil) {
+        self.provider = provider; self.state = state; self.snapshot = snapshot; self.detail = detail; self.declaredPlan = declaredPlan
+    }
 }
 public enum AIUsageError: Error, LocalizedError {
     case invalid(String)

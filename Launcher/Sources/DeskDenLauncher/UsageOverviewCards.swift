@@ -2,29 +2,30 @@ import AppKit
 import SwiftUI
 import LauncherCore
 
-/// Fixed source tiles wrap as a group, without distributing spare width into tiles.
+/// Equal-width columns expand with the viewport and wrap below their minimum.
 struct UsageCardGrid: Layout {
     static let cardSize = CGSize(width: 248, height: 208)
     static let gap: CGFloat = 12
+    static let rowHeight: CGFloat = 236
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let offered = proposal.width ?? Self.cardSize.width
         let width = offered.isFinite ? max(Self.cardSize.width, offered) : Self.cardSize.width
         let columns = columns(for: width, count: subviews.count)
         let rows = (subviews.count + columns - 1) / columns
-        return .init(width: width, height: rows == 0 ? 0 : CGFloat(rows) * Self.cardSize.height + CGFloat(rows - 1) * Self.gap)
+        return .init(width: width, height: rows == 0 ? 0 : CGFloat(rows) * Self.rowHeight + CGFloat(rows - 1) * Self.gap)
     }
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         let columns = columns(for: bounds.width, count: subviews.count)
+        let width = max(0, (bounds.width - CGFloat(columns - 1) * Self.gap) / CGFloat(columns))
         for (index, view) in subviews.enumerated() {
-            view.place(at: .init(x: bounds.minX + CGFloat(index % columns) * (Self.cardSize.width + Self.gap),
-                                 y: bounds.minY + CGFloat(index / columns) * (Self.cardSize.height + Self.gap)),
-                       anchor: .topLeading, proposal: .init(Self.cardSize))
+            view.place(at: .init(x: bounds.minX + CGFloat(index % columns) * (width + Self.gap),
+                                 y: bounds.minY + CGFloat(index / columns) * (Self.rowHeight + Self.gap)),
+                       anchor: .topLeading, proposal: .init(width: width, height: Self.rowHeight))
         }
     }
     private func columns(for width: CGFloat, count: Int) -> Int {
         guard width.isFinite, width > 0 else { return 1 }
-        let maximum = max(1, count)
-        return max(1, Int(min(CGFloat(maximum), (width + Self.gap) / (Self.cardSize.width + Self.gap))))
+        return max(1, min(max(1, count), Int((width + Self.gap) / (Self.cardSize.width + Self.gap))))
     }
 }
 
@@ -53,7 +54,7 @@ struct UsageEmptySourceCard: View {
                 .frame(height: 28)
         }
         .padding(14)
-        .frame(width: UsageCardGrid.cardSize.width, height: UsageCardGrid.cardSize.height, alignment: .topLeading)
+        .frame(maxWidth: .infinity).frame(height: UsageCardGrid.cardSize.height, alignment: .topLeading)
         .background(WorkbenchMaterialSurface(kind: .card, radius: 15))
         .contentShape(RoundedRectangle(cornerRadius: 15))
     }
@@ -91,8 +92,9 @@ struct UsageAIQuotaCard: View {
     @Environment(\.workbenchPalette) private var palette
     private var name: String { display.displayName ?? summary.title }
     private var subtitle: String {
-        let source = summary.snapshot?.source == .manual ? "手动记录" : summary.snapshot?.source == .imported ? "导入读数" : summary.provider == .codex ? "本机会话" : "本机状态栏"
-        return [summary.snapshot?.accountPlan?.title, source].compactMap { $0 }.joined(separator: " · ")
+        let source = summary.snapshot?.source == .manual ? "手动记录" : summary.snapshot?.source == .imported ? "导入读数" : summary.provider == .codex ? "本机会话" : "状态栏同步"
+        let plan = summary.effectiveAccountPlan.map { $0.title + (summary.accountPlanIsDeclared ? "（用户设置）" : "") } ?? "会员未提供"
+        return plan + " · " + source
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -100,49 +102,56 @@ struct UsageAIQuotaCard: View {
                 UsageSourceIcon(appearance: appearance, icon: display.icon, aiProvider: summary.provider)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(name).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                    Text(subtitle).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
+                    Text(subtitle).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1).help(summary.accountPlanDescription)
                 }
                 Spacer(minLength: 4)
                 Circle().fill(summary.state == .ready ? palette.accent : summary.state == .error ? palette.warning : palette.muted)
                     .frame(width: 5, height: 5).help(enabled ? summary.state.title : "自动读取关闭")
             }.frame(height: 32).padding(.bottom, 7)
             if let snapshot = summary.snapshot, !snapshot.availableWindows.isEmpty {
-                let rows = snapshot.comparisonRows
-                ForEach(0..<2, id: \.self) { index in
-                    UsageAIWindowRow(window: index < rows.count ? rows[index] : nil, index: index, timeZone: timeZone)
+                let windows = snapshot.availableWindows
+                ForEach(Array(windows.prefix(2).enumerated()), id: \.offset) { _, window in
+                    UsageAIWindowRow(window: window, timeZone: timeZone)
                         .frame(height: 51, alignment: .top)
                 }
+                if windows.count == 1 {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: summary.hasNoFiveHourLimit ? "checkmark.shield" : "info.circle").font(.system(size: 12))
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(summary.hasNoFiveHourLimit ? "Pro 不设 5 小时限制" : "按来源提供的窗口展示").font(.system(size: 11, weight: .medium))
+                            Text(summary.hasNoFiveHourLimit ? "每周用量以实际读数为准" : "其余周期暂未提供读数").font(.system(size: 10)).foregroundStyle(palette.muted)
+                        }
+                    }.foregroundStyle(palette.secondary).padding(.top, 8)
+                        .frame(maxWidth: .infinity, minHeight: 51, alignment: .topLeading)
+                }
             } else {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("—").font(.system(size: 27)).foregroundStyle(palette.text)
-                    Text(summary.state == .disconnected ? "尚未连接额度来源" : "暂无可用额度窗口")
-                        .font(.system(size: 12)).foregroundStyle(palette.secondary)
+                VStack(alignment: .leading, spacing: 7) {
+                    Label(summary.provider == .claude ? "等待额度同步" : "等待额度读数", systemImage: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 13, weight: .medium)).foregroundStyle(palette.secondary)
                     Text(summary.detail).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(2)
-                }.frame(maxWidth: .infinity, minHeight: 102, alignment: .topLeading)
+                }.frame(maxWidth: .infinity, minHeight: 102, alignment: .center)
             }
             Spacer(minLength: 0)
             HStack(spacing: 4) {
-                Text(!enabled ? "自动读取关闭" : summary.state == .ready ? "窗口占用" : summary.state.title)
+                Text(!enabled ? "自动读取关闭" : summary.state == .ready ? "额度可用" : summary.state.title)
                 if let date = summary.updatedAt { Text("· 更新于 " + ProviderUsageFormatting.time(date, timeZone: timeZone)) }
                 Spacer(minLength: 0)
                 Image(systemName: "arrow.up.right").font(.system(size: 11)).accessibilityHidden(true)
             }.font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
                 .padding(.top, 8).overlay(alignment: .top) { Rectangle().fill(palette.line).frame(height: 1) }
         }
-        .foregroundStyle(palette.text).padding(14).frame(width: UsageCardGrid.cardSize.width, height: UsageCardGrid.cardSize.height, alignment: .topLeading)
+        .foregroundStyle(palette.text).padding(14).frame(maxWidth: .infinity).frame(height: UsageCardGrid.cardSize.height, alignment: .topLeading)
         .background(WorkbenchMaterialSurface(kind: .card, radius: 15))
         .contentShape(RoundedRectangle(cornerRadius: 15))
     }
 }
 
 private struct UsageAIWindowRow: View {
-    let window: AIQuotaWindow?
-    let index: Int
+    let window: AIQuotaWindow
     let timeZone: TimeZone
     @Environment(\.workbenchPalette) private var palette
     var body: some View {
-        if let window {
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text(window.title).font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(1)
                     Spacer(minLength: 3)
@@ -151,12 +160,6 @@ private struct UsageAIWindowRow: View {
                 }.frame(height: 20)
                 WBProgress(value: window.usedPercent / 100, color: window.severity == 2 ? palette.critical : window.severity == 1 ? palette.warning : palette.accent, height: 4)
                 Text(reset(window)).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
-            }
-        } else {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(index == 0 ? "短周期窗口未提供" : "其他额度窗口未提供").font(.system(size: 11)).foregroundStyle(palette.muted)
-                Text("—").font(.system(size: 17)).foregroundStyle(palette.secondary)
-            }.frame(maxWidth: .infinity, alignment: .leading)
         }
     }
     private func reset(_ window: AIQuotaWindow) -> String {
@@ -229,7 +232,7 @@ struct ProviderQuotaCard: View {
             }.font(.system(size: 11)).foregroundStyle(state.refresh.authenticationRequired || state.refresh.failureCount > 0 ? palette.warning : palette.muted)
                 .padding(.top, 8).overlay(alignment: .top) { Rectangle().fill(palette.line).frame(height: 1) }
         }
-        .foregroundStyle(palette.text).padding(14).frame(width: UsageCardGrid.cardSize.width, height: UsageCardGrid.cardSize.height, alignment: .topLeading)
+        .foregroundStyle(palette.text).padding(14).frame(maxWidth: .infinity).frame(height: UsageCardGrid.cardSize.height, alignment: .topLeading)
         .background(WorkbenchMaterialSurface(kind: .card, radius: 15))
         .contentShape(RoundedRectangle(cornerRadius: 15))
     }

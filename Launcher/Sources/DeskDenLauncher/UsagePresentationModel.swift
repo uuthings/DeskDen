@@ -30,6 +30,65 @@ import UniformTypeIdentifiers
     func isCollapsed(_ group: UsageCardGroup) -> Bool { preferences.isCollapsed(group) }
     func appearance(for key: String) -> UsageCardAppearance { preferences.cards[key] ?? .init() }
 
+    func categoryID(for key: String, defaultID: String) -> String {
+        let id = appearance(for: key).categoryID ?? defaultID
+        return preferences.categories.contains { $0.id == id } ? id : "uncategorized"
+    }
+    func categoryTitle(for key: String, defaultID: String) -> String {
+        preferences.categories.first { $0.id == categoryID(for: key, defaultID: defaultID) }?.title ?? "未分类"
+    }
+    @discardableResult func registerSources(_ keys: [String], now: Date = Date()) -> Bool {
+        var next = preferences
+        let missing = keys.filter { !next.sourceOrder.contains($0) }
+        guard !missing.isEmpty else { return true }
+        for key in missing {
+            next.sourceOrder.append(key)
+            var display = next.cards[key] ?? .init(); display.addedAt = display.addedAt ?? now; next.cards[key] = display
+        }
+        return persist(next)
+    }
+    @discardableResult func setOrdering(_ sort: UsageCardSort, ascending: Bool) -> Bool {
+        var next = preferences; next.sort = sort; next.ascending = ascending; return persist(next)
+    }
+    @discardableResult func setCategoryFilter(_ id: String?) -> Bool {
+        var next = preferences; next.filterCategoryID = id; return persist(next)
+    }
+    @discardableResult func replaceCategories(_ categories: [UsageCardCategory]) -> Bool {
+        var next = preferences
+        next.categories = categories.map { .init(id: $0.id, title: $0.title.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        let retained = Set(categories.map(\.id))
+        for (key, var card) in next.cards where card.categoryID.map({ !retained.contains($0) }) == true {
+            card.categoryID = "uncategorized"; next.cards[key] = card
+        }
+        if let filter = next.filterCategoryID, !retained.contains(filter) { next.filterCategoryID = nil }
+        return persist(next)
+    }
+    func orderedSourceIDs(_ entries: [(id: String, name: String, category: String)]) -> [String] {
+        let order = Dictionary(uniqueKeysWithValues: preferences.sourceOrder.enumerated().map { ($0.element, $0.offset) })
+        let filtered = entries.filter { entry in
+            preferences.filterCategoryID.map { categoryID(for: entry.id, defaultID: entry.category) == $0 } ?? true
+        }
+        return filtered.sorted { first, second in
+            let result: ComparisonResult
+            switch preferences.sort {
+            case .added:
+                let a = appearance(for: first.id).addedAt ?? .distantPast, b = appearance(for: second.id).addedAt ?? .distantPast
+                if a != b { result = a < b ? .orderedAscending : .orderedDescending }
+                else {
+                    let firstIndex = order[first.id] ?? Int.max, secondIndex = order[second.id] ?? Int.max
+                    result = firstIndex == secondIndex ? .orderedSame : firstIndex < secondIndex ? .orderedAscending : .orderedDescending
+                }
+            case .name: result = first.name.localizedStandardCompare(second.name)
+            case .category:
+                let a = categoryTitle(for: first.id, defaultID: first.category), b = categoryTitle(for: second.id, defaultID: second.category)
+                let category = a.localizedStandardCompare(b)
+                result = category == .orderedSame ? first.name.localizedStandardCompare(second.name) : category
+            }
+            if result == .orderedSame { return first.id < second.id }
+            return preferences.ascending ? result == .orderedAscending : result == .orderedDescending
+        }.map(\.id)
+    }
+
     @discardableResult func setCollapsed(_ value: Bool, group: UsageCardGroup) -> Bool {
         var next = preferences; next.setCollapsed(value, group: group); return persist(next)
     }
@@ -44,10 +103,11 @@ import UniformTypeIdentifiers
         return persist(next)
     }
     @discardableResult func removeAppearance(for key: String) -> Bool {
-        var next = preferences; next.cards.removeValue(forKey: key); return persist(next)
+        var next = preferences; next.cards.removeValue(forKey: key); next.sourceOrder.removeAll { $0 == key }; return persist(next)
     }
     private func persist(_ next: UsagePresentationPreferences) -> Bool {
         guard storageError == nil else { errorMessage = storageError; return false }
+        var next = next; next.schemaVersion = 2
         do { try store.save(next); preferences = next; errorMessage = nil; return true }
         catch let error as UsagePresentationError { errorMessage = error.localizedDescription; return false }
         catch { errorMessage = UsagePresentationError.storage.localizedDescription; return false }
