@@ -1,6 +1,6 @@
 # DeskDen IPRoyal Connector
 
-连接器版本：**0.1**，独立于 DeskDen App 的版本号。
+连接器版本：**0.1.0**，独立于 DeskDen App 的版本号。
 
 这是 DeskDen（方寸）的可选 Chrome 连接器，用于将 IPRoyal **静态 ISP 订单**的总额度、已用量、余额和原始重置日期同步到本机方寸。只支持 Google Chrome。方寸控制查询周期和流量触发阈值，助手不自行轮询服务商额度。
 
