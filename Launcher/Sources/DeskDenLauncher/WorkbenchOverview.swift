@@ -103,9 +103,20 @@ struct WorkbenchOverview:View {
                 if compact {Text(s.deviceName).font(.system(size:15,weight:.medium));deviceIdentity(s)}
                 else {HStack(alignment:.firstTextBaseline,spacing:9){Text(s.deviceName).font(.system(size:expanded ? 18:15,weight:.medium)).lineLimit(1);deviceIdentity(s)}}
             }.padding(.bottom,expanded ? 24:14).padding(.top,expanded ? 9:0)
-            HStack(alignment:.top,spacing:compact ? 12:18) {
-                metric("存储可用",symbol:"internaldrive",used:s.disk?.available,total:s.disk?.total,percent:s.disk?.percent,note:s.disk.map{"已用 "+DeviceFormat.storage($0.used)} ?? "等待有效采样",warning:(s.disk?.percent ?? 0)>=80,progressLabel:"存储已用比例",storage:true){openDevice(.storage)}
-                metric("内存已用",symbol:"memorychip",used:s.memory?.used,total:s.memory?.total,percent:s.memory?.percent,note:s.memory.map{"压力"+pressureTitle($0.pressure)} ?? "等待有效采样",warning:s.memory?.pressure == .warning || s.memory?.pressure == .critical){openDevice(.memory)}
+            VStack(alignment: .leading, spacing: 12) {
+                Button { openDevice(.thermal) } label: {
+                    DeviceTemperatureReadings(snapshot: s, size: compact ? 23 : 25)
+                        .contentShape(Rectangle())
+                }.buttonStyle(ClickablePlainButtonStyle())
+                    .accessibilityIdentifier("home-temperature-readout")
+                    .help(s.unavailableReasons["temperature"] ?? "查看温度与散热详情")
+                Button { openDevice(.thermal) } label: {
+                    DeviceFanRows(snapshot: s, paired: true).contentShape(Rectangle())
+                }.buttonStyle(ClickablePlainButtonStyle())
+                    .accessibilityIdentifier("home-fan-readout")
+                    .help(s.unavailableReasons["fan"] ?? "查看风扇与散热详情")
+                Text("系统热状态：" + DeviceFormat.thermal(s.thermalState))
+                    .font(.system(size: 11)).foregroundStyle(palette.muted)
             }.frame(maxHeight:.infinity,alignment:.top)
             Rectangle().fill(palette.line).frame(height:1).padding(.top,expanded ? 22:15).padding(.bottom,expanded ? 16:12)
             HStack(alignment:.center,spacing:12) {
@@ -118,15 +129,6 @@ struct WorkbenchOverview:View {
     }
     private func deviceIdentity(_ s:DeviceSnapshot)->some View {Text(s.chipName+" · "+DeviceFormat.capacity(s.memory?.total)).font(.system(size:11)).foregroundStyle(palette.muted).lineLimit(1).minimumScaleFactor(0.8)}
     private var todayTraffic:String {let summary=device.trafficSummary(period:.day,scope:.all);return "今日已记录 "+(summary.coveredSeconds>0 ? DeviceTrafficDisplay.adaptive(summary.totalBytes):"—")}
-    private func metric(_ title:String,symbol:String,used:UInt64?,total:UInt64?,percent:Double?,note:String,warning:Bool,progressLabel:String="内存已用比例",storage:Bool=false,action:@escaping()->Void)->some View {
-        Button(action:action) {VStack(alignment:.leading,spacing:0) {
-            Label(title,systemImage:symbol).font(.system(size:11)).foregroundStyle(palette.secondary)
-            HStack(alignment:.firstTextBaseline,spacing:3){Text(used.map{String(format:"%.1f",Double($0)/(storage ? 1_000_000_000:1_073_741_824))} ?? "—").font(.system(size:expanded ? 30:compact ? 23:25,weight:.medium));Text("GB").font(.system(size:11)).foregroundStyle(palette.muted)}.monospacedDigit().padding(.top,7).padding(.bottom,3)
-            Text("共 "+(storage ? DeviceFormat.storage(total):DeviceFormat.capacity(total))).font(.system(size:11)).foregroundStyle(palette.muted)
-            WBProgress(value:(percent ?? 0)/100,color:warning ? palette.warning:nil).accessibilityLabel(progressLabel).padding(.top,8).padding(.bottom,6)
-            Text(note).font(.system(size:11)).foregroundStyle(palette.secondary).lineLimit(1).minimumScaleFactor(0.8)
-        }.frame(maxWidth:.infinity,alignment:.leading).contentShape(Rectangle())}.buttonStyle(ClickablePlainButtonStyle()).accessibilityIdentifier(title == "存储可用" ? "home-storage-readout" : "home-memory-readout").accessibilityLabel(title+"，"+(storage ? DeviceFormat.storage(used):DeviceFormat.capacity(used))+"，"+note)
-    }
     private var agenda:some View {
         VStack(alignment:.leading,spacing:0) {
             HStack(spacing:7) {
@@ -204,9 +206,7 @@ struct WorkbenchOverview:View {
         case .event(let value):return (value.isAllDay ? "全天":context.time(value.start)+"–"+context.time(value.end))+" · "+value.calendarName+(value.end<Date() ? " · 已结束":"")
         }
     }
-    private func pressureTitle(_ pressure:DevicePressure)->String {
-        switch pressure {case .normal:"正常";case .warning:"偏高";case .critical:"很高";case .unknown:"未知"}
-    }
+
 }
 
 /// The actual homepage context area is also mountable in isolated appearance checks.

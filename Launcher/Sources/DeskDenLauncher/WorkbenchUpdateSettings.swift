@@ -8,11 +8,11 @@ struct WorkbenchUpdateSettings: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 16) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("方寸 " + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"))
+                        Text("方寸 v" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"))
                             .font(.system(size: 12, weight: .medium))
                         Text(updates.status).font(.system(size: 11)).foregroundStyle(updates.hasError ? palette.warning : palette.muted)
                             .fixedSize(horizontal: false, vertical: true)
-                    }
+                    }.accessibilityElement(children: .combine).accessibilityIdentifier("updates-current-version")
                     Spacer(minLength: 8)
                     Button("检查更新", action: updates.checkForUpdates).buttonStyle(WBButtonStyle())
                         .disabled(!updates.canCheck).accessibilityIdentifier("updates-check")
@@ -37,6 +37,6 @@ struct WorkbenchUpdateSettings: View {
                 Text("手动模式只在点击「检查更新」时联网。更新会保留设置与本机资料，安装前会处理未保存的更改。")
                     .font(.system(size: 11)).foregroundStyle(palette.muted).fixedSize(horizontal: false, vertical: true).padding(.top, 12)
             }
-        }.accessibilityIdentifier("fc.settings.updates")
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("fc.settings.updates")
     }
 }

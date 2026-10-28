@@ -107,7 +107,7 @@ struct WorkbenchRootView: View {
             HStack(spacing: 8) {
                 WorkbenchBrandMark(pointSize: 25)
                 Text("方寸").font(.system(size: 12, weight: .medium))
-                Text("V" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"))
+                Text("v" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"))
                     .font(.system(size: 11)).foregroundStyle(palette.muted)
             }.padding(.leading, 4).frame(height: 32)
                 .accessibilityElement(children: .combine).accessibilityIdentifier("window-brand")

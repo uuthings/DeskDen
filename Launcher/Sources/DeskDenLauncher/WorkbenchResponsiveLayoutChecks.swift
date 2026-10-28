@@ -54,6 +54,7 @@ enum WorkbenchResponsiveLayoutChecks {
                 _ = await wait(window) {
                     frame("workbench-sidebar", in: host) != nil && frame("workbench-chrome", in: host) != nil
                         && frame(route == .settings ? "settings-navigation-general" : "navigation-" + route.rawValue, in: host) != nil
+                        && (route != .settings || model.settingsTab != .general || frame("updates-current-version", in: host) != nil)
                 }
                 let chrome = frame("workbench-chrome", in: host), sidebar = frame("workbench-sidebar", in: host)
                 let navigation = frames(prefix: route == .settings ? "settings-navigation-" : "navigation-", in: host)
@@ -75,9 +76,13 @@ enum WorkbenchResponsiveLayoutChecks {
                       "\(route.rawValue) keeps 42 pt navigation rows across resize in \(label)")
                 check(frame("navigation-health", in: host) == nil && !containsAccessibilityText("体检中心", in: host),
                       "\(route.rawValue) exposes no obsolete health navigation or page in \(label)")
-                let version = "V" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")
+                let version = "v" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")
                 check(accessibilityText("window-brand", in: host).contains(version),
-                      "\(route.rawValue) keeps the version's V prefix in the shared brand in \(label)")
+                      "\(route.rawValue) keeps the version's lowercase v prefix in the shared brand in \(label)")
+                if route == .settings && model.settingsTab == .general {
+                    check(accessibilityText("updates-current-version", in: host).contains("方寸 " + version),
+                          "software update settings show the same lowercase version prefix in \(label)")
+                }
             }
 
             model.navigate(.overview)
@@ -89,6 +94,11 @@ enum WorkbenchResponsiveLayoutChecks {
             }
             let status = frame("home-device-summary", in: host), metrics = frame("home-device-metrics", in: host)
             let memoryRing = frame("home-memory-ring", in: host), pressure = frame("home-pressure-summary", in: host)
+            let temperature = frame("home-temperature-readout", in: host), fans = frame("home-fan-readout", in: host)
+            check(metrics.flatMap { card in temperature.flatMap { readings in fans.map { fanReadings in
+                card.insetBy(dx: -1, dy: -1).contains(readings) && card.insetBy(dx: -1, dy: -1).contains(fanReadings)
+            } } } == true && frame("home-storage-readout", in: host) == nil && frame("home-memory-readout", in: host) == nil,
+                  "home device summary fits temperature and fan readings without repeating storage or memory in \(label)")
             check(memoryRing.flatMap { ring in pressure.map { text in
                 ring.maxX + 12 <= text.minX && min(ring.maxY, text.maxY) - max(ring.minY, text.minY) > 24
             } } == true, "home memory ring and pressure explanation remain beside each other without vertical stacking in \(label)")

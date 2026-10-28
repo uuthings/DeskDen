@@ -112,7 +112,7 @@ import Sparkle
         lastChecked = engine.lastUpdateCheckDate
     }
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
-        hasError = false; status = "发现新版本 " + item.displayVersionString
+        hasError = false; status = "发现新版本 v" + item.displayVersionString
     }
     func updaterDidNotFindUpdate(_ updater: SPUUpdater) {
         hasError = false; status = "当前没有适用的新版本"

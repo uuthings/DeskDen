@@ -110,7 +110,7 @@ import LauncherCore
                     abs(before.minX - after.minX) < 1 && abs(before.maxX - after.maxX) < 1 && abs(before.minY - after.minY) < 1
                 } } == true
             }, "closing the city modal restores identical home card positions and left/right boundaries")
-            for id in ["home-storage-readout", "home-memory-readout"] {
+            for id in ["home-temperature-readout", "home-fan-readout"] {
                 check(try await hoverBackground(id, host: host, window: window, output: output, expectedChange: false),
                       "\(id) retains its unboxed readout surface on actual OS hover")
             }

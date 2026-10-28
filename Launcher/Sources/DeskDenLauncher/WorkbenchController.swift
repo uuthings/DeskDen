@@ -144,10 +144,17 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
             do {
                 let target=try ProviderUsageBrowserBridge.exportConnectionKit(to:parent,applicationURL:Bundle.main.bundleURL,bridgeDirectory:self.dataDirectory.appendingPathComponent("ProviderUsage/BrowserBridge",isDirectory:true))
                 NSWorkspace.shared.selectFile(target.path,inFileViewerRootedAtPath:parent.path)
-                completion("连接包已导出。按包内说明完成安装后，再验证订单额度。")
+                completion("连接包已导出。点击「安装本机连接」，再在 Chrome 加载包内 Extension 文件夹；无需打开安装脚本。")
             } catch {completion("导出失败："+error.localizedDescription)}
         }
         if let hostWindow {panel.beginSheetModal(for:hostWindow,completionHandler:finish)} else {finish(panel.runModal())}
+    }
+    func installProviderBrowserHost() -> String {
+        do {
+            try ProviderUsageBrowserBridge.installNativeHost(applicationURL: Bundle.main.bundleURL,
+                bridgeDirectory: dataDirectory.appendingPathComponent("ProviderUsage/BrowserBridge", isDirectory: true))
+            return "本机连接已安装。请在 Chrome 加载连接包的 Extension 文件夹，并在扩展弹窗启用连接；无需双击 install.command。"
+        } catch { return "安装失败：" + error.localizedDescription }
     }
     func openDeviceReading(_ detail:DeviceCardID) {readingReturnRoute=route;deviceDetail=detail;navigate(.device)}
     var requestedReadingReturnTitle:String {"返回"+(readingReturnRoute?.title ?? "设备状态")}

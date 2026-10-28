@@ -235,12 +235,45 @@ import LauncherCore
             check(app.route == .ai && app.ai.destination == .overview && app.usagePresentation.selectedSourceID == nil, "unified overview returns without changing the legacy route identity")
             let pending = provider.state(for: missing.id)
             check(pending.snapshot == nil && pending.status() == .failed, "a failed first query retains unknown usage instead of a fabricated old reading")
+            // Exercise the actual production settings and Home in this same
+            // hidden host. An invalid channel plus allowsStarting=false prevents
+            // even an accidental action from creating a real update engine.
+            owner.updates = AppUpdateController(owner: owner, information: [:], allowsStarting: false)
+            let installedVersion = "v" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")
+            for light in [false, true] {
+                app.changeAppearance(light ? .light : .dark)
+                for width in [960, 1120, 1728] {
+                    window.setContentSize(.init(width: width, height: width == 1728 ? 993 : 758))
+                    app.settingsTab = .general; app.navigate(.settings); await settle(host)
+                    let settingsObjects = objects(host)
+                    check(text("updates-current-version", objects: settingsObjects).contains("方寸 " + installedVersion)
+                          && text("window-brand", objects: settingsObjects).contains(installedVersion),
+                          "version display \(width)/\(light): mounted brand and software update card share the lowercase v prefix")
+                    check(!window.isVisible && !window.isKeyWindow && !owner.updates.canCheck && !app.device.isSampling && provider.refreshing.isEmpty,
+                          "version display \(width)/\(light): settings stay hidden with collection and the real updater disabled")
+                    if let output { check(save(host, to: output.appendingPathComponent("update-settings-\(width)-\(light ? "light" : "dark").png")), "software update settings render offscreen") }
+                    app.navigate(.overview); await settle(host)
+                    let homeObjects = objects(host)
+                    let thermalReadouts = ["home-temperature-readout", "home-fan-readout"].compactMap { frame($0, objects: homeObjects) }
+                    check(thermalReadouts.count == 2 && frame("home-device-metrics", objects: homeObjects).map { card in
+                        thermalReadouts.allSatisfy { card.insetBy(dx: -1, dy: -1).contains($0) }
+                    } == true && frame("home-storage-readout", objects: homeObjects) == nil && frame("home-memory-readout", objects: homeObjects) == nil,
+                          "home readings \(width)/\(light): actual temperature and fan controls fit their card without duplicate storage or memory")
+                    check(!window.isVisible && !window.isKeyWindow && !app.device.isSampling && provider.refreshing.isEmpty,
+                          "home readings \(width)/\(light): mounting Home never activates a window or starts live collection")
+                    if let output { check(save(host, to: output.appendingPathComponent("home-device-\(width)-\(light ? "light" : "dark").png")), "home device readings render offscreen") }
+                }
+            }
+            app.openUsageOverview(); await settle(host)
             if Bundle.main.bundleURL.pathExtension == "app" {
                 let kit = try ProviderUsageBrowserBridge.exportConnectionKit(to: folder, applicationURL: Bundle.main.bundleURL, bridgeDirectory: folder.appendingPathComponent("Bridge"))
                 let manifest = try JSONSerialization.jsonObject(with: Data(contentsOf: kit.appendingPathComponent("com.uuthings.deskden.iproyal.json"))) as? [String: Any]
                 check(manifest?["allowed_origins"] as? [String] == [ProviderUsageBrowserProtocol.extensionOrigin], "bundled exporter restricts its native host to the exact extension")
                 check(FileManager.default.isExecutableFile(atPath: kit.appendingPathComponent("native-host.command").path)
                     && FileManager.default.fileExists(atPath: kit.appendingPathComponent("Extension/manifest.json").path), "bundled exporter includes an executable wrapper and extension resources")
+                let installationGuide = try String(contentsOf: kit.appendingPathComponent("INSTALL.md"), encoding: .utf8)
+                check(installationGuide.contains("/bin/sh") && installationGuide.contains("INSTALL"),
+                      "bundled exporter preserves the linked installation guide and explicit legacy script steps")
                 let extensionManifest = try JSONSerialization.jsonObject(with: Data(contentsOf: kit.appendingPathComponent("Extension/manifest.json"))) as? [String: Any]
                 let icons = extensionManifest?["icons"] as? [String: String] ?? [:]
                 let action = extensionManifest?["action"] as? [String: Any]
@@ -251,6 +284,34 @@ import LauncherCore
                           let original = try? Data(contentsOf: template.appendingPathComponent($0)) else { return false }
                     return exported == original
                 }, "bundled exporter preserves every manifest and toolbar icon")
+                let support = folder.appendingPathComponent("Isolated Application Support", isDirectory: true)
+                let bridge = folder.appendingPathComponent("Bridge with 'quote'", isDirectory: true)
+                let installed = try ProviderUsageBrowserBridge.installNativeHost(applicationURL: Bundle.main.bundleURL, bridgeDirectory: bridge, applicationSupportDirectory: support)
+                let installedData = try Data(contentsOf: installed)
+                let installedManifest = try JSONSerialization.jsonObject(with: installedData) as? [String: Any]
+                let launcher = support.appendingPathComponent("DeskDen/Connectors/IPRoyal/native-host.command")
+                check(installedManifest?["allowed_origins"] as? [String] == [ProviderUsageBrowserProtocol.extensionOrigin]
+                      && installedManifest?["path"] as? String == launcher.path,
+                      "App registration pins the exact extension and a persistent private launcher")
+                let command = try String(contentsOf: launcher, encoding: .utf8)
+                check(command.contains("'\\''") && command.contains(" --provider-usage-browser-host ")
+                      && command.hasSuffix(" \"$@\"\n"), "App registration quotes local paths and forwards Chrome's origin")
+                let launcherMode = try FileManager.default.attributesOfItem(atPath: launcher.path)[.posixPermissions] as? NSNumber
+                let manifestMode = try FileManager.default.attributesOfItem(atPath: installed.path)[.posixPermissions] as? NSNumber
+                check(launcherMode?.intValue == 0o700 && manifestMode?.intValue == 0o600,
+                      "App registration restricts launcher and manifest to the current user")
+                _ = try ProviderUsageBrowserBridge.installNativeHost(applicationURL: Bundle.main.bundleURL, bridgeDirectory: bridge, applicationSupportDirectory: support)
+                check(try Data(contentsOf: installed) == installedData, "reinstalling the same App connection is idempotent")
+                let unsafeSupport = folder.appendingPathComponent("Unsafe Support", isDirectory: true)
+                try FileManager.default.createDirectory(at: unsafeSupport, withIntermediateDirectories: false)
+                try FileManager.default.createSymbolicLink(at: unsafeSupport.appendingPathComponent("Google"), withDestinationURL: support.appendingPathComponent("Google"))
+                do {
+                    _ = try ProviderUsageBrowserBridge.installNativeHost(applicationURL: Bundle.main.bundleURL, bridgeDirectory: bridge, applicationSupportDirectory: unsafeSupport)
+                    check(false, "App registration refuses linked browser directories")
+                } catch { check(true, "App registration refuses linked browser directories") }
+                let afterRefusedInstall = try Data(contentsOf: installed)
+                check(!FileManager.default.fileExists(atPath: unsafeSupport.appendingPathComponent("DeskDen").path)
+                      && afterRefusedInstall == installedData, "refused registration leaves connector and linked destination unchanged")
                 let before = try Data(contentsOf: kit.appendingPathComponent("README.md"))
                 do {
                     _ = try ProviderUsageBrowserBridge.exportConnectionKit(to: folder, applicationURL: Bundle.main.bundleURL, bridgeDirectory: folder)
@@ -281,6 +342,14 @@ import LauncherCore
     }
     private static func identifier(_ object: NSObject) -> String {
         object.responds(to: NSSelectorFromString("accessibilityIdentifier")) ? object.value(forKey: "accessibilityIdentifier") as? String ?? "" : ""
+    }
+    private static func text(_ id: String, objects: [NSObject]) -> String {
+        objects.filter { identifier($0) == id }.flatMap { object in
+            ["accessibilityLabel", "accessibilityValue"].compactMap { selector -> String? in
+                guard object.responds(to: NSSelectorFromString(selector)) else { return nil }
+                return object.value(forKey: selector) as? String
+            }
+        }.joined(separator: " ")
     }
     private static func frame(_ id: String, objects: [NSObject]) -> CGRect? {
         objects.filter { identifier($0) == id }.compactMap { object -> CGRect? in
