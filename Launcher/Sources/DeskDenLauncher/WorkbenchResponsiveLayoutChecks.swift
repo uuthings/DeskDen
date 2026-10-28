@@ -90,25 +90,23 @@ enum WorkbenchResponsiveLayoutChecks {
 
             model.navigate(.overview)
             _ = await wait(window) {
-                frame("home-device-summary",in:host) != nil && frame("home-device-detail",in:host) != nil
-                    && frame("home-network-detail",in:host) != nil && frame("home-storage-progress",in:host) != nil
-                    && frame("home-memory-progress",in:host) != nil
+                frame("home-open-cleaning",in:host) != nil && frame("home-device-detail",in:host) != nil
+                    && frame("home-network-detail",in:host) != nil
             }
-            let status=frame("home-device-summary",in:host),thermal=frame("home-device-detail",in:host),network=frame("home-network-detail",in:host)
-            let storage=frame("home-storage-usage",in:host),memory=frame("home-memory-usage",in:host)
-            check(status.flatMap { card in storage.flatMap { disk in memory.map { ram in
-                card.insetBy(dx:-1,dy:-1).contains(disk) && card.insetBy(dx:-1,dy:-1).contains(ram)
-            } } } == true && frame("home-storage-progress",in:host) != nil && frame("home-memory-progress",in:host) != nil,
-                  "home retains real disk capacity and runtime memory with distinct percentage bars in \(label)")
-            check(status.flatMap { left in thermal.flatMap { middle in network.map { right in
+            let status=frame("home-open-cleaning",in:host),thermal=frame("home-device-detail",in:host),network=frame("home-network-detail",in:host)
+            check(accessibilityText("home-open-cleaning",in:host).contains("磁盘已用比例")
+                  && accessibilityText("home-device-detail",in:host).contains("运行内存已用比例"),
+                  "home retains labeled disk and memory progress inside whole-card actions in \(label)")
+            check(thermal.flatMap { left in status.flatMap { middle in network.map { right in
                 abs(left.maxY-middle.maxY)<1 && abs(middle.maxY-right.maxY)<1
                     && abs(middle.minX-left.maxX-12)<1 && abs(right.minX-middle.maxX-12)<1
                     && abs(left.width+middle.width+right.width+24-sample.page)<3
-                    && max(left.height,max(middle.height,right.height))<=224
+                    && [left,middle,right].allSatisfy { abs($0.height-264)<1 }
+                    && abs(left.width-middle.width)<1 && abs(middle.width-right.width)<1
             } } } == true,
-                  "home disk-memory, thermal-power and realtime-network summaries form a compact three-column row in \(label)")
+                  "home device, disk and realtime-network cards form an equal three-column row in \(label)")
             let thermalText=accessibilityText("home-device-detail",in:host),networkText=accessibilityText("home-network-detail",in:host)
-            check(thermalText.contains("CPU 温度") && thermalText.contains("GPU 温度") && thermalText.contains("风扇")
+            check(thermalText.contains("CPU 温度") && thermalText.contains("GPU 温度") && thermalText.contains("运行内存")
                   && networkText.contains("下载") && networkText.contains("上传"),
                   "home detail cards retain their real thermal, battery and live network labels in \(label)")
             print("DETAIL home-summary \(label) capacity=\(String(describing:status)) thermal=\(String(describing:thermal)) network=\(String(describing:network))")
@@ -144,10 +142,9 @@ enum WorkbenchResponsiveLayoutChecks {
             let month = frame("fc.calendar.monthCard", in: host), side = frame("fc.calendar.sideColumn", in: host)
             let monthDay = frame("fc.calendar.day." + dayKey, in: host)
             check(homeDay.flatMap { home in monthDay.map { month in
-                home.height >= 54 && month.height >= 54 &&
-                (1.0...1.7).contains(home.width / home.height) && (1.0...1.7).contains(month.width / month.height) &&
-                abs(home.width / home.height - month.width / month.height) < 0.30
-            } } == true, "home and main calendar date cells retain comparable readable proportions in \(label)")
+                abs(home.height - 54) < 1 && month.height >= 54 &&
+                (1.0...1.7).contains(month.width / month.height)
+            } } == true, "home uses compact date tiles while the full calendar retains readable proportions in \(label)")
             if sample.page >= 760, let month, let side {
                 calendarWidths.append((sample.page, month.width, side.width))
                 check(abs(month.width + side.width + 12 - sample.page) < 3 &&

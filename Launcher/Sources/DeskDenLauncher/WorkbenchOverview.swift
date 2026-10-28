@@ -13,9 +13,7 @@ struct WorkbenchOverview:View {
     @Environment(\.workbenchDeviceExpanded) private var expanded
     private var compact:Bool {availableWidth<800}
     private var stacksSummaryCards: Bool { availableWidth < 680 }
-    private var summaryInnerWidth: CGFloat { max(0, availableWidth - 24) }
-    private var statusSummaryWidth: CGFloat { summaryInnerWidth * 0.46 }
-    private var thermalSummaryWidth: CGFloat { summaryInnerWidth * 0.30 }
+    private var summaryWidth: CGFloat { max(0, (availableWidth - 24) / 3) }
     private var displayCalendar:Calendar {context.dateContext.calendar}
     private var day:Date {selectedDay ?? Date()}
     private var events:[CalendarEventItem] {calendar.overviewEvents.filter{$0.occurs(on:day,calendar:displayCalendar)}.sorted{$0.start<$1.start}}
@@ -28,15 +26,12 @@ struct WorkbenchOverview:View {
             WBPageHeader(title:"首页",subtitle:"常用之物，皆在方寸之间")
             VStack(spacing:12) {
                 if stacksSummaryCards {
-                    VStack(spacing:12) {
-                        statusCard
-                        HStack(alignment:.top,spacing:12) {deviceCard;networkCard}
-                    }.fixedSize(horizontal:false,vertical:true)
+                    VStack(spacing:12) { deviceCard; storageCard; networkCard }
                 } else {
                     HStack(alignment:.top,spacing:12) {
-                        statusCard.frame(width:statusSummaryWidth)
-                        deviceCard.frame(width:thermalSummaryWidth)
-                        networkCard.frame(maxWidth:.infinity)
+                        deviceCard.frame(width:summaryWidth)
+                        storageCard.frame(width:summaryWidth)
+                        networkCard.frame(width:summaryWidth)
                     }.fixedSize(horizontal:false,vertical:true)
                 }
                 agenda
@@ -46,102 +41,120 @@ struct WorkbenchOverview:View {
         .onChange(of:context.dateContext){_,_ in selectedDay=nil}
         .accessibilityElement(children:.contain).accessibilityIdentifier("fc.page.home")
     }
-    private var statusCard:some View {
-        VStack(alignment:.leading,spacing:10) {storageUsage;memoryUsage}
-            .padding(14).frame(maxWidth:.infinity,minHeight:208,alignment:.topLeading)
-            .background(WorkbenchMaterialSurface(radius:15))
-            .accessibilityElement(children:.contain).accessibilityIdentifier("home-device-summary")
+    private var storageCard: some View {
+        let disk = device.snapshot.disk
+        return WBActionCard(title: "磁盘空间", symbol: "internaldrive", identifier: "home-open-cleaning", actionLabel: "打开空间清理", contentIdentifier: "home-storage-usage", minimumHeight: 264) { navigate(.cleaning) } content: {
+            VStack(spacing: 8) {
+                Spacer(minLength: 0)
+                WorkbenchStorageGauge(percent: disk?.percent)
+                    .accessibilityIdentifier("home-storage-progress")
+                Spacer(minLength: 0)
+                HStack(spacing: 12) {
+                    storageReading("已用", value: disk?.used)
+                    storageReading("可用", value: disk?.available)
+                }
+                Spacer(minLength: 0)
+                HStack {
+                    Text(disk.map { "总容量 " + DeviceFormat.storage($0.total) } ?? "等待有效磁盘采样")
+                    Spacer(minLength: 4)
+                    Text("空间清理")
+                }.font(.system(size: 11)).foregroundStyle(palette.muted)
+            }.frame(height: 207)
+        }
     }
-    private var storageUsage:some View {
-        let disk=device.snapshot.disk
-        return VStack(alignment:.leading,spacing:4) {
-            HStack(spacing:8) {
-                Label("磁盘空间",systemImage:"internaldrive").font(.system(size:12,weight:.medium))
-                Spacer(minLength:4)
-                Button("空间清理"){navigate(.cleaning)}.buttonStyle(WBButtonStyle(compact:true))
-                    .accessibilityIdentifier("home-open-cleaning")
-            }.frame(height:28)
-            HStack(alignment:.firstTextBaseline,spacing:5) {
-                Text(DeviceFormat.storage(disk?.used)).font(.system(size:17,weight:.medium))
-                Text("已用").font(.system(size:11)).foregroundStyle(palette.secondary)
-                Spacer(minLength:4)
-                Text(disk.map{String(format:"已用 %.0f%%",$0.percent)} ?? "读数不可用")
-                    .font(.system(size:11)).foregroundStyle(palette.secondary)
-            }.monospacedDigit().frame(height:22)
-            WBProgress(value:(disk?.percent ?? 0)/100,color:(disk?.percent ?? 0)>=80 ? palette.warning:palette.accent,height:6)
-                .accessibilityElement(children:.ignore)
-                .accessibilityLabel("磁盘已用比例，" + (disk.map{String(format:"%.0f%%",$0.percent)} ?? "读数不可用"))
-                .accessibilityIdentifier("home-storage-progress")
-            Text(disk.map{"总计 "+DeviceFormat.storage($0.total)+" · 可用 "+DeviceFormat.storage($0.available)} ?? "等待有效磁盘采样")
-                .font(.system(size:11)).foregroundStyle(palette.muted).lineLimit(1)
-        }.accessibilityElement(children:.contain).accessibilityIdentifier("home-storage-usage")
+    private func storageReading(_ title: String, value: UInt64?) -> some View {
+        VStack(spacing: 2) {
+            Text(title).font(.system(size: 11)).foregroundStyle(palette.secondary)
+            Text(DeviceFormat.storage(value)).font(.system(size: 19, weight: .medium)).monospacedDigit().lineLimit(1)
+        }.frame(maxWidth: .infinity)
     }
-    private var memoryUsage:some View {
-        let memory=device.snapshot.memory
-        return VStack(alignment:.leading,spacing:4) {
-            HStack(spacing:8) {
-                Label("运行内存",systemImage:"memorychip").font(.system(size:12,weight:.medium))
-                Spacer(minLength:4)
-                Button("查看读数"){openDevice(.memory)}.buttonStyle(WBButtonStyle(compact:true))
-                    .accessibilityIdentifier("home-open-memory")
-            }.frame(height:28)
-            HStack(alignment:.firstTextBaseline,spacing:5) {
-                Text(DeviceFormat.capacity(memory?.used)).font(.system(size:17,weight:.medium))
-                Text("/ "+DeviceFormat.capacity(memory?.total)).font(.system(size:11)).foregroundStyle(palette.secondary)
-                Spacer(minLength:4)
-                Text(memory.map{String(format:"%.0f%%",$0.percent)} ?? "—")
-                    .font(.system(size:12,weight:.medium)).foregroundStyle(palette.secondary)
-            }.monospacedDigit().frame(height:22)
-            WBProgress(value:(memory?.percent ?? 0)/100,color:DeviceAppearance.pressure(memory?.pressure,palette:palette),height:6)
-                .accessibilityElement(children:.ignore)
-                .accessibilityLabel("运行内存已用比例，" + (memory.map{String(format:"%.0f%%",$0.percent)} ?? "读数不可用"))
+    private var memoryUsage: some View {
+        let memory = device.snapshot.memory
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text("运行内存").font(.system(size: 11)).foregroundStyle(palette.secondary)
+                Spacer(minLength: 4)
+                Text(memory.map { String(format: "%.0f%%", $0.percent) } ?? "读数不可用")
+                    .font(.system(size: 12, weight: .medium)).monospacedDigit()
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(DeviceFormat.capacity(memory?.used)).font(.system(size: 15, weight: .medium))
+                Text("/ " + DeviceFormat.capacity(memory?.total)).font(.system(size: 11)).foregroundStyle(palette.secondary)
+                Spacer(minLength: 0)
+            }.monospacedDigit()
+            WBProgress(value: (memory?.percent ?? 0) / 100, color: DeviceAppearance.pressure(memory?.pressure, palette: palette), height: 6)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("运行内存已用比例，" + (memory.map { String(format: "%.0f%%", $0.percent) } ?? "读数不可用"))
                 .accessibilityIdentifier("home-memory-progress")
-            Text(memoryPressureTitle(memory?.pressure ?? .unknown)).font(.system(size:11)).foregroundStyle(palette.muted).lineLimit(1)
-        }.accessibilityElement(children:.contain).accessibilityIdentifier("home-memory-usage")
+            Text(memoryPressureTitle(memory?.pressure ?? .unknown)).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
+        }.accessibilityElement(children: .combine).accessibilityIdentifier("home-memory-usage")
     }
-    private func memoryPressureTitle(_ pressure:DevicePressure)->String {
-        switch pressure {case .normal:"内存压力正常";case .warning:"内存压力偏高";case .critical:"内存压力很高";case .unknown:"等待有效内存压力采样"}
+    private func memoryPressureTitle(_ pressure: DevicePressure) -> String {
+        switch pressure {case .normal: "内存压力正常"; case .warning: "内存压力偏高"; case .critical: "内存压力很高"; case .unknown: "等待有效内存压力采样"}
     }
-    private var deviceCard:some View {
-        let s=device.snapshot
-        return WBActionCard(title: "散热与电池", symbol: "laptopcomputer", identifier: "home-device-detail", actionLabel: "查看设备散热与供电", contentIdentifier: "home-device-metrics", minimumHeight: 208) { openDevice(.thermal) } content: {
-            Text(s.deviceName + " · " + s.chipName).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
-            VStack(alignment: .leading, spacing: 10) {
+    private var deviceCard: some View {
+        let s = device.snapshot
+        return WBActionCard(title: "这台 Mac", symbol: "laptopcomputer", identifier: "home-device-detail", actionLabel: "查看设备状态", contentIdentifier: "home-device-metrics", minimumHeight: 264) { navigate(.device) } content: {
+            VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(s.deviceName).font(.system(size: 17, weight: .medium)).lineLimit(1)
+                    Text(s.chipName).font(.system(size: 12)).foregroundStyle(palette.muted).lineLimit(1)
+                }
                 DeviceTemperatureReadings(snapshot: s, size: 23)
                     .accessibilityElement(children: .combine).accessibilityIdentifier("home-temperature-readout")
-                    .help(s.unavailableReasons["temperature"] ?? "查看温度与散热详情")
-                DeviceFanRows(snapshot: s, paired: true)
-                    .accessibilityElement(children: .combine).accessibilityIdentifier("home-fan-readout")
-                    .help(s.unavailableReasons["fan"] ?? "查看风扇与散热详情")
-            }
-            HStack(spacing: 8) {
-                Label(s.battery.map { String(format: "%.0f%%", $0.percent) } ?? "—", systemImage: s.battery?.isPluggedIn == true ? "battery.100.bolt" : "battery.100")
-                    .font(.system(size: 12, weight: .medium)).monospacedDigit()
-                    .accessibilityIdentifier("home-battery-percent")
-                Text(s.battery.map { $0.isCharging ? "正在充电" : $0.isPluggedIn ? "已连接电源" : "使用电池" } ?? "电源读数不可用")
-                    .font(.system(size: 11)).foregroundStyle(palette.muted)
+                    .help(s.unavailableReasons["temperature"] ?? "设备状态中可查看完整散热信息")
+                HStack(spacing: 6) {
+                    Label(s.battery.map { String(format: "%.0f%%", $0.percent) } ?? "—", systemImage: s.battery?.isPluggedIn == true ? "battery.100.bolt" : "battery.100")
+                        .font(.system(size: 12, weight: .medium)).monospacedDigit()
+                        .accessibilityIdentifier("home-battery-percent")
+                    Spacer(minLength: 0)
+                    Text(s.battery.map { $0.isCharging ? "正在充电" : $0.isPluggedIn ? "已连接电源" : "使用电池" } ?? "电源读数不可用")
+                        .font(.system(size: 11)).foregroundStyle(palette.muted)
+                }
                 Spacer(minLength: 0)
-                Text(DeviceFormat.thermal(s.thermalState)).font(.system(size: 11)).foregroundStyle(palette.muted)
-            }.padding(.top, 2)
+                memoryUsage
+            }.frame(height: 207, alignment: .topLeading)
         }
     }
     private var networkCard: some View {
         let network = device.snapshot.network
-        return WBActionCard(title: "实时网络", symbol: "network", identifier: "home-network-detail", actionLabel: "查看网络监控", minimumHeight: 208) { navigate(.network) } content: {
-            VStack(alignment:.leading,spacing:10) {
-                networkReading("下载",symbol:"arrow.down",value:network.downloadBytesPerSecond)
-                networkReading("上传",symbol:"arrow.up",value:network.uploadBytesPerSecond)
-            }.accessibilityElement(children:.combine).accessibilityIdentifier("home-network-speed")
-            Text(todayTraffic).font(.system(size: 11)).foregroundStyle(palette.muted)
+        return WBActionCard(title: "实时网络", symbol: "arrow.up.arrow.down", identifier: "home-network-detail", actionLabel: "查看网络监控", minimumHeight: 264) { navigate(.network) } content: {
+            VStack(alignment: .leading, spacing: 8) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: 8) {
+                        networkReading("下载", symbol: "arrow.down", value: network.downloadBytesPerSecond, alignment: .leading)
+                        Spacer(minLength: 0)
+                        networkReading("上传", symbol: "arrow.up", value: network.uploadBytesPerSecond, alignment: .trailing)
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        networkReading("下载", symbol: "arrow.down", value: network.downloadBytesPerSecond, alignment: .leading)
+                        networkReading("上传", symbol: "arrow.up", value: network.uploadBytesPerSecond, alignment: .leading)
+                    }
+                }.accessibilityElement(children: .combine).accessibilityIdentifier("home-network-speed")
+                DeviceHistoryChart(points: device.history, kind: .network, minutes: 1, compact: true, showsSeriesLegend: false)
+                    .frame(maxHeight: .infinity).accessibilityIdentifier("home-network-trend")
+                HStack(alignment: .firstTextBaseline) {
+                    Text("今日已记录").font(.system(size: 11)).foregroundStyle(palette.muted)
+                    Spacer(minLength: 4)
+                    Text(todayTraffic).font(.system(size: 17, weight: .medium)).monospacedDigit()
+                }
+            }.frame(height: 207)
         }
     }
-    private func networkReading(_ title: String, symbol: String, value: Double?) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+    private func networkReading(_ title: String, symbol: String, value: Double?, alignment: HorizontalAlignment) -> some View {
+        let parts = DeviceFormat.rate(value).split(separator: " ", maxSplits: 1)
+        return VStack(alignment: alignment, spacing: 4) {
             Label(title, systemImage: symbol).font(.system(size: 11)).foregroundStyle(palette.secondary)
-            Text(DeviceFormat.rate(value)).font(.system(size: 17, weight: .medium)).monospacedDigit().lineLimit(1)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(parts.first.map(String.init) ?? "—").font(.system(size: compact ? 20 : 25, weight: .medium))
+                if parts.count > 1 { Text(String(parts[1])).font(.system(size: 11)).foregroundStyle(palette.secondary) }
+            }.monospacedDigit().fixedSize(horizontal: true, vertical: false)
         }
     }
-    private var todayTraffic:String {let summary=device.trafficSummary(period:.day,scope:.all);return "今日已记录 "+(summary.coveredSeconds>0 ? DeviceTrafficDisplay.adaptive(summary.totalBytes):"—")}
+    private var todayTraffic: String {
+        let summary = device.trafficSummary(period: .day, scope: .all)
+        return summary.coveredSeconds > 0 ? DeviceTrafficDisplay.adaptive(summary.totalBytes) : "—"
+    }
     private var agenda:some View {
         VStack(alignment:.leading,spacing:0) {
             HStack(spacing:7) {
@@ -168,8 +181,7 @@ struct WorkbenchOverview:View {
     }
     private var weekStrip:some View {
         let stripWidth = min(WorkbenchCalendarDayMetrics.maximumHomeWidth, max(0, availableWidth - 28))
-        let cellWidth = max(0, (stripWidth - 36) / 7)
-        let cellHeight = WorkbenchCalendarDayMetrics.height(forWidth:cellWidth)
+        let cellHeight = WorkbenchCalendarDayMetrics.minimumHeight
         return VStack(spacing:5) {
             HStack(spacing:6) {ForEach(0..<7,id:\.self){offset in
                 let date=displayCalendar.date(byAdding:.day,value:offset,to:displayCalendar.startOfDay(for:Date())) ?? Date()
@@ -220,6 +232,39 @@ struct WorkbenchOverview:View {
         }
     }
 
+}
+
+/// A half ring maps used disk capacity to the same percentage as storage details.
+/// Unknown samples keep an empty track and an explicit unavailable label.
+private struct WorkbenchStorageGauge: View {
+    let percent: Double?
+    @Environment(\.workbenchPalette) private var palette
+    private var validPercent: Double? { percent.flatMap { $0.isFinite ? min(100, max(0, $0)) : nil } }
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            WorkbenchStorageArc().stroke(palette.accent.opacity(0.20), style: StrokeStyle(lineWidth: 7, lineCap: .round))
+            if let value = validPercent, value > 0 {
+                WorkbenchStorageArc().trim(from: 0, to: value / 100)
+                    .stroke(value >= 80 ? palette.warning : palette.accent, style: StrokeStyle(lineWidth: 7, lineCap: .round))
+            }
+            VStack(spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 2) {
+                    Text(validPercent.map { String(format: "%.0f", $0) } ?? "—").font(.system(size: 30, weight: .medium))
+                    if validPercent != nil { Text("%").font(.system(size: 13)) }
+                }.monospacedDigit()
+                Text(validPercent == nil ? "读数不可用" : "已用空间").font(.system(size: 11)).foregroundStyle(palette.muted)
+            }
+        }.frame(width: 180, height: 102)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("磁盘已用比例，" + (validPercent.map { String(format: "%.0f%%", $0) } ?? "读数不可用"))
+    }
+}
+private struct WorkbenchStorageArc: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.addArc(center: CGPoint(x: rect.midX, y: rect.maxY - 12), radius: min(rect.width / 2 - 15, rect.height - 27), startAngle: .degrees(180), endAngle: .degrees(0), clockwise: false)
+        return path
+    }
 }
 
 /// The actual homepage context area is also mountable in isolated appearance checks.
