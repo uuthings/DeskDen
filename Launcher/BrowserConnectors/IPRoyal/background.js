@@ -3,7 +3,7 @@ const P = globalThis.FangcunIPRoyalProtocol;
 const HOST = 'com.uuthings.fangcun.iproyal';
 let port = null, pollTimer = null, active = null, starting = false, finishing = false, enabledSession = false, connectionGeneration = 0, requestedEnabled = null;
 const now = () => Date.now()/1000;
-const safeText = code => ({ready:'已连接方寸',disabled:'连接已关闭',missingHost:'请先安装本机连接文件',login:'请在 Chrome 登录 IPRoyal 后重试',waiting:'等待方寸发起查询',querying:'正在读取订单额度',timeout:'页面未返回额度，请检查登录状态',unavailable:'连接暂不可用',rateLimited:'查询过于频繁，方寸将稍后重试'}[code] || '连接暂不可用');
+const safeText = code => ({ready:'已连接 DeskDen',disabled:'连接已关闭',missingHost:'请先安装本机连接文件',login:'请在 Chrome 登录 IPRoyal 后重试',waiting:'等待 DeskDen 发起查询',querying:'正在读取订单额度',timeout:'页面未返回额度，请检查登录状态',unavailable:'连接暂不可用',rateLimited:'查询过于频繁，DeskDen 将稍后重试'}[code] || '连接暂不可用');
 async function status(code) { await chrome.storage.local.set({status:code,statusText:safeText(code)}); }
 function poll() { if (port && enabledSession) { try { port.postMessage({version:1,type:'poll'}); } catch {} } }
 async function removeOwned(tabID) {

@@ -1,8 +1,8 @@
-# 方寸 · DeskDen
+# DeskDen · 方寸
 
 常用之物，皆在方寸之间。方寸是一款原生 macOS 应用，把启动器、设备信息、空间清理、日历与提醒、用量与额度和私密资料放进同一个界面。
 
-当前版本为 **0.3.0**。正式 App 与校验文件见 [v0.3.0 Release](https://github.com/uuthings/DeskDen/releases/tag/v0.3.0)，首次安装与本地旧版升级请先阅读 [安装指南](docs/install.md)。GitHub 的源码压缩包不能直接作为 App 安装。
+当前版本为 **0.3.0**。DMG 安装包与校验文件见 [v0.3.0 Release](https://github.com/uuthings/DeskDen/releases/tag/v0.3.0)，首次安装与旧版升级请先阅读 [安装指南](docs/install.md)。GitHub 的源码压缩包不能直接作为 App 安装。
 
 ## 主要功能
 
@@ -12,7 +12,7 @@
 - 用量与额度：独立 AI 和服务流量卡片，支持 Codex、Claude、IPRoyal 与搬瓦工；本机 Token 记录归入 AI 分类。网络监控保留实时网速与单独的周期预算。
 - 私密空间：独立密码加密、自动锁定、加密备份、文字格式与完整分类管理；正确签名授权的构建可选用 Touch ID。
 - 外观与桌面组件：青碧晨雾、月白云海、暖霞悬山、AR 世界与雷霆机舱主题，以及界面不透明度和组件管理。
-- 图标选择：在「设置 → 外观与材质」中选择青碧晨雾、月白云海或暖霞悬山，默认使用青碧晨雾。
+- 统一图标：应用与浏览器连接器使用浅色桌面图标。
 - 软件更新：默认手动检查，可选择每日自动检查；下载与安装仍需确认。
 
 工作台显示时提供程序坞与应用切换入口；关闭界面后继续后台运行，可从状态栏或快捷键重新打开。最小化与关闭分别处理；顶栏与侧栏尺度保持一致，内容随窗口空间重排。
@@ -31,6 +31,6 @@ App 最低运行系统为 macOS 14；从源码构建需要 **Xcode 27.0（Swift 
 
 [安装与升级](docs/install.md) · [使用说明](docs/usage.md) · [软件更新](docs/updating.md) · [公开范围与贡献方式](docs/public-source.md)
 
-[模块化 Mini](docs/mini-dashboard.md)支持配置、拖动和排列小卡片；[多来源用量与额度](docs/provider-usage.md)分别展示服务余额与重置周期。IPRoyal 网页助手需要手动安装并登录官方控制台，搬瓦工使用实例 API 凭据；不包含预设账号或代理配置。
+[模块化 Mini](docs/mini-dashboard.md)支持配置、拖动和排列小卡片；[多来源用量与额度](docs/provider-usage.md)分别展示服务余额与重置周期。DeskDen IPRoyal Connector 需要手动安装并登录官方控制台，搬瓦工使用实例 API 凭据；不包含预设账号或代理配置。
 
 本仓库由维护者直接维护，不接受 Pull Request；问题反馈使用 Issues。目前尚未指定开源许可证，源码公开本身不额外授予开源许可。

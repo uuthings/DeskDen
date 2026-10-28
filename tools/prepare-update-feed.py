@@ -102,14 +102,14 @@ def main():
     if public_key != info['SUPublicEDKey']:
         raise SystemExit('The existing update signing key does not match the exported App; do not rotate it')
     output.mkdir(parents=True)
-    name = 'Fangcun-' + version + '-macos-universal'
+    name = 'DeskDen-' + version + '-macos-universal'
     archive = output / (name + '.zip')
     subprocess.run(['ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', str(app), str(archive)], check=True)
     (output / (name + '.txt')).write_text(notes)
     shutil.copy2(root / 'updates/appcast.xml', output / 'appcast.xml')
     feed = output / 'appcast.xml'
     feed.write_text(feed.read_text().replace('Signed updates for Fangcun. No public update has been published.',
-                                             'Official signed software updates for Fangcun.'))
+                                             'Official signed software updates for DeskDen.'))
     prefix = 'https://github.com/uuthings/DeskDen/releases/download/v' + urllib.parse.quote(version) + '/'
     command = [str(tools / 'generate_appcast'), '--account', 'local.fangcun.launcher',
                '--download-url-prefix', prefix, '--embed-release-notes', str(output)]

@@ -258,7 +258,7 @@ def prepare(release, output, identity):
         verify_app(recorder, 'source-app', app, info)
         state['originalAppCodeHashes'] = verify_origin(recorder, app, submitted)
         state['sourceAppManifestSHA256'] = manifest_digest(before)
-        dmg = output / ('Fangcun-' + info['CFBundleShortVersionString'] + '-macos-universal.dmg')
+        dmg = output / ('DeskDen-' + info['CFBundleShortVersionString'] + '-macos-universal.dmg')
         with packaging_workspace(output, dmg) as workspace:
             layout = workspace / 'Layout'
             layout.mkdir()
@@ -266,7 +266,7 @@ def prepare(release, output, identity):
             if manifest(layout / app.name) != before:
                 raise ValueError('App copy changed content, permissions or symbolic links')
             (layout / 'Applications').symlink_to('/Applications', target_is_directory=True)
-            recorder.run('create-dmg', 'hdiutil', 'create', '-volname', '方寸', '-srcfolder', layout,
+            recorder.run('create-dmg', 'hdiutil', 'create', '-volname', 'DeskDen', '-srcfolder', layout,
                          '-fs', 'APFS', '-format', 'ULFO', dmg)
             recorder.run('sign-dmg', 'codesign', '--sign', identity, '--timestamp', dmg)
             recorder.run('verify-dmg-signature', 'codesign', '--verify', '--strict', dmg)

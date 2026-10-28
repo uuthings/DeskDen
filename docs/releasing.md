@@ -1,6 +1,6 @@
 # macOS release process
 
-Version 0.1.0 (Build 2) was signed, notarized through Organizer and retained as a local delivery, without a public Release. Version 0.2.0 (Build 3) is the first public distribution. This document describes the required process; the matching Release and each candidate's retained evidence establish the actual distribution result.
+Use **DeskDen** for English product names, Release titles and new downloadable filenames; use **方寸** for the Chinese app name. Follow [public naming and release copy](branding.md) before publishing.
 
 ## Candidate and version
 

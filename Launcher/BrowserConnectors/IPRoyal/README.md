@@ -1,6 +1,6 @@
-# 方寸 IPRoyal 网页助手
+# DeskDen IPRoyal Connector
 
-此连接器将 IPRoyal **静态 ISP 订单**的总额度、已用量、余额和原始重置日期同步到本机方寸。只支持 Google Chrome。方寸控制查询周期和流量触发阈值，助手不自行轮询服务商额度。
+这是 DeskDen（方寸）的可选 Chrome 连接器，用于将 IPRoyal **静态 ISP 订单**的总额度、已用量、余额和原始重置日期同步到本机方寸。只支持 Google Chrome。方寸控制查询周期和流量触发阈值，助手不自行轮询服务商额度。
 
 ## 源码与可选连接包
 

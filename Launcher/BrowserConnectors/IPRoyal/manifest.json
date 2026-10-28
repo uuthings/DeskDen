@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "方寸 · IPRoyal 用量助手",
+  "name": "DeskDen IPRoyal Connector",
   "version": "1.0.0",
-  "description": "仅将 IPRoyal 静态 ISP 订单的流量额度同步到本机方寸。",
+  "description": "Sync IPRoyal static ISP traffic allowances to DeskDen on your Mac.",
   "minimum_chrome_version": "111",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnpmcSue0pNsi2SFeFBHfTayDQBPp9MOEuvM2r8Yp2R2RH36mfFAbN7frnyOdG5wQ3tkV06xkpoJlwfNGguKyn/yrdlFmnMQ3hg/wP42bpawhyjaMb9bdPpRRlmxDsu6n6Ste46j66HYesaU+tarBeeRoLehWiUqEPnQ2aOODEXtbFze4fEP3PztuTBmogz+4k6Cd8xw7vVfSzaXAfzSpLdhMU05gl15hlrUiJYb16JXkDjIKwIr3tmXHp86FZNevivsZJMJ+ItTaq47JhPGmYSaJSYm9nV8iYNQDpiCyOlbFaJv5TAHrryn/ywFGPRUW95uenROECfcwOBiNIk+/fQIDAQAB",
   "permissions": [
@@ -24,7 +24,7 @@
     "type": "module"
   },
   "action": {
-    "default_title": "方寸 IPRoyal 连接",
+    "default_title": "DeskDen IPRoyal Connector",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icon-16.png",

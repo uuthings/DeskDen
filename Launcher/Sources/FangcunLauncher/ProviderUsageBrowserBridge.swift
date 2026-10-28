@@ -12,7 +12,7 @@ final class ProviderUsageBrowserBridge {
         try configuration.validate()
         guard configuration.kind == .iproyal else { throw ProviderUsageFailure.invalidConfiguration }
         guard mailbox.isConnected() else {
-            throw ProviderUsageFailure.unavailable("请安装并启用 Chrome 的方寸 IPRoyal 用量助手，然后保持 Chrome 运行。")
+            throw ProviderUsageFailure.unavailable("请安装并启用 Chrome 的 DeskDen IPRoyal Connector，然后保持 Chrome 运行。")
         }
         let request = ProviderUsageBrowserRequestMessage(sourceID: configuration.id, orderID: configuration.resourceID, at: Date())
         do { try mailbox.enqueue(request) } catch { throw ProviderUsageFailure.unavailable("浏览器连接暂时繁忙或本机连接目录不可用。") }
@@ -50,7 +50,7 @@ final class ProviderUsageBrowserBridge {
     static func exportConnectionKit(to directory: URL, applicationURL: URL, bridgeDirectory: URL) throws -> URL {
         guard let templateURL else { throw ProviderUsageFailure.unavailable("当前构建未包含网页助手资源。") }
         let manager = FileManager.default
-        let target = directory.appendingPathComponent("Fangcun-IPRoyal-Connector", isDirectory: true)
+        let target = directory.appendingPathComponent("DeskDen-IPRoyal-Connector", isDirectory: true)
         guard !manager.fileExists(atPath: target.path), let bundle = Bundle(url: applicationURL), let executable = bundle.executableURL,
               manager.isExecutableFile(atPath: executable.path), directory.isFileURL, bridgeDirectory.isFileURL else {
             throw ProviderUsageFailure.unavailable("请选择新目录，并使用完整的方寸 App 导出连接包。")
@@ -70,7 +70,7 @@ final class ProviderUsageBrowserBridge {
             let wrapper = target.appendingPathComponent("native-host.command")
             let command = "#!/bin/sh\nexec " + shellQuote(executable.path) + " --provider-usage-browser-host --provider-usage-browser-directory " + shellQuote(bridgeDirectory.path) + " \"$@\"\n"
             try writeKit(Data(command.utf8), to: wrapper, permissions: 0o700)
-            let manifest: [String: Any] = ["name": ProviderUsageBrowserProtocol.hostName, "description": "Fangcun IPRoyal quota bridge",
+            let manifest: [String: Any] = ["name": ProviderUsageBrowserProtocol.hostName, "description": "DeskDen IPRoyal Connector",
                 "path": wrapper.path, "type": "stdio", "allowed_origins": [ProviderUsageBrowserProtocol.extensionOrigin]]
             try writeKit(JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys]),
                          to: target.appendingPathComponent(ProviderUsageBrowserProtocol.hostName + ".json"), permissions: 0o600)

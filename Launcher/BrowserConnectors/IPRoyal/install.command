@@ -6,9 +6,9 @@ SOURCE="$KIT_DIR/$HOST_NAME.json"
 DEST_DIR="$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts"
 RUNTIME_DIR="$HOME/Library/Application Support/Fangcun/Connectors/IPRoyal"
 if [ ! -f "$SOURCE" ] || [ ! -x "$KIT_DIR/native-host.command" ]; then
-  printf '%s\n' '连接包不完整。请从方寸重新导出连接包。'; exit 1
+  printf '%s\n' '连接包不完整。请从DeskDen重新导出连接包。'; exit 1
 fi
-printf '%s\n' '这一步会将本机启动组件安装到方寸专用的应用支持目录，并注册当前用户的 Chrome 连接。' '不会安装扩展、读取浏览器凭据或修改网站账户。' '移动连接包后在 Chrome 重选 Extension 目录；移动方寸 App 后请重新导出连接包并注册。' '输入 INSTALL 继续，其他输入退出：'
+printf '%s\n' '这一步会将本机启动组件安装到DeskDen专用的应用支持目录，并注册当前用户的 Chrome 连接。' '不会安装扩展、读取浏览器凭据或修改网站账户。' '移动连接包后在 Chrome 重选 Extension 目录；移动DeskDen App 后请重新导出连接包并注册。' '输入 INSTALL 继续，其他输入退出：'
 read -r ANSWER
 [ "$ANSWER" = INSTALL ] || exit 0
 [ ! -L "$DEST_DIR" ] && [ ! -L "$DEST_DIR/$HOST_NAME.json" ] && [ ! -L "$RUNTIME_DIR" ] && [ ! -L "$RUNTIME_DIR/native-host.command" ] || { printf '%s\n' '目标是符号链接，已停止。'; exit 1; }
