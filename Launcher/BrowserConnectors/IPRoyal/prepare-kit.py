@@ -44,7 +44,7 @@ def main():
         wrapper = output / 'native-host.command'
         wrapper.write_text('#!/bin/sh\nexec ' + shlex.quote(str(executable)) + ' --provider-usage-browser-host --provider-usage-browser-directory ' + shlex.quote(str(bridge)) + ' "$@"\n')
         wrapper.chmod(0o700)
-        host = {'name': HOST, 'description':'Fangcun IPRoyal quota bridge', 'path':str(wrapper), 'type':'stdio',
+        host = {'name': HOST, 'description':'DeskDen IPRoyal Connector', 'path':str(wrapper), 'type':'stdio',
                 'allowed_origins':['chrome-extension://' + extension_id + '/']}
         host_path = output / (HOST + '.json')
         host_path.write_text(json.dumps(host, ensure_ascii=False, indent=2) + '\n')

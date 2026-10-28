@@ -1,3 +1,4 @@
 #!/bin/sh
 set -eu
-exec python3 tools/check-public-scope.py --staged
+python3 tools/check-public-scope.py --staged
+exec python3 tools/check-public-branding.py --staged

@@ -12,6 +12,8 @@ jobs:
       - run: python3 tools/check-public-scope.py --all-refs
       - run: python3 tools/test-public-scope.py
       - run: python3 tools/test-prepare-update-feed.py
+      - run: python3 tools/check-public-branding.py
+      - run: python3 tools/test-public-branding.py
   build:
     runs-on: xcode-27
     env:

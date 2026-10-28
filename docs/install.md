@@ -1,16 +1,16 @@
-# 安装与升级
+# DeskDen 安装与升级
 
-方寸要求 **macOS 14 或更高版本**。正式下载包同时包含 Apple Silicon 与 Intel 架构；目前真实运行验证使用 Apple Silicon Mac，Intel 与较早系统尚未完成逐项实机验证。
+DeskDen（方寸）要求 **macOS 14 或更高版本**。正式下载包同时包含 Apple Silicon 与 Intel 架构；目前真实运行验证使用 Apple Silicon Mac，Intel 与较早系统尚未完成逐项实机验证。
 
 ## 首次安装
 
-1. 从 [v0.3.0 Release](https://github.com/uuthings/DeskDen/releases/tag/v0.3.0) 下载 `Fangcun-0.3.0-macos-universal.zip`。`Source code` 压缩包是源码，不是安装包。
-2. 解压后将「方寸.app」放入「应用程序」，再打开 App。发布包使用 Developer ID 签名并按 Xcode Organizer 流程公证；系统首次打开时仍可能要求确认。
+1. 从 [v0.3.0 Release](https://github.com/uuthings/DeskDen/releases/tag/v0.3.0) 下载 `DeskDen-0.3.0-macos-universal.dmg`。`Source code` 压缩包是源码，不是安装包。
+2. 打开 DMG 后将「方寸.app」拖入「应用程序」，再打开 App。发布包已签名并通过 Apple 公证；系统首次打开时仍可能要求确认。
 3. 新配置默认使用 `⌥ D` 呼出启动器，`⌥ F` 打开工作台。也可以从状态栏或顶部入口进入。关闭窗口仅收起界面，后台继续运行；彻底退出通过方寸菜单确认。
 
 日历、提醒事项与通知按功能请求权限，拒绝授权不影响本机功能。私密空间需要自设独立密码，没有预设密码或密码找回功能。可在支持 Touch ID 的 Mac 上主动开启指纹解锁，密码解锁继续可用。更多说明见 [使用指南](usage.md)。
 
-## 从本地旧版升级
+## 从旧版升级
 
 最初的 0.1.0 没有更新器，需要手动安装当前版本一次：先从方寸菜单正常退出旧 App，再替换「应用程序」中的 App。设置、快捷键和资料保存在 App 之外，替换 App 不会主动删除它们。不要同时运行同 Bundle ID 的多个副本。
 
@@ -22,10 +22,10 @@
 
 ## 校验下载
 
-从同一 Release 下载 `SHA256SUMS.txt`，在下载目录执行：
+从同一 Release 下载 `SHA256SUMS-DeskDen.txt`，在下载目录执行：
 
 ```sh
-shasum -a 256 -c SHA256SUMS.txt
+shasum -a 256 -c SHA256SUMS-DeskDen.txt
 ```
 
 校验值确认文件与清单一致，不单独证明来源。App 的系统签名与公证检查仍应保留；不要通过移除隔离标记或停用 Gatekeeper 绕过系统检查。如下载失败或签名提示异常，请通过 [Issues](https://github.com/uuthings/DeskDen/issues) 反馈。
