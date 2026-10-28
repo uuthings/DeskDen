@@ -84,6 +84,145 @@ final class VaultTests:XCTestCase {
         XCTAssertEqual(try VaultCryptography.unlock(data:newData,password:"new-test-password").contents,content)
         XCTAssertThrowsError(try VaultCryptography.unlock(data:newData,password:password))
     }
+    func testPasswordRotationReencryptsManagedHistoryAndPreservesOtherPasswords() throws {
+        let directory=try directory();defer {try? FileManager.default.removeItem(at:directory)}
+        let store=VaultFileStore(url:directory.appendingPathComponent("private.deskdenvault")),newPassword="new-test-private-password"
+        let historicalContents=contents
+        let first=try VaultCryptography.create(contents:historicalContents,password:password)
+        try store.write(first.envelope)
+        let currentContents=VaultContents(documents:[PrivateDocument(title:"Current synthetic",body:"Current synthetic body")])
+        try store.write(VaultCryptography.seal(contents:currentContents,key:first.key,salt:first.envelope.salt))
+        let retainedURL=directory.appendingPathComponent("vault-before-restore-\(UUID().uuidString).deskdenvault")
+        let independentlySalted=try VaultCryptography.create(contents:historicalContents,password:password)
+        try VaultCryptography.encoded(independentlySalted.envelope).write(to:retainedURL)
+        let foreignURL=directory.appendingPathComponent("vault-before-restore-\(UUID().uuidString).deskdenvault")
+        let foreign=try VaultCryptography.encoded(VaultCryptography.create(contents:contents,password:"different-history-password").envelope)
+        try foreign.write(to:foreignURL)
+        let exportedURL=directory.appendingPathComponent("user-export.deskdenvault"),exported=try store.read()
+        try exported.write(to:exportedURL)
+
+        let prepared=try store.preparePasswordChange(currentPassword:password,newPassword:newPassword)
+        XCTAssertEqual(try store.read(),exported,"preparation cannot change the active password")
+        XCTAssertFalse(store.isPendingPasswordChange)
+        let journalText=String(decoding:try JSONEncoder().encode(prepared),as:UTF8.self)
+        XCTAssertFalse(journalText.contains(password));XCTAssertFalse(journalText.contains(newPassword));XCTAssertFalse(journalText.contains("Current synthetic body"))
+        let result=try store.commitPasswordChange(prepared)
+        XCTAssertEqual(result.reencryptedBackupCount,2)
+        XCTAssertEqual(result.retainedOtherPasswordBackups,[foreignURL.lastPathComponent])
+        XCTAssertEqual(try VaultCryptography.unlock(data:store.read(),password:newPassword).contents,currentContents)
+        for candidate in [store.url,store.url.appendingPathExtension("previous"),retainedURL] {
+            let bytes=try Data(contentsOf:candidate)
+            XCTAssertThrowsError(try VaultCryptography.unlock(data:bytes,password:password))
+            let expected=candidate == store.url ? currentContents:historicalContents
+            XCTAssertEqual(try VaultCryptography.unlock(data:bytes,password:newPassword).contents,expected)
+            XCTAssertEqual((try FileManager.default.attributesOfItem(atPath:candidate.path)[.posixPermissions] as? NSNumber)?.intValue,0o600)
+        }
+        XCTAssertEqual(try Data(contentsOf:foreignURL),foreign)
+        XCTAssertEqual(try Data(contentsOf:exportedURL),exported)
+        XCTAssertEqual(try VaultCryptography.unlock(data:Data(contentsOf:exportedURL),password:password).contents,currentContents)
+        XCTAssertFalse(store.isPendingPasswordChange)
+        XCTAssertNil(try store.recoverPasswordChange())
+    }
+    func testPasswordRotationRejectsChangedSourceBeforeCreatingJournal() throws {
+        let directory=try directory();defer {try? FileManager.default.removeItem(at:directory)}
+        let store=VaultFileStore(url:directory.appendingPathComponent("private.deskdenvault"))
+        let created=try VaultCryptography.create(contents:contents,password:password)
+        try store.write(created.envelope)
+        let prepared=try store.preparePasswordChange(currentPassword:password,newPassword:"replacement-test-password")
+        let external=try VaultCryptography.encoded(VaultCryptography.seal(contents:VaultContents(),key:created.key,salt:created.envelope.salt))
+        try external.write(to:store.url)
+        XCTAssertThrowsError(try store.commitPasswordChange(prepared)) {XCTAssertEqual($0 as? VaultFailure,.passwordChangeSourceChanged)}
+        XCTAssertFalse(store.isPendingPasswordChange)
+        XCTAssertEqual(try store.read(),external)
+    }
+    func testInterruptedPasswordRotationRequiresForwardRecoveryBeforeOrdinaryWrites() throws {
+        let directory=try directory();defer {try? FileManager.default.removeItem(at:directory)}
+        let store=VaultFileStore(url:directory.appendingPathComponent("private.deskdenvault")),newPassword="recovered-test-password"
+        let created=try VaultCryptography.create(contents:contents,password:password)
+        try store.write(created.envelope)
+        try store.write(VaultCryptography.seal(contents:VaultContents(),key:created.key,salt:created.envelope.salt))
+        let prepared=try store.preparePasswordChange(currentPassword:password,newPassword:newPassword)
+        // Inject a process interruption after the journal and first history have
+        // reached disk, while the main vault still uses its original password.
+        let journal=try JSONEncoder().encode(prepared)
+        try journal.write(to:store.url.appendingPathExtension("password-change"))
+        let object=try XCTUnwrap(JSONSerialization.jsonObject(with:journal) as? [String:Any])
+        let targets=try XCTUnwrap(object["targets"] as? [[String:Any]])
+        let previous=try XCTUnwrap(targets.first{($0["name"] as? String) == "private.deskdenvault.previous"})
+        let replacement=try XCTUnwrap(Data(base64Encoded:try XCTUnwrap(previous["replacement"] as? String)))
+        try replacement.write(to:store.url.appendingPathExtension("previous"))
+        XCTAssertTrue(store.isPendingPasswordChange)
+        XCTAssertEqual(try VaultCryptography.unlock(data:Data(contentsOf:store.url),password:password).contents,VaultContents())
+        XCTAssertThrowsError(try store.read()) {XCTAssertEqual($0 as? VaultFailure,.passwordChangePending)}
+        XCTAssertThrowsError(try store.write(created.envelope)) {XCTAssertEqual($0 as? VaultFailure,.passwordChangePending)}
+        XCTAssertThrowsError(try store.restore(created.envelope)) {XCTAssertEqual($0 as? VaultFailure,.passwordChangePending)}
+        XCTAssertThrowsError(try store.preparePasswordChange(currentPassword:password,newPassword:newPassword)) {XCTAssertEqual($0 as? VaultFailure,.passwordChangePending)}
+        let recovered=try XCTUnwrap(store.recoverPasswordChange())
+        XCTAssertEqual(recovered.reencryptedBackupCount,1)
+        XCTAssertFalse(store.isPendingPasswordChange)
+        XCTAssertEqual(try VaultCryptography.unlock(data:store.read(),password:newPassword).contents,VaultContents())
+        XCTAssertEqual(try VaultCryptography.unlock(data:Data(contentsOf:store.url.appendingPathExtension("previous")),password:newPassword).contents,created.contents)
+        XCTAssertThrowsError(try VaultCryptography.unlock(data:store.read(),password:password))
+    }
+    func testInterruptedRotationDoesNotOverwriteExternallyChangedHistory() throws {
+        let directory=try directory();defer {try? FileManager.default.removeItem(at:directory)}
+        let store=VaultFileStore(url:directory.appendingPathComponent("private.deskdenvault"))
+        let created=try VaultCryptography.create(contents:contents,password:password)
+        try store.write(created.envelope);try store.write(created.envelope)
+        let prepared=try store.preparePasswordChange(currentPassword:password,newPassword:"replacement-test-password")
+        try JSONEncoder().encode(prepared).write(to:store.url.appendingPathExtension("password-change"))
+        let external=try VaultCryptography.encoded(VaultCryptography.create(contents:VaultContents(),password:"unrelated-password").envelope)
+        try external.write(to:store.url.appendingPathExtension("previous"))
+        let primary=try Data(contentsOf:store.url)
+        XCTAssertThrowsError(try store.recoverPasswordChange()) {XCTAssertEqual($0 as? VaultFailure,.passwordChangeSourceChanged)}
+        XCTAssertEqual(try Data(contentsOf:store.url.appendingPathExtension("previous")),external)
+        XCTAssertEqual(try Data(contentsOf:store.url),primary)
+        XCTAssertTrue(store.isPendingPasswordChange)
+    }
+    func testPasswordRotationPreservesLegacyHistoryPayloadBytes() throws {
+        let directory=try directory();defer {try? FileManager.default.removeItem(at:directory)}
+        let store=VaultFileStore(url:directory.appendingPathComponent("private.deskdenvault")),newPassword="replacement-test-password"
+        let created=try VaultCryptography.create(contents:contents,password:password)
+        try store.write(created.envelope)
+        var fields=try XCTUnwrap(JSONSerialization.jsonObject(with:JSONEncoder().encode(contents)) as? [String:Any])
+        fields["version"]=1;fields.removeValue(forKey:"categories")
+        let legacyPlaintext=try JSONSerialization.data(withJSONObject:fields)
+        let associated=Data("deskden-encrypted-vault:1:pbkdf2-sha256-310000".utf8)
+        let legacyBox=try AES.GCM.seal(legacyPlaintext,using:created.key,authenticating:associated)
+        let legacyEnvelope=VaultEnvelope(rounds:VaultCryptography.rounds,salt:created.envelope.salt,sealed:try XCTUnwrap(legacyBox.combined))
+        let historyURL=directory.appendingPathComponent("vault-before-restore-\(UUID().uuidString).deskdenvault")
+        try VaultCryptography.encoded(legacyEnvelope).write(to:historyURL)
+        try store.commitPasswordChange(store.preparePasswordChange(currentPassword:password,newPassword:newPassword))
+        let reopened=try VaultCryptography.unlock(data:Data(contentsOf:historyURL),password:newPassword)
+        XCTAssertEqual(reopened.contents.version,1)
+        let plaintext=try AES.GCM.open(AES.GCM.SealedBox(combined:reopened.envelope.sealed),using:reopened.key,authenticating:associated)
+        XCTAssertEqual(plaintext,legacyPlaintext)
+    }
+    func testPasswordRotationRejectsSamePasswordAndMalformedHistoryWithoutChanges() throws {
+        let directory=try directory();defer {try? FileManager.default.removeItem(at:directory)}
+        let store=VaultFileStore(url:directory.appendingPathComponent("private.deskdenvault"))
+        let created=try VaultCryptography.create(contents:contents,password:password)
+        try store.write(created.envelope)
+        let primary=try store.read()
+        XCTAssertThrowsError(try store.preparePasswordChange(currentPassword:password,newPassword:password)) {XCTAssertEqual($0 as? VaultFailure,.unchangedPassword)}
+        let malformed=Data("corrupt synthetic history".utf8)
+        try malformed.write(to:store.url.appendingPathExtension("previous"))
+        XCTAssertThrowsError(try store.preparePasswordChange(currentPassword:password,newPassword:"replacement-test-password"))
+        XCTAssertEqual(try store.read(),primary)
+        XCTAssertEqual(try Data(contentsOf:store.url.appendingPathExtension("previous")),malformed)
+        XCTAssertFalse(store.isPendingPasswordChange)
+    }
+    func testRecoveryRemovesOnlyPreciselyNamedAbandonedCiphertextWrites() throws {
+        let directory=try directory();defer {try? FileManager.default.removeItem(at:directory)}
+        let store=VaultFileStore(url:directory.appendingPathComponent("private.deskdenvault"))
+        let abandoned=directory.appendingPathComponent("private.deskdenvault.password-change-staging-"+UUID().uuidString)
+        let unrelated=directory.appendingPathComponent("private.deskdenvault.password-change-staging-user-file")
+        let encrypted=try VaultCryptography.encoded(VaultCryptography.create(contents:contents,password:password).envelope)
+        try encrypted.write(to:abandoned);try encrypted.write(to:unrelated)
+        XCTAssertNil(try store.recoverPasswordChange())
+        XCTAssertFalse(FileManager.default.fileExists(atPath:abandoned.path))
+        XCTAssertEqual(try Data(contentsOf:unrelated),encrypted)
+    }
     func testAtomicStoreKeepsPreviousEncryptedRevisionAndPrivatePermissions() throws {
         let directory=try directory(); defer { try? FileManager.default.removeItem(at:directory) }
         let store=VaultFileStore(url:directory.appendingPathComponent("private.deskdenvault"))

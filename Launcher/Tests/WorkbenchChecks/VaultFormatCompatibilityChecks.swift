@@ -4,9 +4,9 @@ import Foundation
 import LauncherCore
 import VaultV1Compatibility
 
-/// Reads both formats, but never claims that the retained 0.1 App can write v2.
-/// The v1 codec is an exact frozen copy of the released source, compiled as a
-/// separate module. All data, passwords and biometric storage here are synthetic.
+/// Exercises the DeskDen schema-v1 derivative identified by the check script,
+/// not the earlier brand's release bytes. The codec is a separate module;
+/// all data, passwords and biometric storage here are synthetic.
 @main struct VaultFormatCompatibilityChecks {
     @MainActor static func main() async {
         _=NSApplication.shared;NSApp.setActivationPolicy(.prohibited)
@@ -27,9 +27,9 @@ import VaultV1Compatibility
             try oldPreferences.write(to:preferencesURL)
             let biometric=FormatSyntheticBiometrics()
             let model=VaultModel(dataDirectory:directory.appendingPathComponent("current"),protectedDataAvailable:{true},biometrics:biometric)
-            check(model.idleMinutes == 1 && !model.biometricEnabled,"new reader accepts actual released schema1 preferences")
+            check(model.idleMinutes == 1 && !model.biometricEnabled,"new reader accepts schema1 fixture preferences")
             check(try Data(contentsOf:preferencesURL) == oldPreferences,"loading schema1 preferences does not migrate or rewrite the file")
-            check(await model.unlock(password:password),"new reader unlocks actual released version1 ciphertext")
+            check(await model.unlock(password:password),"new reader unlocks DeskDen schema-v1 fixture ciphertext")
             check(model.selectedDocument?.body == "Legacy synthetic body 🔐" && model.selectedDocument?.category == .work,"legacy body and category survive read-only adoption")
             model.lock(reason:"read-only compatibility check")
             check(try Data(contentsOf:oldStore.url) == oldBytes,"unlocking and locking version1 without edits preserves every encrypted byte")
@@ -39,14 +39,14 @@ import VaultV1Compatibility
             let upgraded=try LauncherCore.VaultCryptography.seal(contents:legacyDecoded.contents,key:legacyDecoded.key,salt:legacyDecoded.envelope.salt)
             let upgradedBytes=try LauncherCore.VaultCryptography.encoded(upgraded)
             check(try LauncherCore.VaultCryptography.unlock(data:upgradedBytes,password:password).contents.version == 3,"even an ordinary successful seal of old content writes payload version3")
-            check(rejects{_ = try VaultV1Compatibility.VaultCryptography.unlock(data:upgradedBytes,password:password)},"actual released decoder rejects migrated version3 before any ordinary edit can strip new fields")
+            check(rejects{_ = try VaultV1Compatibility.VaultCryptography.unlock(data:upgradedBytes,password:password)},"schema-v1 decoder rejects migrated version3 before any ordinary edit can strip new fields")
             check(await model.unlock(password:password),"legacy file can be reopened for an explicit edit")
             let blockedPrevious=oldStore.url.appendingPathExtension("previous")
             try FileManager.default.createDirectory(at:blockedPrevious,withIntermediateDirectories:true)
             model.updateBody("Synthetic pending migration")
             check(!model.flush() && model.hasPendingSave,"failed migration keeps only the encrypted pending revision for retry")
             check(try Data(contentsOf:oldStore.url) == oldBytes,"failed migration never changes the existing version1 ciphertext")
-            check(try VaultV1Compatibility.VaultCryptography.unlock(data:Data(contentsOf:oldStore.url),password:password).contents == oldContents,"actual old decoder still opens the preserved file after failed migration")
+            check(try VaultV1Compatibility.VaultCryptography.unlock(data:Data(contentsOf:oldStore.url),password:password).contents == oldContents,"schema-v1 decoder still opens the preserved file after failed migration")
             try FileManager.default.removeItem(at:blockedPrevious)
             let body="Formatted synthetic body 🔐"
             model.updateRichBody(body,formatting:[LauncherCore.VaultTextStyleRun(location:0,length:(body as NSString).length,family:.serif,size:18,bold:true)])
@@ -64,13 +64,13 @@ import VaultV1Compatibility
             check(try Data(contentsOf:oldStore.url.appendingPathExtension("previous")) == precedingRevision,"later writes preserve every byte of their immediately preceding encrypted revision")
             let current=try LauncherCore.VaultCryptography.unlock(data:newBytes,password:password)
             check(current.contents.version == 3 && current.contents.documents.first?.formatting?.first?.bold == true && current.contents.documents.first?.effectiveCategoryID == category.id,"version3 preserves rich formatting and custom category references")
-            check(rejects{_ = try VaultV1Compatibility.VaultCryptography.unlock(data:newBytes,password:password)},"actual old password unlock rejects the new rich payload")
+            check(rejects{_ = try VaultV1Compatibility.VaultCryptography.unlock(data:newBytes,password:password)},"schema-v1 password unlock rejects the new rich payload")
             check(try Data(contentsOf:oldStore.url) == newBytes,"old decoder rejection leaves new encrypted data unchanged")
             model.changeIdleMinutes(10)
             let schema2=try Data(contentsOf:preferencesURL)
             let parsed=try JSONDecoder().decode(LauncherCore.VaultProtectionPreferences.self,from:schema2).validated()
             check(parsed.schema == 2 && parsed.idleMinutes == 10,"explicit idle change writes schema2 preferences")
-            check(rejects{_ = try JSONDecoder().decode(VaultV1Compatibility.VaultProtectionPreferences.self,from:schema2).validated()},"actual old preference guard rejects schema2 instead of overwriting the new biometric flag")
+            check(rejects{_ = try JSONDecoder().decode(VaultV1Compatibility.VaultProtectionPreferences.self,from:schema2).validated()},"schema-v1 preference guard rejects schema2 instead of overwriting the new biometric flag")
             await model.refreshBiometrics()
             check(await model.enableBiometrics(),"synthetic opt-in persists the schema2 biometric flag")
             model.changeIdleMinutes(5)

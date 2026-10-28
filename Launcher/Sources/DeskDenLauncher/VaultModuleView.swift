@@ -22,7 +22,7 @@ struct VaultModuleView:View {
                     }
                 }
                 if model.hasPendingSave && !model.isUnlocked {
-                    HStack(alignment:.top,spacing:10){Image(systemName:"exclamationmark.triangle").foregroundStyle(palette.warning);Text("最新更改已加密保留，尚未写入磁盘。请重试保存后再退出。");Spacer();Button("重试保存"){model.flush()}.buttonStyle(WBButtonStyle(primary:true))}.font(.system(size:12)).padding(14).background(palette.warning.opacity(0.07),in:RoundedRectangle(cornerRadius:10)).padding(.bottom,12)
+                    HStack(alignment:.top,spacing:10){Image(systemName:"exclamationmark.triangle").foregroundStyle(palette.warning);Text(model.hasPendingPasswordChange ? "密码更改尚未完成，加密资料已保留。请重试完成，之后使用新密码解锁。":"最新更改已加密保留，尚未写入磁盘。请重试保存后再退出。");Spacer();Button(model.hasPendingPasswordChange ? "重试完成":"重试保存"){model.flush()}.buttonStyle(WBButtonStyle(primary:true))}.font(.system(size:12)).padding(14).background(palette.warning.opacity(0.07),in:RoundedRectangle(cornerRadius:10)).padding(.bottom,12)
                 }
                 if model.isUnlocked {VaultUnlockedView(model:model,panelHeight:max(480,min(720,windowHeight-183))).id(model.sessionID)}
                 else {VaultLockedView(model:model).id(model.sessionID).frame(maxWidth:.infinity).frame(minHeight:max(420,min(640,windowHeight-214))).background(WorkbenchMaterialSurface(radius:15))}
@@ -58,6 +58,7 @@ private struct VaultProtectionPage:View {
                             else {Button("开启 Touch ID"){Task{_ = await model.enableBiometrics()}}.buttonStyle(WBButtonStyle(compact:true)).disabled(!model.isUnlocked || model.busy || !model.canChangeProtectionPreferences)}
                         }
                         row("离开私密页时锁定","切换模块、收起工作台后生效"){Text("始终开启").foregroundStyle(palette.secondary)}
+                        row("剪贴板保护","复制后 3 分钟或锁定时清理"){Text("始终开启").foregroundStyle(palette.secondary)}
                         row("闲置自动锁定","没有操作时自动收起内容"){WBSelect("闲置自动锁定",selection:Binding(get:{model.idleMinutes},set:model.changeIdleMinutes),options:[1,5,10].map{($0,"\($0) 分钟")}).frame(width:174).disabled(!model.canChangeProtectionPreferences)}
                         row("睡眠或会话切换","需要重新验证身份",last:true){Text("始终开启").foregroundStyle(palette.secondary)}
                     }
@@ -442,7 +443,7 @@ private struct VaultPrivateTextEditor:NSViewRepresentable {
     }
 }
 
-private final class VaultBodyTextView:NSTextView {
+private final class VaultBodyTextView:VaultClipboardTextView {
     private let history=UndoManager()
     override var undoManager:UndoManager? {history}
     override func paste(_ sender:Any?) {pasteAsPlainText(sender)}
@@ -503,7 +504,7 @@ private struct VaultPasswordSheet:View {
                 VaultPasswordField(title:"当前密码",placeholder:"输入当前密码",text:$current)
                 VaultPasswordField(title:"新密码",placeholder:"至少 8 个字符",text:$next)
                 VaultPasswordField(title:"确认新密码",placeholder:"再次输入新密码",text:$confirmation)
-                VaultPrivacyNotice("更改后会立即锁定。以前导出的备份仍需使用创建该备份时的密码。",warning:true)
+                VaultPrivacyNotice("更改后会立即锁定。使用当前密码的本机历史副本随新密码更新；已导出备份仍需使用创建时的密码。",warning:true)
                 VaultSheetError(model:model)
             }.disabled(model.busy || !model.isUnlocked)
         } actions: {
