@@ -2,7 +2,7 @@
 
 The **用量与额度** navigation entry combines existing AI quotas and local Token activity with independent service quota sources. Each IPRoyal order and Bandwagon VPS keeps its own identity, balance, last successful observation and reset rule. The **网络监控** module remains separate and keeps its existing single local traffic budget.
 
-The overview uses separate **AI 用量** and **服务流量** groups. Cards stay 248 × 208 logical points with 14-point padding and 12-point gaps; more window space adds columns rather than stretching cards. Each group can collapse independently, and its choice is saved. Collapsing does not stop collection or querying. **本机 Token 记录** belongs to the AI group instead of adding activity charts beneath the full overview.
+The overview uses one responsive list with a minimum card width of 248 logical points, 14-point padding and 12-point gaps. Cards expand into equal-width columns and wrap when necessary. Categories, filters and sorting affect presentation only; they do not stop querying, change balances or delete records. **Token 活动** is a separate summary destination, with detailed history in each AI source.
 
 Use **配置用量** to manage the two categories. AI cards use the supported Codex and Claude source identities; hiding or restoring a card does not disconnect its collector or delete activity records. It does not create additional accounts sharing one set of readings. Service sources remain independently configurable. Card display names and icons are separate from connection metadata. Choose an included symbol or import a static PNG, JPEG or WebP image up to 2 MB; DeskDen keeps a small normalized local copy, so the original file can move. Card icons contain no authentication information.
 

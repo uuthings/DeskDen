@@ -1,6 +1,7 @@
 import AppKit
 
 if ProviderUsageBrowserHost.runIfRequested(arguments:CommandLine.arguments) {exit(0)}
+if ClaudeQuotaStatusLineHost.runIfRequested(arguments:CommandLine.arguments) {exit(0)}
 
 let application = NSApplication.shared
 @MainActor func prepareNativeCheckWindows() async {

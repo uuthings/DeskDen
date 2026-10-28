@@ -27,6 +27,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     let calendar:CalendarModel
     let ai:AIUsageModel
     let providerUsage:ProviderUsageModel
+    let apiBalance:APIBalanceModel
     let usageAppearance:UsagePresentationModel
     let providerBrowser:ProviderUsageBrowserBridge
     let usagePresentation=ProviderUsagePresentation()
@@ -79,7 +80,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     private(set) var miniContextVisible=false
     private let startServices:Bool
     private var quitPreparationTask:Task<Void,Never>?
-    init(owner:LauncherController,calendar:CalendarModel?=nil,ai:AIUsageModel?=nil,device:DeviceStatusModel?=nil,cleaning:SpaceCleaningModel?=nil,providerUsage:ProviderUsageModel?=nil,startServices:Bool=true) {
+    init(owner:LauncherController,calendar:CalendarModel?=nil,ai:AIUsageModel?=nil,device:DeviceStatusModel?=nil,cleaning:SpaceCleaningModel?=nil,providerUsage:ProviderUsageModel?=nil,apiBalance:APIBalanceModel?=nil,startServices:Bool=true) {
         self.owner=owner;self.startServices=startServices
         dataDirectory=owner.store.url.deletingLastPathComponent().appendingPathComponent("Workbench",isDirectory:true)
         preferenceStore=WorkbenchPreferenceStore(url:dataDirectory.appendingPathComponent("preferences.json"))
@@ -94,6 +95,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         let browser=ProviderUsageBrowserBridge(directory:providerDirectory.appendingPathComponent("BrowserBridge",isDirectory:true))
         providerBrowser=browser
         self.providerUsage=providerUsage ?? ProviderUsageModel(dataDirectory:providerDirectory,startServices:startServices,browserRequest:{ configuration in try await browser.request(configuration:configuration) })
+        self.apiBalance=apiBalance ?? APIBalanceModel(dataDirectory:dataDirectory.appendingPathComponent("APIBalance"),startServices:startServices)
         vault=VaultModel(dataDirectory:dataDirectory.appendingPathComponent("Vault"))
         opacity=owner.configuration.settings.glassOpacity;appearance=owner.configuration.settings.workbenchAppearance
         buttonHoverCursor=owner.configuration.settings.buttonHoverCursor
@@ -129,12 +131,12 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     }
     func openUsageOverview() {
         guard !modals.isPresented,!usagePresentation.blocksNavigation else {revealWindow?();return}
-        ai.showOverview();usagePresentation.selectedSourceID=nil;navigate(.ai)
+        ai.showOverview();usagePresentation.selectedSourceID=nil;usagePresentation.selectedAPIID=nil;navigate(.ai)
     }
     func openProviderUsage(_ id:UUID) {
         guard !modals.isPresented,!usagePresentation.blocksNavigation else {revealWindow?();return}
         navigate(.ai);guard route == .ai else {return}
-        ai.showOverview();usagePresentation.selectedSourceID=id
+        ai.showOverview();usagePresentation.selectedAPIID=nil;usagePresentation.selectedSourceID=id
     }
     func exportProviderBrowserKit(completion:@escaping(String)->Void) {
         let panel=NSOpenPanel();panel.canChooseDirectories=true;panel.canChooseFiles=false;panel.canCreateDirectories=true;panel.allowsMultipleSelection=false
@@ -174,7 +176,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         cleaning.windowVisible=windowVisible && route == .cleaning
         cleaning.reduceMotion=reduceMotion
         guard startServices else {return}
-        context.setVisible(miniContextVisible || (windowVisible && [.overview,.calendar].contains(route)))
+        context.setVisible(miniContextVisible || windowVisible)
         device.setWindowVisible(windowVisible && [.overview,.device,.cleaning,.network].contains(route))
         device.setWidgetsVisible(preferences.cards.contains(where:{$0.visible && $0.id == .device}) || (windowVisible && route == .cards))
     }
@@ -238,6 +240,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
                 try await self.device.prepareForQuit()
                 try await self.ai.prepareForQuit()
                 try await self.providerUsage.prepareForQuit()
+                try await self.apiBalance.prepareForQuit()
                 self.confirmingQuit=false
                 owner.finishConfirmedQuit()
                 // Keep both the UI and notification gate frozen until the OS
@@ -249,6 +252,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
                 self.device.resumeAfterCancelledQuit()
                 self.ai.resumeAfterCancelledQuit()
                 self.providerUsage.resumeAfterCancelledQuit()
+                self.apiBalance.resumeAfterCancelledQuit()
                 self.quitting=false;self.confirmingQuit=false
                 owner.cancelPendingSystemTermination()
                 self.message="退出前数据保存或提醒暂停未完成：\(error.localizedDescription)"
@@ -316,7 +320,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         struct Report:Codable {var format="deskden-function-audit";var date:Date;var entries:[WorkbenchAuditEntry]}
         do {let encoder=JSONEncoder();encoder.outputFormatting=[.prettyPrinted,.sortedKeys];encoder.dateEncodingStrategy = .iso8601;try encoder.encode(Report(date:Date(),entries:auditEntries)).write(to:url,options:.atomic);toast="功能审计已导出。"} catch {message="导出失败：\(error.localizedDescription)"}
     }
-    func shutdown() {modals.clear();context.stop();cleaning.cancelAll();vault.lock(reason:"退出方寸");device.stop();widgets.hideAll();owner?.settingsWindowController?.stopEmbedding()}
+    func shutdown() {apiBalance.shutdown();modals.clear();context.stop();cleaning.cancelAll();vault.lock(reason:"退出方寸");device.stop();widgets.hideAll();owner?.settingsWindowController?.stopEmbedding()}
 }
 
 @MainActor final class WorkbenchWindowController:NSWindowController,NSWindowDelegate {

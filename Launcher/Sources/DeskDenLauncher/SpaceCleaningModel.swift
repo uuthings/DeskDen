@@ -246,6 +246,18 @@ import Quartz
     func showDetail(_ id: UUID) { detailID = detailID == id ? nil : id; acknowledgement = false; if case .purpose = dialog { closeDialog() } }
     func closeDetail() { detailID = nil }
     func showHistory() { guard !isBusy else { return }; previousScreen = screen; screen = .history; reconcileHistory() }
+    var historyReturnTitle: String { "返回" + screenTitle(previousScreen == .history || requiresRescan ? .start : previousScreen) }
+    var dialogReturnTitle: String { "返回" + screenTitle(screen) }
+    private func screenTitle(_ screen: CleaningScreen) -> String {
+        switch screen {
+        case .history: "清理记录"
+        case .results: "扫描结果"
+        case .completed: "处理结果"
+        case .scanning: "正在扫描"
+        case .processing: "正在处理"
+        case .start, .scope: "空间清理"
+        }
+    }
     func returnFromHistory() { guard !isBusy else { return }; screen = previousScreen == .history || requiresRescan ? .start : previousScreen }
     func closeDialog() { dialog = nil; confirmedIDs = []; pendingHistoryIDs = []; acknowledgement = false }
     func editScope(custom: Bool = false) {

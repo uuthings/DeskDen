@@ -83,14 +83,14 @@ struct SpaceCleaningModuleView: View {
     private var header: some View {
         WBPageHeader(title: model.screen == .history ? "清理记录" : "空间清理", subtitle: subtitle) {
             if model.dialog.map({ !isPurpose($0) }) == true {
-                Button(action: model.closeDialog) { Label("返回", systemImage: "arrow.left") }
+                Button(action: model.closeDialog) { Label(model.dialogReturnTitle, systemImage: "arrow.left") }
                     .buttonStyle(WBQuietButtonStyle()).disabled(model.isBusy)
             } else if model.screen == .results {
                 Button(action: model.goHome) { Label("扫描设置", systemImage: "chevron.left") }
                     .buttonStyle(WBQuietButtonStyle()).disabled(model.isBusy)
                     .accessibilityIdentifier("space-cleaning-edit-scope")
             } else if model.screen == .history {
-                Button(action: model.returnFromHistory) { Label("返回空间清理", systemImage: "chevron.left") }
+                Button(action: model.returnFromHistory) { Label(model.historyReturnTitle, systemImage: "chevron.left") }
                     .buttonStyle(WBQuietButtonStyle()).disabled(model.isBusy)
             }
             if model.screen == .results {

@@ -128,6 +128,32 @@ final class AIUsageCoreTests: XCTestCase {
         XCTAssertNil(claude.accountPlan)
         XCTAssertEqual(claude.availableWindows.map(\.durationMinutes), [10_080])
     }
+    func testDeclaredMembershipIsMarkedAndNeverOverridesSourceOrCreatesQuota() throws {
+        let unknown = AIProviderSummary(provider: .codex, state: .unavailable, snapshot: nil, detail: "", declaredPlan: .pro)
+        XCTAssertEqual(unknown.effectiveAccountPlan, .pro)
+        XCTAssertTrue(unknown.accountPlanIsDeclared)
+        XCTAssertEqual(unknown.accountPlanDescription, "Pro（用户设置）")
+        XCTAssertNil(unknown.snapshot)
+        let weekly = try AIQuotaWindow(usedPercent: 21, durationMinutes: 10_080, resetsAt: nil)
+        let sourced = AIQuotaSnapshot(provider: .codex, observedAt: now, source: .localSession, shortWindow: nil, weeklyWindow: weekly, accountPlan: .plus)
+        let known = AIProviderSummary(provider: .codex, state: .ready, snapshot: sourced, detail: "", declaredPlan: .pro)
+        XCTAssertEqual(known.effectiveAccountPlan, .plus)
+        XCTAssertFalse(known.accountPlanIsDeclared)
+        XCTAssertFalse(known.hasNoFiveHourLimit)
+        XCTAssertNil(known.snapshot?.shortWindow)
+    }
+    func testProAbsenceDescriptionNeverHidesARealFiveHourWindow() throws {
+        let weekly = try AIQuotaWindow(usedPercent: 21, durationMinutes: 10_080, resetsAt: nil)
+        var snapshot = AIQuotaSnapshot(provider: .codex, observedAt: now, source: .localSession, shortWindow: nil, weeklyWindow: weekly, accountPlan: .pro)
+        var summary = AIProviderSummary(provider: .codex, state: .ready, snapshot: snapshot, detail: "")
+        XCTAssertTrue(summary.hasNoFiveHourLimit)
+        snapshot.shortWindow = try AIQuotaWindow(usedPercent: 6, durationMinutes: 300, resetsAt: nil)
+        summary.snapshot = snapshot
+        XCTAssertFalse(summary.hasNoFiveHourLimit)
+        XCTAssertEqual(summary.snapshot?.availableWindows.map(\.durationMinutes), [300, 10_080])
+        summary.provider = .claude; summary.snapshot?.shortWindow = nil
+        XCTAssertFalse(summary.hasNoFiveHourLimit)
+    }
     func testExistingQuotaJSONWithoutPlanRemainsCompatible() throws {
         let data = Data("{\"provider\":\"codex\",\"source\":\"localSession\",\"observedAt\":0,\"shortWindow\":{\"usedPercent\":12,\"durationMinutes\":300}}".utf8)
         let decoded = try JSONDecoder().decode(AIQuotaSnapshot.self, from: data)

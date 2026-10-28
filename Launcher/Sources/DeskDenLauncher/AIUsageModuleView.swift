@@ -149,7 +149,7 @@ struct AIUsageModuleView: View {
     }
     private var backRow: some View {
         HStack {
-            Button { goBack() } label: { Label("返回", systemImage: "chevron.left") }.buttonStyle(WBButtonStyle(compact: true)).accessibilityIdentifier("fc.ai.back")
+            Button { goBack() } label: { Label(model.backTitle(overviewTitle: overviewTitle), systemImage: "chevron.left") }.buttonStyle(WBButtonStyle(compact: true)).accessibilityIdentifier("fc.ai.back")
             Spacer()
         }.frame(height: 28).padding(.bottom, 12)
     }
@@ -478,12 +478,39 @@ struct AIUsageModuleView: View {
             WBPageHeader(title: "Token 活动记录", subtitle: "仅显示用量元数据；已断开来源的历史仍保留") { filters }
             WBCard(spacing: 0) {
                 AICardTitle(title: "最近活动", symbol: "clock.arrow.circlepath", trailing: "\(records.count) 条记录")
+                tokenSourceSummary(records).padding(.bottom, 12)
                 AITokenTable(records: records, model: model, compact: contentWidth < 800, scrollHeight: expanded ? 525 : 405)
             }
             if model.tokenHistoryCapacityLimited { AINotice(text: "历史容量最多 20,000 条，最长保留 31 天。较早记录已移出，当前列表不代表完整账户历史。", warning: true).padding(.top, 12) }
             monthlyTokenHistory.padding(.top, 12)
             privacyFootnote.padding(.top, 12)
         }
+    }
+    private func tokenSourceSummary(_ records: [AITokenRecord]) -> some View {
+        let totals = AIProvider.allCases.map { provider in
+            (provider: provider, tokens: records.filter { $0.provider == provider }.reduce(Int64(0)) { $0 + $1.tokens.total })
+        }
+        let total = totals.reduce(Int64(0)) { $0 + $1.tokens }
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                Text("合计 " + aiCount(total) + " Token").aiText(12, weight: .medium, color: palette.text).monospacedDigit()
+                Spacer(minLength: 8)
+                ForEach(totals, id: \.provider) { source in
+                    let share = total > 0 ? Double(source.tokens) / Double(total) : 0
+                    Text(source.provider.title + " " + (total > 0 ? share.formatted(.percent.precision(.fractionLength(0))) : "暂无记录"))
+                        .aiText(11, color: palette.secondary).monospacedDigit()
+                }
+            }
+            GeometryReader { geometry in
+                HStack(spacing: 0) {
+                    ForEach(totals, id: \.provider) { source in
+                        (source.provider == .codex ? palette.accent : palette.cool)
+                            .frame(width: total > 0 ? geometry.size.width * Double(source.tokens) / Double(total) : 0)
+                    }
+                    if total == 0 { palette.soft }
+                }.clipShape(Capsule())
+            }.frame(height: 5)
+        }.accessibilityElement(children: .combine).accessibilityIdentifier("fc.ai.history.source-summary")
     }
     private var monthlyTokenHistory: some View {
         let summaries = model.monthlyTokenHistory.filter { model.selectedProvider == nil || $0.provider == model.selectedProvider }
@@ -753,11 +780,11 @@ private struct AIProviderQuotaCard: View {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
                         Text(summary.title).aiText(14, weight: .medium, color: palette.text)
-                        if let plan = summary.snapshot?.accountPlan {
+                        if let plan = summary.effectiveAccountPlan {
                             Text(plan.title).aiText(10, weight: .medium, color: palette.secondary)
                                 .padding(.horizontal, 6).frame(height: 18)
                                 .background(palette.soft, in: RoundedRectangle(cornerRadius: 5))
-                                .help("来源报告的会员方案；未提供的倍率不作推算")
+                                .help(summary.accountPlanDescription)
                                 .accessibilityIdentifier("fc.ai.plan." + summary.provider.rawValue)
                         }
                     }.frame(height: 20, alignment: .leading)
@@ -787,7 +814,7 @@ private struct AIProviderQuotaCard: View {
             }.font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1).frame(height: 16)
                 .aiQuotaMeasuredRegion("fc.ai.quota.footer." + summary.provider.rawValue)
                 .accessibilityElement(children: .contain).accessibilityIdentifier("fc.ai.quota.footer." + summary.provider.rawValue)
-            Text(summary.state == .ready ? (summary.snapshot?.accountPlan == nil ? "会员档位未提供 · 不从额度推算" : "会员倍率未提供 · 不从额度推算") : summary.detail)
+            Text(summary.state == .ready ? summary.accountPlanDescription : summary.detail)
                 .aiText(11, color: summary.state == .error ? palette.warning : palette.muted)
                 .lineLimit(1).truncationMode(.tail).help(summary.state == .ready ? summary.accountPlanDescription : summary.detail)
                 .frame(height: 16).padding(.top, 6)
@@ -805,19 +832,16 @@ private struct AIProviderQuotaCard: View {
                 .accessibilityIdentifier("fc.ai.quota.empty." + summary.provider.rawValue)
         } else {
             VStack(alignment: .leading, spacing: rowGap) {
-                ForEach(Array((summary.snapshot?.comparisonRows ?? []).enumerated()), id: \.offset) { index, window in
-                    let identifier = "fc.ai.quota." + summary.provider.rawValue + "." + String(index)
-                    if let window {
-                        AIQuotaRow(window: window, identifier: identifier)
-                    } else {
-                        VStack(alignment: .leading, spacing: 7) {
-                            Label("其他周期未提供", systemImage: "info.circle").font(.system(size: 12))
-                            Text("仅显示来源提供的实际额度，不估算缺失窗口。")
-                                .font(.system(size: 11)).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
-                        }.foregroundStyle(palette.muted).frame(maxWidth: .infinity, alignment: .leading).frame(height: 64, alignment: .top)
-                            .aiQuotaMeasuredRegion(identifier + ".unavailable")
-                            .accessibilityIdentifier(identifier + ".unavailable")
-                    }
+                ForEach(Array(windows.enumerated()), id: \.offset) { index, window in
+                    let slot = window.durationMinutes == 10_080 ? 1 : index
+                    AIQuotaRow(window: window, identifier: "fc.ai.quota." + summary.provider.rawValue + "." + String(slot))
+                }
+                if windows.count == 1 {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Label(summary.hasNoFiveHourLimit ? "Pro 不设 5 小时限制" : "按来源提供的窗口展示", systemImage: summary.hasNoFiveHourLimit ? "checkmark.shield" : "info.circle").font(.system(size: 12))
+                        Text(summary.hasNoFiveHourLimit ? "每周额度仍以实际读数为准。" : "其他周期暂未提供；缺失值不代表已用 0%。")
+                            .font(.system(size: 11)).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
+                    }.foregroundStyle(palette.muted).frame(maxWidth: .infinity, alignment: .leading).frame(height: 64, alignment: .top)
                 }
             }
         }
@@ -1128,14 +1152,18 @@ private struct AIUsageDialogContent: View {
     private var claudeDialog: some View {
         AIDialogShell(title: "连接 Claude 额度", close: model.requestDismissDialog) {
             VStack(alignment: .leading, spacing: 0) {
-                Text("Claude 本机会话只包含 Token。额度需要独立来源。").aiText(12, color: palette.secondary).padding(.bottom, 4)
+                Text("Token 记录与账户额度分别连接。启用同步后，Claude Code 会在请求完成时更新真实额度。").aiText(12, color: palette.secondary).padding(.bottom, 4)
+                AISourceRow(title: "自动同步额度", detail: "接入 Claude 官方状态栏，保留已有的状态栏配置") {
+                    Button("启用额度同步") { model.enableClaudeQuotaSync() }.buttonStyle(WBButtonStyle(primary: true, compact: true)).accessibilityIdentifier("fc.ai.claude.enableSync")
+                }
                 AISourceRow(title: "选择额度 JSON", detail: "读取官方状态栏适配器生成或你已有的额度文件") {
                     Button("选择文件") { model.chooseQuotaFile(for: .claude) }.buttonStyle(WBButtonStyle(compact: true)).accessibilityIdentifier("fc.ai.claude.json")
                 }
                 AISourceRow(title: "导出状态栏适配器", detail: "只导出脚本，不会替换你现有的 Claude 配置", last: true) {
                     Button("导出") { model.exportClaudeAdapter() }.buttonStyle(WBButtonStyle(compact: true)).accessibilityIdentifier("fc.ai.claude.adapter")
                 }
-                AINotice(text: "适配器只接收官方状态栏提供的额度字段。配置后需由 Claude 产生真实读数；缺失时显示不可用。").padding(.top, 16)
+                AINotice(text: "仅保存额度比例与重置时间。重新打开 Claude Code 并完成一次请求后生效；官方未提供的周期保持不可用。").padding(.top, 16)
+                if let message = model.claudeQuotaSyncMessage { AINotice(text: message).padding(.top, 12) }
                 if model.configuration(for: .claude).quotaPath != nil {
                     HStack { Text("已配置额度文件").aiText(11, color: palette.muted); Spacer(); Button("移除连接") { model.removeQuotaFile(for: .claude) }.buttonStyle(WBQuietButtonStyle()) }.padding(.top, 12)
                 }

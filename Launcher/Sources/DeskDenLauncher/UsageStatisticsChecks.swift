@@ -56,14 +56,22 @@ import LauncherCore
             document.states[missing.id] = failedFirstRead
             try ProviderUsageStore(url: providerFolder.appendingPathComponent("provider-usage.json")).save(document)
             let provider = ProviderUsageModel(dataDirectory: providerFolder, startServices: false)
+            let apiFolder = folder.appendingPathComponent("APIBalance")
+            let apiSource = APIBalanceConfiguration(name: "DeepSeek 示例连接", createdAt: now)
+            var apiDocument = APIBalanceDocument(); apiDocument.sources = [apiSource]
+            apiDocument.states[apiSource.id] = .init(snapshot: .init(sourceID: apiSource.id, observedAt: now, isAvailable: true,
+                balances: [.init(currency: "CNY", totalBalance: "23.75", grantedBalance: "3.75", toppedUpBalance: "20.00")]))
+            try APIBalanceStore(url: apiFolder.appendingPathComponent("api-balances.json")).save(apiDocument)
+            let api = APIBalanceModel(dataDirectory: apiFolder, startServices: false)
             let calendar = CalendarModel(dataDirectory: folder.appendingPathComponent("Calendar"), system: UsageCheckCalendar(), notifier: UsageCheckNotifications())
-            let app = WorkbenchAppModel(owner: owner, calendar: calendar, ai: ai, providerUsage: provider, startServices: false)
+            let app = WorkbenchAppModel(owner: owner, calendar: calendar, ai: ai, providerUsage: provider, apiBalance: api, startServices: false)
             app.route = .ai
             let window = NSWindow(contentRect: .init(x: 100, y: 100, width: 1120, height: 758), styleMask: [.borderless], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false; window.ignoresMouseEvents = true
             let host = NSHostingView(rootView: WorkbenchRootView(model: app).environment(\.accessibilityEnabled, true))
             window.contentView = host; app.hostWindow = window; app.modals.hostWindow = window
             defer { app.modals.clear(); window.contentView = nil; window.close(); app.shutdown() }
+            var observedCardWidths = Set<Int>()
             for light in [false, true] {
                 app.changeAppearance(light ? .light : .dark)
                 for width in [960, 1120, 1728] {
@@ -73,77 +81,141 @@ import LauncherCore
                     let objects = objects(host)
                     let cardFrames = [isp, vps, missing].compactMap { frame("fc.usage.source." + $0.id.uuidString, objects: objects) }
                     let screen = window.convertToScreen(host.bounds)
-                    check(cardFrames.count == 3 && cardFrames.allSatisfy { abs($0.width - 248) < 1 && abs($0.height - 208) < 1 && $0.minX >= screen.minX && $0.maxX <= screen.maxX + 1 },
-                          "usage \(width)/\(light): every service card preserves the approved 248 by 208 size inside the shared page")
                     let aiFrames = AIProvider.allCases.compactMap { frame("fc.ai.provider." + $0.rawValue, objects: objects) }
-                    check(aiFrames.count == 2 && aiFrames.allSatisfy { abs($0.width - 248) < 1 && abs($0.height - 208) < 1 },
-                          "usage \(width)/\(light): AI cards use the same fixed size as service cards")
-                    if cardFrames.count == 3 {
-                        check(abs(cardFrames[1].minX - cardFrames[0].minX - 260) < 1
-                              && (width != 960 || abs(cardFrames[2].minX - cardFrames[0].minX) < 1),
-                              "usage \(width)/\(light): cards retain 12-point gaps and wrap from the left")
+                    let apiFrames = [frame("fc.usage.api." + apiSource.id.uuidString, objects: objects)].compactMap { $0 }
+                    let sourceFrames = cardFrames + aiFrames + apiFrames
+                    if let first = sourceFrames.first { observedCardWidths.insert(Int(first.width.rounded())) }
+                    check(cardFrames.count == 3 && aiFrames.count == 2 && apiFrames.count == 1 && sourceFrames.allSatisfy {
+                        $0.width >= 247 && abs($0.height - 236) < 1 && abs($0.width - (sourceFrames.first?.width ?? 0)) < 1
+                            && $0.minX >= screen.minX && $0.maxX <= screen.maxX + 1
+                    }, "usage \(width)/\(light): subscription, traffic and currency cards share adaptive equal widths and a 236-point tagged row")
+                    let rows = sourceFrames.reduce(into: [Int: [CGRect]]()) { $0[Int($1.maxY.rounded()), default: []].append($1) }.values
+                    let rowsAlign = rows.allSatisfy { row in
+                        let ordered = row.sorted { $0.minX < $1.minX }
+                        return zip(ordered, ordered.dropFirst()).allSatisfy { pair in abs(pair.1.minX - pair.0.maxX - 12) < 1 }
+                            && abs((ordered.first?.minX ?? 0) - (sourceFrames.map(\.minX).min() ?? 0)) < 1
                     }
-                    check(provider.refreshing.isEmpty && !app.device.isSampling, "usage fixture performs no live collection")
+                    check(rows.count > 1 && rowsAlign, "usage \(width)/\(light): a unified grid wraps at its minimum width with 12-point gaps and aligned row starts")
+                    check(frame("fc.usage.filter", objects: objects) != nil && frame("fc.usage.sort", objects: objects) != nil
+                          && frame("fc.usage.group.service", objects: objects) == nil && frame("fc.usage.group.ai", objects: objects) == nil,
+                          "usage \(width)/\(light): category filtering and sorting replace collapsible group headers")
+                    let apiText = text("fc.usage.api." + apiSource.id.uuidString, objects: objects)
+                    check(apiText.contains("CNY") && apiText.contains("23.75") && !apiText.contains("GB") && !apiText.contains("%"),
+                          "usage \(width)/\(light): the API card exposes its exact currency amount without traffic units or quota percentages")
+                    check(provider.refreshing.isEmpty && api.refreshing.isEmpty && !app.device.isSampling, "usage fixture performs no live collection")
                     if let output { check(save(host, to: output.appendingPathComponent("usage-\(width)-\(light ? "light" : "dark").png")), "usage surface renders offscreen") }
                 }
             }
+            check(observedCardWidths.count > 1, "usage cards expand proportionally as the viewport changes instead of retaining a fixed width")
             for aiProvider in AIProvider.allCases {
                 _ = app.usageAppearance.setVisible(false, for: UsagePresentationSourceID.ai(aiProvider))
             }
             for source in provider.sources {
                 _ = app.usageAppearance.setVisible(false, for: UsagePresentationSourceID.service(source.id))
             }
+            _ = app.usageAppearance.setVisible(false, for: UsagePresentationSourceID.api(apiSource.id))
             for light in [false, true] {
                 app.changeAppearance(light ? .light : .dark)
                 for width in [960, 1120, 1350, 1728] {
                     window.setContentSize(.init(width: width, height: width >= 1350 ? 993 : 758)); await settle(host)
-                    let emptyFrames = ["ai", "service"].compactMap { frame("fc.usage.empty." + $0, objects: objects(host)) }
+                    let emptyFrame = frame("fc.usage.empty", objects: objects(host))
                     let bounds = window.convertToScreen(host.bounds)
-                    check(emptyFrames.count == 2 && emptyFrames.allSatisfy {
-                        abs($0.width - 248) < 1 && abs($0.height - 208) < 1
-                            && $0.minX >= bounds.minX && $0.maxX <= bounds.maxX
-                    }, "empty usage \(width)/\(light): both groups occupy a single source-card slot instead of a full-width banner")
-                    check(emptyFrames.count == 2 && abs(emptyFrames[0].minX - emptyFrames[1].minX) < 1,
-                          "empty usage \(width)/\(light): source placeholders retain the shared left edge")
+                    check(emptyFrame.map { $0.width >= 248 && $0.height >= 208 && $0.minX >= bounds.minX && $0.maxX <= bounds.maxX } ?? false,
+                          "empty usage \(width)/\(light): one unified configuration placeholder remains within the shared page")
                     if let output { check(save(host, to: output.appendingPathComponent("usage-empty-\(width)-\(light ? "light" : "dark").png")), "empty usage surface renders offscreen") }
                 }
             }
-            for group in [UsageCardGroup.ai, .service] {
-                check(press("fc.usage.empty." + group.rawValue, in: host), "empty \(group.rawValue) card exposes a whole-card configuration action")
-                await settle(host)
-                check(app.usagePresentation.showingConfiguration && app.usagePresentation.configurationGroup == group,
-                      "empty \(group.rawValue) card opens its corresponding configuration category")
-                app.usagePresentation.showingConfiguration = false; await settle(host)
-            }
-            check(provider.sources.count == 3 && provider.state(for: isp.id).snapshot == document.states[isp.id]?.snapshot,
-                  "empty-state configuration preserves connected sources and their last real observations")
+            check(press("fc.usage.empty", in: host), "the unified empty card exposes a whole-card configuration action")
+            await settle(host)
+            check(app.usagePresentation.showingConfiguration, "the empty card opens connection configuration")
+            app.usagePresentation.showingConfiguration = false; await settle(host)
+            check(provider.sources.count == 3 && provider.state(for: isp.id).snapshot == document.states[isp.id]?.snapshot
+                  && api.sources == [apiSource] && api.state(for: apiSource.id).snapshot == apiDocument.states[apiSource.id]?.snapshot,
+                  "hiding cards and configuring an empty list preserves service and currency sources with their cached observations")
             for aiProvider in AIProvider.allCases {
                 _ = app.usageAppearance.setVisible(true, for: UsagePresentationSourceID.ai(aiProvider))
             }
             for source in provider.sources {
                 _ = app.usageAppearance.setVisible(true, for: UsagePresentationSourceID.service(source.id))
             }
+            _ = app.usageAppearance.setVisible(true, for: UsagePresentationSourceID.api(apiSource.id))
             await settle(host)
             check(WorkbenchRoute.ai.title == "用量与额度", "saved AI route keeps its identity with the clearer navigation title")
-            check(frame("fc.usage.tokens", objects: objects(host)) != nil, "local Token records have an entrance within the AI category")
-            check(press("fc.usage.group.service", in: host), "service group exposes a native collapse action")
+            check(frame("fc.usage.tokens", objects: objects(host)) != nil, "local Token records retain an independent summary entrance above the unified list")
+            _ = app.usageAppearance.setOrdering(.name, ascending: true); await settle(host)
+            check(comesBefore("fc.ai.provider.claude", "fc.ai.provider.codex", in: host), "ascending name sorting reorders actual cards in the unified grid")
+            check(press("fc.usage.sort-direction", in: host), "sort direction exposes a native action")
             await settle(host)
-            let restoredAppearance = UsagePresentationModel(dataDirectory: app.dataDirectory.appendingPathComponent("UsagePresentation"))
-            check(app.usageAppearance.isCollapsed(.service) && restoredAppearance.isCollapsed(.service)
-                  && frame("fc.usage.source." + isp.id.uuidString, objects: objects(host)) == nil,
-                  "collapse removes the service tiles and persists independently of their source records")
-            check(provider.sources.count == 3 && provider.state(for: isp.id).snapshot != nil, "collapsing preserves service sources and cached observations")
-            _ = press("fc.usage.group.service", in: host); await settle(host)
+            check(!app.usageAppearance.preferences.ascending && comesBefore("fc.ai.provider.codex", "fc.ai.provider.claude", in: host),
+                  "descending name sorting reverses the visible provider order")
+            _ = app.usageAppearance.setOrdering(.added, ascending: true); await settle(host)
             check(press("fc.usage.configure", in: host), "overview opens unified usage configuration")
             await settle(host)
             check(app.modals.isPresented && frame("fc.usage.configuration", objects: objects(host)) != nil, "usage configuration is mounted in the shared modal host")
-            check(press("fc.usage.config.service", in: host), "configuration exposes a service category")
-            await settle(host)
-            check(app.usagePresentation.configurationGroup == .service, "service configuration changes category without navigating the overview")
-            check(nativeViews(host).compactMap { $0 as? NSScrollView }.contains { abs($0.bounds.width - 564) < 1 && $0.bounds.height >= 120 && $0.bounds.height <= 300 },
-                  "configuration keeps its independent source list readable inside the adaptive dialog body")
+            check(frame("fc.usage.config.kind", objects: objects(host)) != nil
+                  && frame("fc.usage.config.service", objects: objects(host)) == nil && frame("fc.usage.config.ai", objects: objects(host)) == nil,
+                  "configuration uses a shared connection-type selector without the former category tabs")
+            for kind in UsageConnectionKind.allCases {
+                app.usagePresentation.configurationKind = kind; await settle(host)
+                let action = kind == .subscription ? "ai" : kind == .traffic ? "service" : "api"
+                check(frame("fc.usage.config.add-" + action, objects: objects(host)) != nil,
+                      "configuration \(kind.rawValue): changing connection type mounts its matching source action")
+            }
             if let output { check(save(host, to: output.appendingPathComponent("usage-configuration.png")), "configuration renders offscreen") }
-            app.usagePresentation.showingConfiguration = false; await settle(host)
+            check(press("fc.usage.config.categories", in: host), "configuration opens category management")
+            await settle(host)
+            let customCategory = UsageCardCategory(id: "fixture-category", title: "测试分类")
+            check(app.usagePresentation.categoryEditor != nil && frame("fc.usage.category.editor", objects: objects(host)) != nil,
+                  "custom categories use the shared modal editor")
+            app.usagePresentation.categoryEditor?.categories.append(customCategory)
+            check(press("fc.usage.category.save", in: host), "category management exposes an explicit save action")
+            await settle(host)
+            var apiAppearance = app.usageAppearance.appearance(for: UsagePresentationSourceID.api(apiSource.id))
+            apiAppearance.categoryID = customCategory.id
+            check(app.usageAppearance.saveAppearance(apiAppearance, for: UsagePresentationSourceID.api(apiSource.id))
+                  && app.usageAppearance.setCategoryFilter(customCategory.id), "a real API connection can receive and filter by a custom category")
+            await settle(host)
+            check(frame("fc.usage.api." + apiSource.id.uuidString, objects: objects(host)) != nil
+                  && frame("fc.ai.provider.codex", objects: objects(host)) == nil && frame("fc.usage.source." + isp.id.uuidString, objects: objects(host)) == nil,
+                  "category filtering displays matching cards without deleting other source records")
+            let restoredAppearance = UsagePresentationModel(dataDirectory: app.dataDirectory.appendingPathComponent("UsagePresentation"))
+            check(restoredAppearance.preferences.filterCategoryID == customCategory.id
+                  && restoredAppearance.appearance(for: UsagePresentationSourceID.api(apiSource.id)).categoryID == customCategory.id,
+                  "custom categories and filtering survive presentation-model recreation")
+            _ = app.usageAppearance.setVisible(false, for: UsagePresentationSourceID.api(apiSource.id)); await settle(host)
+            check(frame("fc.usage.empty", objects: objects(host)) != nil && api.sources == [apiSource]
+                  && api.state(for: apiSource.id).snapshot == apiDocument.states[apiSource.id]?.snapshot,
+                  "hiding the last filtered card preserves its currency source and cached balance")
+            check(press("fc.usage.empty", in: host), "an empty category can return to all categories")
+            await settle(host)
+            check(app.usageAppearance.preferences.filterCategoryID == nil && !app.usagePresentation.showingConfiguration,
+                  "the filtered empty action clears only its category filter")
+            _ = app.usageAppearance.setVisible(true, for: UsagePresentationSourceID.api(apiSource.id)); await settle(host)
+            check(press("fc.usage.api." + apiSource.id.uuidString, in: host), "the entire API balance card exposes its detail action")
+            await settle(host)
+            let apiDetailText = labels(objects(host))
+            check(app.usagePresentation.selectedAPIID == apiSource.id && app.usagePresentation.selectedSourceID == nil
+                  && frame("fc.usage.api.detail", objects: objects(host)) != nil
+                  && apiDetailText.contains("赠送余额") && apiDetailText.contains("3.75 CNY") && apiDetailText.contains("20.00 CNY"),
+                  "API detail keeps total, granted and topped-up currency amounts distinct from service traffic")
+            if let output { check(save(host, to: output.appendingPathComponent("usage-api-detail.png")), "API balance detail renders offscreen") }
+            check(pressLabel("编辑连接", in: host), "API detail opens its own connection editor")
+            await settle(host)
+            let apiDraft = app.usagePresentation.apiEditor
+            check(apiDraft?.original == apiSource && frame("fc.usage.api.editor", objects: objects(host)) != nil,
+                  "API editing retains the selected source and mounts the shared protected editor")
+            apiDraft?.name = "未保存的余额名称"; apiDraft?.secret = "synthetic-api-draft"
+            app.openUsageOverview()
+            check(app.usagePresentation.selectedAPIID == apiSource.id && app.usagePresentation.apiEditor === apiDraft,
+                  "overview navigation preserves an unsaved API connection draft")
+            app.usagePresentation.requestCloseAPIEditor(); await settle(host)
+            check(app.usagePresentation.discardEditor, "changed API fields require explicit discard")
+            app.usagePresentation.discard(); await settle(host)
+            check(apiDraft?.secret.isEmpty == true && api.sources == [apiSource], "discard clears the transient API key without altering stored currency metadata")
+            check(pressLabel("返回用量与额度", in: host), "API detail names and exposes its real parent return action")
+            await settle(host)
+            check(app.usagePresentation.selectedAPIID == nil && frame("fc.usage.api." + apiSource.id.uuidString, objects: objects(host)) != nil,
+                  "API detail returns to the unified source overview")
             app.usagePresentation.editAI(.codex, appearance: .init())
             let aiDraft = app.usagePresentation.aiEditor!
             aiDraft.name = "未保存的 AI 名称"
@@ -247,8 +319,11 @@ import LauncherCore
                     app.settingsTab = .general; app.navigate(.settings); await settle(host)
                     let settingsObjects = objects(host)
                     check(text("updates-current-version", objects: settingsObjects).contains("方寸 " + installedVersion)
-                          && text("window-brand", objects: settingsObjects).contains(installedVersion),
+                          && text("window-brand", objects: settingsObjects).contains(installedVersion)
+                          && !text("window-brand", objects: settingsObjects).contains("·"),
                           "version display \(width)/\(light): mounted brand and software update card share the lowercase v prefix")
+                    check(frame("top-context-display", objects: settingsObjects) != nil,
+                          "global context \(width)/\(light): date, time and weather remain in the settings top bar")
                     check(!window.isVisible && !window.isKeyWindow && !owner.updates.canCheck && !app.device.isSampling && provider.refreshing.isEmpty,
                           "version display \(width)/\(light): settings stay hidden with collection and the real updater disabled")
                     if let output { check(save(host, to: output.appendingPathComponent("update-settings-\(width)-\(light ? "light" : "dark").png")), "software update settings render offscreen") }
@@ -261,30 +336,46 @@ import LauncherCore
                     let snapshot = app.device.snapshot
                     let batteryText = snapshot.battery.map { String(format: "%.0f%%", $0.percent) } ?? "电源读数不可用"
                     let fansAreExposed = snapshot.fanRPM?.isEmpty == true ? thermalText.contains("无风扇") : thermalText.contains("风扇") && thermalText.contains("RPM")
-                    check(thermalCard.flatMap { card in frame("home-device-stack", objects: homeObjects).map { $0.insetBy(dx: -1, dy: -1).contains(card) } } == true
-                          && thermalText.contains("CPU 温度") && thermalText.contains("GPU 温度") && thermalText.contains("°C") && fansAreExposed
-                          && frame("home-storage-readout", objects: homeObjects) == nil && frame("home-memory-readout", objects: homeObjects) == nil,
-                          "home readings \(width)/\(light): the whole thermal button fits its column and exposes its actual temperature and fan readings without duplicate storage")
-                    check(frame("home-memory-progress", objects: homeObjects) != nil && frame("home-memory-usage", objects: homeObjects) != nil
-                          && thermalText.contains(batteryText)
+                    check(thermalCard != nil && thermalText.contains("CPU 温度") && thermalText.contains("GPU 温度") && thermalText.contains("°C") && fansAreExposed,
+                          "home readings \(width)/\(light): the whole thermal button exposes actual temperature and fan readings")
+                    check(frame("home-storage-usage", objects: homeObjects) != nil && frame("home-storage-progress", objects: homeObjects) != nil
+                          && frame("home-memory-progress", objects: homeObjects) != nil && frame("home-memory-usage", objects: homeObjects) != nil
+                          && text("home-storage-progress", objects: homeObjects).contains(snapshot.disk.map { String(format: "%.0f%%", $0.percent) } ?? "读数不可用")
+                          && text("home-memory-progress", objects: homeObjects).contains(snapshot.memory.map { String(format: "%.0f%%", $0.percent) } ?? "读数不可用"),
+                          "home readings \(width)/\(light): disk capacity and runtime memory both retain independent labeled progress readings")
+                    check(thermalText.contains(batteryText)
                           && networkText.contains("下载") && networkText.contains("上传")
                           && networkText.contains(DeviceFormat.rate(snapshot.network.downloadBytesPerSecond))
                           && networkText.contains(DeviceFormat.rate(snapshot.network.uploadBytesPerSecond))
-                          && thermalCard.flatMap { thermal in networkCard.map { network in network.maxY <= thermal.minY - 10 } } == true,
-                          "home readings \(width)/\(light): runtime memory progress remains visible and the actual battery and live network readings remain accessible in separate cards")
+                          && thermalCard.flatMap { thermal in networkCard.map { network in network.minX >= thermal.maxX + 10 && abs(network.maxY - thermal.maxY) < 1 } } == true,
+                          "home readings \(width)/\(light): actual battery and live network readings occupy compact cards beside one another")
+                    let viewport = window.convertToScreen(host.bounds)
+                    let agendaFrames = ["fc.home.agenda.events", "fc.home.agenda.reminders"].compactMap { frame($0, objects: homeObjects) }
+                    check(agendaFrames.count == 2 && agendaFrames.allSatisfy { $0.intersection(viewport).height >= 60 },
+                          "home layout \(width)/\(light): both schedules and reminders are visible inside the initial viewport")
+                    check(frame("top-context-display", objects: homeObjects) != nil,
+                          "global context \(width)/\(light): Home uses the shared top-bar date, time and weather")
                     print("DETAIL home card labels \(width)/\(light) thermal=\(String(reflecting: thermalText)) network=\(String(reflecting: networkText))")
                     check(press("home-device-detail", in: host), "home thermal card exposes a whole-card action")
                     await settle(host)
-                    check(app.route == .device && app.deviceDetail == .thermal, "the complete thermal card opens its matching detail")
+                    check(app.route == .device && app.deviceDetail == .thermal && frame("top-context-display", objects: objects(host)) != nil,
+                          "the complete thermal card opens its matching detail while retaining global date and weather")
                     app.closeRequestedDeviceDetail(); app.navigate(.overview); await settle(host)
                     check(press("home-network-detail", in: host), "home realtime network card exposes a whole-card action")
                     await settle(host)
-                    check(app.route == .network, "the complete network card opens network monitoring")
+                    check(app.route == .network && frame("top-context-display", objects: objects(host)) != nil,
+                          "the complete network card opens network monitoring while retaining global date and weather")
                     app.navigate(.overview); await settle(host)
                     check(!window.isVisible && !window.isKeyWindow && !app.device.isSampling && provider.refreshing.isEmpty,
                           "home readings \(width)/\(light): mounting Home never activates a window or starts live collection")
                     if let output { check(save(host, to: output.appendingPathComponent("home-device-\(width)-\(light ? "light" : "dark").png")), "home device readings render offscreen") }
                 }
+            }
+            window.setContentSize(.init(width: 1120, height: 758))
+            for route in WorkbenchRoute.allCases {
+                app.navigate(route); await settle(host)
+                check(frame("top-context-display", objects: objects(host)) != nil,
+                      "global context remains available on \(route.rawValue) without starting a weather request")
             }
             app.openUsageOverview(); await settle(host)
             if Bundle.main.bundleURL.pathExtension == "app" {
@@ -341,7 +432,7 @@ import LauncherCore
                 } catch { check(true, "connection export never overwrites an existing kit") }
                 check(try Data(contentsOf: kit.appendingPathComponent("README.md")) == before, "refused export preserves the existing kit")
             }
-            try await provider.prepareForQuit(); try await ai.prepareForQuit()
+            try await provider.prepareForQuit(); try await ai.prepareForQuit(); try await api.prepareForQuit()
         } catch { check(false, "isolated usage fixture: \(error.localizedDescription)") }
         print("Usage UI checks: \(count) checks, \(failures) failures")
         return (count, failures)
@@ -373,6 +464,19 @@ import LauncherCore
             }
         }.joined(separator: " ")
     }
+    private static func labels(_ objects: [NSObject]) -> String {
+        objects.flatMap { object in
+            ["accessibilityLabel", "accessibilityValue"].compactMap { selector -> String? in
+                guard object.responds(to: NSSelectorFromString(selector)) else { return nil }
+                return object.value(forKey: selector) as? String
+            }
+        }.joined(separator: " ")
+    }
+    private static func comesBefore(_ first: String, _ second: String, in host: NSView) -> Bool {
+        let controls = objects(host)
+        guard let a = frame(first, objects: controls), let b = frame(second, objects: controls) else { return false }
+        return abs(a.maxY - b.maxY) < 1 ? a.minX < b.minX : a.maxY > b.maxY
+    }
     private static func frame(_ id: String, objects: [NSObject]) -> CGRect? {
         objects.filter { identifier($0) == id }.compactMap { object -> CGRect? in
             guard object.responds(to: NSSelectorFromString("accessibilityFrame")), let rect = (object.value(forKey: "accessibilityFrame") as? NSValue)?.rectValue, rect.width > 0 else { return nil }; return rect
@@ -381,6 +485,15 @@ import LauncherCore
     private static func press(_ id: String, in host: NSView) -> Bool {
         let selector = NSSelectorFromString("accessibilityPerformPress")
         guard let object = objects(host).first(where: { identifier($0) == id && $0.responds(to: selector) }) else { return false }
+        typealias Press = @convention(c) (AnyObject, Selector) -> Bool
+        return unsafeBitCast(object.method(for: selector), to: Press.self)(object, selector)
+    }
+    private static func pressLabel(_ label: String, in host: NSView) -> Bool {
+        let selector = NSSelectorFromString("accessibilityPerformPress")
+        guard let object = objects(host).first(where: { object in
+            object.responds(to: selector) && object.responds(to: NSSelectorFromString("accessibilityLabel"))
+                && object.value(forKey: "accessibilityLabel") as? String == label
+        }) else { return false }
         typealias Press = @convention(c) (AnyObject, Selector) -> Bool
         return unsafeBitCast(object.method(for: selector), to: Press.self)(object, selector)
     }

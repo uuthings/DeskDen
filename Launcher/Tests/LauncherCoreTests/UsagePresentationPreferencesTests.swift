@@ -78,6 +78,104 @@ final class UsagePresentationPreferencesTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: original), originalData)
     }
 
+    func testLegacyStoreLoadsDisplayChoicesWithoutRewritingOrCreatingBackup() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = UsagePresentationStore(url: directory.appendingPathComponent("legacy.json"))
+        let original = Data("""
+        { "schemaVersion": 1, "aiCollapsed": true, "serviceCollapsed": false,
+          "cards": { "ai.codex": { "displayName": "Legacy research", "visible": false } } }
+        """.utf8)
+        try original.write(to: store.url)
+        let restored = try store.load()
+        XCTAssertEqual(restored.schemaVersion, 1)
+        XCTAssertTrue(restored.isCollapsed(.ai))
+        XCTAssertFalse(restored.isCollapsed(.service))
+        XCTAssertEqual(restored.cards[UsagePresentationSourceID.ai(.codex)]?.displayName, "Legacy research")
+        XCTAssertFalse(try XCTUnwrap(restored.cards[UsagePresentationSourceID.ai(.codex)]).visible)
+        XCTAssertNil(restored.cards[UsagePresentationSourceID.ai(.codex)]?.categoryID)
+        XCTAssertNil(restored.cards[UsagePresentationSourceID.ai(.codex)]?.addedAt)
+        XCTAssertNil(restored.filterCategoryID)
+        XCTAssertFalse(restored.categories.isEmpty)
+        XCTAssertEqual(try Data(contentsOf: store.url), original)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.url.appendingPathExtension("previous").path))
+    }
+
+    func testCustomCategoryFilterOrderingAndIndependentAPIIdentitySurviveDiskRoundTrip() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = UsagePresentationStore(url: directory.appendingPathComponent("display.json"))
+        let identity = UUID(), otherIdentity = UUID()
+        let api = UsagePresentationSourceID.api(identity), service = UsagePresentationSourceID.service(identity)
+        let otherAPI = UsagePresentationSourceID.api(otherIdentity)
+        XCTAssertNotEqual(api, service)
+        XCTAssertNotEqual(api, otherAPI)
+        XCTAssertTrue(UsagePresentationSourceID.isValid(api))
+        XCTAssertFalse(UsagePresentationSourceID.isValid("api.not-a-uuid"))
+        let research = UsageCardCategory(title: "Research APIs")
+        let created = Date(timeIntervalSince1970: 1_700_000_000)
+        var preferences = UsagePresentationPreferences()
+        preferences.categories.append(research)
+        preferences.cards[api] = .init(displayName: "Research balance", categoryID: research.id, addedAt: created)
+        preferences.cards[service] = .init(displayName: "Service quota", visible: false, addedAt: created.addingTimeInterval(60))
+        preferences.cards[otherAPI] = .init(displayName: "Backup balance", categoryID: research.id)
+        preferences.sourceOrder = [service, api, otherAPI]
+        preferences.sort = .category; preferences.ascending = false; preferences.filterCategoryID = research.id
+        try store.save(preferences)
+        let restored = try UsagePresentationStore(url: store.url).load()
+        XCTAssertEqual(restored, preferences)
+        XCTAssertEqual(restored.cards[api]?.categoryID, research.id)
+        XCTAssertNil(restored.cards[service]?.categoryID)
+        XCTAssertEqual(restored.cards[api]?.addedAt, created)
+        XCTAssertEqual(restored.cards[service]?.displayName, "Service quota")
+        XCTAssertEqual(restored.sourceOrder, [service, api, otherAPI])
+        XCTAssertEqual(restored.filterCategoryID, research.id)
+        XCTAssertFalse(restored.ascending)
+    }
+
+    func testInvalidCategoryDefinitionsAndReferencesCannotReplaceSavedPreferences() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = UsagePresentationStore(url: directory.appendingPathComponent("display.json"))
+        let category = UsageCardCategory(title: "Research")
+        let key = UsagePresentationSourceID.ai(.codex)
+        var valid = UsagePresentationPreferences()
+        valid.categories.append(category); valid.cards[key] = .init(categoryID: category.id)
+        try store.save(valid)
+        let original = try Data(contentsOf: store.url)
+        var invalid: [(String, UsagePresentationPreferences)] = []
+        var value = valid; value.categories.append(.init(id: category.id, title: "Different title")); invalid.append(("duplicate category identity", value))
+        value = valid; value.categories.append(.init(title: category.title)); invalid.append(("duplicate category name", value))
+        value = valid; value.categories.append(.init(title: "")); invalid.append(("empty category name", value))
+        value = valid; value.categories.append(.init(title: " Research ")); invalid.append(("untrimmed category name", value))
+        value = valid; value.categories = []; invalid.append(("empty category list", value))
+        value = valid; value.categories = [category]; invalid.append(("missing uncategorized destination", value))
+        value = valid; value.cards[key]?.categoryID = "missing-category"; invalid.append(("missing card category", value))
+        value = valid; value.filterCategoryID = "missing-category"; invalid.append(("missing filter category", value))
+        value = valid; value.sourceOrder = [key, key]; invalid.append(("duplicate source order", value))
+        for (reason, candidate) in invalid {
+            XCTAssertThrowsError(try store.save(candidate), reason)
+            XCTAssertEqual(try Data(contentsOf: store.url), original, reason)
+            XCTAssertEqual(try store.load(), valid, reason)
+        }
+    }
+
+    func testInvalidStoredCategoryReferenceIsProtectedRatherThanSilentlyRepaired() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = UsagePresentationStore(url: directory.appendingPathComponent("display.json"))
+        let valid = UsagePresentationPreferences()
+        try store.save(valid)
+        var invalid = valid
+        invalid.filterCategoryID = "category-no-longer-present"
+        let original = try JSONEncoder().encode(invalid)
+        try original.write(to: store.url)
+        XCTAssertThrowsError(try store.load())
+        XCTAssertThrowsError(try store.save(valid))
+        XCTAssertEqual(try Data(contentsOf: store.url), original)
+    }
+
     func testManagementLinksUseFixedOriginsAndValidatedOrderIdentity() {
         let source = ProviderUsageConfiguration(kind: .iproyal, name: "Fixture", resourceID: "12345")
         let url = ProviderUsageExternalLinks.url(for: source)
