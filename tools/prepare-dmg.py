@@ -21,7 +21,7 @@ import uuid
 
 
 ROOT = Path(__file__).resolve().parent.parent
-IDENTIFIER = 'local.fangcun.launcher'
+IDENTIFIER = 'local.deskden.launcher'
 TEAM = '97K37J92QD'
 ARCHITECTURES = {'arm64', 'x86_64'}
 
@@ -247,7 +247,7 @@ def prepare(release, output, identity):
     before = manifest(app)
     output.mkdir(parents=True)
     recorder = Recorder(output)
-    state = {'schema': 'fangcun.dmg-preparation/1', 'state': 'preparing',
+    state = {'schema': 'deskden.dmg-preparation/1', 'state': 'preparing',
              'createdAt': datetime.now(timezone.utc).isoformat(), **provenance,
              'containerSigningCertificateSHA1': identity, 'containerNotarizationSubmitted': False,
              'containerNotarizationStatus': 'not-submitted', 'published': False,

@@ -174,7 +174,7 @@ final class WeatherCoreTests: XCTestCase, @unchecked Sendable {
         let stored = await cache.load(); XCTAssertEqual(stored, [previous])
     }
     func testFileCacheAtomicRoundTripAndRejectedWritePreservesOldData() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("Fangcun-WeatherTests-" + UUID().uuidString)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("DeskDen-WeatherTests-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let directory = root.appendingPathComponent("Context")
         let file = directory.appendingPathComponent("weather.json")

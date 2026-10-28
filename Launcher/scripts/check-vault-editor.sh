@@ -1,14 +1,14 @@
 #!/bin/zsh
 set -euo pipefail
 task_root="${0:A:h:h}"
-check_dir="$(mktemp -d "${TMPDIR:-/tmp}/fangcun-vault-editor-build.XXXXXX")"
+check_dir="$(mktemp -d "${TMPDIR:-/tmp}/deskden-vault-editor-build.XXXXXX")"
 trap 'rm -rf "$check_dir"' EXIT
 swiftc -swift-version 6 -emit-library -emit-module -module-name LauncherCore \
   "$task_root/Sources/LauncherCore/VaultCore.swift" \
   -emit-module-path "$check_dir/LauncherCore.swiftmodule" -o "$check_dir/libLauncherCore.dylib"
 # Compile the actual production native-formatting class in isolation from the
 # workbench shell, so this check never creates a window or requests permissions.
-python3 - "$task_root/Sources/FangcunLauncher/VaultModuleView.swift" "$check_dir/VaultEditorFormatting.swift" <<'PY'
+python3 - "$task_root/Sources/DeskDenLauncher/VaultModuleView.swift" "$check_dir/VaultEditorFormatting.swift" <<'PY'
 import pathlib,sys
 source=pathlib.Path(sys.argv[1]).read_text()
 start=source.index('@MainActor final class VaultEditorFormatting:')

@@ -2,10 +2,10 @@
 (() => {
   'use strict';
   if (window !== window.top || location.origin !== 'https://dashboard.iproyal.com') return;
-  const P = globalThis.FangcunIPRoyalProtocol, generation = crypto.randomUUID();
+  const P = globalThis.DeskDenIPRoyalProtocol, generation = crypto.randomUUID();
   let enabled = null;
   const queued = [];
-  const bind = () => window.postMessage({channel:'fangcun-iproyal-quota',version:1,type:'bind',generation},location.origin);
+  const bind = () => window.postMessage({channel:'deskden-iproyal-quota',version:1,type:'bind',generation},location.origin);
   bind();
   const forward = safe => chrome.runtime.sendMessage(safe).catch(() => {});
   const hello = async attempt => {

@@ -17,7 +17,7 @@ class ExportPreparationTests(unittest.TestCase):
         self.app = Path('/test/Synthetic.app')
         self.commands = []
 
-    def verify(self, *, identifier='local.fangcun.launcher', team='97K37J92QD', architectures='arm64 x86_64', fail=None):
+    def verify(self, *, identifier='local.deskden.launcher', team='97K37J92QD', architectures='arm64 x86_64', fail=None):
         def run(command, **options):
             self.commands.append(command)
             if fail and (fail in command or (fail == 'requirement' and any(value.startswith('-R=') for value in command))):
@@ -36,7 +36,7 @@ class ExportPreparationTests(unittest.TestCase):
         receipt = self.verify()
         self.assertEqual(receipt['architectures'], ['arm64', 'x86_64'])
         self.assertEqual(receipt['teamIdentifier'], '97K37J92QD')
-        self.assertTrue(any('-R=anchor apple generic and certificate leaf[subject.OU] = "97K37J92QD" and identifier "local.fangcun.launcher"' in command for command in self.commands))
+        self.assertTrue(any('-R=anchor apple generic and certificate leaf[subject.OU] = "97K37J92QD" and identifier "local.deskden.launcher"' in command for command in self.commands))
         self.assertTrue(any('stapler' in command for command in self.commands))
         self.assertTrue(any('spctl' in command for command in self.commands))
         self.assertFalse(any('--sign' in command or '--force' in command or 'submit' in command for command in self.commands))

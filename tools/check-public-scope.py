@@ -11,14 +11,14 @@ import tempfile
 ROOT = Path(__file__).resolve().parent.parent
 ALLOWED = [
     r"(?:README\.md|LICENSE|\.gitignore|\.gitleaks\.toml)",
-    r"Fangcun\.xcodeproj/(?:project\.pbxproj|xcshareddata/xcschemes/Fangcun\.xcscheme|project\.xcworkspace/xcshareddata/swiftpm/Package\.resolved)",
+    r"DeskDen\.xcodeproj/(?:project\.pbxproj|xcshareddata/xcschemes/DeskDen\.xcscheme|project\.xcworkspace/xcshareddata/swiftpm/Package\.resolved)",
     r"updates/appcast\.xml",
     r"Launcher/(?:Package\.swift|Package\.resolved|README\.md)",
-    r"Launcher/Sources/(?:FangcunLauncher|LauncherCore)/[A-Za-z0-9_]+\.swift",
+    r"Launcher/Sources/(?:DeskDenLauncher|LauncherCore)/[A-Za-z0-9_]+\.swift",
     r"Launcher/Tests/(?:LauncherCoreTests|WorkbenchChecks)/[A-Za-z0-9_]+\.swift",
     r"Launcher/scripts/[a-z0-9-]+\.(?:sh|py|swift)",
-    r"Launcher/BrowserConnectors/IPRoyal/(?:manifest\.json|extension-id\.txt|(?:protocol(?:-isolated)?|observer|content|background|popup)\.js|popup\.(?:html|css)|icon-(?:16|32|64|128)\.png|README\.md|install\.command|prepare-kit\.py|tests/(?:protocol\.test\.cjs|native-host\.test\.py))",
-    r"Launcher/Signing/Fangcun\.entitlements",
+    r"Launcher/BrowserConnectors/IPRoyal/(?:manifest\.json|extension-id\.txt|(?:protocol(?:-isolated)?|observer|content|background|popup)\.js|popup\.(?:html|css)|icon-(?:16|32|64|128)\.png|(?:README|INSTALL)\.md|install\.command|prepare-kit\.py|tests/(?:protocol\.test\.cjs|native-host\.test\.py))",
+    r"Launcher/Signing/DeskDen\.entitlements",
     r"Launcher/Resources/(?:Info\.plist|AppIcon\.icns|PanelLogo\.png)",
     r"Launcher/Resources/Workbench/(?:(?:ar-world|thunder-cabin|qingbi-chenwu|yuebai-yunhai|nuanxia-xuanshan)\.jpg|(?:chatgpt|claude)\.png)",
     r"Launcher/Artwork/Workbench/(?:(?:qingbi-chenwu|yuebai-yunhai|nuanxia-xuanshan)\.png|README\.md|provenance\.json)",
@@ -31,6 +31,14 @@ ALLOWED = [
     r"tools/[a-z0-9-]+\.(?:py|sh|json)",
     r"\.githooks/(?:pre-commit|commit-msg|pre-push)",
     r"\.github/workflows/(?:public-checks|verify)\.yml",
+]
+# Earlier immutable commits retain their original paths. This does not permit
+# reintroducing them in the current index or commits after the naming change.
+HISTORICAL_NAMES_REF = 'e795099f081fd3369c9dfd293a4137001b3a5ee6'
+HISTORICAL_ALLOWED = [
+    r"Fangcun\.xcodeproj/(?:project\.pbxproj|xcshareddata/xcschemes/Fangcun\.xcscheme|project\.xcworkspace/xcshareddata/swiftpm/Package\.resolved)",
+    r"Launcher/Sources/FangcunLauncher/[A-Za-z0-9_]+\.swift",
+    r"Launcher/Signing/Fangcun\.entitlements",
 ]
 PRIVATE_PATH = re.compile(rb"/(?:Users|home)/(?!test(?:/|[\"']))[^/\s\"']+")
 PRIVATE_KEY = re.compile(rb"-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----")
@@ -61,9 +69,9 @@ def entries(tree=None):
             yield mode, oid, os.fsdecode(path)
 
 
-def check_blob(mode, oid, path):
+def check_blob(mode, oid, path, historical=False):
     errors = []
-    if not any(re.fullmatch(pattern, path) for pattern in ALLOWED):
+    if not any(re.fullmatch(pattern, path) for pattern in ALLOWED + (HISTORICAL_ALLOWED if historical else [])):
         return [f"Outside public allowlist: {path}"], None
     if mode not in {"100644", "100755"}:
         return [f"Non-regular file is forbidden: {path}"], None
@@ -114,6 +122,9 @@ def main():
         commits = git("rev-list", *args.commits).decode().splitlines()
     if (args.all_refs or args.commits) and not commits:
         raise SystemExit("No reachable commits to verify")
+    historical_commits = set()
+    if commits and subprocess.run(['git', '-C', str(ROOT), 'cat-file', '-e', HISTORICAL_NAMES_REF + '^{commit}'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+        historical_commits = set(git('rev-list', HISTORICAL_NAMES_REF).decode().splitlines())
     errors, seen, metadata = [], set(), []
     for commit in commits:
         raw = git("show", "-s", "--format=%s%x00%ae%x00%ce%x00%B", commit)
@@ -127,7 +138,7 @@ def main():
         snapshot.mkdir()
         for tree in commits or [None]:
             for mode_value, oid, path in entries(tree):
-                key = (mode_value, oid, path)
+                key = (mode_value, oid, path, tree in historical_commits)
                 if key in seen:
                     continue
                 seen.add(key)

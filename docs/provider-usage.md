@@ -4,7 +4,7 @@ The **用量与额度** navigation entry combines existing AI quotas and local T
 
 The overview uses separate **AI 用量** and **服务流量** groups. Cards stay 248 × 208 logical points with 14-point padding and 12-point gaps; more window space adds columns rather than stretching cards. Each group can collapse independently, and its choice is saved. Collapsing does not stop collection or querying. **本机 Token 记录** belongs to the AI group instead of adding activity charts beneath the full overview.
 
-Use **配置用量** to manage the two categories. AI cards use the supported Codex and Claude source identities; hiding or restoring a card does not disconnect its collector or delete activity records. It does not create additional accounts sharing one set of readings. Service sources remain independently configurable. Card display names and icons are separate from connection metadata. Choose an included symbol or import a static PNG, JPEG or WebP image up to 2 MB; Fangcun keeps a small normalized local copy, so the original file can move. Card icons contain no authentication information.
+Use **配置用量** to manage the two categories. AI cards use the supported Codex and Claude source identities; hiding or restoring a card does not disconnect its collector or delete activity records. It does not create additional accounts sharing one set of readings. Service sources remain independently configurable. Card display names and icons are separate from connection metadata. Choose an included symbol or import a static PNG, JPEG or WebP image up to 2 MB; DeskDen keeps a small normalized local copy, so the original file can move. Card icons contain no authentication information.
 
 Service cards show remaining allowance, cycle consumption and total allowance, the provider's reset information, and the last successful observation. Missing or stale data remains explicit. Details include **打开 IPRoyal 订单** for the configured order's official dashboard page, or **打开搬瓦工服务** for the provider's services page. These links open in the default browser without attaching the API Key or browser-session material.
 
@@ -18,9 +18,9 @@ Add a source with a display name, VEID and API Key. A successful read is require
 
 1. Open **用量与额度 → 配置用量 → 服务流量 → 新增服务流量**, then choose **搬瓦工**. The connection form also links to the [official services page](https://bandwagonhost.com/services).
 2. In the provider's services page, choose the intended VPS and open **Open KiwiVM → API → Show API Key**. Use its **VEID**, not the billing service/order number. Copy the existing key; **Reset API Key** replaces it and can break other integrations.
-3. Enter the VEID and API Key directly in Fangcun's secure connection form. A website or VPS password is not required. No browser extension is required, and the key should not be sent in a chat, screenshot or support report. This is the instance's provider-issued key, which may also permit management operations; Fangcun itself only calls the read endpoint below.
+3. Enter the VEID and API Key directly in DeskDen's secure connection form. A website or VPS password is not required. No browser extension is required, and the key should not be sent in a chat, screenshot or support report. This is the instance's provider-issued key, which may also permit management operations; DeskDen itself only calls the read endpoint below.
 4. Click **验证并保存**. The app queries the provider before saving anything. Compare the resulting consumed/total allowance with **KiwiVM → Main controls → Bandwidth usage**; allow for the two observations being taken at different times. The remaining allowance is the provider-adjusted total minus consumed usage, clamped to zero when exhausted.
-5. Check the next-reset timestamp and its displayed timezone, then refresh once and reopen Fangcun to check saved-connection continuity. Each additional VPS repeats this flow with its own key, allowance and reset timestamp.
+5. Check the next-reset timestamp and its displayed timezone, then refresh once and reopen DeskDen to check saved-connection continuity. Each additional VPS repeats this flow with its own key, allowance and reset timestamp.
 
 Editing only the name, icon, visibility or refresh policy while leaving the saved key unchanged uses **保存修改**. It does not claim that the credential was queried again. Enter a key to validate a new or replacement connection; failures retain the prior saved connection and reading.
 
@@ -40,7 +40,7 @@ Export a connection kit from the IPRoyal connection dialog, install it yourself,
 
 The provider's `bandwidth_limit_reset_at` is currently a date-only value. It is shown as the provider's date with timezone unconfirmed, without inventing midnight or converting it into a different day. Quota observations may lag actual traffic; the query timestamp is not a billing cutoff timestamp.
 
-Details retain a bounded cycle-change log. A later provider date together with lower usage and higher remaining allowance creates a candidate; a subsequent compatible reading confirms what Fangcun observed. An allowance change or balance increase alone is not treated as a reset. The log shows the last old-cycle observation, first new-cycle observation and confirmation time in the workbench timezone. These observations do not establish the provider's actual reset instant or timezone. Up to 12 confirmed changes are retained, with at most one pending candidate.
+Details retain a bounded cycle-change log. A later provider date together with lower usage and higher remaining allowance creates a candidate; a subsequent compatible reading confirms what DeskDen observed. An allowance change or balance increase alone is not treated as a reset. The log shows the last old-cycle observation, first new-cycle observation and confirmation time in the workbench timezone. These observations do not establish the provider's actual reset instant or timezone. Up to 12 confirmed changes are retained, with at most one pending candidate.
 
 ## Refresh policy
 

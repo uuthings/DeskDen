@@ -4,7 +4,7 @@ import CryptoKit
 
 final class VaultTests:XCTestCase {
     private let password="test-only-private-password"
-    private func directory() throws -> URL { let url=FileManager.default.temporaryDirectory.appendingPathComponent("fangcun-vault-tests-\(UUID().uuidString)"); try FileManager.default.createDirectory(at:url,withIntermediateDirectories:true); return url }
+    private func directory() throws -> URL { let url=FileManager.default.temporaryDirectory.appendingPathComponent("deskden-vault-tests-\(UUID().uuidString)"); try FileManager.default.createDirectory(at:url,withIntermediateDirectories:true); return url }
     private var contents:VaultContents { VaultContents(documents:[PrivateDocument(title:"Synthetic confidential title",body:"Synthetic private body 🔐 测试")]) }
     func testLegacyDocumentDefaultsToUnclassifiedAndKnownCategoriesRoundTrip() throws {
         let original=PrivateDocument(title:"Legacy synthetic title",body:"Legacy synthetic body")
@@ -86,7 +86,7 @@ final class VaultTests:XCTestCase {
     }
     func testAtomicStoreKeepsPreviousEncryptedRevisionAndPrivatePermissions() throws {
         let directory=try directory(); defer { try? FileManager.default.removeItem(at:directory) }
-        let store=VaultFileStore(url:directory.appendingPathComponent("private.fangcunvault"))
+        let store=VaultFileStore(url:directory.appendingPathComponent("private.deskdenvault"))
         let first=try VaultCryptography.create(contents:contents,password:password)
         try store.write(first.envelope)
         let second=try VaultCryptography.seal(contents:VaultContents(),key:first.key,salt:first.envelope.salt)
@@ -98,7 +98,7 @@ final class VaultTests:XCTestCase {
     }
     func testCorruptCurrentFileCannotBeSilentlyOverwrittenByAutosave() throws {
         let directory=try directory(); defer { try? FileManager.default.removeItem(at:directory) }
-        let store=VaultFileStore(url:directory.appendingPathComponent("private.fangcunvault")),broken=Data("corrupt encrypted file".utf8)
+        let store=VaultFileStore(url:directory.appendingPathComponent("private.deskdenvault")),broken=Data("corrupt encrypted file".utf8)
         try broken.write(to:store.url)
         let valid=try VaultCryptography.create(contents:contents,password:password)
         XCTAssertThrowsError(try store.write(valid.envelope))
@@ -106,7 +106,7 @@ final class VaultTests:XCTestCase {
     }
     func testConfirmedRestorePreservesDisplacedEncryptedFile() throws {
         let directory=try directory(); defer { try? FileManager.default.removeItem(at:directory) }
-        let store=VaultFileStore(url:directory.appendingPathComponent("private.fangcunvault"))
+        let store=VaultFileStore(url:directory.appendingPathComponent("private.deskdenvault"))
         let current=try VaultCryptography.create(contents:contents,password:password)
         try store.write(current.envelope)
         let restored=try VaultCryptography.create(contents:VaultContents(),password:"backup-password")
@@ -116,7 +116,7 @@ final class VaultTests:XCTestCase {
     }
     func testInvalidRestoreDoesNotReplaceCurrentBytes() throws {
         let directory=try directory(); defer { try? FileManager.default.removeItem(at:directory) }
-        let store=VaultFileStore(url:directory.appendingPathComponent("private.fangcunvault"))
+        let store=VaultFileStore(url:directory.appendingPathComponent("private.deskdenvault"))
         let current=try VaultCryptography.create(contents:contents,password:password)
         try store.write(current.envelope); let before=try store.read()
         let invalid=VaultEnvelope(rounds:1,salt:Data(),sealed:Data())

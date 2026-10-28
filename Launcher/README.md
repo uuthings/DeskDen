@@ -4,10 +4,10 @@
 
 ## 构建
 
-在项目根目录打开 `Fangcun.xcodeproj`，选择 `Fangcun` scheme。也可以执行：
+在项目根目录打开 `DeskDen.xcodeproj`，选择 `DeskDen` scheme。也可以执行：
 
 ```sh
-xcodebuild -project Fangcun.xcodeproj -scheme Fangcun \
+xcodebuild -project DeskDen.xcodeproj -scheme DeskDen \
   -configuration Debug -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath build/XcodeDerived build CODE_SIGN_IDENTITY=-
 ```
@@ -38,7 +38,7 @@ xcodebuild -project Fangcun.xcodeproj -scheme Fangcun \
 
 大文件模式支持大小上下限，默认零勾选；开发依赖与版本资料在两种模式中均受保护。纯后台清理模型回归可运行开发可执行文件的 `--space-cleaning-model-check`，使用临时夹具与注入的废纸篓，不创建窗口、不扫描个人目录。它不替代原生界面验收。
 
-顶部 Mini 复用日期天气、日程待办、本机状态与 AI 额度，右上配置与通用设置共用显隐偏好。`--mini-data-check` 使用注入来源验证时区、缺失值与有界读取；`--mini-appearance-check` 仅在隐藏原生窗口验证紧凑排版、刘海避让与配置入口，可通过 `FANGCUN_MINI_OUTPUT` 指定夹具图片目录。两者均不代替真实悬停与前台窗口验收。
+顶部 Mini 复用日期天气、日程待办、本机状态与 AI 额度，右上配置与通用设置共用显隐偏好。`--mini-data-check` 使用注入来源验证时区、缺失值与有界读取；`--mini-appearance-check` 仅在隐藏原生窗口验证紧凑排版、刘海避让与配置入口，可通过 `DESKDEN_MINI_OUTPUT` 指定夹具图片目录。两者均不代替真实悬停与前台窗口验收。
 
 城市、天气单位、时区与时间格式共用设置；`--context-model-check` 使用独立存储与注入的天气来源做后台回归，`--appearance-check` 只在隐藏窗口渲染材质和界面夹具，不替代前台交互验收。
 

@@ -3,7 +3,7 @@ import LauncherCore
 
 @main struct DeviceMonitoringModelChecks {
     @MainActor static func main() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("fangcun-monitoring-checks-\(UUID().uuidString)")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("deskden-monitoring-checks-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
         var failures = 0, checks = 0
         func check(_ value: Bool, _ title: String) { checks += 1; if !value { failures += 1 }; print("\(value ? "PASS" : "FAIL") \(title)") }

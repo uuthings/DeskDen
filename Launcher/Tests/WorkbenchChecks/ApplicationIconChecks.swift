@@ -10,7 +10,7 @@ import Foundation
             print("\(condition ? "PASS" : "FAIL") \(message)")
         }
         let root = URL(fileURLWithPath: CommandLine.arguments[1])
-        let suite = "fangcun.application-icon-checks." + UUID().uuidString
+        let suite = "deskden.application-icon-checks." + UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         var images: [ApplicationIconChoice: NSImage] = [:]

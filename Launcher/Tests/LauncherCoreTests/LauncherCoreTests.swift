@@ -465,7 +465,7 @@ final class ConfigurationStoreTests: XCTestCase {
     var directory:URL!
     var store:ConfigurationStore!
     override func setUpWithError() throws {
-        directory = FileManager.default.temporaryDirectory.appendingPathComponent("fangcun-store-tests-\(UUID().uuidString)",isDirectory:true)
+        directory = FileManager.default.temporaryDirectory.appendingPathComponent("deskden-store-tests-\(UUID().uuidString)",isDirectory:true)
         store = ConfigurationStore(url:directory.appendingPathComponent("configuration.json"))
     }
     override func tearDownWithError() throws { if FileManager.default.fileExists(atPath:directory.path) { try FileManager.default.removeItem(at:directory) } }

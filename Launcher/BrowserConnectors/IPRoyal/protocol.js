@@ -45,10 +45,10 @@
     Number.isFinite(v.createdAt) && Number.isFinite(v.expiresAt) && v.createdAt <= now+5 && v.expiresAt > now &&
     v.expiresAt > v.createdAt && v.expiresAt-v.createdAt <= 300;
   const observation = v => keys(v, ['channel','version','generation','type','orderID','remaining','resetDateText','retryAfterSeconds']) &&
-    v.channel === 'fangcun-iproyal-quota' && v.version === 1 && uuid(v.generation) && orderID(v.orderID) &&
+    v.channel === 'deskden-iproyal-quota' && v.version === 1 && uuid(v.generation) && orderID(v.orderID) &&
     (validRetryAfter(v.retryAfterSeconds) && (v.type === 'rateLimited' || v.retryAfterSeconds === undefined)) &&
     ((v.type === 'quota' && quota(v.remaining) && v.resetDateText === undefined) ||
      (v.type === 'reset' && resetDate(v.resetDateText) && v.remaining === undefined) ||
      ((v.type === 'authentication' || v.type === 'rateLimited') && v.remaining === undefined && v.resetDateText === undefined));
-  globalThis.FangcunIPRoyalProtocol = Object.freeze({MAX_MESSAGE, orderID, uuid, keys, quota, validRetryAfter, retryAfter, resetDate, pageOrder, apiRequest, request, observation});
+  globalThis.DeskDenIPRoyalProtocol = Object.freeze({MAX_MESSAGE, orderID, uuid, keys, quota, validRetryAfter, retryAfter, resetDate, pageOrder, apiRequest, request, observation});
 })();

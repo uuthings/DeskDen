@@ -48,7 +48,7 @@ private final class FixtureHTTPProtocol: URLProtocol {
 @main struct ProviderUsageModelChecks {
     @MainActor static func main() async throws {
         _ = NSApplication.shared; NSApp.setActivationPolicy(.prohibited)
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("fangcun-provider-checks-\(UUID().uuidString)")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("deskden-provider-checks-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         let clock = FixtureClock(), credentials = FixtureCredentials()
         let client = FixtureClient(clock.date)

@@ -7,7 +7,7 @@ import LauncherCore
 @main struct VaultModelChecks {
     @MainActor static func main() async {
         _=NSApplication.shared; NSApp.setActivationPolicy(.prohibited)
-        let directory=FileManager.default.temporaryDirectory.appendingPathComponent("fangcun-vault-model-checks-\(UUID().uuidString)")
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent("deskden-vault-model-checks-\(UUID().uuidString)")
         var failures=0,checks=0
         func check(_ condition:Bool,_ message:String) { checks += 1; if !condition { failures += 1 }; print("\(condition ? "PASS":"FAIL") \(message)") }
         func waitForBusy(_ model:VaultModel) async -> Bool {
@@ -25,7 +25,7 @@ import LauncherCore
         model.newDocument(); model.updateTitle("Synthetic private title"); model.updateBody("Latest synthetic private body")
         check(model.hasPendingSave,"editing immediately creates an encrypted pending revision")
         check(model.flush(),"pending revision persists")
-        let backup=directory.appendingPathComponent("export.fangcunvault")
+        let backup=directory.appendingPathComponent("export.deskdenvault")
         check(model.exportBackup(to:backup),"export writes an encrypted portable backup")
         var didClear=false; model.registerPlaintextClearer(id:UUID()) { didClear=true }
         model.lock(reason:"test lock")

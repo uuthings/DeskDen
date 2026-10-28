@@ -4,9 +4,9 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
 -->
 <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
     <channel>
-        <title>Fangcun updates</title>
+        <title>DeskDen updates</title>
         <link>https://github.com/uuthings/DeskDen</link>
-        <description>Official signed software updates for Fangcun.</description>
+        <description>Official signed software updates for DeskDen.</description>
         <language>zh-CN</language>
         <item>
             <title>0.3.0</title>
@@ -32,7 +32,7 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
 
 IPRoyal 连接器需另行安装并保持官方控制台登录。服务额度存在更新延迟；网络监控仍统计总流量。
 ]]></description>
-            <enclosure url="https://github.com/uuthings/DeskDen/releases/download/v0.3.0/Fangcun-0.3.0-macos-universal.zip" length="25621581" type="application/octet-stream" sparkle:edSignature="xqsgV3bU5n3MjzzEGCrt2CexKqPdmDoOv9jTKk3VDKwORXhYcc4rVSFuK3QG+oInBrWUkH9S3YW9WKullKFUBQ=="/>
+            <enclosure url="https://github.com/uuthings/DeskDen/releases/download/v0.3.0/DeskDen-0.3.0-macos-universal.zip" length="25621581" type="application/octet-stream" sparkle:edSignature="xqsgV3bU5n3MjzzEGCrt2CexKqPdmDoOv9jTKk3VDKwORXhYcc4rVSFuK3QG+oInBrWUkH9S3YW9WKullKFUBQ=="/>
         </item>
         <item>
             <title>0.2.0</title>
@@ -53,11 +53,11 @@ IPRoyal 连接器需另行安装并保持官方控制台登录。服务额度存
 
 完整说明：https://github.com/uuthings/DeskDen/releases/tag/v0.2.0
 ]]></description>
-            <enclosure url="https://github.com/uuthings/DeskDen/releases/download/v0.2.0/Fangcun-0.2.0-macos-universal.zip" length="25678882" type="application/octet-stream" sparkle:edSignature="KXr5YBvXvGMjX6nT0aQ3bZUBo7zylIYfDE2L4OtiXVdpSwuBkDbYw/yOeRBZEDhZVWbAR7gO5gph60OE06dECg=="/>
+            <enclosure url="https://github.com/uuthings/DeskDen/releases/download/v0.2.0/DeskDen-0.2.0-macos-universal.zip" length="25678882" type="application/octet-stream" sparkle:edSignature="KXr5YBvXvGMjX6nT0aQ3bZUBo7zylIYfDE2L4OtiXVdpSwuBkDbYw/yOeRBZEDhZVWbAR7gO5gph60OE06dECg=="/>
         </item>
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: PdmTEUmF48Q7SkB40LKoROk9/0T6+l4aYLdydxd5Y1N95rE03t4b+x8cSWV2Ue8jtUq0Vqix9S3D4HalYbd2AA==
+edSignature: N8gM7WB6gdU4ZRy8k8hJghhhok13znuPBM11nypTxVCrtybzc/sIN7QbY/YMR1Nab4VqEDBC/lahjZ5d3/xTAQ==
 length: 3737
 -->

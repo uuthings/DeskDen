@@ -3,7 +3,7 @@ import XCTest
 
 final class SpaceCleaningDirectorySizeTests: XCTestCase {
     private func fixture(_ body: (URL) throws -> Void) throws {
-        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("FangcunDirectorySize-" + UUID().uuidString)
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("DeskDenDirectorySize-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
         let root = try XCTUnwrap(SpaceCleaningScanner.canonicalURL(temporary))
         defer { try? FileManager.default.removeItem(at: root) }

@@ -4,7 +4,7 @@ import XCTest
 
 final class ProtectedAtomicFileTests:XCTestCase {
     func testPrivatePermissionsAndReplacementLeaveOnlyCompleteDestination() throws {
-        let root=FileManager.default.temporaryDirectory.appendingPathComponent("fangcun-protected-save-\(UUID().uuidString)")
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent("deskden-protected-save-\(UUID().uuidString)")
         defer{try? FileManager.default.removeItem(at:root)}
         let url=root.appendingPathComponent("preferences.json")
         try ProtectedAtomicFile.write(Data("first".utf8),to:url)
@@ -15,7 +15,7 @@ final class ProtectedAtomicFileTests:XCTestCase {
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath:root.path),["preferences.json"])
     }
     func testFailedReplacementPreservesExistingDestinationAndRemovesTemporaryFile() throws {
-        let root=FileManager.default.temporaryDirectory.appendingPathComponent("fangcun-protected-save-\(UUID().uuidString)")
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent("deskden-protected-save-\(UUID().uuidString)")
         defer{try? FileManager.default.removeItem(at:root)}
         let target=root.appendingPathComponent("occupied",isDirectory:true)
         try FileManager.default.createDirectory(at:target,withIntermediateDirectories:true)

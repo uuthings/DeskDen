@@ -16,7 +16,7 @@ import urllib.parse
 
 ROOT = Path(__file__).resolve().parent.parent
 EXPECTED_TEAM = '97K37J92QD'
-EXPECTED_IDENTIFIER = 'local.fangcun.launcher'
+EXPECTED_IDENTIFIER = 'local.deskden.launcher'
 EXPECTED_ARCHITECTURES = {'arm64', 'x86_64'}
 UPDATE_POLICY = runpy.run_path(str(ROOT / 'Launcher/scripts/check-update-config.py'))
 EXPORTED_INFO_KEYS = (
@@ -75,6 +75,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--app', type=Path, required=True)
     parser.add_argument('--sparkle-bin', type=Path, required=True)
+    parser.add_argument('--signing-account', required=True, help='Existing Sparkle Keychain account; never create or rotate a key')
     parser.add_argument('--notes', type=Path, required=True, help='Public plain-text release notes')
     parser.add_argument('--output', type=Path, required=True, help='New persistent directory outside Git')
     args = parser.parse_args()
@@ -98,7 +99,7 @@ def main():
     if not notes.strip():
         raise SystemExit('Public release notes are empty')
     signing = verify_exported_app(app, info)
-    public_key = subprocess.check_output([str(tools / 'generate_keys'), '--account', 'local.fangcun.launcher', '-p'], text=True).strip()
+    public_key = subprocess.check_output([str(tools / 'generate_keys'), '--account', args.signing_account, '-p'], text=True).strip()
     if public_key != info['SUPublicEDKey']:
         raise SystemExit('The existing update signing key does not match the exported App; do not rotate it')
     output.mkdir(parents=True)
@@ -108,16 +109,16 @@ def main():
     (output / (name + '.txt')).write_text(notes)
     shutil.copy2(root / 'updates/appcast.xml', output / 'appcast.xml')
     feed = output / 'appcast.xml'
-    feed.write_text(feed.read_text().replace('Signed updates for Fangcun. No public update has been published.',
+    feed.write_text(feed.read_text().replace('Signed updates for DeskDen. No public update has been published.',
                                              'Official signed software updates for DeskDen.'))
     prefix = 'https://github.com/uuthings/DeskDen/releases/download/v' + urllib.parse.quote(version) + '/'
-    command = [str(tools / 'generate_appcast'), '--account', 'local.fangcun.launcher',
+    command = [str(tools / 'generate_appcast'), '--account', args.signing_account,
                '--download-url-prefix', prefix, '--embed-release-notes', str(output)]
     result = subprocess.run(command, capture_output=True)
     (output / 'generate-appcast.log').write_bytes(result.stdout + result.stderr)
     if result.returncode:
         raise SystemExit('Appcast generation failed; candidate and log retained, nothing published')
-    subprocess.run([str(tools / 'sign_update'), '--account', 'local.fangcun.launcher', '--verify', str(output / 'appcast.xml')], check=True)
+    subprocess.run([str(tools / 'sign_update'), '--account', args.signing_account, '--verify', str(output / 'appcast.xml')], check=True)
     hashes = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in [archive, output / 'appcast.xml']}
     (output / 'SHA256SUMS.txt').write_text(''.join(value + '  ' + key + '\n' for key, value in hashes.items()))
     (output / 'update-preparation.json').write_text(json.dumps({'version': version, 'build': build, 'downloadPrefix': prefix,

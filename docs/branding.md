@@ -14,11 +14,13 @@ The English product name is **DeskDen**; the Chinese app name is **方寸**.
 
 Use the approved Desk artwork from `Launcher/Artwork/AppIcons/Desk` for product branding. The extension has dedicated small-size derivatives. Do not replace the app icon with a letter, Chinese-character tile or a different background.
 
-## Compatibility
+## Engineering names and distribution
 
-Keep installed identities separate from public display names. The existing Bundle ID, Keychain services, data directories, native messaging host `com.uuthings.fangcun.iproyal`, extension ID/key, project/scheme/module names and signed update addresses remain stable. Existing installed connection folders may retain their original paths. Renaming the extension must not reset its permissions or saved connection state.
+Current source uses `DeskDen.xcodeproj`, scheme `DeskDen`, module and executable `DeskDenLauncher`, Bundle ID `local.deskden.launcher`, and native messaging host `com.uuthings.deskden.iproyal`. Current settings and data use the DeskDen namespace. The extension public identity key and the existing update signing key are independent of these names and must not be regenerated during a rename.
 
-Published installers, checksums, source tags, signatures and archive records are immutable. When a public download filename needs correction, add a byte-identical DeskDen-named download and a matching checksum file, then point current download instructions at it. Keep old download addresses that may already be in use. Do not rebuild or re-sign an old App to change its name.
+Each Release has one canonical DMG, an optional same-brand update ZIP, and one `SHA256SUMS.txt` covering all binary downloads. Do not keep duplicate spelling aliases or split checksum lists by packaging step. A documented optional connector must have a generic downloadable package named `DeskDen-IPRoyal-Connector-<version>-chrome-macos.zip`; its independent version uses three components.
+
+Keep the source for the connector in the repository. Its downloadable package contains only generic files; local registration paths and account data are created on the installing computer. Historical signed Apps and source tags retain their original provenance. Changing an outer download filename does not rebuild or re-sign its contents. Before changing an update URL, re-sign and verify the feed and inspect every active download reference.
 
 ## Public release text
 
@@ -31,6 +33,7 @@ Before publishing, review the rendered Release and product page, not only the so
 ```sh
 python3 tools/check-public-branding.py
 python3 tools/check-public-branding.py --release-json "$RELEASE_JSON"
+python3 tools/check-public-branding.py --release-json "$RELEASE_JSON" --checksums "$CHECKSUM_FILE"
 ```
 
 The optional JSON is a GitHub Release-shaped object with `tag_name`, `name`, `body` and `assets`. For a prepared release, list the exact intended filenames. Repeat against the actual response after publication. The check validates copy and naming; it does not prove that files were uploaded, signed or downloaded correctly.

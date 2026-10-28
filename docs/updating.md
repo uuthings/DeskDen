@@ -1,6 +1,6 @@
 # Software updates
 
-Fangcun embeds the pinned Sparkle 2.10.0 framework in both the Xcode target and SwiftPM previews. Sparkle is distributed under its own license, retained inside the framework. Its source, signed distribution and documentation are maintained at [sparkle-project/Sparkle](https://github.com/sparkle-project/Sparkle).
+DeskDen embeds the pinned Sparkle 2.10.0 framework in both the Xcode target and SwiftPM previews. Sparkle is distributed under its own license, retained inside the framework. Its source, signed distribution and documentation are maintained at [sparkle-project/Sparkle](https://github.com/sparkle-project/Sparkle).
 
 Xcode's final build phase signs the embedded framework's four helpers inside-out with the expanded build identity before the App's final signature. Developer ID builds require the existing team, Hardened Runtime and secure timestamps; Debug uses ad-hoc signing, and unsigned CI skips this phase. Only Downloader preserves its own entitlements, following [Sparkle's signing instructions](https://sparkle-project.org/documentation/sandboxing/#code-signing); helpers never inherit the App's Keychain access. The script accepts only Xcode build/archive product context, does not touch the package cache or an Organizer export, and records verification in the derived build directory. Formal distribution still uses Archive → Organizer → exported notarized App; do not run this script on an exported App.
 
@@ -14,7 +14,7 @@ The feed address is `https://raw.githubusercontent.com/uuthings/DeskDen/main/upd
 
 ## Signing material
 
-The public Ed25519 key is in `SUPublicEDKey`. Its matching private key is stored only in the maintainer's login Keychain under the dedicated Sparkle account `local.fangcun.launcher`. It is separate from Apple Developer ID and is not exported into source, environment files, archives or CI. Reuse this key for subsequent updates; do not regenerate it per build. On another signing Mac, arrange an explicit secure key transfer before preparing updates. Do not place a private key in a GitHub secret merely to make an unauthorised workflow run.
+The public Ed25519 key is in `SUPublicEDKey`. Its matching private key is stored only in the maintainer's login Keychain under its existing dedicated Sparkle account. Pass the existing account through `--signing-account` when preparing a feed; a source or Bundle ID rename does not change this signing key. It is separate from Apple Developer ID and is not exported into source, environment files, archives or CI. Reuse this key for subsequent updates; do not regenerate it per build. On another signing Mac, arrange an explicit secure key transfer before preparing updates. Do not place a private key in a GitHub secret merely to make an unauthorised workflow run.
 
 ## Prepare a future release without publishing
 
@@ -22,7 +22,7 @@ Follow [the Organizer release process](releasing.md) first. Export the notarized
 
 ```sh
 python3 tools/prepare-update-feed.py --app "$EXPORTED_NOTARIZED_APP" \
-  --sparkle-bin "$VERIFIED_SPARKLE_BIN" --notes "$PUBLIC_RELEASE_NOTES" \
+  --sparkle-bin "$VERIFIED_SPARKLE_BIN" --signing-account "$SPARKLE_SIGNING_ACCOUNT" --notes "$PUBLIC_RELEASE_NOTES" \
   --output "$NEW_PERSISTENT_UPDATE_DIRECTORY"
 ```
 

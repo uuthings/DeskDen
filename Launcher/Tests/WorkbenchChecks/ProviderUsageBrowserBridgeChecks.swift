@@ -10,7 +10,7 @@ struct ProviderUsageBrowserBridgeChecks {
     static func main() async throws {
         if ProviderUsageBrowserHost.runIfRequested(arguments: CommandLine.arguments) { return }
         let fm = FileManager.default
-        let root = fm.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("fangcun-browser-check-" + UUID().uuidString)
+        let root = fm.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("deskden-browser-check-" + UUID().uuidString)
         try fm.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         defer { try? fm.removeItem(at: root) }
         var count = 0
@@ -112,7 +112,7 @@ struct ProviderUsageBrowserBridgeChecks {
         try appBox.accept(.init(request: rateRequest, status: .rateLimited, observedAt: Date(), retryAfterSeconds: 120))
         do { _ = try await rateTask.value; throw NSError(domain: "ExpectedRateLimit", code: 1) }
         catch ProviderUsageFailure.rateLimited(let seconds) { try check(seconds == 120, "Retry-After reaches App scheduler") }
-        let resolved = ProviderUsageBrowserHost.defaultBridgeDirectory(environment: ["FANGCUN_DATA_DIRECTORY": root.path])
+        let resolved = ProviderUsageBrowserHost.defaultBridgeDirectory(environment: ["DESKDEN_DATA_DIRECTORY": root.path])
         try check(resolved.path == root.appendingPathComponent("Workbench/ProviderUsage/BrowserBridge").path, "isolated data directory")
         print("Provider browser bridge: \(count) checks passed")
     }

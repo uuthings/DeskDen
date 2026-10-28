@@ -36,7 +36,7 @@ public struct WebURLTemplate: Sendable {
             segments.append(.variable(variable)); cursor = trimmed.index(after: closing)
         }
         let preview = segments.map { segment in
-            switch segment { case .literal(let text): text; case .variable: "fangcun-value" }
+            switch segment { case .literal(let text): text; case .variable: "deskden-value" }
         }.joined()
         _ = try Self.validateURL(preview)
         self.source = trimmed; self.variables = variables; self.segments = segments
@@ -62,7 +62,7 @@ public struct WebURLTemplate: Sendable {
     /// Only the origin is needed to retrieve a favicon; no template values or query are requested.
     public var originURL: URL {
         let preview = segments.map { segment in
-            switch segment { case .literal(let text): text; case .variable: "fangcun-value" }
+            switch segment { case .literal(let text): text; case .variable: "deskden-value" }
         }.joined()
         var parts = URLComponents(url: URL(string: preview)!, resolvingAgainstBaseURL: false)!
         parts.path = "/"; parts.query = nil; parts.fragment = nil

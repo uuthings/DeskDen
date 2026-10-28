@@ -24,7 +24,7 @@ class PreparationChecks(unittest.TestCase):
                 PREPARE['validate_output'](output, release)
 
     def test_cache_and_temporary_output_are_rejected(self):
-        for path in ['/tmp/fangcun-new-dmg', '/persistent/DerivedData/new-dmg']:
+        for path in ['/tmp/deskden-new-dmg', '/persistent/DerivedData/new-dmg']:
             with self.assertRaises(ValueError):
                 PREPARE['validate_output'](Path(path), Path('/release-original'))
 

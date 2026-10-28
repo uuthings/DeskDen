@@ -10,7 +10,7 @@ import VaultV1Compatibility
 @main struct VaultFormatCompatibilityChecks {
     @MainActor static func main() async {
         _=NSApplication.shared;NSApp.setActivationPolicy(.prohibited)
-        let directory=FileManager.default.temporaryDirectory.appendingPathComponent("fangcun-vault-format-checks-\(UUID().uuidString)")
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent("deskden-vault-format-checks-\(UUID().uuidString)")
         defer{try? FileManager.default.removeItem(at:directory)}
         var checks=0,failures=0
         func check(_ condition:Bool,_ message:String){checks += 1;if !condition {failures += 1};print("\(condition ? "PASS":"FAIL") \(message)")}
@@ -20,7 +20,7 @@ import VaultV1Compatibility
             let oldContents=VaultV1Compatibility.VaultContents(documents:[VaultV1Compatibility.PrivateDocument(title:"Legacy synthetic title",body:"Legacy synthetic body 🔐",category:.work)])
             let old=try VaultV1Compatibility.VaultCryptography.create(contents:oldContents,password:password)
             let oldBytes=try VaultV1Compatibility.VaultCryptography.encoded(old.envelope)
-            let oldStore=VaultV1Compatibility.VaultFileStore(url:directory.appendingPathComponent("current/private.fangcunvault"))
+            let oldStore=VaultV1Compatibility.VaultFileStore(url:directory.appendingPathComponent("current/private.deskdenvault"))
             try oldStore.write(old.envelope)
             let preferencesURL=directory.appendingPathComponent("current/protection.json")
             let oldPreferences=try JSONEncoder().encode(VaultV1Compatibility.VaultProtectionPreferences(idleMinutes:1))
@@ -85,7 +85,7 @@ import VaultV1Compatibility
             let rewritten=try JSONEncoder().encode(oldParsed)
             check(try JSONDecoder().decode(LauncherCore.VaultProtectionPreferences.self,from:rewritten).schema == 2,"encoding legacy preferences always emits the new schema")
             let optInDirectory=directory.appendingPathComponent("legacy-opt-in")
-            let optInStore=VaultV1Compatibility.VaultFileStore(url:optInDirectory.appendingPathComponent("private.fangcunvault"))
+            let optInStore=VaultV1Compatibility.VaultFileStore(url:optInDirectory.appendingPathComponent("private.deskdenvault"))
             try optInStore.write(old.envelope)
             try oldPreferences.write(to:optInDirectory.appendingPathComponent("protection.json"))
             let optInBiometrics=FormatSyntheticBiometrics()
@@ -113,9 +113,9 @@ import VaultV1Compatibility
             }
             v2Object["documents"]=v2Documents
             let v2Plain=try JSONSerialization.data(withJSONObject:v2Object)
-            let v2Box=try AES.GCM.seal(v2Plain,using:current.key,authenticating:Data("fangcun-encrypted-vault:1:pbkdf2-sha256-310000".utf8))
+            let v2Box=try AES.GCM.seal(v2Plain,using:current.key,authenticating:Data("deskden-encrypted-vault:1:pbkdf2-sha256-310000".utf8))
             let v2Envelope=LauncherCore.VaultEnvelope(rounds:LauncherCore.VaultCryptography.rounds,salt:current.envelope.salt,sealed:v2Box.combined!)
-            let v2Store=LauncherCore.VaultFileStore(url:directory.appendingPathComponent("legacy-v2/private.fangcunvault"))
+            let v2Store=LauncherCore.VaultFileStore(url:directory.appendingPathComponent("legacy-v2/private.deskdenvault"))
             try v2Store.write(v2Envelope);let v2Bytes=try v2Store.read()
             let v2Model=VaultModel(dataDirectory:v2Store.url.deletingLastPathComponent(),protectedDataAvailable:{true},biometrics:FormatSyntheticBiometrics())
             check(await v2Model.unlock(password:password),"version2 encrypted documents still unlock with their original password")
@@ -135,10 +135,10 @@ import VaultV1Compatibility
             check(try Data(contentsOf:v2Store.url.appendingPathExtension("previous")) == v2Bytes,
                   "version2 migration retains its exact prior encrypted revision")
             let styledPlain=try AES.GCM.open(AES.GCM.SealedBox(combined:styledResult.envelope.sealed),using:styledResult.key,
-                authenticating:Data("fangcun-encrypted-vault:1:pbkdf2-sha256-310000".utf8))
+                authenticating:Data("deskden-encrypted-vault:1:pbkdf2-sha256-310000".utf8))
             check(rejects{_ = try JSONDecoder().decode(FrozenV2PayloadVersionGate.self,from:styledPlain)},
                   "the preceding version2 reader rejects the new payload before it could strip color fields")
-            let v3BackupURL=directory.appendingPathComponent("version3-export.fangcunvault")
+            let v3BackupURL=directory.appendingPathComponent("version3-export.deskdenvault")
             check(v2Model.exportBackup(to:v3BackupURL),"version3 backup exports through the real model transaction")
             let v3Backup=try Data(contentsOf:v3BackupURL)
             let restoredV3=try LauncherCore.VaultCryptography.unlock(data:v3Backup,password:password)
@@ -159,9 +159,9 @@ import VaultV1Compatibility
             var futureObject=try JSONSerialization.jsonObject(with:JSONEncoder().encode(current.contents)) as! [String:Any]
             futureObject["version"]=4
             let futurePlaintext=try JSONSerialization.data(withJSONObject:futureObject)
-            let futureBox=try AES.GCM.seal(futurePlaintext,using:current.key,authenticating:Data("fangcun-encrypted-vault:1:pbkdf2-sha256-310000".utf8))
+            let futureBox=try AES.GCM.seal(futurePlaintext,using:current.key,authenticating:Data("deskden-encrypted-vault:1:pbkdf2-sha256-310000".utf8))
             let futureEnvelope=LauncherCore.VaultEnvelope(rounds:LauncherCore.VaultCryptography.rounds,salt:current.envelope.salt,sealed:futureBox.combined!)
-            let futureStore=LauncherCore.VaultFileStore(url:directory.appendingPathComponent("future/private.fangcunvault"))
+            let futureStore=LauncherCore.VaultFileStore(url:directory.appendingPathComponent("future/private.deskdenvault"))
             try futureStore.write(futureEnvelope);let futureBytes=try futureStore.read()
             let futureModel=VaultModel(dataDirectory:directory.appendingPathComponent("future"),protectedDataAvailable:{true},biometrics:FormatSyntheticBiometrics())
             check(!(await futureModel.unlock(password:password)) && futureModel.documents.isEmpty,"unsupported future payload never exposes or adopts a partially decoded document")

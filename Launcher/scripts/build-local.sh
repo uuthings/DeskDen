@@ -41,18 +41,18 @@ for name in required:
     if not path.is_file() or path.is_symlink():
         raise SystemExit(f'Missing regular production resource: Resources/{name}')
 info = plistlib.loads((root / 'Resources/Info.plist').read_bytes())
-qa_keys = {'FangcunDeviceAcceptance', 'FangcunDeviceAcceptanceProfile', 'FangcunUIReview',
-           'FangcunUIReviewDataDirectory', 'FangcunTopEntryDiagnostics'}
+qa_keys = {'DeskDenDeviceAcceptance', 'DeskDenDeviceAcceptanceProfile', 'DeskDenUIReview',
+           'DeskDenUIReviewDataDirectory', 'DeskDenTopEntryDiagnostics'}
 if qa_keys.intersection(info):
     raise SystemExit('Production Info.plist contains QA keys: ' + ', '.join(sorted(qa_keys.intersection(info))))
-if info.get('CFBundleExecutable') != 'FangcunLauncher':
+if info.get('CFBundleExecutable') != 'DeskDenLauncher':
     raise SystemExit('Unexpected production executable name')
-paths = [root / 'Package.swift', root / 'Signing/Fangcun.entitlements']
+paths = [root / 'Package.swift', root / 'Signing/DeskDen.entitlements']
 paths.extend(connector_root / name for name in connector_files)
 for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('scripts', '*.swift'), ('Resources', '*')]:
     paths.extend(path for path in (root / directory).rglob(pattern) if path.is_file())
-paths.extend(path for path in [root / 'Package.resolved', root.parent / 'Fangcun.xcodeproj/project.pbxproj', root.parent / 'Fangcun.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', root.parent / 'updates/appcast.xml', root.parent / 'tools/prepare-update-feed.py', root.parent / 'tools/test-prepare-update-feed.py'] if path.is_file())
-paths.extend((root.parent / 'Fangcun.xcodeproj/xcshareddata/xcschemes').glob('*.xcscheme'))
+paths.extend(path for path in [root / 'Package.resolved', root.parent / 'DeskDen.xcodeproj/project.pbxproj', root.parent / 'DeskDen.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', root.parent / 'updates/appcast.xml', root.parent / 'tools/prepare-update-feed.py', root.parent / 'tools/test-prepare-update-feed.py'] if path.is_file())
+paths.extend((root.parent / 'DeskDen.xcodeproj/xcshareddata/xcschemes').glob('*.xcscheme'))
 files = {}
 for path in sorted(set(paths)):
     if path.is_symlink():
@@ -60,14 +60,14 @@ for path in sorted(set(paths)):
     data = path.read_bytes()
     files[path.relative_to(root.parent).as_posix()] = {'sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data)}
 evidence.mkdir(parents=True, exist_ok=False)
-snapshot = {'schema': 'fangcun.build-inputs/1', 'configuration': sys.argv[2], 'files': files}
+snapshot = {'schema': 'deskden.build-inputs/1', 'configuration': sys.argv[2], 'files': files}
 (evidence / 'source-inputs-before.json').write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + '\n')
 (evidence / 'build-context.json').write_text(json.dumps({'configuration': sys.argv[2], 'createdAt': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'signing': 'ad-hoc local development; no archive, notarization or publication'}, indent=2) + '\n')
 PY
 swift build -c "$build_configuration"
 binary_dir="$(swift build -c "$build_configuration" --show-bin-path)"
 mkdir -p "$app_path/Contents/MacOS" "$app_path/Contents/Resources/Workbench"
-cp "$binary_dir/FangcunLauncher" "$app_path/Contents/MacOS/FangcunLauncher"
+cp "$binary_dir/DeskDenLauncher" "$app_path/Contents/MacOS/DeskDenLauncher"
 cp "$PWD/Resources/Info.plist" "$app_path/Contents/Info.plist"
 cp "$PWD/Resources/PanelLogo.png" "$app_path/Contents/Resources/PanelLogo.png"
 cp "$PWD/Resources/AppIcon.icns" "$app_path/Contents/Resources/AppIcon.icns"
@@ -82,10 +82,10 @@ mkdir -p "$app_path/Contents/Resources/BrowserConnectors/IPRoyal"
 for connector_resource in "${connector_template_files[@]}"; do
     cp "$PWD/BrowserConnectors/IPRoyal/$connector_resource" "$app_path/Contents/Resources/BrowserConnectors/IPRoyal/$connector_resource"
 done
-python3 - "$app_path" "$binary_dir/FangcunLauncher" "$evidence_path" <<'PY'
+python3 - "$app_path" "$binary_dir/DeskDenLauncher" "$evidence_path" <<'PY'
 from pathlib import Path
 import hashlib, json, sys
-source, copied = Path(sys.argv[2]), Path(sys.argv[1]) / 'Contents/MacOS/FangcunLauncher'
+source, copied = Path(sys.argv[2]), Path(sys.argv[1]) / 'Contents/MacOS/DeskDenLauncher'
 source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
 if hashlib.sha256(copied.read_bytes()).hexdigest() != source_hash:
     raise SystemExit('The bundled executable differs from the current SwiftPM output before signing')
@@ -103,12 +103,12 @@ connector_files = sys.argv[3:]
 if connector_root.is_symlink() or connector_root.parent.is_symlink():
     raise SystemExit('Connector template directory became a symbolic link')
 before = json.loads((evidence / 'source-inputs-before.json').read_text())
-paths = [root / 'Package.swift', root / 'Signing/Fangcun.entitlements']
+paths = [root / 'Package.swift', root / 'Signing/DeskDen.entitlements']
 paths.extend(connector_root / name for name in connector_files)
 for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('scripts', '*.swift'), ('Resources', '*')]:
     paths.extend(path for path in (root / directory).rglob(pattern) if path.is_file())
-paths.extend(path for path in [root / 'Package.resolved', root.parent / 'Fangcun.xcodeproj/project.pbxproj', root.parent / 'Fangcun.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', root.parent / 'updates/appcast.xml', root.parent / 'tools/prepare-update-feed.py', root.parent / 'tools/test-prepare-update-feed.py'] if path.is_file())
-paths.extend((root.parent / 'Fangcun.xcodeproj/xcshareddata/xcschemes').glob('*.xcscheme'))
+paths.extend(path for path in [root / 'Package.resolved', root.parent / 'DeskDen.xcodeproj/project.pbxproj', root.parent / 'DeskDen.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', root.parent / 'updates/appcast.xml', root.parent / 'tools/prepare-update-feed.py', root.parent / 'tools/test-prepare-update-feed.py'] if path.is_file())
+paths.extend((root.parent / 'DeskDen.xcodeproj/xcshareddata/xcschemes').glob('*.xcscheme'))
 files = {}
 for path in sorted(set(paths)):
     if path.is_symlink():
@@ -129,7 +129,7 @@ for name, source in expected.items():
     if not target.is_file() or target.is_symlink() or target.read_bytes() != source.read_bytes():
         raise SystemExit('Bundled production input differs from source: ' + name)
 info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
-qa_keys = {'FangcunDeviceAcceptance', 'FangcunDeviceAcceptanceProfile', 'FangcunUIReview', 'FangcunUIReviewDataDirectory', 'FangcunTopEntryDiagnostics'}
+qa_keys = {'DeskDenDeviceAcceptance', 'DeskDenDeviceAcceptanceProfile', 'DeskDenUIReview', 'DeskDenUIReviewDataDirectory', 'DeskDenTopEntryDiagnostics'}
 if qa_keys.intersection(info):
     raise SystemExit('The bundled Info.plist contains QA keys')
 actual_resources = {path.relative_to(app / 'Contents/Resources').as_posix() for path in (app / 'Contents/Resources').rglob('*') if path.is_file()}
@@ -145,7 +145,7 @@ for path in sorted(app.rglob('*')):
     if path.is_file():
         data = path.read_bytes()
         bundle[path.relative_to(app).as_posix()] = {'sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data)}
-manifest = {'schema': 'fangcun.local-bundle/1', 'configuration': before['configuration'], 'sourceInputsUnchanged': True, 'productionInfoAndResourcesMatchSource': True, 'codeSignatureVerified': True, 'executableMatchesBuildOutputBeforeSigning': True, 'files': bundle}
+manifest = {'schema': 'deskden.local-bundle/1', 'configuration': before['configuration'], 'sourceInputsUnchanged': True, 'productionInfoAndResourcesMatchSource': True, 'codeSignatureVerified': True, 'executableMatchesBuildOutputBeforeSigning': True, 'files': bundle}
 (evidence / 'bundle-integrity.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n')
 print(f'Production bundle verified: {len(bundle)} files; source input and signed bundle SHA-256 evidence saved.')
 PY

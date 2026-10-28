@@ -8,7 +8,7 @@ public enum ProtectedAtomicFile {
         guard url.isFileURL else {throw CocoaError(.fileWriteUnsupportedScheme)}
         let manager=FileManager.default,parent=url.deletingLastPathComponent()
         try manager.createDirectory(at:parent,withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
-        let temporary=parent.appendingPathComponent(".fangcun-save-\(UUID().uuidString)")
+        let temporary=parent.appendingPathComponent(".deskden-save-\(UUID().uuidString)")
         guard manager.createFile(atPath:temporary.path,contents:nil,attributes:[.posixPermissions:0o600]) else {throw CocoaError(.fileWriteNoPermission)}
         defer {try? manager.removeItem(at:temporary)}
         let handle=try FileHandle(forWritingTo:temporary)

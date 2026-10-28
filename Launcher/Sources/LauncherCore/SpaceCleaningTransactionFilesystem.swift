@@ -157,7 +157,7 @@ enum SpaceCleaningFilesystem {
     static func removeEmptyIsolation(_ url: URL) {
         guard let parent = try? Directory(url.deletingLastPathComponent()), parent.stillAtPath(),
               let child = parent.entry(url.lastPathComponent), child.mode & UInt32(S_IFMT) == UInt32(S_IFDIR),
-              url.lastPathComponent.hasPrefix(".fangcun-cleaning-") else { return }
+              url.lastPathComponent.hasPrefix(".deskden-cleaning-") else { return }
         _ = url.lastPathComponent.withCString { unlinkat(parent.descriptor, $0, AT_REMOVEDIR) }
     }
 
