@@ -115,8 +115,8 @@ import LauncherCore
                       "\(id) retains its full compact card material on actual OS hover")
             }
             let thermalText = accessibilityText("home-device-detail", in: host)
-            check(thermalText.contains("CPU 温度") && thermalText.contains("GPU 温度") && thermalText.contains("风扇"),
-                  "home's single thermal-card action exposes the real visible readings instead of replacing them with a generic action name")
+            check(thermalText.contains("CPU 温度") && thermalText.contains("GPU 温度") && thermalText.contains("运行内存"),
+                  "home's single device-card action exposes the real visible readings instead of replacing them with a generic action name")
             app.navigate(.ai)
             _ = await settle(window) { exists("fc.ai.provider.codex", in: host) }
             for id in ["fc.ai.provider.codex", "fc.ai.provider.claude"] {

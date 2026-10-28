@@ -444,6 +444,7 @@ struct DeviceHistoryChart: View {
     var minutes = 5
     var compact = false
     var networkScale = false
+    var showsSeriesLegend = true
     @State private var hover: CGPoint?
     private var end: Date { points.last?.date ?? Date() }
     private var visible: [DeviceHistoryPoint] { points.filter { end.timeIntervalSince($0.date) <= Double(minutes * 60) } }
@@ -536,7 +537,7 @@ struct DeviceHistoryChart: View {
                     Spacer(minLength: 0); Text("\(Int(minValue))–\(Int(maxValue))°C · \(minutes == 60 ? "1 小时" : "\(minutes) 分钟")")
                 } else {
                     Text(minutes == 60 ? "1 小时前" : "\(minutes) 分钟前"); Spacer(minLength: 0)
-                    if kind == .network { Text("↓ 下载　↑ 上传") }
+                    if kind == .network { if showsSeriesLegend { Text("↓ 下载　↑ 上传") } }
                     else { Text(kind == .memory ? "内存 · 0–100%" : "使用率 · 0–100%") }
                     Spacer(minLength: 0); Text("现在")
                 }

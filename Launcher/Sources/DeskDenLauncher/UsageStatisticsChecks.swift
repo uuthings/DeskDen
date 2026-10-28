@@ -335,20 +335,26 @@ import LauncherCore
                     let networkText = text("home-network-detail", objects: homeObjects)
                     let snapshot = app.device.snapshot
                     let batteryText = snapshot.battery.map { String(format: "%.0f%%", $0.percent) } ?? "电源读数不可用"
-                    let fansAreExposed = snapshot.fanRPM?.isEmpty == true ? thermalText.contains("无风扇") : thermalText.contains("风扇") && thermalText.contains("RPM")
-                    check(thermalCard != nil && thermalText.contains("CPU 温度") && thermalText.contains("GPU 温度") && thermalText.contains("°C") && fansAreExposed,
-                          "home readings \(width)/\(light): the whole thermal button exposes actual temperature and fan readings")
-                    check(frame("home-storage-usage", objects: homeObjects) != nil && frame("home-storage-progress", objects: homeObjects) != nil
-                          && frame("home-memory-progress", objects: homeObjects) != nil && frame("home-memory-usage", objects: homeObjects) != nil
-                          && text("home-storage-progress", objects: homeObjects).contains(snapshot.disk.map { String(format: "%.0f%%", $0.percent) } ?? "读数不可用")
-                          && text("home-memory-progress", objects: homeObjects).contains(snapshot.memory.map { String(format: "%.0f%%", $0.percent) } ?? "读数不可用"),
-                          "home readings \(width)/\(light): disk capacity and runtime memory both retain independent labeled progress readings")
+                    check(thermalCard != nil && thermalText.contains("CPU 温度") && thermalText.contains("GPU 温度") && thermalText.contains("°C") && thermalText.contains(snapshot.deviceName) && thermalText.contains(snapshot.chipName),
+                          "home readings \(width)/\(light): the whole device button exposes its actual identity and temperatures")
+                    let storageText = text("home-open-cleaning", objects: homeObjects)
+                    check(storageText.contains("磁盘已用比例") && thermalText.contains("运行内存")
+                          && storageText.contains(snapshot.disk.map { String(format: "%.0f%%", $0.percent) } ?? "读数不可用")
+                          && thermalText.contains(snapshot.memory.map { String(format: "%.0f%%", $0.percent) } ?? "读数不可用"),
+                          "home readings \(width)/\(light): disk and memory progress remain labeled inside their whole-card actions")
                     check(thermalText.contains(batteryText)
                           && networkText.contains("下载") && networkText.contains("上传")
                           && networkText.contains(DeviceFormat.rate(snapshot.network.downloadBytesPerSecond))
                           && networkText.contains(DeviceFormat.rate(snapshot.network.uploadBytesPerSecond))
                           && thermalCard.flatMap { thermal in networkCard.map { network in network.minX >= thermal.maxX + 10 && abs(network.maxY - thermal.maxY) < 1 } } == true,
                           "home readings \(width)/\(light): actual battery and live network readings occupy compact cards beside one another")
+                    let diskCard = frame("home-open-cleaning", objects: homeObjects)
+                    check(thermalCard.flatMap { left in diskCard.flatMap { middle in networkCard.map { right in
+                        abs(left.width - middle.width) < 1 && abs(middle.width - right.width) < 1
+                            && abs(middle.minX - left.maxX - 12) < 1 && abs(right.minX - middle.maxX - 12) < 1
+                            && [left, middle, right].allSatisfy { abs($0.height - 264) < 1 }
+                    } } } == true && networkText.contains("最近 1 分钟的实际采样趋势"),
+                          "home layout \(width)/\(light): three equal 264-point cards retain the network trend")
                     let viewport = window.convertToScreen(host.bounds)
                     let agendaFrames = ["fc.home.agenda.events", "fc.home.agenda.reminders"].compactMap { frame($0, objects: homeObjects) }
                     check(agendaFrames.count == 2 && agendaFrames.allSatisfy { $0.intersection(viewport).height >= 60 },
@@ -356,11 +362,15 @@ import LauncherCore
                     check(frame("top-context-display", objects: homeObjects) != nil,
                           "global context \(width)/\(light): Home uses the shared top-bar date, time and weather")
                     print("DETAIL home card labels \(width)/\(light) thermal=\(String(reflecting: thermalText)) network=\(String(reflecting: networkText))")
-                    check(press("home-device-detail", in: host), "home thermal card exposes a whole-card action")
+                    check(press("home-device-detail", in: host), "home device card exposes a whole-card action")
                     await settle(host)
-                    check(app.route == .device && app.deviceDetail == .thermal && frame("top-context-display", objects: objects(host)) != nil,
-                          "the complete thermal card opens its matching detail while retaining global date and weather")
+                    check(app.route == .device && app.deviceDetail == nil && frame("top-context-display", objects: objects(host)) != nil,
+                          "the complete device card opens device status while retaining global date and weather")
                     app.closeRequestedDeviceDetail(); app.navigate(.overview); await settle(host)
+                    check(press("home-open-cleaning", in: host), "home disk card exposes a whole-card cleaning action")
+                    await settle(host)
+                    check(app.route == .cleaning, "the disk card opens space cleaning")
+                    app.navigate(.overview); await settle(host)
                     check(press("home-network-detail", in: host), "home realtime network card exposes a whole-card action")
                     await settle(host)
                     check(app.route == .network && frame("top-context-display", objects: objects(host)) != nil,
