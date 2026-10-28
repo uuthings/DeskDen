@@ -108,14 +108,16 @@ import LauncherCore
 
             let context=WorkbenchContextModel(dataDirectory:root.appendingPathComponent("Context"),provider:MiniCheckWeather())
             defer {context.stop()}
-            _=context.saveClock(zone:"America/New_York",twelveHour:false)
+            _=context.saveClock(zone:nil,twelveHour:false)
             let emptyContext=WorkbenchMiniContextData(context:context,now:now)
-            check(emptyContext.time == "10:24" && emptyContext.zone == "UTC−4" && emptyContext.zoneHelp.contains("纽约"),"mini shares context clock and emits a compact offset with full zone help")
+            check(emptyContext.time == context.time(now) && emptyContext.zone == WorkbenchContextModel.utcOffset(TimeZone.current.identifier,at:now) && emptyContext.zoneHelp.hasPrefix("系统时间"),"unconfigured Mini follows the same system clock and offset without guessing a weather city")
             check(emptyContext.city == "未选择城市" && emptyContext.symbol == "globe" && emptyContext.temperature == "—","no city leaves weather unavailable without an invented temperature")
+            let newYork=WeatherCity(id:"mini:new-york",name:"纽约",latitude:40.7,longitude:-74,timeZoneIdentifier:"America/New_York")
+            _=context.saveCity(newYork)
             let tick = now.addingTimeInterval(37)
             check(WorkbenchMiniContextData(context:context,now:tick,showSeconds:true).time == "10:24:37" &&
                   WorkbenchMiniContextData(context:context,now:tick).time == "10:24", "Mini seconds are optional and use the shared display timezone")
-            _=context.saveClock(zone:"America/New_York",twelveHour:true)
+            _=context.saveClock(zone:nil,twelveHour:true)
             check(WorkbenchMiniContextData(context:context,now:tick,showSeconds:true).time == "上午 10:24:37", "Mini seconds preserve the selected 12-hour clock format")
             let city=WeatherCity(id:"mini:fixture",name:"上海",latitude:31.23,longitude:121.47,timeZoneIdentifier:"Asia/Shanghai")
             check(context.saveContext(city:city,zone:"city",twelveHour:false,temperatureUnit:.fahrenheit),"Mini context fixture uses the shared city and unit settings")
@@ -217,7 +219,7 @@ import LauncherCore
             let savedProjection=await calendar.saveDraft(draft)
             _=await wait {projection.data.reminder?.title == projectionItem.title}
             check(savedProjection && projection.data.reminder?.title == projectionItem.title && projection.data.reminder?.note == nil,"a real reminder save updates the cached Mini agenda after model publication")
-            _=context.saveClock(zone:"America/New_York",twelveHour:false)
+            _=context.saveCity(newYork)
             _=await wait {projection.data.reminder?.dateText == "10/25 · 10:25"}
             check(projection.data.reminder?.dateText == "10/25 · 10:25","changing the shared timezone rebuilds the cached Mini reminder time")
             let beforeMinute=projection.rebuildCount

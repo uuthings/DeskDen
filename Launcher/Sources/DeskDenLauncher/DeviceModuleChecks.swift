@@ -193,7 +193,15 @@ private extension CGRect { var center: CGPoint { CGPoint(x:midX,y:midY) } }
             click(at: paddingPoint, in: window)
             try? await Task.sleep(for: .milliseconds(80))
             check(opened.count == before + 1 && opened.last == .cpu, "native \(light ? "light" : "dark") detail padding routes exactly one CPU detail action")
+            let beforeBody = opened.count
+            click(at: tile.convert(NSPoint(x: 24, y: 90), to: nil), in: window)
+            try? await Task.sleep(for: .milliseconds(80))
+            check(opened.count == beforeBody + 1 && opened.last == .cpu,
+                  "native \(light ? "light" : "dark") card body opens its single destination without requiring the arrow")
         }
+        let beforeAccessiblePress = opened.count
+        check(tile.accessibilityPerformPress() && opened.count == beforeAccessiblePress + 1 && opened.last == .cpu,
+              "the whole native card exposes its destination as an accessibility press action")
         check(model.dashboardLayout == savedLayout && !grid.isInteracting && !model.isSampling,
               "native detail clicks preserve layout and never start a drag or sensor sampling")
         action.isEnabled = false

@@ -338,13 +338,19 @@ private struct CalendarDisplayPreferences:Codable {
         } catch {errorMessage="无法保存日历显示偏好：\(error.localizedDescription)";return false}
     }
     var connectedSourceCount:Int { (preferences.calendarConnected && calendarAccess == .granted ? 1:0)+(preferences.remindersConnected && remindersAccess == .granted ? 1:0) }
+    var systemRemindersAvailable:Bool {preferences.remindersConnected && remindersAccess == .granted}
+    var needsSystemConnection:Bool {!(preferences.calendarConnected && calendarAccess == .granted && systemRemindersAvailable)}
     var canRecoverBackup:Bool { (try? store.decode(Data(contentsOf:store.backupURL))) != nil }
     func count(on day:Date) -> Int { ReminderQueries.entries(reminders:reminders,events:visibleCalendarEvents,filter:.day,day:day,calendar:displayCalendar).count }
     func openNewReminder() {
         guard storageError == nil else { errorMessage=storageError; return }
         errorMessage=nil
         let due=filter == .undated ? nil:ReminderDue(date:selectedDay,includesTime:false,calendar:displayCalendar)
-        editor=CalendarReminderDraft(item:ReminderItem(title:"",due:due),creating:true,defaultDate:selectedDay,calendar:displayCalendar)
+        // New content follows the connected system list. Existing local reminders
+        // retain their identity and are never copied to EventKit implicitly.
+        let destination=systemRemindersAvailable ? writableCalendars.first:nil
+        let item=ReminderItem(origin:systemRemindersAvailable ? .system:.local,calendarID:destination?.id,calendarName:destination?.title,title:"",due:due)
+        editor=CalendarReminderDraft(item:item,creating:true,defaultDate:selectedDay,calendar:displayCalendar)
     }
     func openReminder(_ reminder:ReminderItem) { errorMessage=nil; editor=CalendarReminderDraft(item:reminder,creating:false,defaultDate:selectedDay,calendar:displayCalendar) }
     func cancelEditor() {
@@ -447,6 +453,7 @@ private struct CalendarDisplayPreferences:Codable {
     }
     func connect(reminders:Bool) async {
         guard !isWorking else { return }; isWorking=true; defer { isWorking=false }
+        errorMessage=nil
         do {
             let allowed=try await system.requestAccess(reminders:reminders)
             if reminders { remindersAccess=system.access(reminders:true) } else { calendarAccess=system.access(reminders:false) }
@@ -454,6 +461,18 @@ private struct CalendarDisplayPreferences:Codable {
             var next=preferences; if reminders { next.remindersConnected=true } else { next.calendarConnected=true }
             try requireService().setPreferences(next); syncLocal(); await refresh()
         } catch { errorMessage=error.localizedDescription }
+    }
+    /// An explicit user action requests the two separate macOS permissions.
+    /// A denied source never disconnects the other source or migrates local data.
+    func connectSystemSources() async {
+        guard !isWorking else {return}
+        var messages:[String]=[]
+        for reminders in [false,true] {
+            if reminders ? systemRemindersAvailable:(preferences.calendarConnected && calendarAccess == .granted) {continue}
+            await connect(reminders:reminders)
+            if let errorMessage {messages.append(errorMessage)}
+        }
+        errorMessage=messages.isEmpty ? nil:Array(Set(messages)).sorted().joined(separator:"\n")
     }
     func disconnect(reminders:Bool) async {
         guard !isWorking else { return }; isWorking=true; defer { isWorking=false }
@@ -468,10 +487,17 @@ private struct CalendarDisplayPreferences:Codable {
             await refresh()
         } catch { errorMessage=error.localizedDescription }
     }
+    func reminderDestinationAvailable(for draft:CalendarReminderDraft)->Bool {
+        !draft.creating || draft.item.origin == .local || (systemRemindersAvailable
+            && writableCalendars.contains{$0.id == draft.item.calendarID})
+    }
     func saveDraft(_ draft:CalendarReminderDraft) async -> Bool {
         guard !isWorking else { return false }; isWorking=true; defer { isWorking=false }
         errorMessage=nil
         do {
+            guard reminderDestinationAvailable(for:draft) else {
+                throw ReminderError.unavailable("原提醒列表已不可用，请重新选择有效的系统列表；仅保存在本机需要明确选择。")
+            }
             let result=try requireService().save(draft.value(),creating:draft.creating)
             syncLocal(); updateSystem(result)
             if let date=ReminderQueries.displayDate(for:.reminder(result),calendar:displayCalendar) { selectedDay=date; displayedMonth=date; filter = .day } else { filter = .undated }

@@ -254,11 +254,33 @@ import LauncherCore
                     if let output { check(save(host, to: output.appendingPathComponent("update-settings-\(width)-\(light ? "light" : "dark").png")), "software update settings render offscreen") }
                     app.navigate(.overview); await settle(host)
                     let homeObjects = objects(host)
-                    let thermalReadouts = ["home-temperature-readout", "home-fan-readout"].compactMap { frame($0, objects: homeObjects) }
-                    check(thermalReadouts.count == 2 && frame("home-device-metrics", objects: homeObjects).map { card in
-                        thermalReadouts.allSatisfy { card.insetBy(dx: -1, dy: -1).contains($0) }
-                    } == true && frame("home-storage-readout", objects: homeObjects) == nil && frame("home-memory-readout", objects: homeObjects) == nil,
-                          "home readings \(width)/\(light): actual temperature and fan controls fit their card without duplicate storage or memory")
+                    let thermalCard = frame("home-device-detail", objects: homeObjects)
+                    let networkCard = frame("home-network-detail", objects: homeObjects)
+                    let thermalText = text("home-device-detail", objects: homeObjects)
+                    let networkText = text("home-network-detail", objects: homeObjects)
+                    let snapshot = app.device.snapshot
+                    let batteryText = snapshot.battery.map { String(format: "%.0f%%", $0.percent) } ?? "电源读数不可用"
+                    let fansAreExposed = snapshot.fanRPM?.isEmpty == true ? thermalText.contains("无风扇") : thermalText.contains("风扇") && thermalText.contains("RPM")
+                    check(thermalCard.flatMap { card in frame("home-device-stack", objects: homeObjects).map { $0.insetBy(dx: -1, dy: -1).contains(card) } } == true
+                          && thermalText.contains("CPU 温度") && thermalText.contains("GPU 温度") && thermalText.contains("°C") && fansAreExposed
+                          && frame("home-storage-readout", objects: homeObjects) == nil && frame("home-memory-readout", objects: homeObjects) == nil,
+                          "home readings \(width)/\(light): the whole thermal button fits its column and exposes its actual temperature and fan readings without duplicate storage")
+                    check(frame("home-memory-progress", objects: homeObjects) != nil && frame("home-memory-usage", objects: homeObjects) != nil
+                          && thermalText.contains(batteryText)
+                          && networkText.contains("下载") && networkText.contains("上传")
+                          && networkText.contains(DeviceFormat.rate(snapshot.network.downloadBytesPerSecond))
+                          && networkText.contains(DeviceFormat.rate(snapshot.network.uploadBytesPerSecond))
+                          && thermalCard.flatMap { thermal in networkCard.map { network in network.maxY <= thermal.minY - 10 } } == true,
+                          "home readings \(width)/\(light): runtime memory progress remains visible and the actual battery and live network readings remain accessible in separate cards")
+                    print("DETAIL home card labels \(width)/\(light) thermal=\(String(reflecting: thermalText)) network=\(String(reflecting: networkText))")
+                    check(press("home-device-detail", in: host), "home thermal card exposes a whole-card action")
+                    await settle(host)
+                    check(app.route == .device && app.deviceDetail == .thermal, "the complete thermal card opens its matching detail")
+                    app.closeRequestedDeviceDetail(); app.navigate(.overview); await settle(host)
+                    check(press("home-network-detail", in: host), "home realtime network card exposes a whole-card action")
+                    await settle(host)
+                    check(app.route == .network, "the complete network card opens network monitoring")
+                    app.navigate(.overview); await settle(host)
                     check(!window.isVisible && !window.isKeyWindow && !app.device.isSampling && provider.refreshing.isEmpty,
                           "home readings \(width)/\(light): mounting Home never activates a window or starts live collection")
                     if let output { check(save(host, to: output.appendingPathComponent("home-device-\(width)-\(light ? "light" : "dark").png")), "home device readings render offscreen") }

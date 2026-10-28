@@ -122,6 +122,7 @@ struct WBSelect<Value: Hashable>: NSViewRepresentable {
 /// popup cell's keyboard and menu behavior instead of reimplementing selection.
 class WBPopUpButton: ClickablePopUpButton {
     private var choicePanel: WBChoicePopup?
+    weak var choiceReturnTarget: NSView?
     var choiceListFrame: NSRect? { choicePanel?.isVisible == true ? choicePanel?.frame : nil }
     override func mouseDown(with event: NSEvent) { openChoiceList() }
     override func performClick(_ sender: Any?) { openChoiceList() }
@@ -198,6 +199,44 @@ struct WBCard<Content:View>: View {
         }
         .frame(maxWidth:.infinity,alignment:.leading).padding(insets)
         .background(WorkbenchMaterialSurface())
+    }
+}
+
+/// One destination belongs to the entire compact card. The arrow is only a
+/// visual cue; compound workspaces continue to use their explicit controls.
+struct WBActionCard<Content: View>: View {
+    let title: String
+    let symbol: String
+    let identifier: String
+    let actionLabel: String
+    var contentIdentifier: String? = nil
+    var minimumHeight: CGFloat = 0
+    let action: () -> Void
+    @ViewBuilder let content: () -> Content
+    @Environment(\.workbenchPalette) private var palette
+    @State private var hovering = false
+    @FocusState private var focused: Bool
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 9) {
+                HStack(spacing: 7) {
+                    Image(systemName: symbol).font(.system(size: 15, weight: .light)).foregroundStyle(palette.secondary)
+                    Text(title).font(.system(size: 12, weight: .medium))
+                    Spacer(minLength: 0)
+                    Image(systemName: "arrow.up.right").font(.system(size: 12))
+                        .foregroundStyle(palette.secondary).opacity(hovering || focused ? 1 : 0)
+                        .accessibilityHidden(true)
+                }.frame(height: 20)
+                content()
+            }.frame(maxWidth: .infinity, alignment: .leading).padding(14)
+                .frame(minHeight: minimumHeight, alignment: .topLeading)
+                .background(WorkbenchMaterialSurface(radius: 15))
+                .contentShape(RoundedRectangle(cornerRadius: 15))
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier(contentIdentifier ?? identifier + ".content")
+        }.buttonStyle(ClickablePlainButtonStyle()).focused($focused)
+            .onHover { hovering = $0 }.help(actionLabel)
+            .accessibilityHint(actionLabel).accessibilityIdentifier(identifier)
     }
 }
 
@@ -684,7 +723,7 @@ struct ClickablePlainButtonStyle: ButtonStyle {
         let wasKey = isKeyWindow
         let parent = parent; parent?.removeChildWindow(self); orderOut(nil)
         anchor?.choiceListDismissed()
-        if NSApp.isActive, wasKey { parent?.makeKey(); parent?.makeFirstResponder(anchor) }
+        if NSApp.isActive, wasKey { parent?.makeKey(); parent?.makeFirstResponder(anchor?.choiceReturnTarget ?? anchor) }
         close()
     }
     private func choose(_ index: Int) {

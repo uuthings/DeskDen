@@ -125,6 +125,14 @@ import SwiftUI
             model.openReminder(original)
             _=await wait(host){coordinator.presentations.count == 1}
             await settle(host)
+            let noteScroller=descendantViews(host).compactMap{$0 as? NSScrollView}.first{$0.accessibilityIdentifier() == "fc.calendar.editor.notes"}
+            check(coordinator.top?.width == 560 && noteScroller.map{$0.scrollerStyle == .overlay && $0.autohidesScrollers
+                && abs($0.contentSize.width - $0.bounds.width) < 1} == true,
+                  "the reminder form uses a wider editor and a notes overlay scroller without reserving document width")
+            check((noteScroller?.documentView as? NSTextView).map{$0.string.isEmpty && $0.textContainerInset.width >= 10
+                && $0.textContainerInset.height >= 8} == true,
+                  "empty reminder notes retain balanced text insets without an occupied scrollbar track")
+            try NativeUIFixtureAccessibility.saveView(host,name:"reminder-editor.png")
             guard var draft=model.editor else {throw ReminderError.invalid("隔离编辑器未打开。")}
             let editorID=draft.id,presentationID=coordinator.top?.id,before=try Data(contentsOf:store.url)
             draft.item.title="   "
@@ -179,6 +187,7 @@ import SwiftUI
     private static func axElements(identifier:String,in host:NSView)->[NSObject] {
         axObjects(host).filter{axString("accessibilityIdentifier",from:$0) == identifier}
     }
+    private static func descendantViews(_ root:NSView)->[NSView] {root.subviews.flatMap{[$0]+descendantViews($0)}}
     private static func visibleAX(identifier:String,text:String,in host:NSView,window:NSWindow)->Bool {
         let bounds=window.convertToScreen(host.convert(host.bounds,to:nil)).insetBy(dx:-1,dy:-1)
         return axElements(identifier:identifier,in:host).contains {object in

@@ -24,7 +24,7 @@ extension WorkbenchMiniContextData {
         date=WorkbenchMiniFormat.date(now,calendar:context.dateContext.calendar,pattern:"M月d日 · EEEE")
         shortDate=WorkbenchMiniFormat.date(now,calendar:context.dateContext.calendar,pattern:"M月d日")
         weekday=WorkbenchMiniFormat.date(now,calendar:context.dateContext.calendar,pattern:"EEE")
-        zoneHelp=WorkbenchContextModel.zoneTitle(context.effectiveTimeZoneIdentifier,at:now)
+        zoneHelp=context.locationTitle+" · "+WorkbenchContextModel.utcOffset(context.effectiveTimeZoneIdentifier,at:now)
         zone=zoneHelp.components(separatedBy:" · ").last ?? zoneHelp
         city=context.settings.city?.name ?? "未选择城市"
         let weather=context.weather,snapshot=weather?.snapshot

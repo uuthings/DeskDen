@@ -36,6 +36,7 @@ struct CalendarModuleView:View {
                     }
                 }
                 if let error=model.storageError {storageWarning(error).padding(.bottom,12)}
+                if model.needsSystemConnection {systemConnectionCard.padding(.bottom,12)}
                 if !horizontalWorkspace {
                     VStack(spacing:12) {
                         monthCard.frame(height:calendarHeight)
@@ -69,6 +70,21 @@ struct CalendarModuleView:View {
             .accessibilityElement(children:.contain).accessibilityIdentifier(model.showSources ? "fc.page.calendar.sources":"fc.page.calendar")
     }
     private var zoneTitle:String {context?.zoneTitle.components(separatedBy:" · ").first ?? model.displayTimeZone.identifier}
+    private var systemConnectionCard:some View {
+        HStack(alignment:.center,spacing:16) {
+            Image(systemName:"calendar.badge.checkmark").font(.system(size:22,weight:.light)).foregroundStyle(palette.accent)
+            VStack(alignment:.leading,spacing:5) {
+                Text("连接系统日历与提醒事项").font(.system(size:12,weight:.medium))
+                Text("直接显示已有日程和待办。接入后，新提醒默认保存到系统列表；原有本机提醒仍然保留。")
+                    .font(.system(size:11)).foregroundStyle(palette.secondary).fixedSize(horizontal:false,vertical:true)
+            }
+            Spacer(minLength:8)
+            Button("接入系统") {Task {await model.connectSystemSources()}}.buttonStyle(WBButtonStyle(primary:true))
+                .disabled(model.isWorking || model.storageError != nil).accessibilityIdentifier("fc.calendar.connect-system")
+            Button("管理") {model.openSources()}.buttonStyle(WBButtonStyle())
+        }.padding(14).frame(maxWidth:.infinity,alignment:.leading).background(WorkbenchMaterialSurface())
+            .accessibilityElement(children:.contain).accessibilityIdentifier("fc.calendar.system-connection")
+    }
     private func storageWarning(_ text:String)->some View {
         HStack(alignment:.top,spacing:8) {
             Image(systemName:"exclamationmark.triangle").foregroundStyle(palette.warning)
@@ -273,7 +289,7 @@ struct CalendarDialogs:View {
     var context:WorkbenchContextModel? = nil
     var body:some View {
         Color.clear.frame(width:0,height:0)
-            .workbenchModal(item:$model.editor,onRequestDismiss:{model.editorCloseRequest += 1}) {CalendarReminderEditor(model:model,initial:$0)}
+            .workbenchModal(item:$model.editor,width:560,onRequestDismiss:{model.editorCloseRequest += 1}) {CalendarReminderEditor(model:model,initial:$0)}
             .workbenchModal(item:$model.selectedEvent) {event in CalendarEventDetail(model:model,event:event)}
             .workbenchModal(item:$model.selectedReminder) {item in CalendarReminderDetail(model:model,item:item)}
             .workbenchModal(isPresented:$model.showNotifications) {CalendarNotificationsDialog(model:model)}
@@ -306,6 +322,7 @@ private struct CalendarOperationErrorDialog:View {
 private struct CalendarDialog<Content:View,Actions:View>:View {
     let title:String
     let dismiss:()->Void
+    var width:CGFloat=470
     @ViewBuilder var content:()->Content
     @ViewBuilder var actions:()->Actions
     @Environment(\.workbenchPalette) private var palette
@@ -314,7 +331,7 @@ private struct CalendarDialog<Content:View,Actions:View>:View {
             HStack {Text(title).font(.system(size:15,weight:.medium));Spacer();Button(action:dismiss){Image(systemName:"xmark")}.buttonStyle(WBIconButtonStyle(size:32)).accessibilityLabel("关闭")}.padding(.horizontal,18).padding(.top,18).padding(.bottom,13)
             WorkbenchDialogBody(maximumHeight:380) { VStack(alignment:.leading,spacing:16,content:content) }
             HStack(spacing:8,content:actions).padding(.horizontal,18).padding(.vertical,13).overlay(alignment:.top){palette.line.frame(height:1)}
-        }.foregroundStyle(palette.text).frame(width:470)
+        }.foregroundStyle(palette.text).frame(width:width)
     }
 }
 private struct CalendarReminderEditor:View {
@@ -325,51 +342,149 @@ private struct CalendarReminderEditor:View {
     @State private var confirmDiscard=false
     @FocusState private var titleFocused:Bool
     @Environment(\.workbenchPalette) private var palette
+    @Environment(\.workbenchModals) private var modals
     init(model:CalendarModel,initial:CalendarReminderDraft){self.model=model;self.initial=initial;_draft=State(initialValue:initial)}
     private var writable:Bool {draft.creating || draft.item.isWritable}
+    private var destinationError:String? {
+        guard draft.creating,draft.item.origin == .system else {return nil}
+        guard model.systemRemindersAvailable else {return "系统提醒事项连接或权限已关闭。请重新接入，或明确选择仅保存在本机。"}
+        guard !model.writableCalendars.isEmpty else {return "系统没有可写入的提醒列表。请在提醒事项中创建列表，或明确选择仅保存在本机。"}
+        return model.reminderDestinationAvailable(for:draft) ? nil:"原提醒列表已不可用，请重新选择一个系统列表。"
+    }
+    private var destinationOptions:[(value:String,title:String)] {
+        (model.systemRemindersAvailable ? model.writableCalendars.map{(value:"system:"+$0.id,title:"提醒事项 · "+$0.title)}:[])
+            + [(value:"local",title:"仅保存在方寸本机")]
+    }
+    private var destination:Binding<String> {
+        Binding(get:{draft.item.origin == .local ? "local":"system:"+(draft.item.calendarID ?? "")},set:{value in
+            if value == "local" {draft.item.origin = .local;draft.item.calendarID=nil;draft.item.calendarName=nil}
+            else if let calendar=model.writableCalendars.first(where:{"system:"+$0.id == value}) {
+                draft.item.origin = .system;draft.item.calendarID=calendar.id;draft.item.calendarName=calendar.title
+            }
+        })
+    }
     var body:some View {
-        CalendarDialog(title:initial.creating ? "新建提醒":"编辑提醒",dismiss:cancel) {
+        CalendarDialog(title:initial.creating ? "新建提醒":"编辑提醒",dismiss:cancel,width:560) {
             VStack(alignment:.leading,spacing:6) {
                 Text("标题").font(.system(size:12))
                 TextField("要记住什么？",text:$draft.item.title).textFieldStyle(.plain).font(.system(size:12)).padding(.horizontal,10).frame(height:32).background(palette.soft,in:RoundedRectangle(cornerRadius:8)).overlay(RoundedRectangle(cornerRadius:8).strokeBorder(palette.line,lineWidth:1)).focused($titleFocused).disabled(!writable)
             }
             HStack(alignment:.top,spacing:12) {
                 VStack(alignment:.leading,spacing:8){Toggle("日期",isOn:$draft.hasDate).toggleStyle(.checkbox).clickableCursor().font(.system(size:12));WBDateInput("提醒日期",selection:$draft.date,components:.date,calendar:draft.calendar).frame(maxWidth:.infinity).frame(height:32).disabled(!draft.hasDate)}.frame(maxWidth:.infinity)
-                VStack(alignment:.leading,spacing:8){Toggle("时间 · 可留空",isOn:$draft.hasTime).toggleStyle(.checkbox).clickableCursor().font(.system(size:12)).disabled(!draft.hasDate);WBDateInput("提醒时间",selection:$draft.time,components:.time,calendar:draft.calendar).frame(maxWidth:.infinity).frame(height:32).disabled(!draft.hasDate || !draft.hasTime)}.frame(maxWidth:.infinity)
+                VStack(alignment:.leading,spacing:8){Toggle("时间 · 可留空",isOn:$draft.hasTime).toggleStyle(.checkbox).clickableCursor().font(.system(size:12)).disabled(!draft.hasDate);WBDateInput("提醒时间",selection:$draft.time,components:.time,calendar:draft.calendar).frame(maxWidth:.infinity).frame(height:32).disabled(!draft.hasDate || !draft.hasTime)}.frame(width:192)
             }.environment(\.calendar,draft.calendar).environment(\.timeZone,draft.calendar.timeZone).disabled(!writable)
                 .onChange(of:draft.hasDate){_,value in if !value {draft.hasTime=false}}
-            VStack(alignment:.leading,spacing:6) {
-                Text("保存到").font(.system(size:12))
-                if draft.creating && model.preferences.remindersConnected && model.remindersAccess == .granted {
-                    WBSelect("保存到",selection:$draft.item.origin,options:[(value:.local,title:"本机提醒"),(value:.system,title:"系统提醒事项")]).onChange(of:draft.item.origin){_,value in if value == .system {draft.item.calendarID=model.writableCalendars.first?.id}}
-                } else {Text(draft.item.sourceTitle).font(.system(size:12)).foregroundStyle(palette.secondary).frame(height:32)}
-                if draft.item.origin == .system && draft.creating {
-                    WBSelect("提醒列表",selection:Binding(get:{draft.item.calendarID ?? ""},set:{draft.item.calendarID=$0}),options:model.writableCalendars.map{(value:$0.id,title:$0.title)})
-                    if model.writableCalendars.isEmpty {Text("系统没有可写入的提醒列表，请先在提醒事项中创建列表。").font(.system(size:11)).foregroundStyle(palette.warning)}
+            VStack(alignment:.leading,spacing:8) {
+                HStack(spacing:12) {
+                    Text("保存到").font(.system(size:12)).fixedSize().frame(width:48,alignment:.leading)
+                    if draft.creating {
+                        WBSelect("选择提醒列表",selection:destination,options:destinationOptions).accessibilityIdentifier("fc.calendar.editor.destination")
+                    } else {
+                        Text(draft.item.sourceTitle).font(.system(size:12)).foregroundStyle(palette.secondary)
+                            .frame(maxWidth:.infinity,minHeight:32,alignment:.leading).padding(.horizontal,10)
+                            .background(palette.soft,in:RoundedRectangle(cornerRadius:8))
+                    }
+                }
+                if draft.creating && !model.systemRemindersAvailable {
+                    HStack(spacing:10) {
+                        Text("接入后可直接保存到系统提醒事项。").font(.system(size:11)).foregroundStyle(palette.muted)
+                        Spacer(minLength:0)
+                        Button("接入提醒事项") {Task {
+                            await model.connect(reminders:true)
+                            if model.systemRemindersAvailable {
+                                let calendar=model.writableCalendars.first
+                                draft.item.origin = .system;draft.item.calendarID=calendar?.id;draft.item.calendarName=calendar?.title
+                            }
+                        }}.buttonStyle(WBButtonStyle(compact:true)).disabled(model.isWorking)
+                            .accessibilityIdentifier("fc.calendar.editor.connect-reminders")
+                    }
+                }
+                if let destinationError {
+                    Text(destinationError)
+                        .font(.system(size:11)).foregroundStyle(palette.warning).fixedSize(horizontal:false,vertical:true)
+                        .accessibilityIdentifier("fc.calendar.editor.destination-error")
                 }
             }
             VStack(alignment:.leading,spacing:6) {
                 Text("备注").font(.system(size:12))
-                TextEditor(text:$draft.item.notes).font(.system(size:12)).scrollContentBackground(.hidden).padding(6).frame(height:74).background(palette.soft,in:RoundedRectangle(cornerRadius:8)).overlay(RoundedRectangle(cornerRadius:8).strokeBorder(palette.line,lineWidth:1)).disabled(!writable)
+                CalendarNotesEditor(text:$draft.item.notes).frame(height:88).background(palette.soft,in:RoundedRectangle(cornerRadius:8))
+                    .overlay(RoundedRectangle(cornerRadius:8).strokeBorder(palette.line,lineWidth:1)).clipShape(RoundedRectangle(cornerRadius:8)).disabled(!writable)
             }
             if draft.item.origin == .local {
                 Toggle("到时提醒我",isOn:$draft.item.notificationsEnabled).toggleStyle(.checkbox).clickableCursor().font(.system(size:12)).disabled(!writable)
                 Text("本机提醒无需日历授权；需设置日期和时间才会通知，通知权限不影响保存。"+(model.preferences.notificationsEnabled && model.notificationAccess == .granted ? "":"本机通知尚未开启，可在来源中管理。"))
                     .font(.system(size:11)).foregroundStyle(palette.muted).fixedSize(horizontal:false,vertical:true)
             } else {Text("系统提醒沿用提醒事项中的闹钟与通知设置，方寸不重复发送。").font(.system(size:11)).foregroundStyle(palette.muted)}
-            if draft.hasDate {Text("提醒日期与时间：\(draft.calendar.timeZone.identifier)。更改展示时区不会改写提醒。").font(.system(size:11)).foregroundStyle(palette.muted)}
+            if draft.hasDate {Text("按当前城市的日期与时间保存；已有提醒保留原定时间。").font(.system(size:11)).foregroundStyle(palette.muted)}
             if !writable {Text("这个系统提醒列表为只读。").font(.system(size:11)).foregroundStyle(palette.warning)}
             if let error=model.errorMessage {Text(error).font(.system(size:11)).foregroundStyle(palette.critical).fixedSize(horizontal:false,vertical:true).accessibilityIdentifier("fc.calendar.editor.inline-error")}
         } actions:{
             if !initial.creating && writable {Button("删除"){confirmDelete=true}.buttonStyle(WBButtonStyle(destructive:true))}
             Spacer()
             Button("取消",action:cancel).buttonStyle(WBButtonStyle()).keyboardShortcut(.cancelAction)
-            Button(initial.creating ? "创建提醒":"保存修改"){Task {_=await model.saveDraft(draft)}}.buttonStyle(WBButtonStyle(primary:true)).keyboardShortcut(.return,modifiers:.command).disabled(!writable || model.isWorking || (draft.item.origin == .system && draft.creating && model.writableCalendars.isEmpty))
+            Button(initial.creating ? "创建提醒":"保存修改"){
+                guard WBEditableComboSurface.commitActive(in:modals?.hostWindow) else {model.errorMessage="请检查日期与时间中的输入。";return}
+                Task {_=await model.saveDraft(draft)}
+            }.buttonStyle(WBButtonStyle(primary:true)).keyboardShortcut(.return,modifiers:.command).disabled(!writable || model.isWorking || destinationError != nil)
         }.onAppear{titleFocused=true;model.errorMessage=nil}.onChange(of:model.editorCloseRequest){_,_ in cancel()}
+            .onChange(of:model.writableCalendars){_,calendars in
+                if draft.creating,draft.item.origin == .system,draft.item.calendarID == nil,let calendar=calendars.first {
+                    draft.item.calendarID=calendar.id;draft.item.calendarName=calendar.title
+                }
+            }
             .workbenchModal(isPresented:$confirmDiscard){CalendarDiscardDialog {confirmDiscard=false} discard:{confirmDiscard=false;model.cancelEditor()}}
             .workbenchModal(isPresented:$confirmDelete){CalendarDeleteDialog(model:model,item:initial.item,dismiss:{confirmDelete=false})}
     }
-    private func cancel(){guard !model.isWorking else{return};if draft != initial {confirmDiscard=true}else{model.cancelEditor()}}
+    private func cancel(){guard !model.isWorking else{return};modals?.hostWindow?.makeFirstResponder(nil);if draft != initial {confirmDiscard=true}else{model.cancelEditor()}}
+}
+
+/// Notes use the same overlay scrollbar rule as page and dialog documents.
+/// A short or empty note has no reserved scrollbar track or horizontal gutter.
+private struct CalendarNotesEditor:NSViewRepresentable {
+    @Binding var text:String
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.workbenchPalette) private var palette
+    func makeCoordinator()->Coordinator {Coordinator(text:$text)}
+    func makeNSView(context:Context)->CalendarNotesScrollView {
+        let scroll=CalendarNotesScrollView()
+        scroll.hasVerticalScroller=true;scroll.hasHorizontalScroller=false
+        scroll.autohidesScrollers=true;scroll.scrollerStyle = .overlay
+        scroll.borderType = .noBorder;scroll.drawsBackground=false
+        scroll.setAccessibilityIdentifier("fc.calendar.editor.notes")
+        let editor=NSTextView(frame:NSRect(x:0,y:0,width:480,height:88))
+        editor.isRichText=false;editor.importsGraphics=false;editor.allowsUndo=true
+        editor.font = .systemFont(ofSize:12);editor.drawsBackground=false
+        editor.textContainerInset=NSSize(width:10,height:8)
+        editor.textContainer?.lineFragmentPadding=0;editor.textContainer?.widthTracksTextView=true
+        editor.textContainer?.containerSize=NSSize(width:480,height:CGFloat.greatestFiniteMagnitude)
+        editor.isVerticallyResizable=true;editor.isHorizontallyResizable=false
+        editor.autoresizingMask=[.width];editor.minSize=NSSize(width:0,height:0)
+        editor.maxSize=NSSize(width:CGFloat.greatestFiniteMagnitude,height:CGFloat.greatestFiniteMagnitude)
+        editor.setAccessibilityLabel("备注");editor.setAccessibilityIdentifier("fc.calendar.editor.notes.text")
+        editor.delegate=context.coordinator;scroll.documentView=editor
+        return scroll
+    }
+    func updateNSView(_ scroll:CalendarNotesScrollView,context:Context) {
+        context.coordinator.text=$text
+        guard let editor=scroll.documentView as? NSTextView else {return}
+        if editor.string != text && !editor.hasMarkedText() {editor.string=text}
+        editor.isEditable=enabled;editor.isSelectable=true
+        editor.textColor=palette.nsText.withAlphaComponent(enabled ? 1:0.45);editor.insertionPointColor=palette.nsText
+        scroll.scrollerStyle = .overlay;scroll.autohidesScrollers=true
+    }
+    @MainActor final class Coordinator:NSObject,NSTextViewDelegate {
+        var text:Binding<String>
+        init(text:Binding<String>){self.text=text}
+        func textDidChange(_ notification:Notification) {
+            guard let editor=notification.object as? NSTextView else{return}
+            text.wrappedValue=editor.string
+        }
+    }
+}
+private final class CalendarNotesScrollView:NSScrollView {
+    override var scrollerStyle:NSScroller.Style {
+        didSet {if scrollerStyle != .overlay {scrollerStyle = .overlay}}
+    }
 }
 
 private struct CalendarDiscardDialog:View {
@@ -435,9 +550,10 @@ private struct CalendarNewChoice:View {
     @ObservedObject var model:CalendarModel
     @Environment(\.workbenchPalette) private var palette
     var body:some View {CalendarDialog(title:"新建",dismiss:{model.showNewChoice=false}){
-        Button {model.showNewChoice=false;model.openNewReminder()} label:{Label("本机提醒",systemImage:"checkmark.circle")}.buttonStyle(WBButtonStyle(primary:true))
+        Button {model.showNewChoice=false;model.openNewReminder()} label:{Label(model.systemRemindersAvailable ? "提醒事项":"新建提醒",systemImage:"checkmark.circle")}.buttonStyle(WBButtonStyle(primary:true))
         Button {model.openSystemCalendar();model.showNewChoice=false} label:{Label("系统日程",systemImage:"calendar")}.buttonStyle(WBButtonStyle())
-        Text("本机提醒可在这里直接创建。系统日程交由系统日历编辑。").font(.system(size:12)).foregroundStyle(palette.secondary)
+        Text(model.systemRemindersAvailable ? "提醒直接保存到系统列表，与提醒事项保持同步。系统日程交由日历编辑。":"接入系统提醒事项后，新提醒默认保存到系统列表。尚未接入时可明确保存为本机提醒。系统日程交由日历编辑。")
+            .font(.system(size:12)).foregroundStyle(palette.secondary)
     } actions:{Spacer();Button("取消"){model.showNewChoice=false}.buttonStyle(WBButtonStyle()).keyboardShortcut(.cancelAction)}}
 }
 
@@ -462,6 +578,11 @@ private struct CalendarSourcesPage:View {
             Button {model.errorMessage=nil;onBack()} label:{Label(model.sourcesReturnToPrivacy ? "返回隐私与锁定":"返回日历与提醒",systemImage:"chevron.left")}.buttonStyle(WBQuietButtonStyle()).padding(.bottom,12)
             WBPageHeader(title:"日历来源",subtitle:"按来源管理日程、提醒与授权状态")
             VStack(spacing:12) {
+                WBCard(title:"系统来源",symbol:"calendar") {
+                    systemSource(reminders:false)
+                    ForEach(model.calendarSources){source in sourceRow(source.title,source.account.isEmpty ? "系统日历 · 只读显示":source.account+" · 只读显示") {Toggle("显示\(source.title)",isOn:Binding(get:{model.isSourceVisible(source.id)},set:{model.setSourceVisible(source.id,$0)})).labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.small).tint(palette.accent)}}
+                    systemSource(reminders:true)
+                }
                 WBCard(title:"中国大陆节假日",symbol:"calendar") {
                     sourceRow("放假与调休","关闭后隐藏官方放假、休息与补班标记") {
                         Toggle("显示中国大陆节假日",isOn:Binding(get:{model.holidaysEnabled},set:{model.setHolidaysEnabled($0)}))
@@ -475,13 +596,8 @@ private struct CalendarSourcesPage:View {
                     sourceRow("本机提醒","保存在此设备，无需日历权限"){status(model.storageError == nil ? "可用":"数据不可用",good:model.storageError == nil)}
                     sourceRow("提醒通知","不授权通知也可以保存提醒",last:true){Button(model.preferences.notificationsEnabled && model.notificationAccess == .granted ? "已允许 · 管理":"管理通知"){model.showNotifications=true}.buttonStyle(WBButtonStyle(compact:true))}
                 }
-                WBCard(title:"系统来源",symbol:"calendar") {
-                    systemSource(reminders:false)
-                    ForEach(model.calendarSources){source in sourceRow(source.title,source.account.isEmpty ? "系统日历 · 只读显示":source.account+" · 只读显示") {Toggle("显示\(source.title)",isOn:Binding(get:{model.isSourceVisible(source.id)},set:{model.setSourceVisible(source.id,$0)})).labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.small).tint(palette.accent)}}
-                    systemSource(reminders:true)
-                }
                 VStack(alignment:.leading,spacing:8) {
-                    Text("中国大陆节假日无需日历权限；系统日历为可选来源。断开只停止读取，不删除系统内容。节假日资料为年度数据，未载入年份不推算调休。").font(.system(size:11)).foregroundStyle(palette.secondary)
+                    Text("日程直接读取系统日历，提醒事项可在原系统列表中创建、编辑与完成。断开只停止同步，不删除系统内容；原有本机提醒也不会自动迁移。节假日资料按年度载入，不推算未知年份的调休。").font(.system(size:11)).foregroundStyle(palette.secondary)
                     Link(WorkbenchChinaHolidays.sourceTitle,destination:WorkbenchChinaHolidays.sourceURL).font(.system(size:11))
                     Text("数据版本："+WorkbenchChinaHolidays.datasetVersion).font(.system(size:11)).foregroundStyle(palette.muted)
                 }.padding(12).frame(maxWidth:.infinity,alignment:.leading).background(palette.soft,in:RoundedRectangle(cornerRadius:8))

@@ -421,8 +421,8 @@ import SwiftUI
                 return abs(input.bounds.height - 32) < 1 && document.bounds.insetBy(dx: -1, dy: -1).contains(rect)
             }
             check(resetByBinding && allDatesMounted && model.manualDraft.specifiesResetTimes && allInsideDocuments &&
-                  inputs.filter { $0.picker.datePickerElements == .yearMonthDay }.count == 3 &&
-                  inputs.filter { $0.picker.datePickerElements == .hourMinute }.count == 3,
+                  inputs.filter { $0.components == .date }.count == 3 &&
+                  inputs.filter { $0.components == .time }.count == 3,
                   "DEBUG state-driven known reset layout mounts all three real date and three time inputs inside their scroll document in \(label)")
             if let lastInput = inputs.last, let scroll = lastInput.enclosingScrollView {
                 _ = lastInput.scrollToVisible(lastInput.bounds)

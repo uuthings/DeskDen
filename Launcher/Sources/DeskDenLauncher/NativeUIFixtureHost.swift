@@ -4,7 +4,7 @@ import SwiftUI
 
 enum NativeUIFixtureAccessibility {
     static func isRequested(arguments: [String] = CommandLine.arguments) -> Bool {
-        arguments.contains { ["--self-check", "--device-check", "--form-check", "--space-cleaning-check", "--pointer-check", "--shortcut-responder-check", "--mini-appearance-check", "--usage-ui-check", "--top-entry-check"].contains($0) }
+        arguments.contains { ["--home-feedback-check", "--self-check", "--device-check", "--form-check", "--space-cleaning-check", "--pointer-check", "--shortcut-responder-check", "--mini-appearance-check", "--usage-ui-check", "--top-entry-check"].contains($0) }
     }
 
     private struct BridgeProbe: Sendable {
@@ -20,6 +20,18 @@ enum NativeUIFixtureAccessibility {
     }
     @MainActor private static var bridgeProbe: BridgeProbe?
     @MainActor private static var mountedProbeAttempted = false
+
+    @MainActor static func saveView(_ view: NSView?, name: String) throws {
+        guard isRequested(), let path = ProcessInfo.processInfo.environment["DESKDEN_USAGE_OUTPUT"] else { return }
+        guard let view, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+            throw NSError(domain: "DeskDenFixtureRender", code: 1)
+        }
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        guard let data = bitmap.representation(using: .png, properties: [:]) else { throw NSError(domain: "DeskDenFixtureRender", code: 2) }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try data.write(to: directory.appendingPathComponent(name), options: .atomic)
+    }
 
     /// A public AX request to this process makes AppKit's SwiftUI accessibility
     /// bridge service its real dynamic subtree. Direct in-process children

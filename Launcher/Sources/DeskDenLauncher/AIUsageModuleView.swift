@@ -1023,6 +1023,7 @@ private func aiCount(_ value: Int64) -> String {
 
 private struct AIUsageDialogContent: View {
     @ObservedObject var model: AIUsageModel
+    @Environment(\.workbenchModals) private var modals
     @State private var manualTimesExpanded = false
     #if DEBUG
     @Environment(\.aiManualDialogInspection) private var inspection
@@ -1080,7 +1081,7 @@ private struct AIUsageDialogContent: View {
         }.accessibilityIdentifier("fc.modal.ai.alert")
     }
     private var manualDialog: some View {
-        AIDialogShell(title: "手动记录额度", close: model.requestDismissDialog) {
+        AIDialogShell(title: "手动记录额度", close: dismissManual) {
             VStack(alignment: .leading, spacing: 16) {
                 AIFieldLabel("来源") { WBSelect("记录来源", selection: $model.manualDraft.provider, options: AIProvider.allCases.map { (value: $0, title: $0.title) }) }
                 HStack(spacing: 14) {
@@ -1102,21 +1103,25 @@ private struct AIUsageDialogContent: View {
                 errorText
             }
         } footer: {
-            Button("取消") { model.requestDismissDialog() }.buttonStyle(WBButtonStyle())
-            Button("保存记录") { model.saveManualDraft() }.buttonStyle(WBButtonStyle(primary: true)).accessibilityIdentifier("fc.ai.manual.save")
+            Button("取消", action: dismissManual).buttonStyle(WBButtonStyle())
+            Button("保存记录") {
+                guard WBEditableComboSurface.commitActive(in: modals?.hostWindow) else { return }
+                model.saveManualDraft()
+            }.buttonStyle(WBButtonStyle(primary: true)).accessibilityIdentifier("fc.ai.manual.save")
         }.accessibilityIdentifier("fc.modal.ai.manual")
         #if DEBUG
         .onAppear { inspection?.attach(owner: inspectionOwner, expanded: $manualTimesExpanded, knownReset: $model.manualDraft.specifiesResetTimes) }
         .onDisappear { inspection?.detach(owner: inspectionOwner) }
         #endif
     }
+    private func dismissManual() { modals?.hostWindow?.makeFirstResponder(nil); model.requestDismissDialog() }
     private func dateTimeField(_ title: String, selection: Binding<Date>) -> some View {
         AIFieldLabel(title) {
             HStack(spacing: 12) {
                 WBDateInput(title + " · 日期", selection: selection, components: .date, calendar: inputCalendar)
                     .frame(maxWidth: .infinity)
                 WBDateInput(title + " · 时间", selection: selection, components: .time, calendar: inputCalendar)
-                    .frame(maxWidth: .infinity)
+                    .frame(width: 156)
             }
         }
     }

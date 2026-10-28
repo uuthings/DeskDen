@@ -36,7 +36,7 @@ import SwiftUI
         presentations.removeAll { $0.id == id }
         for child in descendants {child.invalidate();remove(child.id)}
     }
-    func dismissTop() { top?.requestDismiss() }
+    func dismissTop() { hostWindow?.makeFirstResponder(nil); top?.requestDismiss() }
     func clear() {let previous=presentations;presentations=[];for item in previous {item.invalidate()}}
 }
 

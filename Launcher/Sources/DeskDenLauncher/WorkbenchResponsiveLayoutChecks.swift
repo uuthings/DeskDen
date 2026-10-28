@@ -87,18 +87,27 @@ enum WorkbenchResponsiveLayoutChecks {
 
             model.navigate(.overview)
             _ = await wait(window) {
-                guard let status = frame("home-device-summary", in: host), let metrics = frame("home-device-metrics", in: host),
+                guard let status = frame("home-device-summary", in: host), let metrics = frame("home-device-stack", in: host),
                       frame("home-memory-ring", in: host) != nil, frame("home-pressure-summary", in: host) != nil else { return false }
                 return sample.page < 760 ? abs(status.width - sample.page) < 2 && abs(metrics.width - sample.page) < 2
                     : abs(status.width + metrics.width + 12 - sample.page) < 3
             }
-            let status = frame("home-device-summary", in: host), metrics = frame("home-device-metrics", in: host)
+            let status = frame("home-device-summary", in: host), metrics = frame("home-device-stack", in: host)
             let memoryRing = frame("home-memory-ring", in: host), pressure = frame("home-pressure-summary", in: host)
-            let temperature = frame("home-temperature-readout", in: host), fans = frame("home-fan-readout", in: host)
-            check(metrics.flatMap { card in temperature.flatMap { readings in fans.map { fanReadings in
-                card.insetBy(dx: -1, dy: -1).contains(readings) && card.insetBy(dx: -1, dy: -1).contains(fanReadings)
-            } } } == true && frame("home-storage-readout", in: host) == nil && frame("home-memory-readout", in: host) == nil,
-                  "home device summary fits temperature and fan readings without repeating storage or memory in \(label)")
+            let thermalCard = frame("home-device-detail", in: host), networkCard = frame("home-network-detail", in: host)
+            let thermalText = accessibilityText("home-device-detail", in: host)
+            let networkText = accessibilityText("home-network-detail", in: host)
+            check(thermalCard.flatMap { card in metrics.map { $0.insetBy(dx: -1, dy: -1).contains(card) } } == true
+                  && thermalText.contains("CPU 温度") && thermalText.contains("GPU 温度") && thermalText.contains("风扇")
+                  && frame("home-storage-readout", in: host) == nil && frame("home-memory-readout", in: host) == nil,
+                  "home thermal card fits its column and exposes its actual temperature and fan labels without repeated storage in \(label)")
+            check(thermalCard.flatMap { thermal in networkCard.map { network in
+                network.maxY <= thermal.minY - 10 && abs(thermal.minX - network.minX) < 1 && abs(thermal.width - network.width) < 1
+            } } == true && networkText.contains("下载") && networkText.contains("上传"),
+                  "home network card stays separate below thermal readings and exposes both live directions in \(label)")
+            check(frame("home-memory-usage", in: host).flatMap { usage in status.map { $0.contains(usage) } } == true
+                  && frame("home-network-detail", in: host) != nil,
+                  "home retains its runtime memory bar and a separate realtime network destination in \(label)")
             check(memoryRing.flatMap { ring in pressure.map { text in
                 ring.maxX + 12 <= text.minX && min(ring.maxY, text.maxY) - max(ring.minY, text.minY) > 24
             } } == true, "home memory ring and pressure explanation remain beside each other without vertical stacking in \(label)")

@@ -110,12 +110,13 @@ import LauncherCore
                     abs(before.minX - after.minX) < 1 && abs(before.maxX - after.maxX) < 1 && abs(before.minY - after.minY) < 1
                 } } == true
             }, "closing the city modal restores identical home card positions and left/right boundaries")
-            for id in ["home-temperature-readout", "home-fan-readout"] {
+            for id in ["home-device-detail", "home-network-detail"] {
                 check(try await hoverBackground(id, host: host, window: window, output: output, expectedChange: false),
-                      "\(id) retains its unboxed readout surface on actual OS hover")
+                      "\(id) retains its full compact card material on actual OS hover")
             }
-            check(try await hoverBackground("home-device-detail", host: host, window: window, output: output),
-                  "home device detail arrow uses the bounded shared icon hover surface")
+            let thermalText = accessibilityText("home-device-detail", in: host)
+            check(thermalText.contains("CPU 温度") && thermalText.contains("GPU 温度") && thermalText.contains("风扇"),
+                  "home's single thermal-card action exposes the real visible readings instead of replacing them with a generic action name")
             app.navigate(.ai)
             _ = await settle(window) { exists("fc.ai.provider.codex", in: host) }
             for id in ["fc.ai.provider.codex", "fc.ai.provider.claude"] {
@@ -634,6 +635,17 @@ import LauncherCore
         NSApp.postEvent(up, atStart: false)
         NSApp.sendEvent(down)
         return true
+    }
+    private static func accessibilityText(_ identifier: String, in root: NSView) -> String {
+        objects(root).filter { object in
+            object.responds(to: NSSelectorFromString("accessibilityIdentifier"))
+                && object.value(forKey: "accessibilityIdentifier") as? String == identifier
+        }.flatMap { object in
+            ["accessibilityLabel", "accessibilityValue"].compactMap { selector -> String? in
+                guard object.responds(to: NSSelectorFromString(selector)) else { return nil }
+                return object.value(forKey: selector) as? String
+            }
+        }.joined(separator: " ")
     }
     private static func objects(_ root: NSObject) -> [NSObject] {
         var pending = [root], result: [NSObject] = [], visited = Set<ObjectIdentifier>()

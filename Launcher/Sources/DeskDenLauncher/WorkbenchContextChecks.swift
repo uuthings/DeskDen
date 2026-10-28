@@ -21,7 +21,8 @@ import LauncherCore
             let initialCalls = await provider.totalCalls()
             check(initialCalls == 0, "constructing context does not make an unrequested weather query")
             model.showClock = true
-            check(model.saveClock(zone: "America/New_York", twelveHour: true) && !model.showClock, "clock saves the selected zone and format, then closes")
+            check(model.saveClock(zone: "America/New_York", twelveHour: true) && !model.showClock && model.settings.timeZoneMode == .system && model.dateContext.timeZoneIdentifier == TimeZone.current.identifier,
+                  "clock format saves without introducing a location independent of the selected city")
             let url = directory.appendingPathComponent("context.json"), saved = try Data(contentsOf: url)
             let reloaded = WorkbenchContextModel(dataDirectory: directory, provider: provider)
             defer { reloaded.stop() }
@@ -38,10 +39,10 @@ import LauncherCore
             reminders.reminders = [.init(id: "timed", title: "独立提醒", due: timed), .init(id: "all-day", title: "原始日期", due: allDay)]
             let store = ReminderStore(directory: directory); try store.save(reminders)
             let reminderData = try Data(contentsOf: store.url), dueInstant = timed.date
-            check(model.saveClock(zone: "Asia/Shanghai", twelveHour: false), "display zone can change independently")
+            check(model.saveCity(berlin), "selecting a city updates the shared date and clock location")
             let after = try store.load()
             check((try? Data(contentsOf: store.url)) == reminderData && after.reminders.map(\.due) == [timed, allDay] && after.reminders[0].due?.date == dueInstant,
-                  "display zone change preserves timed and day-only reminder bytes, original zones and due instant")
+                  "city display change preserves timed and day-only reminder bytes, original zones and due instant")
             check(WorkbenchContextModel.zoneTitle("America/New_York", at: Date(timeIntervalSince1970: 1_783_080_000)).contains("UTC−4") &&
                   WorkbenchContextModel.zoneTitle("America/New_York", at: Date(timeIntervalSince1970: 1_767_225_600)).contains("UTC−5"),
                   "clock zone title uses actual summer and winter UTC offsets")
@@ -63,8 +64,8 @@ import LauncherCore
             check(model.saveCity(berlin) && !model.showWeather, "manual city save persists selection and closes the dialog")
             let loaded = await wait { !model.loadingWeather && model.weather?.snapshot?.city == berlin }
             check(loaded && model.weather?.isCurrent == true, "manual city receives an actual injected provider reading")
-            check(model.dateContext.timeZoneIdentifier == "Asia/Shanghai" && model.settings.city?.timeZoneIdentifier == "Europe/Berlin",
-                  "an explicit custom display zone remains independent when the weather city changes")
+            check(model.dateContext.timeZoneIdentifier == "Europe/Berlin" && model.settings.city?.timeZoneIdentifier == "Europe/Berlin",
+                  "weather and display date always use the same selected city's timezone")
             let beforePreview = try Data(contentsOf: url), oldSettings = model.settings
             let preview = await model.service.load(city: tokyo)
             model.showWeather = true; model.showWeather = false
@@ -77,14 +78,14 @@ import LauncherCore
                   "previously previewed city can use its attributed cache after actual save")
             check(model.saveCity(nil), "explicitly clearing weather city saves a nil selection")
             let cleared = await wait { !model.loadingWeather && model.weather?.freshness == .noCity }
-            check(cleared && model.weather?.snapshot == nil && model.dateContext.timeZoneIdentifier == "Asia/Shanghai",
-                  "cleared city removes weather without changing the clock")
+            check(cleared && model.weather?.snapshot == nil && model.dateContext.timeZoneIdentifier == TimeZone.current.identifier,
+                  "clearing a city removes weather and restores system date and time")
 
             let linkedDirectory = root.appendingPathComponent("linked-city")
             let linked = WorkbenchContextModel(dataDirectory: linkedDirectory, provider: provider)
             defer { linked.stop() }
-            check(linked.settings.timeZoneMode == .city && linked.dateContext.timeZoneIdentifier == TimeZone.current.identifier && linked.settings.city == nil,
-                  "new context follows the selected city and uses system timezone until a real city is chosen")
+            check(linked.settings.timeZoneMode == .system && linked.dateContext.timeZoneIdentifier == TimeZone.current.identifier && linked.settings.city == nil,
+                  "new context explicitly follows system date and time without inventing weather")
             linked.showClock = true; linked.showWeather = true
             check(linked.saveContext(city: berlin, zone: "city", twelveHour: true, temperatureUnit: .fahrenheit) &&
                   !linked.showClock && !linked.showWeather && linked.dateContext.timeZoneIdentifier == "Europe/Berlin" && linked.temperature(17) == "63°F",
@@ -100,12 +101,12 @@ import LauncherCore
             previewClock.twelveHour = false
             let previewInstant = Date(timeIntervalSince1970: 1_767_225_900)
             check(previewClock.time(previewInstant) == "01:05", "weather update time follows the draft city timezone and 24-hour format before save")
-            previewClock.zone = "America/New_York"; previewClock.twelveHour = true
+            previewClock.city = .init(id:"context:new-york",name:"纽约",latitude:40.7,longitude:-74,timeZoneIdentifier:"America/New_York"); previewClock.twelveHour = true
             check(previewClock.time(previewInstant).contains("下午") && previewClock.time(previewInstant).contains("7:05"),
-                  "weather update time respects an unsaved custom timezone and 12-hour format")
-            previewClock.zone = "system"
+                  "weather update time follows an unsaved city selection and 12-hour format")
+            previewClock.city = nil
             check(previewClock.effectiveTimeZoneIdentifier == TimeZone.current.identifier,
-                  "weather preview explicitly follows system timezone when selected in the draft")
+                  "clearing the draft city makes its preview follow system time")
             check(linked.saveCity(tokyo) && linked.dateContext.timeZoneIdentifier == "Asia/Tokyo",
                   "changing city updates the default linked display timezone")
             check(linked.saveContext(city: nil, zone: "city", twelveHour: false, temperatureUnit: .celsius) &&
@@ -115,8 +116,8 @@ import LauncherCore
             check(!linked.saveContext(city: invalidCity, zone: "city", twelveHour: false, temperatureUnit: .celsius) && linked.settings.city == nil,
                   "a city without valid supplied timezone is rejected rather than assigned a guessed clock")
             check(linked.saveContext(city: berlin, zone: "system", twelveHour: false, temperatureUnit: .celsius) &&
-                  linked.settings.timeZoneMode == .system && linked.dateContext.timeZoneIdentifier == TimeZone.current.identifier,
-                  "explicit system timezone remains available in the merged settings")
+                  linked.settings.timeZoneMode == .city && linked.dateContext.timeZoneIdentifier == berlin.timeZoneIdentifier,
+                  "a legacy independent-zone argument cannot separate the selected city's weather and clock")
             let linkedURL = linkedDirectory.appendingPathComponent("context.json")
             let linkedBefore = try Data(contentsOf: linkedURL), linkedSettings = linked.settings
             check(!linked.saveContext(city: tokyo, zone: "Invalid/Nowhere", twelveHour: true, temperatureUnit: .fahrenheit) &&
@@ -126,8 +127,8 @@ import LauncherCore
             check(linkedReload.settings == linkedSettings, "temperature and timezone-link preferences survive a separate model reload")
             linkedReload.stop()
             for (name, legacy, expectedMode) in [
-                ("legacy-explicit", #"{"schema":1,"twelveHour":true,"timeZoneIdentifier":"UTC"}"#, WorkbenchContextTimeZoneMode.custom),
-                ("legacy-default", #"{"schema":1,"twelveHour":false}"#, WorkbenchContextTimeZoneMode.city)
+                ("legacy-explicit", #"{"schema":1,"twelveHour":true,"timeZoneIdentifier":"UTC"}"#, WorkbenchContextTimeZoneMode.system),
+                ("legacy-default", #"{"schema":1,"twelveHour":false}"#, WorkbenchContextTimeZoneMode.system)
             ] {
                 let legacyDirectory = root.appendingPathComponent(name)
                 try FileManager.default.createDirectory(at: legacyDirectory, withIntermediateDirectories: true)
@@ -136,9 +137,23 @@ import LauncherCore
                 let migrated = WorkbenchContextModel(dataDirectory: legacyDirectory, provider: provider)
                 check(migrated.error == nil && migrated.settings.schema == 2 && migrated.settings.timeZoneMode == expectedMode &&
                       migrated.temperatureUnit == .celsius && (try? Data(contentsOf: legacyURL)) == legacyData,
-                      "\(name) migrates in memory, preserves explicit timezone, defaults Celsius and leaves original bytes until save")
+                      "\(name) adopts unified system location in memory and leaves original bytes until explicit save")
                 migrated.stop()
             }
+            let legacyCityDirectory = root.appendingPathComponent("legacy-city-override")
+            try FileManager.default.createDirectory(at:legacyCityDirectory,withIntermediateDirectories:true)
+            let legacyCityURL = legacyCityDirectory.appendingPathComponent("context.json")
+            var legacyCity = WorkbenchContextPreferences(); legacyCity.city = berlin
+            legacyCity.timeZoneMode = .custom; legacyCity.timeZoneIdentifier = "UTC"
+            let legacyCityData = try JSONEncoder().encode(legacyCity); try legacyCityData.write(to:legacyCityURL)
+            let migratedCity = WorkbenchContextModel(dataDirectory:legacyCityDirectory,provider:provider)
+            check(migratedCity.dateContext.timeZoneIdentifier == berlin.timeZoneIdentifier && migratedCity.settings.city == berlin &&
+                  migratedCity.settings.timeZoneMode == .city && (try? Data(contentsOf:legacyCityURL)) == legacyCityData,
+                  "a legacy city with a separate clock override unifies in memory while preserving its original settings file")
+            migratedCity.stop()
+            let beijing = WorkbenchCityCatalog.matches("北京").first!, guangzhou = WorkbenchCityCatalog.matches("广州").first!
+            check(linked.saveCity(beijing) && linked.zoneTitle == "北京 · UTC+8" && linked.saveCity(guangzhou) && linked.zoneTitle == "广州 · UTC+8",
+                  "Chinese cities retain their selected names instead of showing Shanghai's IANA representative name")
 
             // A failing destination preserves both in-memory settings and the last valid bytes.
             let oldDirectory = root.appendingPathComponent("preferences-backup")

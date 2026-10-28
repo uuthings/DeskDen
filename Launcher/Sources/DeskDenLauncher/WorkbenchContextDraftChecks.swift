@@ -15,17 +15,15 @@ import LauncherCore
         let model = WorkbenchContextModel(dataDirectory: directory, provider: ContextDraftOfflineProvider())
         defer { model.stop() }
         do {
-            check(model.saveClock(zone: "UTC", twelveHour: false), "context draft fixture starts from saved clock preferences")
+            check(model.saveClock(zone: nil, twelveHour: false), "context draft fixture starts from saved clock preferences")
             let saved = try Data(contentsOf: directory.appendingPathComponent("context.json"))
             var clock = WorkbenchClockDraft(settings: model.settings)
-            check(!clock.hasChanges, "clock draft starts clean from persisted zone and hour format")
-            clock.zone = "Asia/Tokyo"
-            check(clock.hasChanges, "changed display zone is an unsaved clock draft")
-            clock.zone = "UTC"; clock.twelveHour = true
+            check(!clock.hasChanges, "clock draft starts clean from persisted hour format")
+            clock.twelveHour = true
             check(clock.hasChanges, "hour-format change independently makes the clock draft dirty")
             clock.twelveHour = false
-            check(!clock.hasChanges, "reverting both clock fields restores a clean draft")
-            clock.zone = "Asia/Tokyo"; clock.twelveHour = true
+            check(!clock.hasChanges, "reverting the clock format restores a clean draft")
+            clock.twelveHour = true
 
             let clockClose = WorkbenchDraftCloseCoordinator(), clockModals = WorkbenchModalCoordinator()
             model.showClock = true
@@ -43,7 +41,7 @@ import LauncherCore
             let clockConfirmedAgain = await wait(window: clockWindow) { clockClose.confirmingDiscard && clockModals.presentations.count == 2 }
             check(clockConfirmedAgain && clockClose.closeRequests == 2,
                   "clock close signals remain observable after cached presentation and continued editing retains dirty draft")
-            check((try? Data(contentsOf: directory.appendingPathComponent("context.json"))) == saved && model.settings.timeZoneIdentifier == "UTC" && !model.settings.twelveHour,
+            check((try? Data(contentsOf: directory.appendingPathComponent("context.json"))) == saved && model.settings.timeZoneIdentifier == nil && !model.settings.twelveHour,
                   "clock confirmation and continued editing cannot persist either draft field")
             clockClose.discardChanges { model.showClock = false }
             let clockDiscarded = await wait(window: clockWindow) { clockModals.presentations.isEmpty }
@@ -72,6 +70,7 @@ import LauncherCore
             let weatherWindow = mount(model: model, close: weatherClose, coordinator: weatherModals, weather: weather)
             defer { weatherModals.clear(); weatherWindow.close() }
             _ = await wait(window: weatherWindow) { weatherModals.presentations.count == 1 }
+            try NativeUIFixtureAccessibility.saveView(weatherWindow.contentView,name:"city-time-dialog.png")
             weatherModals.dismissTop()
             let weatherConfirmed = await wait(window: weatherWindow) { weatherClose.confirmingDiscard && weatherModals.presentations.count == 2 }
             check(weatherConfirmed && model.showWeather && model.settings.city == nil,
@@ -92,10 +91,10 @@ import LauncherCore
             weather.city = nil
             check(!weather.hasChanges, "reverting selected city to the saved nil value makes weather clean again")
             model.showClock = true
-            check(model.saveClock(zone: clock.zone, twelveHour: clock.twelveHour) && !model.showClock,
-                  "explicit clock save uses the real model and closes normally with both draft values saved")
+            check(model.saveClock(zone: nil, twelveHour: clock.twelveHour) && !model.showClock,
+                  "explicit clock save uses the real model and closes normally with the format saved")
             let reloaded = WorkbenchContextModel(dataDirectory: directory, provider: ContextDraftOfflineProvider())
-            check(reloaded.settings.timeZoneIdentifier == "Asia/Tokyo" && reloaded.settings.twelveHour,
+            check(reloaded.settings.timeZoneMode == .system && reloaded.settings.twelveHour,
                   "successful draft save survives an independent context reload")
             reloaded.stop()
         } catch { check(false, "context draft fixture setup: \(error.localizedDescription)") }
@@ -188,7 +187,7 @@ private actor ContextDraftOfflineProvider: WeatherProviding {
         do {
             guard context.saveClock(zone:"UTC",twelveHour:false) else {throw ReminderError.invalid("取消检查无法建立隔离时区偏好。")}
             let saved=try Data(contentsOf:directory.appendingPathComponent("context.json"))
-            var draft=WorkbenchClockDraft(settings:context.settings);draft.zone="Asia/Tokyo"
+            var draft=WorkbenchClockDraft(settings:context.settings);draft.twelveHour=true
             let source=NSHostingView(rootView:CancelClockPresenter(context:context,close:close,coordinator:model.modals,draft:draft).nativeCheckAccessibility())
             source.frame=NSRect(x:0,y:0,width:1,height:1);root.addSubview(source);presenter=source
             context.showClock=true
@@ -214,7 +213,7 @@ private actor ContextDraftOfflineProvider: WeatherProviding {
             window.makeFirstResponder(nil);text.removeFromSuperview()
             _=sendEscape(to:window)
             let guardedAgain=await wait(window){close.confirmingDiscard && model.modals.presentations.count == 2}
-            check(guardedAgain && close.closeRequests == 2 && context.settings.timeZoneIdentifier == "UTC",
+            check(guardedAgain && close.closeRequests == 2 && context.settings.timeZoneIdentifier == nil,
                   "after local text handling, an unfocused Escape still reopens draft protection without saving")
             close.discardChanges{context.showClock=false}
             _=await wait(window){model.modals.presentations.isEmpty}

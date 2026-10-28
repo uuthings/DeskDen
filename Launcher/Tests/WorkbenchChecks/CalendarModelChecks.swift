@@ -36,6 +36,24 @@ import LauncherCore
         check(!model.preferences.remindersConnected && model.localReminders.count == 1,"denied system access leaves local reminders usable")
         system.granted=true; await model.connect(reminders:true)
         check(model.preferences.remindersConnected && system.permissionRequests == 2,"explicit reconnect can enable system source")
+        model.openNewReminder()
+        check(model.editor?.item.origin == .system && model.editor?.item.calendarID == "fixture",
+              "connected reminders default new drafts to the provider's first writable list")
+        var destinationDraft=model.editor!;destinationDraft.item.title="Synthetic destination validation"
+        system.writableLists=[];await model.refresh()
+        check(!(await model.saveDraft(destinationDraft)) && model.editor?.item.origin == .system
+              && model.localReminders.count == 1 && system.writeCalls == 0,
+              "an empty system list collection blocks saving without switching the draft to local storage")
+        system.writableLists=[ReminderCalendar(id:"replacement",title:"Replacement list")];await model.refresh()
+        check(!(await model.saveDraft(destinationDraft)) && model.editor?.item.calendarID == "fixture"
+              && model.localReminders.count == 1 && system.writeCalls == 0,
+              "a removed destination requires explicit reselection even when another writable list exists")
+        system.writableLists=[ReminderCalendar(id:"fixture",title:"Synthetic fixture")];await model.refresh()
+        var failedSystemDraft=model.editor!;failedSystemDraft.item.title="Synthetic rejected system reminder"
+        system.failWrites=true
+        check(!(await model.saveDraft(failedSystemDraft)) && model.editor?.id == failedSystemDraft.id && model.localReminders.count == 1 && system.items.isEmpty,
+              "failed system save preserves its draft without creating a duplicate local reminder")
+        system.failWrites=false;model.cancelEditor()
         let todayStart=Calendar.current.startOfDay(for:Date())
         let futureMonth=Calendar.current.date(byAdding:.month,value:2,to:todayStart)!
         system.calendarEvents=[
@@ -56,6 +74,24 @@ import LauncherCore
         check(model.systemReminders.count == 1 && model.localReminders.count == 1 && system.items.count == 1,"system saves do not become local duplicates")
         await model.disconnect(reminders:true)
         check(model.systemReminders.isEmpty && system.items.count == 1,"disconnect hides system source without deleting its items")
+        model.openNewReminder()
+        check(model.editor?.item.origin == .local && model.localReminders.count == 1,
+              "disconnected reminder source offers an explicit local draft without migrating old content")
+        model.cancelEditor()
+        let connected=CalendarModel(dataDirectory:directory.appendingPathComponent("combined"),system:system,notifier:notifications)
+        let beforeCombined=system.permissionRequests
+        await connected.connectSystemSources()
+        check(!connected.needsSystemConnection && connected.preferences.calendarConnected && connected.systemRemindersAvailable
+              && system.permissionRequests == beforeCombined + 2,
+              "explicit combined setup connects both independent system permissions")
+        await connected.connectSystemSources()
+        check(system.permissionRequests == beforeCombined + 2,"combined setup never requests already connected source permissions again")
+        let partialSystem=CalendarCheckSystem();partialSystem.granted=true;partialSystem.calendarGranted=false
+        let partial=CalendarModel(dataDirectory:directory.appendingPathComponent("partial"),system:partialSystem,notifier:notifications)
+        await partial.connectSystemSources()
+        check(!partial.preferences.calendarConnected && partial.systemRemindersAvailable && partialSystem.permissionRequests == 2
+              && partial.errorMessage?.contains("未允许访问日历") == true,
+              "denying Calendar still connects Reminders and reports the independently denied permission")
         model.disableNotifications(); await Task.yield()
         check(notifications.pending.isEmpty && !model.preferences.notificationsEnabled,"explicit notification disable cancels owned pending requests")
         check(system.calendarWrites == 0,"calendar integration never writes calendar events")
@@ -66,14 +102,20 @@ import LauncherCore
 @MainActor final class CalendarCheckSystem:CalendarSystemProviding {
     var permissionRequests=0,calendarWrites=0
     var granted=false
+    var calendarGranted:Bool?
+    var failWrites=false
+    var writeCalls=0
+    var writableLists=[ReminderCalendar(id:"fixture",title:"Synthetic fixture")]
     var items:[ReminderItem] = []
     var calendarEvents:[CalendarEventItem] = []
-    func access(reminders:Bool) -> CalendarAccess { granted ? .granted:.denied }
-    func requestAccess(reminders:Bool) async throws -> Bool { permissionRequests += 1; return granted }
+    func access(reminders:Bool) -> CalendarAccess { (reminders ? granted:(calendarGranted ?? granted)) ? .granted:.denied }
+    func requestAccess(reminders:Bool) async throws -> Bool { permissionRequests += 1; return access(reminders:reminders) == .granted }
     func events(in interval:DateInterval) throws -> [CalendarEventItem] { calendarEvents.filter { $0.start < interval.end && $0.end > interval.start } }
     func reminders() async throws -> [ReminderItem] { items }
-    func writableReminderCalendars() -> [ReminderCalendar] { [ReminderCalendar(id:"fixture",title:"Synthetic fixture")] }
+    func writableReminderCalendars() -> [ReminderCalendar] {writableLists}
     func saveReminder(_ item:ReminderItem,creating:Bool) throws -> ReminderItem {
+        writeCalls += 1
+        if failWrites {throw ReminderError.unavailable("Synthetic write failure")}
         var result=item; if creating { result.id=UUID().uuidString }
         if let i=items.firstIndex(where:{$0.id == result.id}) { items[i]=result } else { items.append(result) }; return result
     }
