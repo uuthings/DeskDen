@@ -86,8 +86,22 @@ import LauncherCore
                   && fixture.app.usageAppearance.appearance(for: codexKey) == originalCodex
                   && fixture.ai.configuration(for: .codex).declaredPlan == .pro,
                   "adding a built-in subscription cannot overwrite its existing display or plan")
+            duplicate.connectSubscription(app: fixture.app)
+            check(duplicate.busy && duplicate.selectedSourceID == codexKey,
+                  "one click connects the unique local source directly from the new form")
+            check(await settle(duplicate), "local connection resolves without a second sync action")
+            check(fixture.app.usageAppearance.appearance(for: codexKey) == originalCodex
+                  && fixture.ai.configuration(for: .codex).declaredPlan == .pro
+                  && duplicate.draft.name == "Must not overwrite" && duplicate.draft.declaredPlan == .plus,
+                  "connecting preserves saved card metadata and keeps explicit appearance edits as a draft")
 
             let rollback = UsageConnectionManager(sourceID: codexKey); rollback.prepare(app: fixture.app)
+            let switched = UsageConnectionManager(); switched.selectService(.claude)
+            switched.draft.declaredPlan = .plus; switched.selectService(.codex)
+            switched.connectSubscription(app: fixture.app)
+            check(await settle(switched), "switching subscription service resolves its connection")
+            check(switched.draft.declaredPlan == .pro && fixture.ai.configuration(for: .codex).declaredPlan == .pro,
+                  "a different service's optional plan cannot clear the existing subscription plan")
             rollback.draft.declaredPlan = .plus; rollback.draft.name = "Unsaved name"
             let displayBytes = try Data(contentsOf: fixture.appearanceFile)
             try FileManager.default.removeItem(at: fixture.appearanceFile)

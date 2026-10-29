@@ -6,6 +6,71 @@ import LauncherCore
 /// checking constants from the implementation. No pointer events are injected.
 @MainActor
 enum WorkbenchResponsiveLayoutChecks {
+    /// Explicit foreground-only entry: mounts the production window with no
+    /// real calendar, AI session paths, network services or shortcut setup.
+    /// It runs only the persistent Home sequence, never the broad route suite.
+    static func runHomeResizeFixture() async -> (count:Int,failures:Int) {
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent("deskden-home-resize-\(UUID().uuidString)")
+        let priorApplication=NSWorkspace.shared.frontmostApplication
+        let priorPolicy=NSApp.activationPolicy()
+        let oldPalette=(Palette.workbenchTheme,Palette.isLight,Palette.glassOpacity)
+        defer {
+            Palette.workbenchTheme=oldPalette.0;Palette.isLight=oldPalette.1;Palette.glassOpacity=oldPalette.2
+            NSApp.setActivationPolicy(priorPolicy)
+            if priorApplication?.processIdentifier != ProcessInfo.processInfo.processIdentifier {priorApplication?.activate(options:[])}
+            try? FileManager.default.removeItem(at:directory)
+        }
+        do {
+            try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
+            let owner=LauncherController(dataDirectory:directory.appendingPathComponent("Launcher"))
+            owner.scanning=true
+            owner.configuration.settings.workbenchHotKey=nil;owner.configuration.settings.applicationViewHotKey=nil
+            owner.configuration.settings.launcherHotKey=nil;owner.configuration.settings.directLaunchPrefix=nil
+            owner.configuration.bindingHotKeys=[:]
+            owner.configuration.settings.backgroundMotionEnabled=false;owner.configuration.settings.reduceMotion=true
+            try owner.store.save(owner.configuration)
+            let aiDirectory=directory.appendingPathComponent("AI"),sourcesDirectory=aiDirectory.appendingPathComponent("AIUsage")
+            try FileManager.default.createDirectory(at:sourcesDirectory,withIntermediateDirectories:true)
+            let sources=AIProvider.allCases.map {provider in
+                AIUsageSourceConfiguration(provider:provider,enabled:false,sessionsPath:directory.appendingPathComponent("disabled-"+provider.rawValue).path,quotaPath:nil,manualSnapshot:nil)
+            }
+            try JSONEncoder().encode(sources).write(to:sourcesDirectory.appendingPathComponent("sources.json"))
+            let system=HomeResizeCalendar(),notifications=HomeResizeNotifications()
+            let calendar=CalendarModel(dataDirectory:directory.appendingPathComponent("Calendar"),system:system,notifier:notifications)
+            let ai=AIUsageModel(dataDirectory:aiDirectory,startServices:false,notifications:HomeResizeAINotifications(),claudeSettingsDirectory:directory.appendingPathComponent("DisabledClaude"))
+            let model=WorkbenchAppModel(owner:owner,calendar:calendar,ai:ai,startServices:false)
+            let controller=WorkbenchWindowController(owner:owner,model:model,autosavesFrame:false)
+            owner.workbenchController=controller
+            defer {
+                model.modals.clear();model.shutdown()
+                controller.window?.orderOut(nil);controller.window?.delegate=nil
+                controller.window?.contentView=nil;controller.window?.close()
+                owner.workbenchController=nil
+                owner.hotKey.unregister();owner.bindingHotKeys.unregister();owner.toastTask?.cancel()
+            }
+            guard let window=controller.window,let host=window.contentView else {
+                print("FAIL isolated Home resize fixture creates its production native window")
+                return (1,1)
+            }
+            controller.present(route:.overview)
+            let ready=await NativeUIFixtureWindow.prepare(window:window) {
+                frame("home-device-detail",in:host) != nil && frame("home-open-cleaning",in:host) != nil && frame("home-network-detail",in:host) != nil
+            }
+            guard ready else {
+                print("FAIL isolated Home resize fixture becomes foreground with its actual accessibility tree")
+                return (1,1)
+            }
+            let result=await checkPersistentHomeResizing(model:model,window:window,host:host)
+            let isolated = !model.device.isSampling && !ai.isRefreshing && model.providerUsage.refreshing.isEmpty && model.apiBalance.refreshing.isEmpty
+                && system.permissionRequests == 0 && system.writes == 0 && notifications.permissionRequests == 0
+            print("\(isolated ? "PASS":"FAIL") isolated Home resize fixture keeps sampling, real sources and permission requests disabled")
+            return (result.count+1,result.failures+(isolated ? 0:1))
+        } catch {
+            print("FAIL isolated Home resize fixture: \(error.localizedDescription)")
+            return (1,1)
+        }
+    }
+
     static func run(model: WorkbenchAppModel, window: NSWindow) async -> (count: Int, failures: Int) {
         var count = 0, failures = 0
         func check(_ condition: Bool, _ name: String) {
@@ -26,8 +91,10 @@ enum WorkbenchResponsiveLayoutChecks {
             model.ai.show(originalAIDestination); model.navigate(originalRoute)
             window.setFrame(originalFrame, display: false)
         }
-        // Alternate widths in the same hosting view. A stale initial 864 pt
-        // state therefore fails the actual compact ratio and summary checks.
+        let persistentHome = await checkPersistentHomeResizing(model:model,window:window,host:host)
+        count += persistentHome.count; failures += persistentHome.failures
+        // These route checks intentionally remount pages. The separate Home
+        // sequence above keeps its state alive throughout every size transition.
         let sizes: [(window: NSSize, page: CGFloat)] = [
             (.init(width: 1120, height: 758), 864),
             (.init(width: 960, height: 720), 704),
@@ -171,6 +238,88 @@ enum WorkbenchResponsiveLayoutChecks {
         check(WorkbenchRoute(rawValue: "health") == nil, "the obsolete health route is removed from the navigation model")
         print("Responsive layout checks: \(count - failures)/\(count) passed")
         return (count, failures)
+    }
+
+    /// Keep the same Home mounted. Switching routes between sizes would discard
+    /// its measured-width state and conceal the wide-row feedback regression.
+    /// The fixture is already a foreground native window: zoom and full-screen
+    /// below use its actual AppKit controls, rather than assigning a model flag.
+    private static func checkPersistentHomeResizing(model:WorkbenchAppModel,window:NSWindow,host:NSView) async -> (count:Int,failures:Int) {
+        var count=0,failures=0
+        func check(_ value:Bool,_ name:String) {count += 1;if !value {failures += 1};print("\(value ? "PASS":"FAIL") \(name)")}
+        model.navigate(.overview)
+        window.setContentSize(.init(width:1120,height:758))
+        _ = await wait(window) {frame("fc.page.home",in:host) != nil}
+        let calendar=model.context.dateContext.calendar
+        func dayID(_ date:Date)->String {
+            let parts=calendar.dateComponents([.year,.month,.day],from:date)
+            return String(format:"fc.home.calendar.day.%04d-%02d-%02d",parts.year ?? 0,parts.month ?? 0,parts.day ?? 0)
+        }
+        let today=Date(),selectedDate=calendar.date(byAdding:.day,value:1,to:today) ?? today
+        let selectedID=dayID(selectedDate)
+        check(press(selectedID,in:host),"persistent Home resize selects a day through its mounted calendar action")
+        _ = await wait(window) {accessibilityText(selectedID,in:host).contains("已选择")}
+        func fitsViewport()->Bool {
+            guard window.contentView === host,
+                  abs(host.bounds.width-window.contentRect(forFrameRect:window.frame).width)<1,
+                  let left=frame("home-device-detail",in:host),let middle=frame("home-open-cleaning",in:host),let right=frame("home-network-detail",in:host),
+                  let scroll=outerPageScrollView(in:host) else {return false}
+            let page=min(1360,max(0,host.bounds.width-2-184-70))
+            let viewport=window.convertToScreen(host.convert(host.bounds,to:nil))
+            let cards=[left,middle,right]
+            guard cards.allSatisfy({abs($0.height-264)<1 && $0.minX>=viewport.minX+184+35 && $0.maxX<=viewport.maxX-35}),
+                  (scroll.documentView?.bounds.width ?? .infinity)<=scroll.contentSize.width+1 else {return false}
+            if page<680 {
+                return cards.allSatisfy{abs($0.width-page)<2} && middle.maxY<=left.minY-10 && right.maxY<=middle.minY-10
+            }
+            return abs(left.width+middle.width+right.width+24-page)<3
+                && abs(left.width-middle.width)<1 && abs(middle.width-right.width)<1
+                && abs(left.maxY-middle.maxY)<1 && abs(middle.maxY-right.maxY)<1
+                && abs(middle.minX-left.maxX-12)<1 && abs(right.minX-middle.maxX-12)<1
+        }
+        let sizes:[NSSize]=[
+            .init(width:1120,height:758),.init(width:1920,height:1080),.init(width:1728,height:993),
+            .init(width:1351,height:900),.init(width:1349,height:900),.init(width:1120,height:758),
+            .init(width:960,height:720),.init(width:900,height:620),.init(width:1120,height:758)
+        ]
+        for size in sizes {
+            window.setContentSize(size)
+            let fitted=await wait(window,until:fitsViewport)
+            check(fitted,"same mounted Home follows actual \(Int(size.width))×\(Int(size.height)) viewport without horizontal overflow")
+            check(accessibilityText(selectedID,in:host).contains("已选择"),"Home resize preserves the selected day instead of rebuilding the page")
+            print("DETAIL persistent-home requested=\(size) host=\(host.bounds) device=\(String(describing:frame("home-device-detail",in:host))) disk=\(String(describing:frame("home-open-cleaning",in:host))) network=\(String(describing:frame("home-network-detail",in:host)))")
+        }
+        // Coalesce several drag-sized changes without awaiting a completed
+        // layout at every step, then verify the final actual viewport settles.
+        for width:CGFloat in [1728,1600,1480,1360,1240,1120] {
+            window.setContentSize(.init(width:width,height:758));host.layoutSubtreeIfNeeded()
+            await Task.yield()
+        }
+        check(await wait(window,until:fitsViewport),"rapid continuous shrinking converges without a route change or view reset")
+        let ordinarySize=host.bounds.size
+        window.zoom(nil)
+        check(await wait(window,until:fitsViewport),"native window zoom lays out Home from the actual enlarged viewport")
+        window.zoom(nil)
+        check(await wait(window) {fitsViewport() && abs(host.bounds.width-ordinarySize.width)<1},
+              "a second native window zoom restores the ordinary-width cards in place")
+        if let controller=window.delegate as? WorkbenchWindowController {
+            controller.requestToggleFullScreen()
+            let entered=await wait(window,timeout:.seconds(10)) {
+                window.styleMask.contains(.fullScreen) && !controller.isFullScreenTransitioning && model.isFullScreen && fitsViewport()
+            }
+            check(entered,"native full-screen entry finishes with Home fitted to its actual hosting viewport")
+            if window.styleMask.contains(.fullScreen) {
+                controller.requestToggleFullScreen()
+                check(await wait(window,timeout:.seconds(10)) {
+                    !window.styleMask.contains(.fullScreen) && !controller.isFullScreenTransitioning && !model.isFullScreen
+                        && fitsViewport() && abs(host.bounds.width-ordinarySize.width)<1
+                },"native full-screen exit restores ordinary Home card widths without remounting")
+            } else {check(false,"native full-screen resize fixture completes both transition boundaries")}
+        } else {check(false,"persistent Home full-screen check uses the production native window controller")}
+        check(accessibilityText(selectedID,in:host).contains("已选择"),"zoom and native full-screen round trips preserve the same Home state")
+        _ = press(dayID(today),in:host)
+        print("Persistent Home resize checks: \(count-failures)/\(count) passed")
+        return (count,failures)
     }
 
     /// Reading gutters belong to the document canvas, never to its scroll viewport.
@@ -351,8 +500,8 @@ enum WorkbenchResponsiveLayoutChecks {
         return result.joined(separator: " ")
     }
 
-    private static func wait(_ window: NSWindow, until condition: () -> Bool) async -> Bool {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+    private static func wait(_ window: NSWindow, timeout:Duration = .seconds(2), until condition: () -> Bool) async -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
         repeat {
             window.contentView?.layoutSubtreeIfNeeded()
             if condition() {
@@ -365,6 +514,20 @@ enum WorkbenchResponsiveLayoutChecks {
             try? await Task.sleep(for: .milliseconds(10))
         } while ContinuousClock.now < deadline
         return condition()
+    }
+    private static func press(_ identifier:String,in root:NSView)->Bool {
+        var pending:[NSObject]=[root],seen=Set<ObjectIdentifier>()
+        let selector=NSSelectorFromString("accessibilityPerformPress")
+        while let object=pending.popLast(),seen.count<8_192 {
+            guard seen.insert(ObjectIdentifier(object)).inserted else {continue}
+            if object.responds(to:NSSelectorFromString("accessibilityIdentifier")),object.value(forKey:"accessibilityIdentifier") as? String == identifier,object.responds(to:selector) {
+                typealias Press = @convention(c) (AnyObject,Selector)->Bool
+                return unsafeBitCast(object.method(for:selector),to:Press.self)(object,selector)
+            }
+            if let view=object as? NSView {pending.append(contentsOf:view.subviews)}
+            if object.responds(to:NSSelectorFromString("accessibilityChildren")),let children=object.value(forKey:"accessibilityChildren") as? [NSObject] {pending.append(contentsOf:children)}
+        }
+        return false
     }
     private static func frame(_ identifier: String, in root: NSView) -> NSRect? {
         frames(matching: { $0 == identifier }, in: root).max { $0.width * $0.height < $1.width * $1.height }
@@ -389,4 +552,26 @@ enum WorkbenchResponsiveLayoutChecks {
         }
         return result
     }
+}
+
+@MainActor private final class HomeResizeCalendar:CalendarSystemProviding {
+    var permissionRequests=0,writes=0
+    func access(reminders:Bool)->CalendarAccess {.notDetermined}
+    func requestAccess(reminders:Bool) async throws->Bool {permissionRequests += 1;return false}
+    func events(in interval:DateInterval) throws->[CalendarEventItem] {[]}
+    func reminders() async throws->[ReminderItem] {[]}
+    func writableReminderCalendars()->[ReminderCalendar] {[]}
+    func saveReminder(_ item:ReminderItem,creating:Bool) throws->ReminderItem {writes += 1;throw ReminderError.unavailable("Isolated resize fixture")}
+    func deleteReminder(_ item:ReminderItem) throws {writes += 1;throw ReminderError.unavailable("Isolated resize fixture")}
+}
+@MainActor private final class HomeResizeNotifications:ReminderNotificationProviding {
+    var permissionRequests=0
+    func access() async->CalendarAccess {.notDetermined}
+    func requestAccess() async throws->Bool {permissionRequests += 1;return false}
+    func replacePending(_ notifications:[ReminderNotification]) async throws {}
+}
+@MainActor private final class HomeResizeAINotifications:AIQuotaNotificationProviding {
+    func permission() async->AIQuotaNotificationPermission {.denied}
+    func requestPermission() async throws->Bool {false}
+    func deliver(_ event:AIQuotaAlertEvent) async throws {throw AIUsageError.invalid("Isolated resize fixture")}
 }

@@ -331,6 +331,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     private var finishingClose = false
     private var pendingMinimizeGeneration:Int?
     private var fullScreenTransition=false
+    var isFullScreenTransitioning: Bool { fullScreenTransition }
     private var ordinaryWindowSessionActive=false
     private var ordinaryDismissalGeneration:Int?
     /// The OS transition boundary is injectable for timer-race checks without

@@ -4,7 +4,7 @@ import SwiftUI
 
 enum NativeUIFixtureAccessibility {
     static func isRequested(arguments: [String] = CommandLine.arguments) -> Bool {
-        arguments.contains { ["--home-feedback-check", "--self-check", "--device-check", "--form-check", "--space-cleaning-check", "--pointer-check", "--shortcut-responder-check", "--mini-appearance-check", "--usage-ui-check", "--top-entry-check"].contains($0) }
+        arguments.contains { ["--home-resize-check", "--home-feedback-check", "--self-check", "--device-check", "--form-check", "--space-cleaning-check", "--pointer-check", "--shortcut-responder-check", "--mini-appearance-check", "--usage-ui-check", "--top-entry-check"].contains($0) }
     }
 
     private struct BridgeProbe: Sendable {

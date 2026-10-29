@@ -12,9 +12,11 @@ Some local metering records omit the membership name. Configuration can record a
 
 ## Claude Code
 
-Use **连接 Claude 额度 → 启用额度同步** to connect the [official Claude Code status line](https://code.claude.com/docs/en/statusline). This is an explicit setup action. Fangcun adds its own status-line command only when no other command is configured. An existing different status line is preserved; use the exported adapter or an existing quota JSON file to combine sources manually.
+Use the subscription **连接** action to enable the local source and connect the [official Claude Code status line](https://code.claude.com/docs/en/statusline) together. Fangcun can update a strictly recognized older Fangcun command after the app or preview data directory moves, preserving other status-line options. An existing third-party status line is preserved; use the exported adapter or an existing quota JSON file to combine sources manually.
 
-After setup, restart Claude Code and complete a request. The status line invokes a short-lived mode of the Fangcun app, so the automatic connection does not require a separate Python installation. Keep the app at the location used during setup. If it moves, review the Claude status-line command before reconnecting.
+Claude Code hot-reloads a changed status-line command and runs it immediately. A running session that already has rate-limit data can therefore complete the connection in one action. Fangcun waits for a fresh official reading before reporting success. Without an active session or its first response, setup remains in a waiting state and follows later readings automatically. Fangcun never sends a generation request merely to obtain a quota. The status line invokes a short-lived mode of the app, so this connection does not require Python. Reconnect after moving the app to update its command.
+
+If the local session directory is missing or unreadable, choose the actual directory through the system file picker and connect directly, without a second preview confirmation. Selecting a Claude profile's `projects` directory also selects that profile's parent configuration directory. The default respects `CLAUDE_CONFIG_DIR` when present. A missing directory is a recoverable local-source condition, not proof of a failed account login.
 
 Only the official `rate_limits.five_hour` and `rate_limits.seven_day` percentages and reset times are written to the private quota snapshot. Context-window percentages, prompts, credentials and other status-line fields are discarded. A snapshot is not created until a real quota window is available. Missing windows do not become zero, and a response without quota fields preserves the last reading, which can become stale.
 

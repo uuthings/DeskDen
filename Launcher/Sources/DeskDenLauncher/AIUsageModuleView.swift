@@ -466,7 +466,7 @@ struct AIUsageModuleView: View {
                 AISourceRow(title: "额度快照", detail: value.snapshot?.source.title ?? "官方状态栏导出的用量字段") {
                     AIStateChip(title: value.state == .ready ? "有效" + (value.updatedAt.map { " · " + $0.formatted(date: .omitted, time: .shortened) } ?? "") : value.state.title, positive: value.state == .ready)
                 }
-                AISourceRow(title: "连接方式", detail: "选择额度 JSON，或导出状态栏适配器", last: true) {
+                AISourceRow(title: "连接方式", detail: "一键连接本机订阅，自动配置额度同步", last: true) {
                     Button("连接设置") { model.present(.claudeConnect) }.buttonStyle(WBButtonStyle(compact: true))
                 }
             }
@@ -1152,21 +1152,30 @@ private struct AIUsageDialogContent: View {
     private var claudeDialog: some View {
         AIDialogShell(title: "连接 Claude 额度", close: model.requestDismissDialog) {
             VStack(alignment: .leading, spacing: 0) {
-                Text("Token 记录与账户额度分别连接。启用同步后，Claude Code 会在请求完成时更新真实额度。").aiText(12, color: palette.secondary).padding(.bottom, 4)
-                AISourceRow(title: "自动同步额度", detail: "接入 Claude 官方状态栏，保留已有的状态栏配置") {
-                    Button("启用额度同步") { model.enableClaudeQuotaSync() }.buttonStyle(WBButtonStyle(primary: true, compact: true)).accessibilityIdentifier("fc.ai.claude.enableSync")
+                Text("自动连接本机 Claude Code 并配置额度同步，无需填写密钥或选择文件。").aiText(12, color: palette.secondary).padding(.bottom, 4)
+                AISourceRow(title: "本机 Claude 订阅", detail: "读取已有会话，并自动接管方寸旧版连接", last: true) {
+                    Button(model.dialogBusy ? "正在连接…" : "连接本机订阅") {
+                        guard !model.dialogBusy else { return }
+                        model.dialogBusy = true
+                        Task { @MainActor in
+                            _ = await UsageSubscriptionAuthorization.connect(model: model, provider: .claude)
+                            model.dialogBusy = false
+                        }
+                    }.buttonStyle(WBButtonStyle(primary: true, compact: true)).disabled(model.dialogBusy)
+                        .accessibilityIdentifier("fc.ai.claude.enableSync")
                 }
-                AISourceRow(title: "选择额度 JSON", detail: "读取官方状态栏适配器生成或你已有的额度文件") {
-                    Button("选择文件") { model.chooseQuotaFile(for: .claude) }.buttonStyle(WBButtonStyle(compact: true)).accessibilityIdentifier("fc.ai.claude.json")
-                }
-                AISourceRow(title: "导出状态栏适配器", detail: "只导出脚本，不会替换你现有的 Claude 配置", last: true) {
-                    Button("导出") { model.exportClaudeAdapter() }.buttonStyle(WBButtonStyle(compact: true)).accessibilityIdentifier("fc.ai.claude.adapter")
-                }
-                AINotice(text: "仅保存额度比例与重置时间。重新打开 Claude Code 并完成一次请求后生效；官方未提供的周期保持不可用。").padding(.top, 16)
+                DisclosureGroup("高级连接方式") {
+                    AISourceRow(title: "选择额度 JSON", detail: "读取已有额度文件") {
+                        Button("选择文件") { model.chooseQuotaFile(for: .claude) }.buttonStyle(WBButtonStyle(compact: true)).accessibilityIdentifier("fc.ai.claude.json")
+                    }
+                    AISourceRow(title: "导出状态栏适配器", detail: "用于自定义状态栏配置", last: true) {
+                        Button("导出") { model.exportClaudeAdapter() }.buttonStyle(WBButtonStyle(compact: true)).accessibilityIdentifier("fc.ai.claude.adapter")
+                    }
+                    if model.configuration(for: .claude).quotaPath != nil {
+                        HStack { Text("已配置额度文件").aiText(11, color: palette.muted); Spacer(); Button("移除连接") { model.removeQuotaFile(for: .claude) }.buttonStyle(WBQuietButtonStyle()) }.padding(.top, 12)
+                    }
+                }.font(.system(size: 11)).foregroundStyle(palette.secondary).padding(.top, 16).disabled(model.dialogBusy)
                 if let message = model.claudeQuotaSyncMessage { AINotice(text: message).padding(.top, 12) }
-                if model.configuration(for: .claude).quotaPath != nil {
-                    HStack { Text("已配置额度文件").aiText(11, color: palette.muted); Spacer(); Button("移除连接") { model.removeQuotaFile(for: .claude) }.buttonStyle(WBQuietButtonStyle()) }.padding(.top, 12)
-                }
                 errorText.padding(.top, model.errorMessage == nil ? 0 : 12)
             }
         } footer: {

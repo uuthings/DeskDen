@@ -163,6 +163,12 @@ import LauncherCore
                   && frame("fc.usage.config.kind", objects: objects(host)) == nil,
                   "the native form exposes one category and a service field without a second classification")
             manager.selectService(.codex)
+            await settle(host)
+            check(frame("fc.usage.manager.connect-subscription", objects: objects(host)) != nil
+                  && frame("fc.usage.manager.edit-existing", objects: objects(host)) == nil
+                  && frame("fc.usage.manager.claude-sync", objects: objects(host)) == nil
+                  && frame("fc.usage.manager.plan", objects: objects(host)) == nil,
+                  "a local subscription exposes one connection action without an edit prerequisite or required plan field")
             let previousAI = app.usageAppearance.appearance(for: UsagePresentationSourceID.ai(.codex))
             manager.save(app: app)
             check(manager.existingSubscriptionID == UsagePresentationSourceID.ai(.codex)

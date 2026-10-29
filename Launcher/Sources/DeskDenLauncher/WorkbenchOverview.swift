@@ -8,7 +8,9 @@ struct WorkbenchOverview:View {
     var navigate:(WorkbenchRoute)->Void
     var openDevice:(DeviceCardID)->Void
     @State private var selectedDay:Date?
-    @State private var availableWidth:CGFloat=864
+    // Measuring this page after fixing its card widths creates a feedback loop:
+    // a previous wide row can hold the measurement wide when the window shrinks.
+    @Environment(\.workbenchPageWidth) private var availableWidth
     @Environment(\.workbenchPalette) private var palette
     @Environment(\.workbenchDeviceExpanded) private var expanded
     private var compact:Bool {availableWidth<800}
@@ -37,7 +39,6 @@ struct WorkbenchOverview:View {
                 agenda
             }
         }.frame(maxWidth:.infinity,alignment:.leading)
-        .background(GeometryReader{geometry in Color.clear.onAppear{availableWidth=geometry.size.width}.onChange(of:geometry.size.width){_,value in availableWidth=value}})
         .onChange(of:context.dateContext){_,_ in selectedDay=nil}
         .accessibilityElement(children:.contain).accessibilityIdentifier("fc.page.home")
     }

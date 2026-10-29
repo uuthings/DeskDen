@@ -17,6 +17,7 @@ struct UsageConnectionManagerView: View {
     @State private var categoryDiscard = false
     @State private var showingBrowserGuide = false
     @State private var browserGuideMessage: String?
+    @State private var showingSubscriptionOptions = false
 
     init(app: WorkbenchAppModel, manager: UsageConnectionManager, onClose: @escaping () -> Void) {
         self.app = app; self.manager = manager; self.onClose = onClose
@@ -54,6 +55,7 @@ struct UsageConnectionManagerView: View {
         .foregroundStyle(palette.text)
         .background(GeometryReader { proxy in Color.clear.onAppear { availableWidth = proxy.size.width }.onChange(of: proxy.size.width) { _, width in availableWidth = width } })
         .onAppear { manager.prepare(app: app) }
+        .onChange(of: ai.lastRefreshed) { _, _ in manager.updateSubscriptionStatus(app: app) }
         .onChange(of: appearance.preferences.categories) { _, categories in manager.reconcileCategories(categories) }
         .workbenchModal(isPresented: $manager.confirmingDiscard, width: 430, onRequestDismiss: manager.keepEditing) {
             WorkbenchDialogFrame(title: manager.discardTitle, dismiss: manager.keepEditing) {
@@ -190,17 +192,7 @@ struct UsageConnectionManagerView: View {
         }
     }
     @ViewBuilder private var connectionFields: some View {
-        if let existing = manager.existingSubscriptionID {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("此本机订阅已有连接").font(.system(size: 12))
-                    Text("可直接编辑已有连接，保留原来的名称、分类和图标。").font(.system(size: 11)).foregroundStyle(palette.secondary)
-                }
-                Spacer(minLength: 0)
-                Button("编辑已有连接") { manager.select(existing, app: app) }.buttonStyle(WBButtonStyle())
-                    .accessibilityIdentifier("fc.usage.manager.edit-existing")
-            }
-        } else if let provider = manager.draft.service?.aiProvider {
+        if let provider = manager.draft.service?.aiProvider {
             subscriptionFields(provider)
         } else if manager.draft.service == .iproyal {
             iproyalFields
@@ -221,26 +213,27 @@ struct UsageConnectionManagerView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(provider == .codex ? "读取本机 Codex 订阅" : "连接本机 Claude Code").font(.system(size: 12))
+                    Text(provider == .codex ? "本机 Codex 订阅" : "本机 Claude 订阅").font(.system(size: 12))
                     Text(subscriptionStatus(provider)).font(.system(size: 11)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
-                Button(ai.isRefreshing ? "正在读取" : "读取本机来源") { manager.connectSubscription(app: app) }
-                    .buttonStyle(WBButtonStyle()).disabled(ai.isRefreshing).accessibilityIdentifier("fc.usage.manager.connect-subscription")
+                Button(manager.busy ? "正在连接…" : "连接本机订阅") { manager.connectSubscription(app: app, allowDirectorySelection: true) }
+                    .buttonStyle(WBButtonStyle(primary: true)).disabled(manager.busy)
+                    .accessibilityIdentifier("fc.usage.manager.connect-subscription")
             }
-            if provider == .claude {
-                HStack(spacing: 12) {
-                    Text("订阅额度通过 Claude Code 官方状态栏同步。").font(.system(size: 11)).foregroundStyle(palette.secondary)
-                    Spacer(minLength: 0)
-                    Button("启用额度同步") { manager.enableClaudeSync(app: app) }.buttonStyle(WBButtonStyle())
-                        .accessibilityIdentifier("fc.usage.manager.claude-sync")
-                }
+            Text("自动读取本机登录来源并配置额度同步，无需填写密钥或选择额度文件。")
+                .font(.system(size: 11)).foregroundStyle(palette.secondary)
+            if let plan = ai.providerSummaries.first(where: { $0.provider == provider })?.effectiveAccountPlan {
+                Text("会员计划 · " + plan.title).font(.system(size: 12)).foregroundStyle(palette.secondary)
             }
-            field("会员计划") {
-                WBSelect("会员计划", selection: $manager.draft.declaredPlan, options: planOptions(provider))
-                    .accessibilityIdentifier("fc.usage.manager.plan")
+            DisclosureGroup("会员显示设置（可选）", isExpanded: $showingSubscriptionOptions) {
+                field("来源未提供会员信息时显示") {
+                    WBSelect("会员计划", selection: $manager.draft.declaredPlan, options: planOptions(provider))
+                        .accessibilityIdentifier("fc.usage.manager.plan")
+                }.padding(.top, 8)
+                Text("优先采用来源提供的信息，手动选择只影响会员名称。").font(.system(size: 11)).foregroundStyle(palette.muted)
             }
-            Text("优先显示来源提供的会员信息；手动设置只改变名称，不改变额度。").font(.system(size: 11)).foregroundStyle(palette.muted)
+            .font(.system(size: 11)).foregroundStyle(palette.secondary)
         }
     }
     private func subscriptionStatus(_ provider: AIProvider) -> String {
