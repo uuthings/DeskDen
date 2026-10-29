@@ -204,7 +204,9 @@ enum WorkbenchResponsiveLayoutChecks {
                 guard let month = frame("fc.calendar.monthCard", in: host), let side = frame("fc.calendar.sideColumn", in: host),
                       frame("fc.calendar.day." + dayKey, in: host) != nil else { return false }
                 if sample.page < 760 { return abs(month.width - sample.page) < 2 && abs(side.width - sample.page) < 2 && side.maxY < month.minY }
-                return abs(month.width + side.width + 12 - sample.page) < 3 && (0.31...0.37).contains(side.width / (sample.page - 12))
+                return abs(month.width + side.width + 12 - sample.page) < 3
+                    && (499...721).contains(month.width) && side.width >= 247
+                    && frame("fc.calendar.upcomingAgenda",in:host) != nil
             }
             let month = frame("fc.calendar.monthCard", in: host), side = frame("fc.calendar.sideColumn", in: host)
             let monthDay = frame("fc.calendar.day." + dayKey, in: host)
@@ -215,8 +217,11 @@ enum WorkbenchResponsiveLayoutChecks {
             if sample.page >= 760, let month, let side {
                 calendarWidths.append((sample.page, month.width, side.width))
                 check(abs(month.width + side.width + 12 - sample.page) < 3 &&
-                      (0.31...0.37).contains(side.width / (sample.page - 12)),
-                      "calendar and agenda share the available width in \(label)")
+                      (499...721).contains(month.width) && side.width >= 247 && month.height <= 601,
+                      "calendar keeps its bounded reading width while agenda receives the remaining space in \(label)")
+                let recent=frame("fc.calendar.upcomingAgenda",in:host)
+                check(recent.map{abs($0.width-month.width)<2 && $0.maxY<=month.minY-10 && abs($0.minY-side.minY)<2} == true,
+                      "the upcoming seven-day list uses the space below the calendar and shares the agenda's bottom in \(label)")
             } else {
                 check(month.flatMap { top in side.map { bottom in abs(top.width - bottom.width) < 2 && bottom.maxY <= top.minY - 10 } } == true,
                       "compact calendar reflows both side cards below its month without squeezing the date grid")
@@ -230,8 +235,8 @@ enum WorkbenchResponsiveLayoutChecks {
                   "mounted network day labels, including the current day marker, remain a single line in \(label)")
         }
         if let regular = calendarWidths.first(where: { $0.page == 864 }), let large = calendarWidths.first(where: { $0.page == 1360 }) {
-            check(large.side > regular.side + 140 && large.month > regular.month + 280,
-                  "enlarging the workbench grows both calendar and agenda columns rather than freezing the agenda width")
+            check(large.side > regular.side + 240 && large.month <= 721 && large.month > regular.month + 150,
+                  "wide workbenches cap the calendar at 720 points and give most added width to the agenda")
         } else { check(false, "calendar width verification covers both normal and large windows") }
         let scrolling = await checkFullPageScrolling(model: model, window: window, host: host)
         count += scrolling.count; failures += scrolling.failures
