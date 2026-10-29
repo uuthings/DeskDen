@@ -154,10 +154,22 @@ enum SpaceCleaningFilesystem {
         }
         guard parent.stillAtPath() else { throw Failure(message: "隔离目录创建期间父位置发生变化。") }
     }
+    /// Released trash receipts retain their original isolation path. Accept only
+    /// the two product prefixes and the exact UUID shape emitted by execute/purge.
+    static func isIsolationDirectoryName(_ name:String, recordID:UUID? = nil)->Bool {
+        guard let prefix=[".deskden-cleaning-",".fangcun-cleaning-"].first(where:{name.hasPrefix($0)}) else {return false}
+        let tail=String(name.dropFirst(prefix.count))
+        guard tail.count == 36 || tail.count == 73, let identity=UUID(uuidString:String(tail.prefix(36))),
+              recordID == nil || recordID == identity else {return false}
+        if tail.count == 73 {
+            guard tail.dropFirst(36).first == "-", UUID(uuidString:String(tail.suffix(36))) != nil else {return false}
+        }
+        return true
+    }
     static func removeEmptyIsolation(_ url: URL) {
         guard let parent = try? Directory(url.deletingLastPathComponent()), parent.stillAtPath(),
               let child = parent.entry(url.lastPathComponent), child.mode & UInt32(S_IFMT) == UInt32(S_IFDIR),
-              url.lastPathComponent.hasPrefix(".deskden-cleaning-") else { return }
+              isIsolationDirectoryName(url.lastPathComponent) else { return }
         _ = url.lastPathComponent.withCString { unlinkat(parent.descriptor, $0, AT_REMOVEDIR) }
     }
 

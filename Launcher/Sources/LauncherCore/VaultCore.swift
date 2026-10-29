@@ -164,7 +164,7 @@ public struct VaultEnvelope:Codable,Sendable {
     public let sealed:Data
     public init(rounds:UInt32,salt:Data,sealed:Data) {format="deskden-encrypted-vault";version=1;self.rounds=rounds;self.salt=salt;self.sealed=sealed}
     public func validate() throws {
-        guard format=="deskden-encrypted-vault",version==1,rounds==310_000,salt.count==16,sealed.count>=28,sealed.count<=16_777_216 else {throw VaultFailure.invalidData}
+        guard ["deskden-encrypted-vault","fangcun-encrypted-vault"].contains(format),version==1,rounds==310_000,salt.count==16,sealed.count>=28,sealed.count<=16_777_216 else {throw VaultFailure.invalidData}
     }
 }
 public struct UnlockedVault:Sendable {
@@ -175,6 +175,11 @@ public struct UnlockedVault:Sendable {
 public enum VaultCryptography {
     public static let rounds:UInt32=310_000
     private static let associatedData=Data("deskden-encrypted-vault:1:pbkdf2-sha256-310000".utf8)
+    /// The released envelope's identity is authenticated. Renaming the product
+    /// must not change the associated data used to open its existing ciphertext.
+    private static func associatedData(for envelope:VaultEnvelope)->Data {
+        Data("\(envelope.format):1:pbkdf2-sha256-310000".utf8)
+    }
     public static func create(contents:VaultContents,password:String) throws -> UnlockedVault {
         guard password.count>=8 else {throw VaultFailure.weakPassword}
         var salt=Data(count:16)
@@ -195,7 +200,7 @@ public enum VaultCryptography {
         guard key.bitCount == 256 else {throw VaultFailure.invalidData}
         do {
             let box=try AES.GCM.SealedBox(combined:envelope.sealed)
-            let plaintext=try AES.GCM.open(box,using:key,authenticating:associatedData)
+            let plaintext=try AES.GCM.open(box,using:key,authenticating:associatedData(for:envelope))
             let contents=try JSONDecoder().decode(VaultContents.self,from:plaintext);try contents.validate()
             return UnlockedVault(key:key,envelope:envelope,contents:contents)
         } catch {throw VaultFailure.incorrectPassword}
@@ -238,7 +243,7 @@ public enum VaultCryptography {
         let oldKey=try derive(password:password,salt:envelope.salt)
         let box=try AES.GCM.SealedBox(combined:envelope.sealed)
         var plaintext:Data
-        do {plaintext=try AES.GCM.open(box,using:oldKey,authenticating:associatedData)}
+        do {plaintext=try AES.GCM.open(box,using:oldKey,authenticating:associatedData(for:envelope))}
         catch CryptoKitError.authenticationFailure {return nil}
         defer {plaintext.resetBytes(in:0..<plaintext.count)}
         let replacement=try AES.GCM.seal(plaintext,using:key,authenticating:associatedData)

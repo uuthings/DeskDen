@@ -454,4 +454,61 @@ final class SpaceCleaningTransactionTests: XCTestCase {
         XCTAssertFalse(SpaceCleaningFilesystem.isCloudPlaceholder(flags: 0))
         XCTAssertFalse(SpaceCleaningFilesystem.isCloudPlaceholder(flags: UInt32(UF_HIDDEN | UF_NODUMP | UF_COMPRESSED)))
     }
+    func testReleasedFangcunHistoryLoadsWithoutRewritingAndRestoresItsProvenItem() throws {
+        try fixture { fixture in
+            var released=clean(fixture)
+            XCTAssertEqual(released.state,.trashed)
+            let isolation=try XCTUnwrap(released.isolationURL)
+            released.isolationURL=isolation.deletingLastPathComponent().appendingPathComponent(".fangcun-cleaning-"+released.id.uuidString)
+            let bytes=try JSONEncoder().encode([released])
+            let journal=fixture.home.appendingPathComponent("released-actions.json")
+            try bytes.write(to:journal)
+            let store=try SpaceCleaningHistoryStore(fileURL:journal)
+            XCTAssertEqual(store.records,[released])
+            XCTAssertEqual(try Data(contentsOf:journal),bytes)
+            let restored=SpaceCleaningTransaction.restore(record:try XCTUnwrap(store.records.first),conflict:.skip,persist:store.record)
+            XCTAssertEqual(restored.state,.restored,restored.explanation)
+            XCTAssertEqual(try String(contentsOf:fixture.item,encoding:.utf8),"selected-A")
+            XCTAssertEqual(try SpaceCleaningHistoryStore(fileURL:journal).records,[restored])
+        }
+    }
+    func testIsolationNamesAcceptOnlyReleasedUUIDShapesAndMatchingRecord() throws {
+        try fixture { fixture in
+            var record=SpaceCleaningRecord(operationID:UUID(),candidate:fixture.candidate,method:.trash)
+            for prefix in [".fangcun-cleaning-",".deskden-cleaning-"] {
+                for suffix in ["","-"+UUID().uuidString] {
+                    record.isolationURL=fixture.home.appendingPathComponent(prefix+record.id.uuidString+suffix)
+                    XCTAssertNoThrow(try record.validated())
+                }
+                for name in [prefix+UUID().uuidString,prefix+record.id.uuidString+"-junk",
+                             prefix+"junk-"+record.id.uuidString,prefix+record.id.uuidString+"-"+UUID().uuidString+"-extra"] {
+                    record.isolationURL=fixture.home.appendingPathComponent(name)
+                    XCTAssertThrowsError(try record.validated(),name)
+                }
+            }
+        }
+    }
+    func testLegacyIsolationCleanupRemovesOnlyExactlyNamedEmptyDirectories() throws {
+        try fixture { fixture in
+            for prefix in [".fangcun-cleaning-",".deskden-cleaning-"] {
+                let empty=fixture.home.appendingPathComponent(prefix+UUID().uuidString)
+                try FileManager.default.createDirectory(at:empty,withIntermediateDirectories:false)
+                SpaceCleaningFilesystem.removeEmptyIsolation(empty)
+                XCTAssertFalse(FileManager.default.fileExists(atPath:empty.path))
+                let occupied=fixture.home.appendingPathComponent(prefix+UUID().uuidString+"-"+UUID().uuidString)
+                try FileManager.default.createDirectory(at:occupied,withIntermediateDirectories:false)
+                try Data("keep".utf8).write(to:occupied.appendingPathComponent("unrelated"))
+                SpaceCleaningFilesystem.removeEmptyIsolation(occupied)
+                XCTAssertTrue(FileManager.default.fileExists(atPath:occupied.appendingPathComponent("unrelated").path))
+                let malformed=fixture.home.appendingPathComponent(prefix+"not-a-uuid")
+                try FileManager.default.createDirectory(at:malformed,withIntermediateDirectories:false)
+                SpaceCleaningFilesystem.removeEmptyIsolation(malformed)
+                XCTAssertTrue(FileManager.default.fileExists(atPath:malformed.path))
+                let link=fixture.home.appendingPathComponent(prefix+UUID().uuidString)
+                try FileManager.default.createSymbolicLink(at:link,withDestinationURL:occupied)
+                SpaceCleaningFilesystem.removeEmptyIsolation(link)
+                XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath:link.path),occupied.path)
+            }
+        }
+    }
 }

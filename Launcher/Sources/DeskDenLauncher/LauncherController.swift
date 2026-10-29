@@ -69,6 +69,7 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
     var launchEpoch = 0
     var focusTransitionUntil = Date.distantPast
     var storageProblem: String?
+    private var identityMigrationFailure: String?
     var hotKeyProblem: String?
     var bindingHotKeyProblem: String?
     var hotKeysStarted = false
@@ -175,9 +176,41 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
         let path = dataDirectory ?? reviewDirectory ?? ProcessInfo.processInfo.environment["DESKDEN_DATA_DIRECTORY"].map { URL(fileURLWithPath:$0) } ?? testDirectory ?? support.appendingPathComponent("DeskDen/Launcher",isDirectory:true)
         store = ConfigurationStore(url:path.appendingPathComponent("configuration.json"))
         super.init()
+        // Review/test profiles and explicit data directories never inspect the
+        // normal user's released data or preferences.
+        if Bundle.main.bundleIdentifier == "local.deskden.launcher", dataDirectory == nil,
+           reviewDirectory == nil, testDirectory == nil,
+           ProcessInfo.processInfo.environment["DESKDEN_DATA_DIRECTORY"] == nil,
+           !CommandLine.arguments.dropFirst().contains(where:{$0.hasSuffix("-check") || $0.hasSuffix("-checks")}) {
+            do {
+                let legacy = support.appendingPathComponent("Fangcun/Launcher", isDirectory:true)
+                if !FileManager.default.fileExists(atPath:path.path), FileManager.default.fileExists(atPath:legacy.path),
+                   !NSRunningApplication.runningApplications(withBundleIdentifier:LegacyIdentityMigration.legacyDefaultsDomain).isEmpty {
+                    throw LauncherError.storage("请先退出旧版方寸，再重新打开新版以迁移资料。")
+                }
+                try LegacyIdentityMigration.migrate(applicationSupport:support)
+                if LegacyIdentityMigration.hasMigrationMarker(in:path) {
+                    let defaults=UserDefaults.standard
+                    let changes=LegacyIdentityMigration.preferencesToMigrate(
+                        legacy:defaults.persistentDomain(forName:LegacyIdentityMigration.legacyDefaultsDomain) ?? [:],
+                        current:defaults.persistentDomain(forName:"local.deskden.launcher") ?? [:])
+                    for (key,value) in changes {defaults.set(value,forKey:key)}
+                }
+            } catch {identityMigrationFailure=error.localizedDescription}
+        }
     }
     func applicationDidFinishLaunching(_ notification:Notification) {
         NSApp.setActivationPolicy(.accessory)
+        if let identityMigrationFailure {
+            let alert=NSAlert();alert.alertStyle = .critical
+            alert.messageText="旧版资料尚未迁移"
+            alert.informativeText=identityMigrationFailure+"\n旧版资料保持原样，本次不会建立空白资料。"
+            alert.addButton(withTitle:"退出")
+            _=alert.runModal()
+            confirmedTerminationPermit=true
+            NSApp.terminate(nil)
+            return
+        }
         do {
             if let saved = try store.load() { configuration = saved }
             else { configuration = initialConfiguration(); try store.save(configuration) }

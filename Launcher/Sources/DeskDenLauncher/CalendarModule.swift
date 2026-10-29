@@ -137,21 +137,37 @@ struct CalendarReminderDraft:Identifiable,Equatable {
     var id:UUID = UUID()
     var item:ReminderItem
     var creating:Bool
-    var hasDate:Bool
+    var deadlineMode:ReminderDeadlineMode
+    var deadlineDaysText="10"
+    var countingRule=ReminderCountingRule()
+    /// Keep the original civil start day even when the editor remains open overnight.
+    var deadlineAnchor:Date
+    var hasDate:Bool {
+        get {deadlineMode != .none}
+        set {if !newValue {deadlineMode = .none} else if deadlineMode == .none {deadlineMode = .date}}
+    }
     var hasTime:Bool
     var date:Date
     var time:Date
     var calendar:Calendar
-    init(item:ReminderItem,creating:Bool,defaultDate:Date,calendar:Calendar = .current) {
+    init(item:ReminderItem,creating:Bool,defaultDate:Date,calendar:Calendar = .current,now:Date = Date()) {
         var editingCalendar=calendar
         if let due=item.due,let zone=TimeZone(identifier:due.timeZoneIdentifier) {editingCalendar.timeZone=zone}
         self.calendar=editingCalendar
-        self.item=item; self.creating=creating; hasDate=item.due != nil; hasTime=item.due?.hasTime ?? false
-        date=item.due?.date ?? defaultDate; time=item.due?.date ?? Date()
+        self.item=item; self.creating=creating; deadlineMode=item.due == nil ? .none:.date; hasTime=item.due?.hasTime ?? false
+        deadlineAnchor=now
+        date=item.due?.date ?? defaultDate; time=item.due?.date ?? now
+    }
+    func resolvedDeadline() throws -> Date? {
+        switch deadlineMode {
+        case .none:return nil
+        case .date:return date
+        case .days:return try ReminderDeadlineCalculator.resolve(daysText:deadlineDaysText,anchor:deadlineAnchor,rule:countingRule,calendar:calendar)
+        }
     }
     func value() throws -> ReminderItem {
         var item=item
-        if hasDate {
+        if let date=try resolvedDeadline() {
             var due=ReminderDue(date:date,includesTime:false,calendar:calendar)
             if hasTime { due.hour=calendar.component(.hour,from:time); due.minute=calendar.component(.minute,from:time) }
             item.due=due
@@ -367,7 +383,11 @@ private struct CalendarDisplayPreferences:Codable {
     private func syncLocal() { if let snapshot=service?.snapshot { localReminders=snapshot.reminders; preferences=snapshot.preferences } }
     private func requireService() throws -> ReminderService { guard let service else { throw ReminderError.unavailable(storageError ?? "本机提醒数据不可用。") }; return service }
     func refresh() async {
+        guard !Task.isCancelled else {return}
         refreshVersion += 1; let version=refreshVersion; isLoading=true
+        // Only the current read owns the loading state. An obsolete or cancelled
+        // continuation cannot clear a newer read's indicator.
+        defer {if version == refreshVersion {isLoading=false}}
         calendarAccess=system.access(reminders:false); remindersAccess=system.access(reminders:true)
         if preferences.calendarConnected && calendarAccess == .granted {
             do { events=try system.events(in:eventInterval) } catch { errorMessage="系统日历读取失败：\(error.localizedDescription)" }
@@ -387,13 +407,14 @@ private struct CalendarDisplayPreferences:Codable {
         if preferences.remindersConnected && remindersAccess == .granted {
             do {
                 let loaded=try await system.reminders()
-                guard version == refreshVersion else { return }
+                guard !Task.isCancelled,version == refreshVersion else { return }
                 if preferences.remindersConnected && system.access(reminders:true) == .granted { systemReminders=loaded; writableCalendars=system.writableReminderCalendars();remindersReadError=nil }
-            } catch { if version == refreshVersion { remindersReadError="系统提醒读取失败";errorMessage="系统提醒事项读取失败：\(error.localizedDescription)" } }
+            } catch { if !Task.isCancelled,version == refreshVersion { remindersReadError="系统提醒读取失败";errorMessage="系统提醒事项读取失败：\(error.localizedDescription)" } }
         } else { systemReminders=[]; writableCalendars=[];remindersReadError=nil }
+        guard !Task.isCancelled,version == refreshVersion else {return}
         let access=await notifier.access()
-        guard version == refreshVersion else { return }
-        notificationAccess=access; isLoading=false; scheduleNotifications()
+        guard !Task.isCancelled,version == refreshVersion else { return }
+        notificationAccess=access; scheduleNotifications()
     }
     /// Mini reads only the existing seven-day overview and reminders. Hovering
     /// never loads the month currently being browsed or changes the selected day.
@@ -505,6 +526,7 @@ private struct CalendarDisplayPreferences:Codable {
                 throw ReminderError.unavailable("原提醒列表已不可用，请重新选择有效的系统列表；仅保存在本机需要明确选择。")
             }
             let result=try requireService().save(draft.value(),creating:draft.creating)
+            invalidateReadsAfterWriting(result.origin)
             syncLocal(); updateSystem(result)
             if let date=ReminderQueries.displayDate(for:.reminder(result),calendar:displayCalendar) { selectedDay=date; displayedMonth=date; filter = .day } else { filter = .undated }
             errorMessage=nil; editor=nil; undo=nil; undoMessage=nil; scheduleNotifications(); await refresh(); return true
@@ -515,13 +537,15 @@ private struct CalendarDisplayPreferences:Codable {
         do {
             var next=item; next.isCompleted.toggle(); next.completedAt=next.isCompleted ? Date():nil; next.updatedAt=Date()
             let saved=try requireService().save(next,creating:false)
+            invalidateReadsAfterWriting(saved.origin)
             syncLocal(); updateSystem(saved); undo = .changed(item); undoMessage=saved.isCompleted ? "已完成「\(item.title)」":"已移回待办"; scheduleNotifications()
         } catch { errorMessage=error.localizedDescription }
     }
     func delete(_ item:ReminderItem) async -> Bool {
         guard !isWorking else { return false }; isWorking=true; defer { isWorking=false }
         do {
-            try requireService().delete(item); syncLocal(); systemReminders.removeAll { $0.stableID == item.stableID }
+            try requireService().delete(item); invalidateReadsAfterWriting(item.origin)
+            syncLocal(); systemReminders.removeAll { $0.stableID == item.stableID }
             undo = .deleted(item); undoMessage="已删除「\(item.title)」"; editor=nil; scheduleNotifications(); return true
         } catch { errorMessage=error.localizedDescription; return false }
     }
@@ -533,12 +557,22 @@ private struct CalendarDisplayPreferences:Codable {
             case .changed(let item):restored=try requireService().save(item,creating:false)
             case .deleted(let item):restored=try requireService().save(item,creating:item.origin == .system)
             }
+            invalidateReadsAfterWriting(restored.origin)
             syncLocal(); updateSystem(restored); self.undo=nil; undoMessage=nil; scheduleNotifications()
         } catch { errorMessage="撤销失败，操作记录仍保留：\(error.localizedDescription)" }
     }
     private func updateSystem(_ item:ReminderItem) {
         guard item.origin == .system else { return }
         if let index=systemReminders.firstIndex(where:{$0.id == item.id}) { systemReminders[index]=item } else { systemReminders.append(item) }
+    }
+    private func invalidateReadsAfterWriting(_ origin:ReminderOrigin) {
+        guard origin == .system else {return}
+        // EventKit fetches may still return a pre-write snapshot. Retain their
+        // native continuations, but revoke their right to publish over this write.
+        // This synchronous actor turn owns the version being invalidated; every
+        // eventual completion checks its own version before touching loading.
+        refreshVersion += 1
+        isLoading=false
     }
     func enableNotifications() async {
         guard !isWorking else { return }; isWorking=true; defer { isWorking=false }

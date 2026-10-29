@@ -126,7 +126,7 @@ import SwiftUI
             _=await wait(host){coordinator.presentations.count == 1}
             await settle(host)
             let noteScroller=descendantViews(host).compactMap{$0 as? NSScrollView}.first{$0.accessibilityIdentifier() == "fc.calendar.editor.notes"}
-            check(coordinator.top?.width == 560 && noteScroller.map{$0.scrollerStyle == .overlay && $0.autohidesScrollers
+            check(coordinator.top?.width == 640 && noteScroller.map{$0.scrollerStyle == .overlay && $0.autohidesScrollers
                 && abs($0.contentSize.width - $0.bounds.width) < 1} == true,
                   "the reminder form uses a wider editor and a notes overlay scroller without reserving document width")
             check((noteScroller?.documentView as? NSTextView).map{$0.string.isEmpty && $0.textContainerInset.width >= 10
