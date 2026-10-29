@@ -17,6 +17,19 @@ struct AIUsageSourceConfiguration: Codable, Sendable, Identifiable {
     var id: String { provider.rawValue }
 }
 
+enum AISubscriptionConnectionResult: Equatable, Sendable {
+    case ready(message: String)
+    case waiting(message: String)
+    case authorizationRequired(message: String)
+    case failed(message: String)
+    var message: String {
+        switch self {
+        case .ready(let message), .waiting(let message), .authorizationRequired(let message), .failed(let message): message
+        }
+    }
+    var isReady: Bool { if case .ready = self { true } else { false } }
+}
+
 /// A short-lived, UI-free mode of the app invoked by Claude Code's official status line.
 /// Input may contain other metadata; only the two documented quota windows survive.
 enum ClaudeQuotaStatusLineHost {
@@ -64,6 +77,30 @@ enum ClaudeQuotaStatusLineHost {
 }
 
 enum ClaudeQuotaSyncInstaller {
+    /// Recognizes only the literal, shell-quoted command emitted by Fangcun.
+    /// Shell substitutions, extra commands and third-party scripts cannot match.
+    static func ownedCommand(_ command: String, matchingExecutable executableURL: URL) -> Bool {
+        var remainder = command[...]
+        func quotedPath() -> String? {
+            guard remainder.first == "'" else { return nil }
+            remainder.removeFirst()
+            var path = ""
+            while !remainder.isEmpty {
+                if remainder.hasPrefix("'\"'\"'") { path.append("'"); remainder.removeFirst(5) }
+                else if remainder.first == "'" { remainder.removeFirst(); return path }
+                else { path.append(remainder.removeFirst()) }
+            }
+            return nil
+        }
+        guard let executable = quotedPath(), executable.hasPrefix("/"),
+              URL(fileURLWithPath: executable).lastPathComponent == executableURL.lastPathComponent else { return false }
+        let flags = " " + ClaudeQuotaStatusLineHost.argument + " --claude-quota-output "
+        guard remainder.hasPrefix(flags) else { return false }
+        remainder.removeFirst(flags.count)
+        guard let output = quotedPath(), remainder.isEmpty, output.hasPrefix("/") else { return false }
+        let destination = URL(fileURLWithPath: output)
+        return destination.lastPathComponent == "claude-quota.json" && destination.deletingLastPathComponent().lastPathComponent == "AIUsage"
+    }
     struct Receipt {
         let settingsURL: URL
         let originalData: Data?
@@ -74,19 +111,31 @@ enum ClaudeQuotaSyncInstaller {
             else { try FileManager.default.removeItem(at: settingsURL) }
         }
     }
+    private static func attributesIfPresent(_ url: URL) throws -> [FileAttributeKey: Any]? {
+        do { return try FileManager.default.attributesOfItem(atPath: url.path) }
+        catch let error as NSError where error.domain == NSCocoaErrorDomain && [NSFileReadNoSuchFileError, NSFileNoSuchFileError].contains(error.code) { return nil }
+    }
+    private static func settingsData(_ url: URL) throws -> Data? {
+        guard let attributes = try attributesIfPresent(url) else { return nil }
+        guard attributes[.type] as? FileAttributeType == .typeRegular,
+              ((attributes[.size] as? NSNumber)?.intValue ?? Int.max) <= 262_144 else {
+            throw AIUsageError.invalid("Claude 设置文件类型或大小不受支持，原设置已保留。")
+        }
+        let handle = try FileHandle(forReadingFrom: url); defer { try? handle.close() }
+        let data = try handle.read(upToCount: 262_145) ?? Data()
+        guard data.count <= 262_144 else { throw AIUsageError.invalid("Claude 设置文件超过读取上限，原设置已保留。") }
+        return data
+    }
     private static func validateDirectory(_ url: URL) throws {
-        let fm = FileManager.default
-        if fm.fileExists(atPath: url.path) {
-            let info = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-            guard info.isDirectory == true, info.isSymbolicLink != true else { throw AIUsageError.invalid("同步目录应为普通文件夹，不能是符号链接。") }
+        if let attributes = try attributesIfPresent(url), attributes[.type] as? FileAttributeType != .typeDirectory {
+            throw AIUsageError.invalid("同步目录应为普通文件夹，不能是符号链接。")
         }
     }
     static func validateOutput(_ url: URL) throws {
         guard url.isFileURL, url.path.hasPrefix("/"), url.lastPathComponent == "claude-quota.json" else { throw AIUsageError.invalid("额度同步文件位置无效。") }
         try validateDirectory(url.deletingLastPathComponent())
-        if FileManager.default.fileExists(atPath: url.path) {
-            let info = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
-            guard info.isRegularFile == true, info.isSymbolicLink != true else { throw AIUsageError.invalid("额度同步文件不能是符号链接或文件夹。") }
+        if let attributes = try attributesIfPresent(url), attributes[.type] as? FileAttributeType != .typeRegular {
+            throw AIUsageError.invalid("额度同步文件不能是符号链接或文件夹。")
         }
     }
     static func install(settingsDirectory: URL, executableURL: URL, quotaURL: URL) throws -> Receipt {
@@ -94,23 +143,26 @@ enum ClaudeQuotaSyncInstaller {
         try validateDirectory(settingsDirectory); try validateOutput(quotaURL)
         guard executableURL.isFileURL, fm.isExecutableFile(atPath: executableURL.path) else { throw AIUsageError.invalid("方寸程序暂不可用，请从应用程序文件夹重新打开。") }
         let url = settingsDirectory.appendingPathComponent("settings.json")
-        var settings: [String: Any] = [:], original: Data?
-        if fm.fileExists(atPath: url.path) {
-            let info = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
-            guard info.isRegularFile == true, info.isSymbolicLink != true, (info.fileSize ?? 0) <= 262_144 else { throw AIUsageError.invalid("Claude 设置文件类型或大小不受支持，原设置已保留。") }
-            let data = try Data(contentsOf: url)
+        var settings: [String: Any] = [:]
+        let original = try settingsData(url)
+        if let data = original {
             guard let value = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw AIUsageError.invalid("Claude 设置格式无效，原设置已保留。") }
-            settings = value; original = data
+            settings = value
         }
         func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'" }
         let command = quote(executableURL.path) + " " + ClaudeQuotaStatusLineHost.argument + " --claude-quota-output " + quote(quotaURL.path)
         if let existing = settings["statusLine"], !(existing is NSNull) {
-            guard let status = existing as? [String: Any], status["type"] as? String == "command", status["command"] as? String == command else {
+            guard var status = existing as? [String: Any], status["type"] as? String == "command", let previous = status["command"] as? String,
+                  previous == command || ownedCommand(previous, matchingExecutable: executableURL) else {
                 throw AIUsageError.invalid("Claude 已有状态栏配置，方寸已保留它。可导出适配器手动合并，或选择已有额度 JSON。")
             }
+            status["command"] = command; settings["statusLine"] = status
         } else { settings["statusLine"] = ["type": "command", "command": command] }
         let encoded = try JSONSerialization.data(withJSONObject: settings, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
-        if original != encoded { try ProtectedAtomicFile.write(encoded, to: url) }
+        if original != encoded {
+            guard try settingsData(url) == original else { throw AIUsageError.invalid("Claude 设置刚被其他程序更改，请重试连接。原设置已保留。") }
+            try ProtectedAtomicFile.write(encoded, to: url)
+        }
         return Receipt(settingsURL: url, originalData: original, installedData: encoded)
     }
 }
@@ -365,9 +417,14 @@ final class AIUsageModel: ObservableObject {
     @Published private(set) var connectionPreview: AIUsageConnectionPreview?
     @Published private(set) var connectionPreviewLoading = false
     @Published private(set) var claudeQuotaSyncMessage: String?
+    @Published private(set) var subscriptionConnectionResults: [AIProvider: AISubscriptionConnectionResult] = [:]
     private let directory: URL
     private let claudeSettingsDirectory: URL
     private let statusLineExecutableURL: URL?
+    private let subscriptionConnectionWait: TimeInterval
+    private let followsSubscriptionConnections: Bool
+    private var connectingSubscriptions = Set<AIProvider>()
+    private var subscriptionFollowups: [AIProvider: Task<Void, Never>] = [:]
     private let tokenStore: AITokenLedgerStore
     private let alertStore: AIQuotaAlertStore
     private let notifications: any AIQuotaNotificationProviding
@@ -393,17 +450,23 @@ final class AIUsageModel: ObservableObject {
     var storageRecoveryInstructions: String { "原文件已保留，对应文件的写入已暂停。请先退出方寸，备份下列原文件，再修复文件或将损坏文件移出此目录，重新打开方寸。移走文件会重新建立该项数据，不会恢复旧记录。" }
     func revealDataDirectory() { NSWorkspace.shared.open(directory) }
     init(dataDirectory: URL, startServices: Bool = true, notifications: (any AIQuotaNotificationProviding)? = nil,
-         claudeSettingsDirectory: URL? = nil, statusLineExecutableURL: URL? = nil) {
+         claudeSettingsDirectory: URL? = nil, statusLineExecutableURL: URL? = nil, subscriptionConnectionWait: TimeInterval = 4) {
         directory = dataDirectory.appendingPathComponent("AIUsage", isDirectory: true)
-        self.claudeSettingsDirectory = claudeSettingsDirectory ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude", isDirectory: true)
+        let environmentDirectory = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"].flatMap { path -> URL? in
+            guard path.hasPrefix("/"), !path.contains("\0") else { return nil }
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+        self.claudeSettingsDirectory = claudeSettingsDirectory ?? environmentDirectory ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude", isDirectory: true)
         self.statusLineExecutableURL = statusLineExecutableURL ?? Bundle.main.executableURL
+        self.subscriptionConnectionWait = subscriptionConnectionWait.isFinite ? min(10, max(0, subscriptionConnectionWait)) : 4
+        followsSubscriptionConnections = startServices
         tokenStore = AITokenLedgerStore(url: directory.appendingPathComponent("token-ledger.json"))
         alertStore = AIQuotaAlertStore(url: directory.appendingPathComponent("quota-alerts.json"))
         tokenLedger = AITokenLedger()
         self.notifications = notifications ?? AIQuotaNotificationService()
         let home = FileManager.default.homeDirectoryForCurrentUser
         let defaults = AIProvider.allCases.map { provider in
-            AIUsageSourceConfiguration(provider: provider, sessionsPath: home.appendingPathComponent(provider == .codex ? ".codex/sessions" : ".claude/projects").path)
+            AIUsageSourceConfiguration(provider: provider, sessionsPath: provider == .codex ? home.appendingPathComponent(".codex/sessions").path : self.claudeSettingsDirectory.appendingPathComponent("projects").path)
         }
         configurations = defaults
         do { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700]) }
@@ -489,7 +552,7 @@ final class AIUsageModel: ObservableObject {
                                  detail: result.snapshots.isEmpty ? "本次未读取到有效额度，保留最后读数并等待来源恢复。" : stale ? "保留最后有效读数；超过 15 分钟或窗口已重置，等待来源更新。" : "额度来自所标注来源，不由 Token 数推算。")
                 }
                 let detail = config.provider == .claude
-                    ? (config.quotaPath == nil ? "Token 会话与额度分别连接。请启用 Claude 额度同步，或选择额度 JSON。" : "已配置额度来源，等待 Claude Code 完成请求并提供真实额度窗口。")
+                    ? (config.quotaPath == nil ? "在配置用量中点击“连接本机订阅”，自动接入 Claude 额度。" : "已连接本机来源，等待 Claude Code 提供真实额度；收到后自动更新。")
                     : "尚未找到额度字段。使用已登录的 Codex 完成一次请求后刷新，或选择会话目录。"
                 return .init(provider: config.provider, state: result.sourceExists || config.quotaPath != nil ? .unavailable : .disconnected, snapshot: nil, detail: detail)
             }.map { summary in
@@ -498,12 +561,14 @@ final class AIUsageModel: ObservableObject {
                 return value
             }
             self.lastRefreshed = now
+            self.updateSubscriptionConnectionResults()
             await self.processAlerts(at: now)
             if self.generation == currentGeneration { self.isRefreshing = false }
         }
     }
     func prepareForQuit() async throws {
         preparingForQuit = true
+        subscriptionFollowups.values.forEach { $0.cancel() }; subscriptionFollowups.removeAll()
         refreshTask?.cancel()
         if let refreshTask { await refreshTask.value }
         refreshTask = nil; isRefreshing = false
@@ -670,7 +735,127 @@ final class AIUsageModel: ObservableObject {
         return records.filter { (provider == nil || $0.provider == provider) && (includeDisconnected || enabled.contains($0.provider)) && $0.timestamp >= start && $0.timestamp <= now }
     }
     func configuration(for provider: AIProvider) -> AIUsageSourceConfiguration { configurations.first { $0.provider == provider }! }
-    @discardableResult func setEnabled(_ enabled: Bool, provider: AIProvider) -> Bool { mutate(provider) { $0.enabled = enabled } }
+    @discardableResult func setEnabled(_ enabled: Bool, provider: AIProvider) -> Bool {
+        guard mutate(provider, update: { $0.enabled = enabled }) else { return false }
+        if !enabled { subscriptionFollowups.removeValue(forKey: provider)?.cancel(); subscriptionConnectionResults.removeValue(forKey: provider) }
+        return true
+    }
+    /// Accepts the directory already chosen in a system open panel. No second
+    /// connection-preview confirmation is needed before the explicit connect.
+    @discardableResult func useLocalSubscriptionDirectory(_ url: URL, provider: AIProvider) -> Bool {
+        var isDirectory: ObjCBool = false
+        guard url.isFileURL, FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue,
+              FileManager.default.isReadableFile(atPath: url.path) else {
+            errorMessage = "请选择可读取的 \(provider.title) 会话文件夹。"; return false
+        }
+        guard mutate(provider, update: { $0.sessionsPath = url.standardizedFileURL.path }) else { return false }
+        errorMessage = nil; return true
+    }
+    /// One explicit action connects the local source and, for Claude, its official
+    /// status-line adapter. Only a fresh automatic quota may return ready.
+    func connectLocalSubscription(provider: AIProvider) async -> AISubscriptionConnectionResult {
+        guard connectingSubscriptions.insert(provider).inserted else {
+            return .waiting(message: "正在检查本机来源，请稍候。")
+        }
+        defer { connectingSubscriptions.remove(provider) }
+        let connectionStartedAt = Date()
+        errorMessage = nil
+        subscriptionFollowups.removeValue(forKey: provider)?.cancel()
+        func finish(_ result: AISubscriptionConnectionResult) -> AISubscriptionConnectionResult {
+            subscriptionConnectionResults[provider] = result
+            switch result {
+            case .failed, .authorizationRequired: errorMessage = result.message; if provider == .claude { claudeQuotaSyncMessage = nil }
+            case .ready, .waiting: errorMessage = nil; if provider == .claude { claudeQuotaSyncMessage = result.message }
+            }
+            return result
+        }
+        let sourceURL = URL(fileURLWithPath: configuration(for: provider).sessionsPath)
+        var isDirectory: ObjCBool = false
+        let sourceExists = FileManager.default.fileExists(atPath: sourceURL.path, isDirectory: &isDirectory) && isDirectory.boolValue
+        if sourceExists && !FileManager.default.isReadableFile(atPath: sourceURL.path) {
+            return finish(.authorizationRequired(message: "无法读取 \(provider.title) 本机来源。请在系统文件选择窗口中授权实际会话目录后重试。"))
+        }
+        if !sourceExists {
+            return finish(.authorizationRequired(message: "未找到 \(provider.title) 本机会话目录。可选择实际会话文件夹恢复；若尚未使用官方客户端，请先安装并完成登录。"))
+        }
+        if provider == .claude {
+            guard enableClaudeQuotaSync() else { return finish(.failed(message: errorMessage ?? "Claude 额度同步设置未完成，原设置已保留。")) }
+        } else {
+            guard mutate(provider, update: { $0.enabled = true; $0.quotaPath = nil; $0.manualSnapshot = nil; $0.manualNote = nil }) else {
+                return finish(.failed(message: errorMessage ?? "本机来源无法保存，请检查设置文件后重试。"))
+            }
+        }
+        subscriptionConnectionResults[provider] = waitingForSubscription(provider)
+        let deadline = Date().addingTimeInterval(subscriptionConnectionWait)
+        var lastClaudeQuotaStamp = quotaFileStamp(.claude)
+        var nextCodexInspection = Date().addingTimeInterval(1)
+        repeat {
+            let checkedCurrentSource = !isRefreshing && (lastRefreshed ?? .distantPast) >= connectionStartedAt
+            if checkedCurrentSource, let ready = freshSubscriptionResult(provider) { return finish(ready) }
+            if checkedCurrentSource, let summary = providerSummaries.first(where: { $0.provider == provider }), summary.state == .error {
+                return finish(.failed(message: summary.detail))
+            }
+            if Date() >= deadline || Task.isCancelled || preparingForQuit { break }
+            if !isRefreshing {
+                if provider == .claude {
+                    let stamp = quotaFileStamp(provider)
+                    if stamp != lastClaudeQuotaStamp { lastClaudeQuotaStamp = stamp; refresh() }
+                } else if Date() >= nextCodexInspection { nextCodexInspection = Date().addingTimeInterval(1); refresh() }
+            }
+            do { try await Task.sleep(for: .milliseconds(100)) } catch { break }
+        } while true
+        if !isRefreshing, (lastRefreshed ?? .distantPast) >= connectionStartedAt, let ready = freshSubscriptionResult(provider) { return finish(ready) }
+        let result = finish(waitingForSubscription(provider))
+        followSubscriptionReading(provider)
+        return result
+    }
+    private func freshSubscriptionResult(_ provider: AIProvider) -> AISubscriptionConnectionResult? {
+        guard configuration(for: provider).enabled,
+              let summary = providerSummaries.first(where: { $0.provider == provider }), summary.state == .ready,
+              let snapshot = summary.snapshot, !snapshot.isStale(),
+              snapshot.source == (provider == .claude ? .claudeStatusLine : .localSession) else { return nil }
+        return .ready(message: provider.title + " 订阅额度已连接。")
+    }
+    private func waitingForSubscription(_ provider: AIProvider) -> AISubscriptionConnectionResult {
+        .waiting(message: provider == .claude
+            ? "同步设置已完成，等待 Claude Code 提供真实额度。已有会话会自动更新；尚无读数时，下一次正常使用后自动显示。"
+            : "本机来源已启用，等待 Codex 提供真实额度。下一次正常使用后会自动更新。")
+    }
+    private func updateSubscriptionConnectionResults() {
+        for provider in Array(subscriptionConnectionResults.keys) where configuration(for: provider).enabled {
+            if let ready = freshSubscriptionResult(provider) {
+                subscriptionConnectionResults[provider] = ready; subscriptionFollowups.removeValue(forKey: provider)?.cancel()
+                if provider == .claude { claudeQuotaSyncMessage = ready.message }
+            }
+            else if let summary = providerSummaries.first(where: { $0.provider == provider }), summary.state == .error {
+                subscriptionConnectionResults[provider] = .failed(message: summary.detail)
+            } else if subscriptionConnectionResults[provider]?.isReady == true {
+                subscriptionConnectionResults[provider] = waitingForSubscription(provider)
+            }
+        }
+    }
+    private func followSubscriptionReading(_ provider: AIProvider) {
+        guard followsSubscriptionConnections, !preparingForQuit else { return }
+        subscriptionFollowups[provider]?.cancel()
+        subscriptionFollowups[provider] = Task { [weak self] in
+            var lastStamp = self?.quotaFileStamp(provider)
+            for attempt in 0..<120 {
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                guard let model = self, model.configuration(for: provider).enabled, !model.preparingForQuit else { return }
+                if model.freshSubscriptionResult(provider) != nil { return }
+                if provider == .claude {
+                    let stamp = model.quotaFileStamp(provider)
+                    if stamp != lastStamp { lastStamp = stamp; model.refresh() }
+                } else if attempt % 5 == 0 { model.refresh() }
+            }
+        }
+    }
+    private func quotaFileStamp(_ provider: AIProvider) -> String? {
+        guard let path = configuration(for: provider).quotaPath,
+              let info = try? URL(fileURLWithPath: path).resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
+              let modified = info.contentModificationDate else { return nil }
+        return "\(modified.timeIntervalSince1970):\(info.fileSize ?? 0)"
+    }
     func chooseSessionsDirectory(for provider: AIProvider) {
         let panel = NSOpenPanel(); panel.title = "选择 \(provider.title) 会话目录"; panel.message = "仅读取 JSONL 中的用量元数据，不保存对话正文。"; panel.canChooseFiles = false; panel.canChooseDirectories = true; panel.canCreateDirectories = false
         panel.directoryURL = URL(fileURLWithPath: configuration(for: provider).sessionsPath)
@@ -789,11 +974,13 @@ final class AIUsageModel: ObservableObject {
         }
         do {
             let destination = directory.appendingPathComponent("claude-quota.json")
-            let receipt = try ClaudeQuotaSyncInstaller.install(settingsDirectory: claudeSettingsDirectory, executableURL: executable, quotaURL: destination)
-            guard mutate(.claude, update: { $0.quotaPath = destination.path; $0.enabled = true }) else {
+            let sessions = URL(fileURLWithPath: configuration(for: .claude).sessionsPath)
+            let settingsDirectory = sessions.lastPathComponent == "projects" ? sessions.deletingLastPathComponent() : claudeSettingsDirectory
+            let receipt = try ClaudeQuotaSyncInstaller.install(settingsDirectory: settingsDirectory, executableURL: executable, quotaURL: destination)
+            guard mutate(.claude, update: { $0.quotaPath = destination.path; $0.enabled = true; $0.manualSnapshot = nil; $0.manualNote = nil }) else {
                 try receipt.rollback(); return false
             }
-            claudeQuotaSyncMessage = "同步已启用。重新打开 Claude Code，完成一次请求后，额度会自动出现在这里。"
+            claudeQuotaSyncMessage = "同步设置已完成。已有 Claude Code 会话会自动更新；尚无额度读数时，下一次正常使用后自动显示。"
             return true
         } catch { errorMessage = error.localizedDescription; return false }
     }

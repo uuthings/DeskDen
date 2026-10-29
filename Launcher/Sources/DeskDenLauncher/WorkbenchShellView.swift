@@ -7,12 +7,14 @@ struct WorkbenchShellMetrics {
     let chromeHeight: CGFloat
     let contentGutter: CGFloat
     let sidebarWidth: CGFloat
+    let pageWidth: CGFloat
 
     init(viewport: CGSize) {
         chromeHeight = 46
         // Fixed reading margins are independent of scrollbar presence.
         contentGutter = 35
         sidebarWidth = 184
+        pageWidth = min(1360, max(0, viewport.width - sidebarWidth - 2 - 2 * contentGutter))
     }
 }
 
@@ -21,6 +23,9 @@ private struct WorkbenchPageInsetsKey: EnvironmentKey {
 }
 private struct WorkbenchPageScrollHeightKey: EnvironmentKey {
     static let defaultValue: CGFloat = 0
+}
+private struct WorkbenchPageWidthKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 864
 }
 enum WorkbenchPageScrollSpace { static let name = "workbench-page-scroll" }
 extension EnvironmentValues {
@@ -31,6 +36,11 @@ extension EnvironmentValues {
     var workbenchPageScrollHeight: CGFloat {
         get {self[WorkbenchPageScrollHeightKey.self]}
         set {self[WorkbenchPageScrollHeightKey.self] = newValue}
+    }
+    /// Derived from the hosting viewport, independent of a page's intrinsic size.
+    var workbenchPageWidth: CGFloat {
+        get {self[WorkbenchPageWidthKey.self]}
+        set {self[WorkbenchPageWidthKey.self] = newValue}
     }
 }
 extension View {
@@ -76,6 +86,7 @@ struct WorkbenchRootView: View {
                             .environment(\.workbenchPageInsets,pageInsets)
                     }
                 }.padding(1)
+                    .blur(radius: model.modals.isPresented || model.confirmingQuit || model.quitting ? 8 : 0)
                     .disabled(model.modals.isPresented || model.confirmingQuit || model.quitting)
                     .accessibilityHidden(model.modals.isPresented || model.confirmingQuit)
                 WorkbenchModalHost(coordinator:model.modals)
@@ -86,6 +97,7 @@ struct WorkbenchRootView: View {
             }
             .environment(\.workbenchScale, 1)
             .environment(\.workbenchDeviceExpanded, false)
+            .environment(\.workbenchPageWidth, metrics.pageWidth)
             .environment(\.workbenchContentHeight, max(0, viewport.size.height - chromeHeight - 2 - 22 - 16))
             .environment(\.workbenchPageScrollHeight, max(0, viewport.size.height - chromeHeight - 2))
         }

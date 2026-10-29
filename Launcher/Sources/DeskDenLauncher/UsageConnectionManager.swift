@@ -43,11 +43,24 @@ struct UsageManagedConnection: Identifiable {
 @MainActor final class UsageConnectionManager: ObservableObject, Identifiable {
     let id = UUID()
     let initialSourceID: String?
-    @Published var draft = UsageConnectionDraft()
+    @Published var draft = UsageConnectionDraft() {
+        didSet {
+            guard !loadingDraft else { return }
+            if draft.name != oldValue.name { editedDisplayFields.insert(.name) }
+            if draft.appearance.icon != oldValue.appearance.icon { editedDisplayFields.insert(.icon) }
+            if draft.appearance.categoryID != oldValue.appearance.categoryID { editedDisplayFields.insert(.category) }
+            if draft.appearance.visible != oldValue.appearance.visible { editedDisplayFields.insert(.visibility) }
+            if draft.declaredPlan != oldValue.declaredPlan { editedDisplayFields.insert(.plan) }
+        }
+    }
+    private enum DisplayField: Hashable { case name, icon, category, visibility, plan }
+    private var editedDisplayFields = Set<DisplayField>()
+    private var loadingDraft = false
     @Published private(set) var selectedSourceID: String?
     @Published private(set) var busy = false
     @Published var error: String?
     @Published var notice: String?
+    private var waitingForSubscription: AIProvider?
     @Published var confirmingDiscard = false
     @Published var discardTitle = "放弃未保存的修改？"
     @Published var discardDetail = "本次连接修改尚未保存。"
@@ -127,10 +140,13 @@ struct UsageManagedConnection: Identifiable {
         guard !busy, selectedSourceID == nil, draft.service != service else { return }
         let change = { [weak self] in
             guard let self else { return }
+            self.loadingDraft = true
+            defer { self.loadingDraft = false }
             let old = self.draft.service
             if self.draft.name.isEmpty || self.draft.name == old?.defaultName { self.draft.name = service?.defaultName ?? "" }
             self.draft.service = service; self.draft.resourceID = ""; self.draft.secret = ""
             self.draft.declaredPlan = nil; self.draft.enabled = true
+            self.editedDisplayFields.remove(.plan)
             self.draft.minimumHours = "1"; self.draft.maximumHours = "6"; self.draft.thresholdMB = "1000"
             self.verifiedOrder = nil; self.verifiedResourceID = nil; self.error = nil; self.notice = nil
         }
@@ -145,18 +161,43 @@ struct UsageManagedConnection: Identifiable {
         if let category = original.appearance.categoryID, !valid.contains(category) { original.appearance.categoryID = "uncategorized" }
     }
 
-    func connectSubscription(app: WorkbenchAppModel) {
+    func connectSubscription(app: WorkbenchAppModel, allowDirectorySelection: Bool = false) {
         guard !busy, let provider = draft.service?.aiProvider else { return }
+        // Local subscriptions are unique sources. Connecting from the new form
+        // reuses that source without replacing its saved card customization.
+        if isNew {
+            let pending = draft
+            let changed = editedDisplayFields
+            load(UsagePresentationSourceID.ai(provider), app: app)
+            if changed.contains(.name) { draft.name = pending.name }
+            if changed.contains(.icon) { draft.appearance.icon = pending.appearance.icon }
+            if changed.contains(.category) { draft.appearance.categoryID = pending.appearance.categoryID }
+            if changed.contains(.visibility) { draft.appearance.visible = pending.appearance.visible }
+            if changed.contains(.plan) { draft.declaredPlan = pending.declaredPlan }
+        }
         error = nil; notice = nil
-        if app.ai.setEnabled(true, provider: provider) {
-            app.ai.refresh(); notice = "已启用本机读取，连接状态和额度以实际读数为准。"
-        } else { error = app.ai.errorMessage ?? "本机来源未能启用，请稍后重试。" }
+        waitingForSubscription = nil
+        busy = true
+        Task { @MainActor [weak self, weak app] in
+            guard let self, let app else { return }
+            defer { self.busy = false }
+            let result = allowDirectorySelection
+                ? await UsageSubscriptionAuthorization.connect(model: app.ai, provider: provider)
+                : await app.ai.connectLocalSubscription(provider: provider)
+            switch result {
+            case .ready(let message): self.notice = message
+            case .waiting(let message): self.notice = message; self.waitingForSubscription = provider
+            case .authorizationRequired(let message), .failed(let message): self.error = message
+            }
+        }
     }
-    func enableClaudeSync(app: WorkbenchAppModel) {
-        guard !busy, draft.service == .claude else { return }
-        error = nil
-        if app.ai.enableClaudeQuotaSync() { notice = app.ai.claudeQuotaSyncMessage; app.ai.refresh() }
-        else { error = app.ai.errorMessage ?? "额度同步未启用。" }
+    func updateSubscriptionStatus(app: WorkbenchAppModel) {
+        guard let provider = waitingForSubscription,
+              let summary = app.ai.providerSummaries.first(where: { $0.provider == provider }),
+              summary.state == .ready,
+              summary.snapshot?.source == (provider == .claude ? .claudeStatusLine : .localSession) else { return }
+        waitingForSubscription = nil
+        notice = "已连接本机 " + provider.title + " 订阅，额度已更新。"
     }
     func checkBrowser(app: WorkbenchAppModel) {
         guard !busy else { return }
@@ -263,12 +304,17 @@ struct UsageManagedConnection: Identifiable {
     }
     private func clearSecret() { draft.secret = "" }
     private func reset() {
+        loadingDraft = true
+        defer { loadingDraft = false; editedDisplayFields.removeAll() }
         clearSecret(); draft = .init(); original = draft; selectedSourceID = nil
         originalTraffic = nil; originalAPI = nil; newIdentifier = UUID(); verifiedOrder = nil; verifiedResourceID = nil
         error = nil; notice = nil
+        waitingForSubscription = nil
     }
     private func load(_ key: String, app: WorkbenchAppModel) {
         reset()
+        loadingDraft = true
+        defer { loadingDraft = false; editedDisplayFields.removeAll() }
         guard let entry = connections(app: app).first(where: { $0.id == key }) else { return }
         selectedSourceID = key; draft.service = entry.service; draft.name = entry.name
         draft.appearance = entry.appearance

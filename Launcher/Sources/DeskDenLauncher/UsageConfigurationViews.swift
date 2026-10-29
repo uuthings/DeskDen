@@ -2,6 +2,35 @@ import AppKit
 import SwiftUI
 import LauncherCore
 
+/// A missing or protected directory is resolved through the system picker once;
+/// successful authorization continues the same connection without a review step.
+@MainActor enum UsageSubscriptionAuthorization {
+    static func connect(model: AIUsageModel, provider: AIProvider) async -> AISubscriptionConnectionResult {
+        let result = await model.connectLocalSubscription(provider: provider)
+        guard case .authorizationRequired = result else { return result }
+        let panel = NSOpenPanel()
+        panel.title = "选择 " + provider.title + " 本机会话目录"
+        panel.message = result.message + " 仅读取用量元数据，不保存对话正文。"
+        panel.prompt = "允许读取并连接"
+        panel.canChooseFiles = false; panel.canChooseDirectories = true
+        panel.canCreateDirectories = false; panel.allowsMultipleSelection = false
+        panel.showsHiddenFiles = true
+        panel.directoryURL = URL(fileURLWithPath: model.configuration(for: provider).sessionsPath)
+        let response: NSApplication.ModalResponse = await withCheckedContinuation { continuation in
+            if let window = NSApp.keyWindow, window.attachedSheet == nil {
+                panel.beginSheetModal(for: window) { continuation.resume(returning: $0) }
+            } else { panel.begin { continuation.resume(returning: $0) } }
+        }
+        guard response == .OK, let url = panel.url else { return result }
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        guard model.useLocalSubscriptionDirectory(url, provider: provider) else {
+            return .failed(message: model.errorMessage ?? "无法读取所选目录，请检查权限。")
+        }
+        return await model.connectLocalSubscription(provider: provider)
+    }
+}
+
 enum UsageConnectionKind: String, CaseIterable {
     case subscription, traffic, api
     var title: String { switch self { case .subscription: "AI 订阅额度"; case .traffic: "服务流量"; case .api: "API 余额" } }

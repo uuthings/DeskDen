@@ -71,6 +71,13 @@ import LauncherCore
         let preferredSummary = membershipModel.providerSummaries.first { $0.provider == .codex }
         check(preferredSummary?.effectiveAccountPlan == .pro && preferredSummary?.accountPlanIsDeclared == false && membershipModel.quotaHistory.allSatisfy { $0.accountPlan == .pro },
               "real source membership wins over a declared preference without changing historical quota metadata")
+        check(membershipModel.saveManual(provider: .codex, shortPercent: "99", weekPercent: "", observedAt: now.addingTimeInterval(30), shortReset: reset, weekReset: reset),
+              "manual fixture can precede reconnecting an automatic subscription")
+        await refresh(membershipModel)
+        let codexConnection = await membershipModel.connectLocalSubscription(provider: .codex)
+        check(codexConnection.isReady && membershipModel.providerSummaries.first(where: { $0.provider == .codex })?.snapshot?.source == .localSession
+              && membershipModel.configuration(for: .codex).manualSnapshot == nil && membershipModel.quotaHistory.contains { $0.source == .manual },
+              "one-click Codex waits for a fresh automatic reading, clears its manual override and retains historical manual observations")
 
         let syncBase = try fixture("claude-statusline-sync")
         let settingsDirectory = syncBase.appendingPathComponent("Claude settings")
@@ -93,6 +100,24 @@ import LauncherCore
         check(waitingSummary?.state == .unavailable && waitingSummary?.snapshot == nil && syncModel.claudeQuotaSyncMessage != nil,
               "configured sync waits for a real Claude response without fabricating a connected quota or read failure")
         check(syncModel.enableClaudeQuotaSync(), "re-enabling the same status-line command is idempotent")
+        var decoratedSettings = installedSettings
+        var decoratedLine = decoratedSettings["statusLine"] as! [String: Any]; decoratedLine["padding"] = 3
+        decoratedSettings["statusLine"] = decoratedLine
+        try JSONSerialization.data(withJSONObject: decoratedSettings).write(to: settingsURL)
+        let movedDirectory = syncBase.appendingPathComponent("Moved app")
+        try fm.createDirectory(at: movedDirectory, withIntermediateDirectories: true)
+        let movedExecutable = movedDirectory.appendingPathComponent(executable.lastPathComponent)
+        try fm.copyItem(at: executable, to: movedExecutable)
+        let migratedOutput = syncBase.appendingPathComponent("New preview profile/AIUsage/claude-quota.json")
+        _ = try ClaudeQuotaSyncInstaller.install(settingsDirectory: settingsDirectory, executableURL: movedExecutable, quotaURL: migratedOutput)
+        let migratedSettings = try JSONSerialization.jsonObject(with: Data(contentsOf: settingsURL)) as! [String: Any]
+        let migratedLine = migratedSettings["statusLine"] as! [String: Any], migratedCommand = migratedLine["command"] as! String
+        check(migratedLine["padding"] as? Int == 3 && migratedSettings["theme"] as? String == "fixture-theme"
+              && migratedCommand != command && ClaudeQuotaSyncInstaller.ownedCommand(migratedCommand, matchingExecutable: executable),
+              "a recognized Fangcun connection migrates moved app and preview destinations while retaining existing status-line options")
+        check(!ClaudeQuotaSyncInstaller.ownedCommand(command + " && fixture-extra-command", matchingExecutable: executable)
+              && !ClaudeQuotaSyncInstaller.ownedCommand("printf '" + ClaudeQuotaStatusLineHost.argument + "'", matchingExecutable: executable),
+              "own-command recognition rejects extra shell commands and a third-party script merely mentioning the flag")
         let outputURL = file(syncBase, "claude-quota.json")
         let payload = try JSONSerialization.data(withJSONObject: ["rate_limits": ["five_hour": ["used_percentage": 13, "resets_at": reset.timeIntervalSince1970],
             "seven_day": ["used_percentage": 27, "resets_at": reset.timeIntervalSince1970]],
@@ -126,6 +151,14 @@ import LauncherCore
         try receipt.rollback()
         let rolledBack = try Data(contentsOf: rollbackURL)
         check(rolledBack == originalSettings, "a failed source save can roll back only the exact status-line settings written by the installer")
+        let linkedSettingsDirectory = syncBase.appendingPathComponent("dangling-settings")
+        try fm.createDirectory(at: linkedSettingsDirectory, withIntermediateDirectories: true)
+        let linkedSettings = linkedSettingsDirectory.appendingPathComponent("settings.json")
+        try fm.createSymbolicLink(at: linkedSettings, withDestinationURL: syncBase.appendingPathComponent("missing-target.json"))
+        do {
+            _ = try ClaudeQuotaSyncInstaller.install(settingsDirectory: linkedSettingsDirectory, executableURL: executable, quotaURL: outputURL)
+            check(false, "quota setup refuses a dangling settings symlink instead of replacing it")
+        } catch { check(true, "quota setup refuses a dangling settings symlink instead of replacing it") }
         let oversized = Data(repeating: 32, count: ClaudeQuotaStatusLineHost.maximumInputBytes + 1)
         do { try ClaudeQuotaStatusLineHost.consume(oversized, outputURL: outputURL, now: now); check(false, "oversized status-line payload is rejected") }
         catch { check(true, "oversized status-line payload is rejected") }
@@ -135,6 +168,84 @@ import LauncherCore
         try fm.createSymbolicLink(at: symlinkURL, withDestinationURL: outputURL)
         do { try ClaudeQuotaStatusLineHost.consume(payload, outputURL: symlinkURL, now: now); check(false, "status-line host refuses a symlink output") }
         catch { check(true, "status-line host refuses a symlink output") }
+
+        func connectionFixture(_ name: String, wait: TimeInterval = 0.25) throws -> (AIUsageModel, URL, URL) {
+            let base = try fixture(name), settings = base.appendingPathComponent("Claude config")
+            let projects = settings.appendingPathComponent("projects")
+            try fm.createDirectory(at: projects, withIntermediateDirectories: true)
+            var sources = AIProvider.allCases.map { AIUsageSourceConfiguration(provider: $0, enabled: false, sessionsPath: base.appendingPathComponent("unused-" + $0.rawValue).path) }
+            sources[1].sessionsPath = projects.path
+            try JSONEncoder().encode(sources).write(to: file(base, "sources.json"))
+            return (AIUsageModel(dataDirectory: base, startServices: false, notifications: FixtureAIQuotaNotifications(),
+                                 claudeSettingsDirectory: settings, statusLineExecutableURL: executable, subscriptionConnectionWait: wait), base, settings)
+        }
+        let (pendingModel, pendingBase, _) = try connectionFixture("one-click-waits-for-real-quota")
+        let pending = await pendingModel.connectLocalSubscription(provider: .claude)
+        if case .waiting = pending { check(true, "one-click Claude returns waiting when setup succeeds without a real quota window") }
+        else { check(false, "one-click Claude returns waiting when setup succeeds without a real quota window") }
+        check(!pending.isReady && pendingModel.configuration(for: .claude).enabled && pendingModel.configuration(for: .claude).quotaPath == file(pendingBase, "claude-quota.json").path
+              && pendingModel.providerSummaries.first(where: { $0.provider == .claude })?.snapshot == nil
+              && pendingModel.claudeQuotaSyncMessage == pending.message && pendingModel.errorMessage == nil,
+              "one-click setup enables both local reading and quota sync while publishing an honest waiting message")
+        let pendingOutput = file(pendingBase, "claude-quota.json")
+        try ClaudeQuotaStatusLineHost.consume(payload, outputURL: pendingOutput, now: now)
+        await refresh(pendingModel)
+        check(pendingModel.subscriptionConnectionResults[.claude]?.isReady == true,
+              "a later official status-line reading completes the pending connection without another user action")
+        try fm.removeItem(at: pendingOutput)
+        let reconnectWithoutReading = await pendingModel.connectLocalSubscription(provider: .claude)
+        check(!reconnectWithoutReading.isReady && pendingModel.providerSummaries.first(where: { $0.provider == .claude })?.state == .stale,
+              "reconnecting cannot report ready from a previously fresh cached window before the current source scan finishes")
+
+        let (liveModel, liveBase, _) = try connectionFixture("one-click-hot-reload", wait: 1)
+        let liveOutput = file(liveBase, "claude-quota.json")
+        let hotReload = Task {
+            try await Task.sleep(for: .milliseconds(150))
+            return try ClaudeQuotaStatusLineHost.consume(payload, outputURL: liveOutput, now: now)
+        }
+        let liveConnection = await liveModel.connectLocalSubscription(provider: .claude)
+        _ = try await hotReload.value
+        check(liveConnection.isReady && liveModel.providerSummaries.first(where: { $0.provider == .claude })?.snapshot?.source == .claudeStatusLine
+              && liveModel.claudeQuotaSyncMessage == liveConnection.message,
+              "one-click Claude can await a hot-reloaded real quota and finish ready in the same action")
+
+        let (conflictModel, _, conflictDirectory) = try connectionFixture("one-click-keeps-third-party-statusline")
+        let conflictURL = conflictDirectory.appendingPathComponent("settings.json")
+        try existingStatus.write(to: conflictURL)
+        let conflicted = await conflictModel.connectLocalSubscription(provider: .claude)
+        if case .failed = conflicted { check(true, "one-click Claude reports a third-party status-line conflict as failure") }
+        else { check(false, "one-click Claude reports a third-party status-line conflict as failure") }
+        let conflictAfter = try Data(contentsOf: conflictURL)
+        check(conflictAfter == existingStatus && !conflictModel.configuration(for: .claude).enabled && conflictModel.errorMessage == conflicted.message,
+              "conflicted one-click setup preserves third-party bytes and does not silently enable a disconnected source")
+
+        let missingConnectionBase = try fixture("one-click-missing-client-source")
+        let missingSettings = missingConnectionBase.appendingPathComponent("absent-claude-config")
+        let missingConnectionModel = AIUsageModel(dataDirectory: missingConnectionBase, startServices: false, notifications: FixtureAIQuotaNotifications(),
+                                       claudeSettingsDirectory: missingSettings, statusLineExecutableURL: executable, subscriptionConnectionWait: 0)
+        let missingBefore = try Data(contentsOf: file(missingConnectionBase, "sources.json"))
+        let missingConnection = await missingConnectionModel.connectLocalSubscription(provider: .claude)
+        let missingAfter = try Data(contentsOf: file(missingConnectionBase, "sources.json"))
+        if case .authorizationRequired = missingConnection { check(true, "missing official local sources return a recoverable authorization/setup state") }
+        else { check(false, "missing official local sources return a recoverable authorization/setup state") }
+        check(missingBefore == missingAfter && !fm.fileExists(atPath: missingSettings.appendingPathComponent("settings.json").path),
+              "missing-source recovery does not create a fake session directory or alter Claude settings")
+        let selectedSettings = missingConnectionBase.appendingPathComponent("user-selected-Claude-profile")
+        let selectedProjects = selectedSettings.appendingPathComponent("projects")
+        try fm.createDirectory(at: selectedProjects, withIntermediateDirectories: true)
+        check(missingConnectionModel.useLocalSubscriptionDirectory(selectedProjects, provider: .claude)
+              && !missingConnectionModel.configuration(for: .claude).enabled && missingConnectionModel.dialog == nil,
+              "an already authorized directory can be selected without enabling the source or opening a second preview")
+        let recoveredConnection = await missingConnectionModel.connectLocalSubscription(provider: .claude)
+        check(!recoveredConnection.isReady && missingConnectionModel.configuration(for: .claude).enabled
+              && fm.fileExists(atPath: selectedSettings.appendingPathComponent("settings.json").path)
+              && !fm.fileExists(atPath: missingSettings.appendingPathComponent("settings.json").path),
+              "directory recovery reconnects the selected Claude profile rather than changing another account's default settings")
+        let beforeInvalidDirectory = try Data(contentsOf: file(missingConnectionBase, "sources.json"))
+        let invalidDirectoryRejected = !missingConnectionModel.useLocalSubscriptionDirectory(file(missingConnectionBase, "sources.json"), provider: .claude)
+        let afterInvalidDirectory = try Data(contentsOf: file(missingConnectionBase, "sources.json"))
+        check(invalidDirectoryRejected && beforeInvalidDirectory == afterInvalidDirectory,
+              "directory recovery rejects a regular file without replacing the saved source")
 
         let manualBase = try fixture("manual-with-automatic-reading-disabled")
         let trapSessions = manualBase.appendingPathComponent("disabled-session-trap")
