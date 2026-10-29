@@ -42,6 +42,74 @@ final class UsagePresentationPreferencesTests: XCTestCase {
         XCTAssertThrowsError(try preferences.validate())
     }
 
+    func testBrandPresetsRoundTripAlongsideExistingIcons() throws {
+        for brand in UsageBrandIcon.allCases {
+            let value = UsageCardIcon.brand(brand)
+            try value.validate()
+            XCTAssertEqual(try JSONDecoder().decode(UsageCardIcon.self, from: JSONEncoder().encode(value)), value)
+        }
+        let legacy = Data(#"{"symbol":{"_0":"terminal"}}"#.utf8)
+        XCTAssertEqual(try JSONDecoder().decode(UsageCardIcon.self, from: legacy), .symbol("terminal"))
+        XCTAssertThrowsError(try JSONDecoder().decode(UsageCardIcon.self, from: Data(#"{"brand":{"_0":"unregistered-brand"}}"#.utf8)))
+    }
+
+    func testStockCategoryMigrationConsolidatesTrafficAndPreservesReferences() throws {
+        var previous = UsagePresentationPreferences()
+        previous.schemaVersion = 2
+        previous.categories = [
+            .init(id: "ai-subscription", title: "AI 订阅"), .init(id: "static-isp", title: "静态 ISP"),
+            .init(id: "vps-traffic", title: "VPS 流量"), .init(id: "api-balance", title: "API 余额"), .init(id: "uncategorized", title: "未分类")
+        ]
+        let serviceKey = UsagePresentationSourceID.service(UUID())
+        previous.cards[serviceKey] = .init(displayName: "My server", categoryID: "vps-traffic")
+        previous.filterCategoryID = "static-isp"
+        let restored = try JSONDecoder().decode(UsagePresentationPreferences.self, from: JSONEncoder().encode(previous))
+        try restored.validate()
+        XCTAssertEqual(Set(restored.categories.map(\.title)), ["订阅", "API", "流量服务", "未分类"])
+        XCTAssertEqual(restored.cards[serviceKey]?.categoryID, "traffic-services")
+        XCTAssertEqual(restored.cards[serviceKey]?.displayName, "My server")
+        XCTAssertEqual(restored.filterCategoryID, "traffic-services")
+        XCTAssertEqual(restored.resolvedCategoryID("static-isp"), "traffic-services")
+        XCTAssertEqual(restored.resolvedCategoryID("vps-traffic"), "traffic-services")
+    }
+
+    func testCategoryMigrationKeepsRenamedDefaultsAndUserCategoryIdentities() throws {
+        var previous = UsagePresentationPreferences()
+        previous.schemaVersion = 2
+        previous.categories = [
+            .init(id: "ai-subscription", title: "Research"), .init(id: "static-isp", title: "Office"),
+            .init(id: "vps-traffic", title: "VPS 流量"), .init(id: "api-balance", title: "API 余额"),
+            .init(id: "custom-balance", title: "API"), .init(id: "uncategorized", title: "未分类")
+        ]
+        previous.cards["ai.codex"] = .init(categoryID: "ai-subscription")
+        previous.filterCategoryID = "static-isp"
+        let restored = try JSONDecoder().decode(UsagePresentationPreferences.self, from: JSONEncoder().encode(previous))
+        try restored.validate()
+        XCTAssertTrue(restored.categories.contains(.init(id: "ai-subscription", title: "Research")))
+        XCTAssertTrue(restored.categories.contains(.init(id: "static-isp", title: "Office")))
+        XCTAssertTrue(restored.categories.contains(.init(id: "custom-balance", title: "API")))
+        XCTAssertTrue(restored.categories.contains(.init(id: "api-balance", title: "API 余额")))
+        XCTAssertEqual(restored.cards["ai.codex"]?.categoryID, "ai-subscription")
+        XCTAssertEqual(restored.filterCategoryID, "static-isp")
+        XCTAssertEqual(restored.resolvedCategoryID("static-isp"), "static-isp")
+        XCTAssertEqual(restored.resolvedCategoryID("vps-traffic"), "traffic-services")
+    }
+
+    func testLegacyDefaultReferencesMigrateWithoutMaskingInvalidDocuments() throws {
+        let key = UsagePresentationSourceID.service(UUID())
+        let valid = Data("""
+        {"schemaVersion":2,"cards":{"\(key)":{"categoryID":"static-isp"}},"filterCategoryID":"vps-traffic"}
+        """.utf8)
+        let restored = try JSONDecoder().decode(UsagePresentationPreferences.self, from: valid)
+        try restored.validate()
+        XCTAssertEqual(restored.cards[key]?.categoryID, "traffic-services")
+        XCTAssertEqual(restored.filterCategoryID, "traffic-services")
+        let invalid = Data("""
+        {"schemaVersion":2,"categories":[{"id":"static-isp","title":"静态 ISP"},{"id":"static-isp","title":"静态 ISP"},{"id":"uncategorized","title":"未分类"}]}
+        """.utf8)
+        XCTAssertThrowsError(try JSONDecoder().decode(UsagePresentationPreferences.self, from: invalid))
+    }
+
     func testStorePreservesMalformedOriginalAndValidPreviousSnapshot() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

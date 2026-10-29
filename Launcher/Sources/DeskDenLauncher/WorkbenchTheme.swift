@@ -128,7 +128,11 @@ struct WorkbenchMaterialSurface: View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         ZStack {
             if kind == .card || kind == .panel || kind == .selected {
-                WorkbenchBackdropBlur(behindWindow: behindWindow).opacity(0.14)
+                // Panels sit above other text-bearing surfaces. Keep their
+                // native blur fully composited so the unblurred page cannot
+                // bleed through; the shared gradient still owns tint/opacity.
+                WorkbenchBackdropBlur(behindWindow: behindWindow, material: kind == .panel ? .popover : .underWindowBackground)
+                    .opacity(kind == .panel ? 1 : 0.14)
             }
             switch kind {
             case .card: shape.fill(palette.surfaceGradient)
@@ -160,11 +164,12 @@ struct WorkbenchMaterialSurface: View {
 
 private struct WorkbenchBackdropBlur: NSViewRepresentable {
     var behindWindow: Bool
+    var material: NSVisualEffectView.Material = .underWindowBackground
     @Environment(\.colorScheme) private var scheme
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = WorkbenchPassthroughVisualEffectView()
         view.blendingMode = behindWindow ? .behindWindow : .withinWindow
-        view.material = .underWindowBackground
+        view.material = material
         view.state = .active
         view.isEmphasized = false
         view.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
@@ -172,6 +177,7 @@ private struct WorkbenchBackdropBlur: NSViewRepresentable {
     }
     func updateNSView(_ view: NSVisualEffectView, context: Context) {
         view.blendingMode = behindWindow ? .behindWindow : .withinWindow
+        view.material = material
         view.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
     }
 }

@@ -4,7 +4,7 @@ import LauncherCore
 
 /// Equal-width columns expand with the viewport and wrap below their minimum.
 struct UsageCardGrid: Layout {
-    static let cardSize = CGSize(width: 248, height: 208)
+    static let cardSize = CGSize(width: 248, height: 236)
     static let gap: CGFloat = 12
     static let rowHeight: CGFloat = 236
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
@@ -25,7 +25,21 @@ struct UsageCardGrid: Layout {
     }
     private func columns(for width: CGFloat, count: Int) -> Int {
         guard width.isFinite, width > 0 else { return 1 }
-        return max(1, min(max(1, count), Int((width + Self.gap) / (Self.cardSize.width + Self.gap))))
+        return max(1, min(4, max(1, count), Int((width + Self.gap) / (Self.cardSize.width + Self.gap))))
+    }
+}
+
+struct UsageCategoryTag: View {
+    let title: String
+    @Environment(\.workbenchPalette) private var palette
+    var body: some View {
+        HStack {
+            Text(title).font(.system(size: 11)).foregroundStyle(palette.secondary)
+                .lineLimit(1).help(title)
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(palette.soft, in: Capsule())
+            Spacer(minLength: 0)
+        }.frame(height: 20)
     }
 }
 
@@ -65,6 +79,7 @@ struct UsageSourceIcon: View {
     let icon: UsageCardIcon
     var aiProvider: AIProvider?
     var serviceKind: ProviderUsageKind?
+    var defaultBrand: UsageBrandIcon?
     var size: CGFloat = 25
     @Environment(\.workbenchPalette) private var palette
     var body: some View {
@@ -73,6 +88,10 @@ struct UsageSourceIcon: View {
                 Image(nsImage: image).resizable().scaledToFit()
             } else if case .symbol(let symbol) = icon {
                 Image(systemName: symbol).font(.system(size: size * 0.78)).foregroundStyle(palette.accent)
+            } else if case .brand(let brand) = icon {
+                UsageBrandLogo(brand: brand, size: size)
+            } else if let defaultBrand {
+                UsageBrandLogo(brand: defaultBrand, size: size)
             } else if let aiProvider {
                 AIProviderLogo(provider: aiProvider, size: size)
             } else {
@@ -83,12 +102,47 @@ struct UsageSourceIcon: View {
     }
 }
 
+extension UsageBrandIcon {
+    var title: String {
+        switch self {
+        case .chatgpt: "GPT"
+        case .claude: "Claude"
+        case .deepseek: "DeepSeek"
+        }
+    }
+}
+
+/// Bundled brand marks identify sources; choosing one never changes a connection.
+/// DeepSeek's mark is the PNG representation of https://www.deepseek.com/favicon.ico.
+/// ChatGPT and Claude reuse the existing production artwork.
+@MainActor private enum UsageBrandArtwork {
+    static let images: [UsageBrandIcon: NSImage] = Dictionary(uniqueKeysWithValues: UsageBrandIcon.allCases.compactMap { brand in
+        let locations = [Bundle.main.url(forResource: brand.rawValue, withExtension: "png", subdirectory: "Workbench"),
+                         Bundle.main.resourceURL?.appendingPathComponent("Workbench/" + brand.rawValue + ".png")]
+        guard let image = locations.compactMap({ $0 }).compactMap({ NSImage(contentsOf: $0) }).first else { return nil }
+        return (brand, image)
+    })
+}
+
+struct UsageBrandLogo: View {
+    let brand: UsageBrandIcon
+    var size: CGFloat = 25
+    @Environment(\.workbenchPalette) private var palette
+    var body: some View {
+        Group {
+            if let image = UsageBrandArtwork.images[brand] { Image(nsImage: image).resizable().scaledToFit() }
+            else { Text(brand.title.prefix(1)).font(.system(size: size * 0.7, weight: .medium)).foregroundStyle(palette.secondary) }
+        }.frame(width: size, height: size).accessibilityHidden(true)
+    }
+}
+
 struct UsageAIQuotaCard: View {
     let summary: AIProviderSummary
     let display: UsageCardAppearance
     @ObservedObject var appearance: UsagePresentationModel
     let enabled: Bool
     let timeZone: TimeZone
+    var categoryTitle: String = "订阅"
     @Environment(\.workbenchPalette) private var palette
     private var name: String { display.displayName ?? summary.title }
     private var subtitle: String {
@@ -98,6 +152,7 @@ struct UsageAIQuotaCard: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            UsageCategoryTag(title: categoryTitle).padding(.bottom, 8)
             HStack(spacing: 8) {
                 UsageSourceIcon(appearance: appearance, icon: display.icon, aiProvider: summary.provider)
                 VStack(alignment: .leading, spacing: 3) {
@@ -180,9 +235,11 @@ struct ProviderQuotaCard: View {
     let display: UsageCardAppearance
     @ObservedObject var appearance: UsagePresentationModel
     var timeZone: TimeZone = .current
+    var categoryTitle: String = "流量服务"
     @Environment(\.workbenchPalette) private var palette
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            UsageCategoryTag(title: categoryTitle).padding(.bottom, 8)
             HStack(spacing: 8) {
                 UsageSourceIcon(appearance: appearance, icon: display.icon, serviceKind: source.kind)
                 VStack(alignment: .leading, spacing: 3) {

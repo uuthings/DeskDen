@@ -13,6 +13,8 @@ import LauncherCore
         }
         let presentationChecks = UsagePresentationModelChecks.run()
         count += presentationChecks.count; failures += presentationChecks.failures
+        let managerChecks = await UsageConnectionManagerChecks.run()
+        count += managerChecks.count; failures += managerChecks.failures
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("deskden-usage-ui-\(UUID())")
         let output = ProcessInfo.processInfo.environment["DESKDEN_USAGE_OUTPUT"].map { URL(fileURLWithPath: $0) }
         let originalPalette = (Palette.workbenchTheme, Palette.isLight, Palette.glassOpacity)
@@ -127,8 +129,8 @@ import LauncherCore
             }
             check(press("fc.usage.empty", in: host), "the unified empty card exposes a whole-card configuration action")
             await settle(host)
-            check(app.usagePresentation.showingConfiguration, "the empty card opens connection configuration")
-            app.usagePresentation.showingConfiguration = false; await settle(host)
+            check(app.usagePresentation.connectionManager != nil, "the empty card opens connection configuration")
+            app.usagePresentation.connectionManager = nil; await settle(host)
             check(provider.sources.count == 3 && provider.state(for: isp.id).snapshot == document.states[isp.id]?.snapshot
                   && api.sources == [apiSource] && api.state(for: apiSource.id).snapshot == apiDocument.states[apiSource.id]?.snapshot,
                   "hiding cards and configuring an empty list preserves service and currency sources with their cached observations")
@@ -151,18 +153,59 @@ import LauncherCore
             _ = app.usageAppearance.setOrdering(.added, ascending: true); await settle(host)
             check(press("fc.usage.configure", in: host), "overview opens unified usage configuration")
             await settle(host)
-            check(app.modals.isPresented && frame("fc.usage.configuration", objects: objects(host)) != nil, "usage configuration is mounted in the shared modal host")
-            check(frame("fc.usage.config.kind", objects: objects(host)) != nil
-                  && frame("fc.usage.config.service", objects: objects(host)) == nil && frame("fc.usage.config.ai", objects: objects(host)) == nil,
-                  "configuration uses a shared connection-type selector without the former category tabs")
-            for kind in UsageConnectionKind.allCases {
-                app.usagePresentation.configurationKind = kind; await settle(host)
-                let action = kind == .subscription ? "ai" : kind == .traffic ? "service" : "api"
-                check(frame("fc.usage.config.add-" + action, objects: objects(host)) != nil,
-                      "configuration \(kind.rawValue): changing connection type mounts its matching source action")
+            check(app.modals.isPresented && app.usagePresentation.connectionManager != nil, "split connection manager is mounted in the shared modal host")
+            let manager = app.usagePresentation.connectionManager!
+            check(manager.isNew && manager.draft.service == nil && manager.draft.name.isEmpty
+                  && manager.draft.appearance.categoryID == "uncategorized", "new connection opens a blank form without a provider selection stage")
+            check(frame("fc.usage.manager.name", objects: objects(host)) != nil
+                  && frame("fc.usage.manager.category", objects: objects(host)) != nil
+                  && frame("fc.usage.manager.service", objects: objects(host)) != nil
+                  && frame("fc.usage.config.kind", objects: objects(host)) == nil,
+                  "the native form exposes one category and a service field without a second classification")
+            manager.selectService(.codex)
+            let previousAI = app.usageAppearance.appearance(for: UsagePresentationSourceID.ai(.codex))
+            manager.save(app: app)
+            check(manager.existingSubscriptionID == UsagePresentationSourceID.ai(.codex)
+                  && app.usageAppearance.appearance(for: UsagePresentationSourceID.ai(.codex)) == previousAI,
+                  "adding an existing local subscription cannot overwrite its saved presentation")
+            manager.selectService(.bandwagon)
+            for light in [false, true] {
+                app.changeAppearance(light ? .light : .dark)
+                for width in [960, 1120, 1728] {
+                    window.setContentSize(.init(width: width, height: width == 1728 ? 993 : 758)); await settle(host)
+                    let controls = objects(host), bounds = window.convertToScreen(host.bounds)
+                    let saveFrame = frame("fc.usage.manager.save", objects: controls)
+                    check(saveFrame.map { abs($0.height - 32) < 1 && $0.minX >= bounds.minX && $0.maxX <= bounds.maxX
+                        && $0.minY >= bounds.minY && $0.maxY <= bounds.maxY } ?? false,
+                          "split manager \(width)/\(light): fixed save action remains visible within the window")
+                    check(frame("fc.usage.manager.resource", objects: controls) != nil && frame("fc.usage.manager.secret", objects: controls) != nil,
+                          "split manager \(width)/\(light): instance and secure key fields are available")
+                    check(!window.isVisible && !window.isKeyWindow && provider.refreshing.isEmpty,
+                          "split manager geometry check remains isolated from live services")
+                    if let output, width == 1120 { check(save(host, to: output.appendingPathComponent("usage-manager-\(light ? "light" : "dark").png")), "split manager renders offscreen") }
+                }
             }
-            if let output { check(save(host, to: output.appendingPathComponent("usage-configuration.png")), "configuration renders offscreen") }
-            check(press("fc.usage.config.categories", in: host), "configuration opens category management")
+            manager.draft.name = "自定义连接名称"
+            manager.draft.appearance.icon = .brand(.claude)
+            manager.draft.appearance.categoryID = "api-balance"
+            manager.selectService(.bandwagon)
+            check(manager.draft.name == "自定义连接名称" && manager.draft.appearance.icon == .brand(.claude)
+                  && manager.draft.appearance.categoryID == "api-balance", "service choice preserves an independently chosen name, brand icon and category")
+            manager.draft.resourceID = "2002"; manager.draft.secret = "synthetic-switch-draft"
+            manager.selectService(.deepseek)
+            check(manager.confirmingDiscard && manager.draft.service == .bandwagon, "switching a service protects entered connection fields")
+            manager.discardChanges(); await settle(host)
+            check(manager.draft.service == .deepseek && manager.draft.secret.isEmpty && manager.draft.resourceID.isEmpty
+                  && manager.draft.appearance.categoryID == "api-balance", "confirmed service change clears credentials but preserves the category")
+            manager.select(UsagePresentationSourceID.service(isp.id), app: app)
+            check(manager.confirmingDiscard && manager.isNew, "switching to an existing connection protects the new draft")
+            manager.discardChanges(); await settle(host)
+            check(manager.selectedSourceID == UsagePresentationSourceID.service(isp.id) && manager.draft.resourceID == isp.resourceID,
+                  "existing connection selection loads its real order fields")
+            if let output { check(save(host, to: output.appendingPathComponent("usage-configuration.png")), "split configuration renders offscreen") }
+            app.usagePresentation.requestCloseConfiguration(); await settle(host)
+            check(app.usagePresentation.connectionManager == nil, "an unchanged connection closes without a discard prompt")
+            check(press("fc.usage.categories", in: host), "overview opens the shared category catalog")
             await settle(host)
             let customCategory = UsageCardCategory(id: "fixture-category", title: "测试分类")
             check(app.usagePresentation.categoryEditor != nil && frame("fc.usage.category.editor", objects: objects(host)) != nil,
@@ -188,7 +231,7 @@ import LauncherCore
                   "hiding the last filtered card preserves its currency source and cached balance")
             check(press("fc.usage.empty", in: host), "an empty category can return to all categories")
             await settle(host)
-            check(app.usageAppearance.preferences.filterCategoryID == nil && !app.usagePresentation.showingConfiguration,
+            check(app.usageAppearance.preferences.filterCategoryID == nil && app.usagePresentation.connectionManager == nil,
                   "the filtered empty action clears only its category filter")
             _ = app.usageAppearance.setVisible(true, for: UsagePresentationSourceID.api(apiSource.id)); await settle(host)
             check(press("fc.usage.api." + apiSource.id.uuidString, in: host), "the entire API balance card exposes its detail action")
@@ -201,17 +244,18 @@ import LauncherCore
             if let output { check(save(host, to: output.appendingPathComponent("usage-api-detail.png")), "API balance detail renders offscreen") }
             check(pressLabel("编辑连接", in: host), "API detail opens its own connection editor")
             await settle(host)
-            let apiDraft = app.usagePresentation.apiEditor
-            check(apiDraft?.original == apiSource && frame("fc.usage.api.editor", objects: objects(host)) != nil,
-                  "API editing retains the selected source and mounts the shared protected editor")
-            apiDraft?.name = "未保存的余额名称"; apiDraft?.secret = "synthetic-api-draft"
+            let apiDraft = app.usagePresentation.connectionManager
+            check(apiDraft?.selectedSourceID == UsagePresentationSourceID.api(apiSource.id) && apiDraft?.draft.service == .deepseek,
+                  "API editing loads the selected source into the same split manager")
+            apiDraft?.draft.name = "未保存的余额名称"; apiDraft?.draft.secret = "synthetic-api-draft"
             app.openUsageOverview()
-            check(app.usagePresentation.selectedAPIID == apiSource.id && app.usagePresentation.apiEditor === apiDraft,
+            check(app.usagePresentation.selectedAPIID == apiSource.id && app.usagePresentation.connectionManager === apiDraft,
                   "overview navigation preserves an unsaved API connection draft")
-            app.usagePresentation.requestCloseAPIEditor(); await settle(host)
-            check(app.usagePresentation.discardEditor, "changed API fields require explicit discard")
-            app.usagePresentation.discard(); await settle(host)
-            check(apiDraft?.secret.isEmpty == true && api.sources == [apiSource], "discard clears the transient API key without altering stored currency metadata")
+            app.usagePresentation.requestCloseConfiguration(); await settle(host)
+            check(apiDraft?.confirmingDiscard == true, "changed API fields require explicit discard")
+            apiDraft?.discardChanges(); await settle(host)
+            check(apiDraft?.draft.secret.isEmpty == true && api.sources == [apiSource] && app.usagePresentation.connectionManager == nil,
+                  "discard clears the transient API key without altering stored currency metadata")
             check(pressLabel("返回用量与额度", in: host), "API detail names and exposes its real parent return action")
             await settle(host)
             check(app.usagePresentation.selectedAPIID == nil && frame("fc.usage.api." + apiSource.id.uuidString, objects: objects(host)) != nil,

@@ -48,6 +48,7 @@ enum ProviderUsageFormatting {
     @Published var isRemoving = false
     @Published var showingBrowserSetup = false
     @Published var showingConfiguration = false
+    @Published var connectionManager: UsageConnectionManager?
     @Published var configurationGroup: UsageCardGroup = .ai
     @Published var configurationKind: UsageConnectionKind = .subscription
     @Published var categoryEditor: UsageCategoryEditor?
@@ -56,7 +57,7 @@ enum ProviderUsageFormatting {
     @Published var removingAPI: APIBalanceConfiguration?
     @Published var aiEditor: UsageAIEditor?
     var blocksNavigation: Bool {
-        editor != nil || aiEditor != nil || categoryEditor != nil || apiEditor != nil || removingAPI != nil || showingConfiguration || showingBrowserSetup || removing != nil
+        connectionManager != nil || editor != nil || aiEditor != nil || categoryEditor != nil || apiEditor != nil || removingAPI != nil || showingConfiguration || showingBrowserSetup || removing != nil
     }
     func edit(_ source: ProviderUsageConfiguration, appearance: UsageCardAppearance = .init()) {
         showingConfiguration = false; editor = ProviderUsageEditor(source: source, existing: true, appearance: appearance)
@@ -64,7 +65,11 @@ enum ProviderUsageFormatting {
     func add(_ kind: ProviderUsageKind) {
         showingConfiguration = false; editor = ProviderUsageEditor(source: .init(kind: kind, name: kind.title, resourceID: ""), existing: false)
     }
-    func configure(_ group: UsageCardGroup = .ai) { configurationGroup = group; configurationKind = group == .ai ? .subscription : .traffic; showingConfiguration = true }
+    func configure(_ group: UsageCardGroup = .ai) { connectionManager = .init() }
+    func configure(sourceID: String) { connectionManager = .init(sourceID: sourceID) }
+    func requestCloseConfiguration() {
+        connectionManager?.requestClose { [weak self] in self?.connectionManager = nil }
+    }
     func editAI(_ provider: AIProvider, appearance: UsageCardAppearance, declaredPlan: AIAccountPlan? = nil) {
         showingConfiguration = false; aiEditor = UsageAIEditor(provider: provider, appearance: appearance, declaredPlan: declaredPlan)
     }
@@ -164,8 +169,8 @@ struct UsageStatisticsView: View {
             else if let id = presentation.selectedSourceID, let source = model.sources.first(where: { $0.id == id }) { detail(source) }
             else { overview }
         }
-        .workbenchModal(isPresented: $presentation.showingConfiguration, width: 600) {
-            UsageConfigurationView(app: app, model: model, ai: ai, presentation: presentation, appearance: appearance)
+        .workbenchModal(item: $presentation.connectionManager, width: 840, onRequestDismiss: presentation.requestCloseConfiguration) { manager in
+            UsageConnectionManagerView(app: app, manager: manager, onClose: { presentation.connectionManager = nil })
         }
         .workbenchModal(item: $presentation.aiEditor, width: 560, onRequestDismiss: presentation.requestCloseAIEditor) { editor in
             UsageAIEditorView(ai: ai, editor: editor, presentation: presentation, appearance: appearance)
@@ -222,7 +227,7 @@ struct UsageStatisticsView: View {
         .workbenchModal(isPresented: $presentation.showingBrowserSetup, width: 540) {
             ProviderBrowserSetupView(app: app, close: { presentation.showingBrowserSetup = false })
         }
-        .workbenchModal(isPresented: Binding(get: { overviewError != nil && presentation.editor == nil && presentation.aiEditor == nil && presentation.apiEditor == nil && presentation.categoryEditor == nil && presentation.removing == nil && presentation.removingAPI == nil && !presentation.showingConfiguration }, set: { if !$0 { clearOverviewError() } }), width: 470) {
+        .workbenchModal(isPresented: Binding(get: { overviewError != nil && presentation.connectionManager == nil && presentation.editor == nil && presentation.aiEditor == nil && presentation.apiEditor == nil && presentation.categoryEditor == nil && presentation.removing == nil && presentation.removingAPI == nil && !presentation.showingConfiguration }, set: { if !$0 { clearOverviewError() } }), width: 470) {
             WorkbenchDialogFrame(title: "用量与额度", dismiss: clearOverviewError) {
                 Text(overviewError ?? "").font(.system(size: 12)).foregroundStyle(palette.secondary)
             } actions: { Spacer(); Button("知道了", action: clearOverviewError).buttonStyle(WBButtonStyle(primary: true)) }
@@ -263,7 +268,7 @@ struct UsageStatisticsView: View {
     private var displayedKeys: [String] { appearance.orderedSourceIDs(entries) }
     private var overview: some View {
         VStack(alignment: .leading, spacing: 0) {
-            WBPageHeader(title: "用量与额度", subtitle: "订阅额度、服务流量与 API 余额，各自独立计量") {
+            WBPageHeader(title: "用量与额度", subtitle: "订阅额度、API 余额与流量服务") {
                 HStack(spacing: 8) {
                     Button {
                         ai.refresh()
@@ -281,6 +286,8 @@ struct UsageStatisticsView: View {
             HStack(spacing: 10) {
                 WBSelect("按分类筛选", selection: Binding(get: { appearance.preferences.filterCategoryID ?? "all" }, set: { _ = appearance.setCategoryFilter($0 == "all" ? nil : $0) }), options: [("all", "全部分类")] + appearance.preferences.categories.map { ($0.id, $0.title) }).frame(width: 164)
                     .accessibilityIdentifier("fc.usage.filter")
+                Button("管理分类") { presentation.categoryEditor = .init(appearance.preferences.categories) }
+                    .buttonStyle(WBButtonStyle(compact: true)).accessibilityIdentifier("fc.usage.categories")
                 Spacer(minLength: 8)
                 Text("排序").font(.system(size: 11)).foregroundStyle(palette.muted)
                 WBSelect("卡片排序", selection: Binding(get: { appearance.preferences.sort }, set: { _ = appearance.setOrdering($0, ascending: appearance.preferences.ascending) }), options: UsageCardSort.allCases.map { ($0, $0.title) }).frame(width: 126)
@@ -299,26 +306,28 @@ struct UsageStatisticsView: View {
             }
             Text("余额、订阅百分比与流量额度分别展示，不相加或互相推算。").font(.system(size: 11)).foregroundStyle(palette.muted).padding(.top, 18)
         }.frame(maxWidth: .infinity, alignment: .leading).foregroundStyle(palette.text)
-            .onAppear { _ = appearance.registerSources(allKeys) }
-            .onChange(of: allKeys) { _, keys in _ = appearance.registerSources(keys) }
+            .onAppear { _ = appearance.registerSources(allKeys, defaultCategoryIDs: defaultCategories) }
+            .onChange(of: allKeys) { _, keys in _ = appearance.registerSources(keys, defaultCategoryIDs: defaultCategories) }
     }
-    private func tag(_ key: String, category: String) -> some View {
-        HStack { Text(appearance.categoryTitle(for: key, defaultID: category)).font(.system(size: 10)).foregroundStyle(palette.secondary)
-                .padding(.horizontal, 8).padding(.vertical, 3).background(palette.soft, in: Capsule()); Spacer(minLength: 0) }.frame(height: 20)
+    private var defaultCategories: [String: String] {
+        var defaults = Dictionary(uniqueKeysWithValues: AIProvider.allCases.map { (UsagePresentationSourceID.ai($0), "ai-subscription") })
+        for source in model.sources { defaults[UsagePresentationSourceID.service(source.id)] = source.kind == .iproyal ? "static-isp" : "vps-traffic" }
+        for source in api.sources { defaults[UsagePresentationSourceID.api(source.id)] = "api-balance" }
+        return defaults
     }
     @ViewBuilder private func sourceCell(_ key: String) -> some View {
         if let provider = AIProvider.allCases.first(where: { UsagePresentationSourceID.ai($0) == key }) {
             let display = appearance.appearance(for: key)
             Button { presentation.selectedSourceID = nil; presentation.selectedAPIID = nil; ai.show(.provider(provider)) } label: {
-                VStack(spacing: 8) { tag(key, category: "ai-subscription"); UsageAIQuotaCard(summary: summary(provider), display: display, appearance: appearance, enabled: ai.configuration(for: provider).enabled, timeZone: context.dateContext.timeZone) }
+                UsageAIQuotaCard(summary: summary(provider), display: display, appearance: appearance, enabled: ai.configuration(for: provider).enabled, timeZone: context.dateContext.timeZone, categoryTitle: appearance.categoryTitle(for: key, defaultID: "ai-subscription"))
             }.buttonStyle(ClickablePlainButtonStyle()).accessibilityHint("查看" + provider.title + "额度详情").accessibilityIdentifier("fc.ai.provider." + provider.rawValue)
         } else if let source = model.sources.first(where: { UsagePresentationSourceID.service($0.id) == key }) {
             Button { presentation.selectedAPIID = nil; presentation.selectedSourceID = source.id } label: {
-                VStack(spacing: 8) { tag(key, category: source.kind == .iproyal ? "static-isp" : "vps-traffic"); ProviderQuotaCard(source: source, state: model.state(for: source.id), refreshing: model.refreshing.contains(source.id), display: appearance.appearance(for: key), appearance: appearance, timeZone: context.dateContext.timeZone) }
+                ProviderQuotaCard(source: source, state: model.state(for: source.id), refreshing: model.refreshing.contains(source.id), display: appearance.appearance(for: key), appearance: appearance, timeZone: context.dateContext.timeZone, categoryTitle: appearance.categoryTitle(for: key, defaultID: source.kind == .iproyal ? "static-isp" : "vps-traffic"))
             }.buttonStyle(ClickablePlainButtonStyle()).accessibilityHint("查看服务流量详情").accessibilityIdentifier("fc.usage.source." + source.id.uuidString)
         } else if let source = api.sources.first(where: { UsagePresentationSourceID.api($0.id) == key }) {
             Button { presentation.selectedSourceID = nil; presentation.selectedAPIID = source.id } label: {
-                VStack(spacing: 8) { tag(key, category: "api-balance"); UsageAPIBalanceCard(source: source, state: api.state(for: source.id), refreshing: api.refreshing.contains(source.id), display: appearance.appearance(for: key), appearance: appearance, timeZone: context.dateContext.timeZone) }
+                UsageAPIBalanceCard(source: source, state: api.state(for: source.id), refreshing: api.refreshing.contains(source.id), display: appearance.appearance(for: key), appearance: appearance, timeZone: context.dateContext.timeZone, categoryTitle: appearance.categoryTitle(for: key, defaultID: "api-balance"))
             }.buttonStyle(ClickablePlainButtonStyle()).accessibilityHint("查看 API 余额详情").accessibilityIdentifier("fc.usage.api." + source.id.uuidString)
         }
     }
@@ -332,7 +341,7 @@ struct UsageStatisticsView: View {
             WBPageHeader(title: source.name, subtitle: "DeepSeek API · 官方余额") {
                 HStack(spacing: 8) {
                     Button("刷新") { Task { await api.refresh(id: source.id) } }.buttonStyle(WBButtonStyle()).disabled(api.refreshing.contains(source.id))
-                    Button("编辑连接") { presentation.apiEditor = .init(source: source, appearance: appearance.appearance(for: UsagePresentationSourceID.api(source.id))) }.buttonStyle(WBButtonStyle())
+                    Button("编辑连接") { presentation.configure(sourceID: UsagePresentationSourceID.api(source.id)) }.buttonStyle(WBButtonStyle())
                     Button("移除") { presentation.removingAPI = source }.buttonStyle(WBButtonStyle(destructive: true))
                 }
             }
