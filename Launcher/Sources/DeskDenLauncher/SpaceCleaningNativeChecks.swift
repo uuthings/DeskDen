@@ -74,8 +74,8 @@ import LauncherCore
             }
             app.navigate(.overview)
             _ = await settle(window) { exists("home-open-cleaning", in: host) }
-            check(try await hoverBackground("home-open-cleaning", host: host, window: window, output: output),
-                  "home's primary cleaning action has visible hover feedback")
+            check(try await hoverCardCue("home-open-cleaning", host: host, window: window, output: output),
+                  "home's disk card reveals its detail arrow on hover while its material and hit area stay fixed")
             let homeBoundaryIDs = ["fc.page.home", "fc.home.agenda", "fc.home.calendar.strip", "home-device-detail"]
             let homeBoundaryFrames = homeBoundaryIDs.map { frame($0, in: host) }
             let homePageScroll = objects(host).compactMap { $0 as? NSScrollView }.max { $0.bounds.width * $0.bounds.height < $1.bounds.width * $1.bounds.height }
@@ -576,6 +576,50 @@ import LauncherCore
     }
     /// Compare an empty padding strip from the production view before/after
     /// an OS-delivered mouse move. Text color changes alone cannot pass this.
+    /// Compact destination cards communicate hover through their trailing
+    /// arrow, not through a second background fill. Compare both regions using
+    /// real pointer events, and require the cue to disappear when the pointer exits.
+    private static func hoverCardCue(_ identifier: String, host: NSView, window: NSWindow, output: URL) async throws -> Bool {
+        guard let rect = frame(identifier, in: host), rect.width >= 60, rect.height >= 60 else { return false }
+        let original = CGEvent(source: nil)?.location, ignored = window.ignoresMouseEvents
+        window.ignoresMouseEvents = false; window.acceptsMouseMovedEvents = true
+        window.makeFirstResponder(nil)
+        func post(_ point: NSPoint) {
+            let top = NSScreen.screens.first?.frame.maxY ?? 0
+            CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: CGPoint(x: point.x, y: top - point.y), mouseButton: .left)?.post(tap: .cghidEventTap)
+        }
+        func pixels(_ screen: NSRect) -> [UInt8]? {
+            let local = host.convert(window.convertFromScreen(screen), from: nil)
+            guard host.bounds.contains(local) else { return nil }
+            host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+            guard let bitmap = host.bitmapImageRepForCachingDisplay(in: local), let data = bitmap.bitmapData else { return nil }
+            host.cacheDisplay(in: local, to: bitmap)
+            return Array(UnsafeBufferPointer(start: data, count: bitmap.bytesPerRow * bitmap.pixelsHigh))
+        }
+        func changed(_ before: [UInt8]?, _ after: [UInt8]?) -> Int? {
+            guard let before, let after, before.count == after.count else { return nil }
+            return zip(before, after).filter { abs(Int($0) - Int($1)) > 2 }.count
+        }
+        defer {
+            if let original { CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: original, mouseButton: .left)?.post(tap: .cghidEventTap) }
+            window.ignoresMouseEvents = ignored
+        }
+        let outside = NSPoint(x: window.frame.minX + 4, y: window.frame.maxY - 4)
+        let arrow = NSRect(x: rect.maxX - 36, y: rect.maxY - 36, width: 24, height: 24)
+        let padding = NSRect(x: rect.minX + 3, y: rect.midY - 4, width: 5, height: 8)
+        post(outside); try? await Task.sleep(for: .milliseconds(140))
+        let originalArrow = pixels(arrow), originalPadding = pixels(padding)
+        post(NSPoint(x: rect.midX, y: rect.midY)); try? await Task.sleep(for: .milliseconds(180))
+        let activeArrow = pixels(arrow), activePadding = pixels(padding)
+        let stable = frame(identifier, in: host) == rect
+        try capture(host: host, name: "hover-cue-" + identifier, output: output)
+        post(outside); try? await Task.sleep(for: .milliseconds(140))
+        let appeared = changed(originalArrow, activeArrow), disappeared = changed(activeArrow, pixels(arrow))
+        let surface = changed(originalPadding, activePadding)
+        print("DETAIL compact card hover \(identifier) arrowAppeared=\(appeared ?? -1) arrowDisappeared=\(disappeared ?? -1) surfaceChanged=\(surface ?? -1) stable=\(stable)")
+        return appeared.map { $0 >= 12 } == true && disappeared.map { $0 >= 12 } == true && surface.map { $0 < 12 } == true && stable
+    }
+
     private static func hoverBackground(_ identifier: String, host: NSView, window: NSWindow, output: URL, expectedChange: Bool = true) async throws -> Bool {
         guard let rect = frame(identifier, in: host), rect.width >= 16, rect.height >= 16 else { return false }
         let original = CGEvent(source: nil)?.location

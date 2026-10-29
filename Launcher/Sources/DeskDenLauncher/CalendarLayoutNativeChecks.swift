@@ -99,7 +99,7 @@ import LauncherCore
                   "recent agenda shows the loaded source event outside the month being browsed")
             check(!text("fc.calendar.upcoming.range", in: host).isEmpty, "recent agenda explicitly labels its seven-day range")
             calendar.setSourceVisible("fixture-calendar", false)
-            check(await settle(window, until: { text("fc.calendar.upcoming.status", in: host).contains("暂无") }),
+            check(await settle(window, until: { text("fc.calendar.upcomingAgenda", in: host).contains("暂无") }),
                   "hidden sources are excluded before a fully covered empty state is shown")
             calendar.setSourceVisible("fixture-calendar", true)
             system.failEvents = true
@@ -118,19 +118,47 @@ import LauncherCore
             }), "a differently bounded seven-day cache is reported as incomplete coverage")
             await calendar.refresh()
 
+            // Exercise the shared records through the actual visible controls.
+            let localItem=ReminderItem(id:"fixture-local-dated",title:"可完成的隔离待办",due:ReminderDue(date:nextDay,includesTime:false,calendar:display),notificationsEnabled:false)
+            check(await calendar.saveDraft(CalendarReminderDraft(item:localItem,creating:true,defaultDate:nextDay,calendar:display)),"a dated local reminder is saved into the real model for the mounted workspace")
+            _=await settle(window) {text("fc.calendar.selectedAgenda",in:host).contains(localItem.title) && text("fc.calendar.upcomingAgenda",in:host).contains(localItem.title)}
+            if let source=objects(in:host).compactMap({$0 as? WBPopUpButton}).first(where:{$0.itemTitles.contains("全部来源")}),let index=source.itemTitles.firstIndex(of:"日程 · 隔离日历") {
+                source.selectItem(at:index);_=source.sendAction(source.action,to:source.target)
+                check(await settle(window) {text("fc.calendar.upcomingAgenda",in:host).contains("隔离日程样本") && !text("fc.calendar.upcomingAgenda",in:host).contains(localItem.title)},"actual global source selector filters the seven-day mixed list")
+                check(text("fc.calendar.selectedAgenda",in:host).contains(localItem.title) && display.isDate(calendar.selectedDay,inSameDayAs:nextDay),"right source filtering leaves the selected day and its complete list unchanged")
+                source.selectItem(at:0);_=source.sendAction(source.action,to:source.target)
+                _=await settle(window) {text("fc.calendar.upcomingAgenda",in:host).contains(localItem.title)}
+            } else {check(false,"the source selector is the actual shared native popup")}
+            let completionID="fc.calendar.complete."+localItem.stableID
+            check(press(completionID,in:host),"the real centered reminder checkbox accepts a completion action")
+            check(await settle(window) {calendar.localReminders.first(where:{$0.id == localItem.id})?.isCompleted == true && !text("fc.calendar.upcomingAgenda",in:host).contains(localItem.title)},"completing a reminder removes it from upcoming while persisting its completed state")
+            check(text("fc.calendar.selectedAgenda",in:host).contains(localItem.title),"the selected day retains the completed reminder for context and recovery")
+            await calendar.undoLastChange()
+            check(await settle(window) {text("fc.calendar.upcomingAgenda",in:host).contains(localItem.title) && calendar.localReminders.first(where:{$0.id == localItem.id})?.isCompleted == false},"undo restores the same reminder in both views")
+            for index in 1...3 {
+                let item=ReminderItem(id:"fixture-undated-\(index)",title:"长期待办 \(index)",notificationsEnabled:false)
+                _=await calendar.saveDraft(CalendarReminderDraft(item:item,creating:true,defaultDate:nextDay,calendar:display))
+            }
+            _=await settle(window) {text("fc.calendar.pendingReminders",in:host).contains("长期待办 3")}
+            check(!text("fc.calendar.upcomingAgenda",in:host).contains("长期待办 3") && text("fc.calendar.pendingReminders",in:host).contains("长期待办 3"),"undated reminders appear only in the lower long-term section")
+            if let scroll=innerScroll("fc.calendar.upcomingAgenda",in:host) {
+                check(scroll.scrollerStyle == .overlay && scroll.autohidesScrollers,"seven-day content uses the global overlay scrolling policy")
+            } else {check(false,"seven-day shared scroller is mounted")}
+            try NativeUIFixtureAccessibility.saveView(host,name:"calendar-layout-mixed-cards.png")
+
             system.remindersValue = (1...24).map { index in
                 ReminderItem(id: "fixture-reminder-\(index)", origin: .system, calendarID: "fixture-list", calendarName: "隔离提醒",
                              title: String(format: "滚动待办 %02d", index), due: ReminderDue(date: nextDay, includesTime: false, calendar: display))
             }
             await calendar.refresh()
-            check(await settle(window, until: { calendar.systemReminders.count == 24 && innerScroll("fc.calendar.pendingReminders", in: host).map { extent($0) > 100 } == true }),
-                  "pending reminders keep more than three items in a real internal scrolling viewport")
-            if let scroll = innerScroll("fc.calendar.pendingReminders", in: host) {
+            check(await settle(window, until: { calendar.systemReminders.count == 24 && innerScroll("fc.calendar.upcomingAgenda", in: host).map { extent($0) > 100 } == true }),
+                  "seven-day reminders keep more than three items in a real internal scrolling viewport")
+            if let scroll = innerScroll("fc.calendar.upcomingAgenda", in: host) {
                 let offset = scroll.contentView.bounds.origin.y
                 let moved = moveToBottom(scroll)
                 check(moved && abs(scroll.contentView.bounds.origin.y - offset) > 100,
                       "the reminder viewport scrolls its complete content independently")
-                check(await settle(window, until: { text("fc.calendar.pendingReminders", in: host).contains("滚动待办 24") }),
+                check(await settle(window, until: { text("fc.calendar.upcomingAgenda", in: host).contains("滚动待办 24") }),
                       "the last pending reminder is reachable instead of being truncated")
             } else { check(false, "pending reminder scroll has an actual native viewport") }
 
@@ -161,19 +189,31 @@ import LauncherCore
 
     private static func geometryFits(_ host: NSView) -> Bool {
         let page = min(1360, max(0, host.bounds.width - 184 - 2 - 70))
-        guard let month = frame("fc.calendar.monthCard", in: host), let side = frame("fc.calendar.sideColumn", in: host),
+        guard let month = frame("fc.calendar.monthCard", in: host),
+              let selected = frame("fc.calendar.selectedAgenda", in: host),
+              let recent = frame("fc.calendar.upcomingAgenda", in: host),
+              let longTerm = frame("fc.calendar.pendingReminders", in: host),
+              let workspace = frame("fc.calendar.workspace", in: host),
               month.width > 0, month.height <= 600.5 else { return false }
-        // The current month may be deliberately outside today's date, so date
-        // readability is checked on every mounted tile rather than requiring it.
         let tiles = objects(in: host).filter { identifier($0).hasPrefix("fc.calendar.day.") }.compactMap(rect)
         guard !tiles.isEmpty, tiles.allSatisfy({ $0.height >= 53.5 && $0.width > 0 }) else { return false }
-        if page < 760 { return abs(month.width - page) < 2 && abs(side.width - page) < 2 && side.maxY <= month.minY - 10 }
-        guard let recent = frame("fc.calendar.upcomingAgenda", in: host), let workspace = frame("fc.calendar.workspace", in: host) else { return false }
+        if page < 760 {
+            return abs(month.width-page) < 2 && abs(selected.width-page) < 2 && abs(recent.width-page) < 2
+                && selected.maxY <= month.minY-10 && recent.maxY <= selected.minY-10 && longTerm.maxY <= recent.minY-10
+        }
         let availableBottom = host.window.map { $0.convertToScreen(host.convert(host.bounds, to: nil)).minY + 16 } ?? 0
-        return (499...721).contains(month.width) && side.width >= 247
-            && abs(month.width + side.width + 12 - page) < 3
-            && abs(side.maxY - month.maxY) < 2 && abs(side.minY - recent.minY) < 2
-            && recent.maxY <= month.minY - 10 && workspace.minY <= availableBottom + 24
+        return abs(month.width-(page-12)*0.45) < 2 && recent.width >= 400
+            && abs(month.width+recent.width+12-page) < 3
+            && abs(recent.maxY-month.maxY) < 2 && abs(selected.minY-longTerm.minY) < 2
+            && selected.maxY <= month.minY-10 && longTerm.maxY <= recent.minY-10
+            && workspace.minY <= availableBottom+24
+
+    }
+    private static func press(_ id:String,in host:NSView)->Bool {
+        let selector=NSSelectorFromString("accessibilityPerformPress")
+        guard let object=objects(in:host).first(where:{identifier($0)==id && $0.responds(to:selector)}) else {return false}
+        typealias Press = @convention(c) (AnyObject,Selector)->Bool
+        return unsafeBitCast(object.method(for:selector),to:Press.self)(object,selector)
     }
     private static func centered(_ action: String, in card: String, host: NSView) -> Bool {
         guard let button = frame(action, in: host), let container = frame(card, in: host) else { return false }

@@ -12,12 +12,16 @@ protocol APIBalanceCredentialStoring: Sendable {
 }
 actor APIBalanceKeychain: APIBalanceCredentialStoring {
     private let service = "local.deskden.launcher.api-balance.v1"
-    private func query(_ id: UUID) -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+    private func query(_ id: UUID, service: String? = nil) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service ?? self.service,
          kSecAttrAccount as String: id.uuidString, kSecAttrSynchronizable as String: false]
     }
     func read(id: UUID) throws -> String? {
-        var request = query(id); request[kSecReturnData as String] = true; request[kSecMatchLimit as String] = kSecMatchLimitOne
+        try LegacyIdentityMigration.readCredential(current:{try read(id:id,service:service)},
+            legacyDisabled:{try legacyIsDeleted(id:id)}, legacy:{try read(id:id,service:"local.fangcun.launcher.api-balance.v1")})
+    }
+    private func read(id: UUID, service: String) throws -> String? {
+        var request = query(id,service:service); request[kSecReturnData as String] = true; request[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?; let status = SecItemCopyMatching(request as CFDictionary, &result)
         if status == errSecItemNotFound { return nil }
         guard status == errSecSuccess, let data = result as? Data, let value = String(data: data, encoding: .utf8), !value.isEmpty else { throw APIBalanceFailure.credentials }
@@ -30,9 +34,26 @@ actor APIBalanceKeychain: APIBalanceCredentialStoring {
         request[kSecValueData as String] = Data(secret.utf8)
         guard SecItemAdd(request as CFDictionary, nil) == errSecSuccess else { throw APIBalanceFailure.credentials }
     }
+    private func legacyIsDeleted(id: UUID) throws -> Bool {
+        var request = query(id,service:service + ".legacy-deleted")
+        request[kSecReturnAttributes as String] = true; request[kSecMatchLimit as String] = kSecMatchLimitOne
+        let status = SecItemCopyMatching(request as CFDictionary,nil)
+        guard status == errSecSuccess || status == errSecItemNotFound else { throw APIBalanceFailure.credentials }
+        return status == errSecSuccess
+    }
     func remove(id: UUID) throws {
-        let result = SecItemDelete(query(id) as CFDictionary)
-        guard result == errSecSuccess || result == errSecItemNotFound else { throw APIBalanceFailure.credentials }
+        try LegacyIdentityMigration.deleteCredential(markLegacyDeleted:{
+            // This non-secret marker belongs to the new identity. Keep the old
+            // credential untouched while preventing fallback after deletion.
+            var marker = query(id,service:service + ".legacy-deleted")
+            marker[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            marker[kSecValueData as String] = Data([1])
+            let status = SecItemAdd(marker as CFDictionary,nil)
+            guard status == errSecSuccess || status == errSecDuplicateItem else { throw APIBalanceFailure.credentials }
+        },deleteCurrent:{
+            let status = SecItemDelete(query(id) as CFDictionary)
+            guard status == errSecSuccess || status == errSecItemNotFound else { throw APIBalanceFailure.credentials }
+        })
     }
 }
 /// Only the documented read endpoint is allowed. No cookies, cache, URL keys,

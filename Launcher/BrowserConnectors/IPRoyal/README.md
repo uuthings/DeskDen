@@ -1,12 +1,12 @@
 # DeskDen IPRoyal Connector
 
-连接器版本：**0.1.0**，独立于 DeskDen App 的版本号。
+连接器版本：**0.1.1**，独立于 DeskDen App 的版本号。
 
 这是 DeskDen（方寸）的可选 Chrome 连接器，用于将 IPRoyal **静态 ISP 订单**的总额度、已用量、余额和原始重置日期同步到本机方寸。只支持 Google Chrome。方寸控制查询周期和流量触发阈值，助手不自行轮询服务商额度。
 
 ## 源码与可选连接包
 
-连接器源码与方寸在同一仓库的 `Launcher/BrowserConnectors/IPRoyal` 目录维护，并纳入仓库的精确公开范围。普通用户从 [Release 下载](https://github.com/uuthings/DeskDen/releases/tag/v0.3.0)中的 `DeskDen-IPRoyal-Connector-0.1.0-chrome-macos.zip` 获取连接包，支持 DeskDen 0.3.0 及更新版本。也可从 App 导出本机连接包。未使用 IPRoyal 的用户无需安装；搬瓦工通过服务商 API 查询额度，不需要浏览器连接器。
+连接器源码与方寸在同一仓库的 `Launcher/BrowserConnectors/IPRoyal` 目录维护，并纳入仓库的精确公开范围。普通用户从 [Release 下载](https://github.com/uuthings/DeskDen/releases/tag/v0.4.0)中的 `DeskDen-IPRoyal-Connector-0.1.1-chrome-macos.zip` 获取连接包，支持 DeskDen 0.3.0 及更新版本。也可从 App 导出本机连接包。未使用 IPRoyal 的用户无需安装；搬瓦工通过服务商 API 查询额度，不需要浏览器连接器。
 
 公开 ZIP 包含扩展、通用安装脚本和说明，不包含登录会话、账号配置、真实额度数据、机器路径或本机注册文件。安装时选择 App 后才生成本机配置。App 导出的连接包则已经绑定本机路径，不作为公开发行件。Chrome 应用商店分发属于单独的发布流程；当前使用「加载已解压的扩展程序」。下载包安装说明见 [INSTALL.md](INSTALL.md)。
 

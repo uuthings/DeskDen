@@ -23,6 +23,7 @@ struct VaultRestorePreview:Identifiable {
     @Published private(set) var categories:[VaultCategory] = []
     @Published private(set) var categoryFilter="all"
     @Published private(set) var biometricEnabled=false
+    @Published private(set) var identityBiometricSetupRequired=false
     @Published private(set) var biometricAvailable=false
     @Published private(set) var biometricCanRemove=false
     @Published private(set) var biometricUnavailableReason:String?="正在检查 Touch ID 是否可用"
@@ -85,6 +86,7 @@ struct VaultRestorePreview:Identifiable {
                 let preferences=try JSONDecoder().decode(VaultProtectionPreferences.self,from:data).validated();idleMinutes=preferences.idleMinutes;biometricEnabled=preferences.biometricEnabled
             } catch {protectionProtected=true;errorMessage="锁定偏好无法读取，原文件已保留；当前按 5 分钟自动锁定。"}
         }
+        identityBiometricSetupRequired = !biometricEnabled && FileManager.default.fileExists(atPath:dataDirectory.appendingPathComponent(LegacyIdentityMigration.vaultNoticeName).path)
         activityMonitor=NSEvent.addLocalMonitorForEvents(matching:[.keyDown,.leftMouseDown,.rightMouseDown,.scrollWheel]) { [weak self] event in
             MainActor.assumeIsolated {
                 if let self,self.isUnlocked,let window=self.hostWindow,event.window === window || event.window?.sheetParent === window { self.recordActivity() }
@@ -101,7 +103,11 @@ struct VaultRestorePreview:Identifiable {
     }
     isolated deinit { saveTask?.cancel(); idleTask?.cancel(); if let activityMonitor { NSEvent.removeMonitor(activityMonitor) } }
     var selectedDocument:PrivateDocument? { documents.first { $0.id == selectedID } }
-    var completionMessage:String? { !isUnlocked && (lockReason.hasPrefix("密码已更改") || lockReason.hasPrefix("上次密码更改已完成") || lockReason.hasPrefix("备份已恢复")) ? lockReason:nil }
+    var completionMessage:String? {
+        guard !isUnlocked else {return nil}
+        if lockReason.hasPrefix("密码已更改") || lockReason.hasPrefix("上次密码更改已完成") || lockReason.hasPrefix("备份已恢复") {return lockReason}
+        return identityBiometricSetupRequired ? "资料已迁移。请先用密码解锁，再重新开启 Touch ID。":nil
+    }
     var canChangeProtectionPreferences:Bool { !protectionProtected }
     var hasPendingPasswordChange:Bool {store.isPendingPasswordChange}
     func recordActivity() { lastActivityUptime=ProcessInfo.processInfo.systemUptime }
@@ -356,7 +362,10 @@ struct VaultRestorePreview:Identifiable {
             try await biometrics.enroll(key:secret,salt:salt);enrolled=true
             guard token == generation,isUnlocked else {try? await biometrics.remove();return false}
             guard requireProtectedData() else {try? await biometrics.remove();return false}
-            try persistBiometricPreference(true);biometricAvailable=biometrics.available;biometricCanRemove=biometrics.canRemove;busy=false;recordActivity();return true
+            try persistBiometricPreference(true)
+            try? FileManager.default.removeItem(at:vaultDataURL.deletingLastPathComponent().appendingPathComponent(LegacyIdentityMigration.vaultNoticeName))
+            identityBiometricSetupRequired=false
+            biometricAvailable=biometrics.available;biometricCanRemove=biometrics.canRemove;busy=false;recordActivity();return true
         } catch {if enrolled {try? await biometrics.remove()};if token == generation {busy=false;errorMessage=error.localizedDescription};return false}
     }
     private func persistBiometricPreference(_ enabled:Bool) throws {
@@ -406,7 +415,7 @@ struct VaultRestorePreview:Identifiable {
     }
     func chooseRestoreSource() {
         guard !busy else { return }
-        let open=NSOpenPanel(); open.title="选择方寸加密备份"; open.allowedContentTypes=[UTType(filenameExtension:"deskdenvault") ?? .data]; open.allowsMultipleSelection=false; open.canChooseDirectories=false
+        let open=NSOpenPanel(); open.title="选择方寸加密备份"; open.allowedContentTypes=[UTType(filenameExtension:"deskdenvault") ?? .data,UTType(filenameExtension:"fangcunvault") ?? .data]; open.allowsMultipleSelection=false; open.canChooseDirectories=false
         panel=open; let token=generation
         let completion:@MainActor (NSApplication.ModalResponse)->Void = { [weak self,weak open] response in
             guard let self else { return }; self.panel=nil

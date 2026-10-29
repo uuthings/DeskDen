@@ -201,30 +201,49 @@ enum WorkbenchResponsiveLayoutChecks {
             model.calendar.goToToday(); model.calendar.presentationMode = .month
             model.navigate(.calendar)
             _ = await wait(window) {
-                guard let month = frame("fc.calendar.monthCard", in: host), let side = frame("fc.calendar.sideColumn", in: host),
+                guard let month = frame("fc.calendar.monthCard", in: host),
+                      let selected = frame("fc.calendar.selectedAgenda", in: host),
+                      let upcoming = frame("fc.calendar.upcomingAgenda", in: host),
+                      let pending = frame("fc.calendar.pendingReminders", in: host),
                       frame("fc.calendar.day." + dayKey, in: host) != nil else { return false }
-                if sample.page < 760 { return abs(month.width - sample.page) < 2 && abs(side.width - sample.page) < 2 && side.maxY < month.minY }
+                if sample.page < 760 {
+                    return [month,selected,upcoming,pending].allSatisfy { abs($0.width-sample.page)<2 }
+                        && selected.maxY < month.minY && upcoming.maxY < selected.minY && pending.maxY < upcoming.minY
+                }
+                guard let side = frame("fc.calendar.sideColumn", in: host) else { return false }
                 return abs(month.width + side.width + 12 - sample.page) < 3
-                    && (499...721).contains(month.width) && side.width >= 247
-                    && frame("fc.calendar.upcomingAgenda",in:host) != nil
+                    && abs(month.width/(sample.page-12)-0.45)<0.01
+                    && abs(upcoming.maxY-month.maxY)<2 && pending.maxY < upcoming.minY
             }
             let month = frame("fc.calendar.monthCard", in: host), side = frame("fc.calendar.sideColumn", in: host)
             let monthDay = frame("fc.calendar.day." + dayKey, in: host)
             check(homeDay.flatMap { home in monthDay.map { month in
-                abs(home.height - 54) < 1 && month.height >= 54 &&
-                (1.0...1.7).contains(month.width / month.height)
+                abs(home.height - 54) < 1 && month.height >= 54 && month.height <= 72 &&
+                (0.85...1.4).contains(month.width / month.height)
             } } == true, "home uses compact date tiles while the full calendar retains readable proportions in \(label)")
+            let selected=frame("fc.calendar.selectedAgenda",in:host)
+            let upcoming=frame("fc.calendar.upcomingAgenda",in:host)
+            let pending=frame("fc.calendar.pendingReminders",in:host)
             if sample.page >= 760, let month, let side {
                 calendarWidths.append((sample.page, month.width, side.width))
                 check(abs(month.width + side.width + 12 - sample.page) < 3 &&
-                      (499...721).contains(month.width) && side.width >= 247 && month.height <= 601,
-                      "calendar keeps its bounded reading width while agenda receives the remaining space in \(label)")
-                let recent=frame("fc.calendar.upcomingAgenda",in:host)
-                check(recent.map{abs($0.width-month.width)<2 && $0.maxY<=month.minY-10 && abs($0.minY-side.minY)<2} == true,
-                      "the upcoming seven-day list uses the space below the calendar and shares the agenda's bottom in \(label)")
+                      abs(month.width/(sample.page-12)-0.45)<0.01 && month.height <= 600,
+                      "calendar and agenda retain the accepted 45/55 split and bounded month height in \(label)")
+                check(selected.map{abs($0.width-month.width)<2 && abs($0.maxY-month.minY+12)<2 && $0.height>=160} == true,
+                      "the selected day's complete agenda stays below its calendar in \(label)")
+                check(upcoming.flatMap { recent in pending.map { longTerm in
+                    abs(recent.maxY-month.maxY)<2 && abs(recent.width-side.width)<2
+                        && abs(longTerm.width-side.width)<2 && abs(longTerm.maxY-recent.minY+12)<2
+                        && (203...229).contains(longTerm.height) && abs(longTerm.minY-side.minY)<2
+                        && selected.map{abs($0.minY-side.minY)<2} == true
+                } } == true, "seven-day arrangements stay above long-term reminders and both columns align in \(label)")
             } else {
-                check(month.flatMap { top in side.map { bottom in abs(top.width - bottom.width) < 2 && bottom.maxY <= top.minY - 10 } } == true,
-                      "compact calendar reflows both side cards below its month without squeezing the date grid")
+                check(month.flatMap { top in selected.flatMap { day in upcoming.flatMap { recent in pending.map { longTerm in
+                    [top,day,recent,longTerm].allSatisfy {abs($0.width-sample.page)<2}
+                        && abs(day.maxY-top.minY+12)<2 && abs(recent.maxY-day.minY+12)<2
+                        && abs(longTerm.maxY-recent.minY+12)<2
+                } } } } == true,
+                      "compact calendar stacks month, selected day, seven-day arrangements and long-term reminders in order")
             }
             print("DETAIL calendar proportions \(label) month=\(String(describing: month)) side=\(String(describing: side)) homeDay=\(String(describing: homeDay)) monthDay=\(String(describing: monthDay))")
 
@@ -235,8 +254,8 @@ enum WorkbenchResponsiveLayoutChecks {
                   "mounted network day labels, including the current day marker, remain a single line in \(label)")
         }
         if let regular = calendarWidths.first(where: { $0.page == 864 }), let large = calendarWidths.first(where: { $0.page == 1360 }) {
-            check(large.side > regular.side + 240 && large.month <= 721 && large.month > regular.month + 150,
-                  "wide workbenches cap the calendar at 720 points and give most added width to the agenda")
+            check(large.side > regular.side + 240 && large.month <= 610 && large.month > regular.month + 150,
+                  "wide workbenches preserve the bounded calendar and allocate the larger share to the agenda")
         } else { check(false, "calendar width verification covers both normal and large windows") }
         let scrolling = await checkFullPageScrolling(model: model, window: window, host: host)
         count += scrolling.count; failures += scrolling.failures
@@ -399,6 +418,24 @@ enum WorkbenchResponsiveLayoutChecks {
             print("DETAIL device-detail-scroll oldY=\(oldOffset) detailY=\(detailScroll?.contentView.bounds.origin.y ?? -1) detailExtent=\(detailScroll.map(scrollExtent) ?? -1) destinationStillScrollable=\(detailScroll.map { scrollExtent($0) > 20 } ?? false)")
         } else { check(false, "device detail-reset fixture has its real outer scroll viewport") }
 
+        // The unified overview is intentionally compact with only two source
+        // cards. Create actual isolated service records so this regression starts
+        // with a genuinely scrollable card grid, not an artificial spacer.
+        let scrollingSources = (1...3).map { index in
+            ProviderUsageConfiguration(kind: .iproyal, name: "Scroll fixture \(index)", resourceID: String(900_000 + index), enabled: false)
+        }
+        var sourceFixtureReady = true
+        for source in scrollingSources {
+            var accepting = source; accepting.enabled = true
+            let saved = await model.providerUsage.save(accepting)
+            let snapshot = ProviderUsageSnapshot(sourceID: source.id, observedAt: Date(), usedBytes: 200_000_000,
+                limitBytes: 1_000_000_000, remainingBytes: 800_000_000, displayUnit: .decimalGB, sourceDescription: "Isolated scroll fixture")
+            let accepted = model.providerUsage.acceptBrowserSnapshot(snapshot, for: source.id)
+            let disabled = await model.providerUsage.save(source)
+            sourceFixtureReady = accepted && saved && disabled && sourceFixtureReady
+        }
+        check(sourceFixtureReady && scrollingSources.allSatisfy { source in model.providerUsage.sources.contains { $0.id == source.id } },
+              "AI scroll regression uses real isolated source records and snapshots with automatic queries disabled")
         model.deviceDetail = nil; model.ai.showOverview(); model.navigate(.ai)
         _ = await wait(window) { frame("fc.page.usage", in: host) != nil && outerPageScrollView(in: host).map { scrollExtent($0) > 20 } == true }
         if let oldScroll = outerPageScrollView(in: host) {
@@ -422,6 +459,10 @@ enum WorkbenchResponsiveLayoutChecks {
                   "AI detail navigation preserves the same model, unsaved form draft and activity filters")
             print("DETAIL ai-detail-scroll oldY=\(oldOffset) detailY=\(detailScroll?.contentView.bounds.origin.y ?? -1) detailExtent=\(detailScroll.map(scrollExtent) ?? -1) providerCard=\(String(describing: frame("fc.ai.detail.quota.codex", in: host))) sameScroll=\(detailScroll === oldScroll) sameHost=\(window.contentView === host)")
         } else { check(false, "AI detail-reset fixture has its real outer scroll viewport") }
+        var removedScrollingSources = true
+        for source in scrollingSources { let removed = await model.providerUsage.remove(id: source.id); removedScrollingSources = removed && removedScrollingSources }
+        check(removedScrollingSources && scrollingSources.allSatisfy { source in !model.providerUsage.sources.contains { $0.id == source.id } },
+              "AI scroll regression removes only the temporary sources it created")
 
         model.calendar.showSources = false; model.navigate(.calendar)
         _ = await wait(window) { frame("fc.page.calendar", in: host) != nil && outerPageScrollView(in: host).map { scrollExtent($0) > 20 } == true }

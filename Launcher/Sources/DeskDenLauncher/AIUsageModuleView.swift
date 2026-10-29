@@ -842,6 +842,7 @@ private struct AIProviderQuotaCard: View {
                         Text(summary.hasNoFiveHourLimit ? "每周额度仍以实际读数为准。" : "其他周期暂未提供；缺失值不代表已用 0%。")
                             .font(.system(size: 11)).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
                     }.foregroundStyle(palette.muted).frame(maxWidth: .infinity, alignment: .leading).frame(height: 64, alignment: .top)
+                        .aiQuotaMeasuredRegion("fc.ai.quota." + summary.provider.rawValue + ".availability")
                 }
             }
         }

@@ -12,7 +12,7 @@ fixture_hash="$(shasum -a 256 "$fixture" | cut -d ' ' -f 1)"
 swiftc -swift-version 6 -emit-library -emit-module -module-name VaultV1Compatibility \
   "$fixture" -emit-module-path "$check_dir/VaultV1Compatibility.swiftmodule" -o "$check_dir/libVaultV1Compatibility.dylib"
 swiftc -swift-version 6 -emit-library -emit-module -module-name LauncherCore \
-  "$task_root/Sources/LauncherCore/VaultCore.swift" "$task_root/Sources/LauncherCore/ProtectedAtomicFile.swift" \
+  "$task_root"/Sources/LauncherCore/*.swift \
   -emit-module-path "$check_dir/LauncherCore.swiftmodule" -o "$check_dir/libLauncherCore.dylib"
 swiftc -swift-version 6 -parse-as-library -I "$check_dir" -L "$check_dir" -lLauncherCore -lVaultV1Compatibility \
   -Xlinker -rpath -Xlinker "$check_dir" \

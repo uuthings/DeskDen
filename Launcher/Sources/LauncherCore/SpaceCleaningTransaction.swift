@@ -62,7 +62,7 @@ public struct SpaceCleaningRecord: Identifiable, Codable, Equatable, Sendable {
               ![.trashed, .deleting, .restoring].contains(state) || locationURL != nil,
               state != .restored || restoredURL != nil else { throw SpaceCleaningFilesystem.Failure(message: "空间清理记录无效，原记录已保留。") }
         if let isolationURL {
-            guard isolationURL.lastPathComponent.hasPrefix(".deskden-cleaning-"), isolationURL.lastPathComponent.contains(id.uuidString) else {
+            guard SpaceCleaningFilesystem.isIsolationDirectoryName(isolationURL.lastPathComponent, recordID:id) else {
                 throw SpaceCleaningFilesystem.Failure(message: "隔离位置记录无效，未操作文件。")
             }
         }

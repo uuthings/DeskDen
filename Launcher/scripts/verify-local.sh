@@ -17,6 +17,8 @@ from pathlib import Path
 import hashlib, json, sys
 root = Path.cwd()
 paths = [root / 'Package.swift', root / 'Signing/DeskDen.entitlements']
+connector_files = ['manifest.json', 'extension-id.txt', 'protocol.js', 'protocol-isolated.js', 'observer.js', 'content.js', 'background.js', 'popup.html', 'popup.css', 'popup.js', 'install.command', 'README.md', 'INSTALL.md', 'prepare-kit.py', 'icon-16.png', 'icon-32.png', 'icon-64.png', 'icon-128.png']
+paths.extend(root / 'BrowserConnectors/IPRoyal' / name for name in connector_files)
 for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('scripts', '*.swift'), ('Resources', '*')]:
     paths.extend(path for path in (root / directory).rglob(pattern) if path.is_file())
 paths.extend(path for path in [root / 'Package.resolved', root.parent / 'DeskDen.xcodeproj/project.pbxproj', root.parent / 'DeskDen.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', root.parent / 'updates/appcast.xml', root.parent / 'tools/prepare-update-feed.py', root.parent / 'tools/test-prepare-update-feed.py'] if path.is_file())
@@ -39,6 +41,9 @@ swift test > "$verification_dir/core-tests.log" 2>&1
 ./scripts/build-local.sh "$verification_dir/Debug/方寸.app" debug > "$verification_dir/debug-build.log" 2>&1
 "$verification_dir/Debug/方寸.app/Contents/MacOS/DeskDenLauncher" --self-check > "$verification_dir/debug-native-checks.log" 2>&1
 "$verification_dir/Debug/方寸.app/Contents/MacOS/DeskDenLauncher" --device-check > "$verification_dir/debug-device-module-checks.log" 2>&1
+"$verification_dir/Debug/方寸.app/Contents/MacOS/DeskDenLauncher" --home-feedback-check > "$verification_dir/home-feedback-checks.log" 2>&1
+"$verification_dir/Debug/方寸.app/Contents/MacOS/DeskDenLauncher" --calendar-deadline-editor-check > "$verification_dir/calendar-deadline-editor-checks.log" 2>&1
+"$verification_dir/Debug/方寸.app/Contents/MacOS/DeskDenLauncher" --calendar-layout-check > "$verification_dir/calendar-layout-checks.log" 2>&1
 ./scripts/build-local.sh "$verification_dir/Release/方寸.app" release > "$verification_dir/build.log" 2>&1
 "$verification_dir/Release/方寸.app/Contents/MacOS/DeskDenLauncher" --self-check > "$verification_dir/native-checks.log" 2>&1
 "$verification_dir/Release/方寸.app/Contents/MacOS/DeskDenLauncher" --device-check > "$verification_dir/device-module-checks.log" 2>&1
@@ -56,6 +61,8 @@ import hashlib, json, os, re, sys
 verification = Path(sys.argv[1])
 source = Path.cwd()
 paths = [source / 'Package.swift', source / 'Signing/DeskDen.entitlements']
+connector_files = ['manifest.json', 'extension-id.txt', 'protocol.js', 'protocol-isolated.js', 'observer.js', 'content.js', 'background.js', 'popup.html', 'popup.css', 'popup.js', 'install.command', 'README.md', 'INSTALL.md', 'prepare-kit.py', 'icon-16.png', 'icon-32.png', 'icon-64.png', 'icon-128.png']
+paths.extend(source / 'BrowserConnectors/IPRoyal' / name for name in connector_files)
 for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('scripts', '*.swift'), ('Resources', '*')]:
     paths.extend(path for path in (source / directory).rglob(pattern) if path.is_file())
 paths.extend(path for path in [source / 'Package.resolved', source.parent / 'DeskDen.xcodeproj/project.pbxproj', source.parent / 'DeskDen.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', source.parent / 'updates/appcast.xml', source.parent / 'tools/prepare-update-feed.py', source.parent / 'tools/test-prepare-update-feed.py'] if path.is_file())
@@ -135,6 +142,9 @@ checks = [
     ('configuration', 'update-config-checks.log', 'Update configuration checks', 'ratio'),
     ('debug', 'debug-native-checks.log', 'Native checks', 'native'),
     ('debug', 'debug-device-module-checks.log', 'Device module checks', 'ratio'),
+    ('debug', 'home-feedback-checks.log', 'Home feedback checks', 'native'),
+    ('debug', 'calendar-deadline-editor-checks.log', 'Deadline editor checks', 'native'),
+    ('debug', 'calendar-layout-checks.log', 'Calendar layout checks', 'native'),
     ('release', 'native-checks.log', 'Native checks', 'native'),
     ('release', 'device-module-checks.log', 'Device module checks', 'ratio'),
     ('release', 'form-checks.log', 'Device monitoring form checks', 'ratio'),

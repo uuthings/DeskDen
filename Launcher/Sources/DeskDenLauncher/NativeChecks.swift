@@ -129,10 +129,14 @@ enum NativeChecks {
             }
 
             let controller = LauncherController(dataDirectory:temporary.appendingPathComponent("config"))
+            // These temporary controllers exercise binding transactions only. Do
+            // not compete with a running app for its default workbench shortcut.
+            controller.configuration.settings.workbenchHotKey = nil
             let file = temporary.appendingPathComponent("目标 中文.txt"); try Data("test".utf8).write(to:file)
             let target = TargetResolver.target(kind:.file,url:file)
             do {
                 let quitting = LauncherController(dataDirectory:temporary.appendingPathComponent("quit-drafts"))
+                quitting.configuration.settings.workbenchHotKey = nil
                 quitting.configuration.bindings["D"] = KeyBinding(target:target)
                 let originalShortcut = BindingHotKey(keyCode:80,control:true,option:true,shift:true,command:true)
                 quitting.configuration.bindingHotKeys["D"] = originalShortcut

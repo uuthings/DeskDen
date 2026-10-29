@@ -309,11 +309,13 @@ import SwiftUI
             frame(a).flatMap { left in frame(b).map { right in abs(left.midY - right.midY) < 1 && abs(left.height - right.height) < 1 } } ?? false
         }
         check(aligned("fc.ai.quota.header.codex", "fc.ai.quota.header.claude"), "AI provider headers share a stable row despite differing source and membership metadata")
-        check(aligned("fc.ai.quota.codex.1.progress", "fc.ai.quota.claude.1.progress"), "weekly-only and two-window AI cards align the actual weekly progress bars")
+        // Available windows lead each card. A weekly-only Pro plan does not
+        // reserve an invented short-window row above its real observation.
+        check(aligned("fc.ai.quota.codex.1.progress", "fc.ai.quota.claude.0.progress"), "the first actual quota readings align without reserving a missing short-window slot")
         check(aligned("fc.ai.quota.footer.codex", "fc.ai.quota.footer.claude"), "AI source status footers align below the shared metric area")
-        check(aligned("fc.ai.quota.codex.0.unavailable", "fc.ai.quota.claude.0") && frame("fc.ai.quota.codex.0.progress") == nil && frame("fc.ai.quota.claude.0.progress") != nil,
-              "a missing short AI window retains an aligned availability row without a fabricated label or empty progress bar")
-        let regions = ["header.codex", "header.claude", "codex.0.unavailable", "claude.0", "codex.1.progress", "claude.1.progress", "footer.codex", "footer.claude"]
+        check(aligned("fc.ai.quota.codex.availability", "fc.ai.quota.claude.1") && frame("fc.ai.quota.codex.0.progress") == nil && frame("fc.ai.quota.claude.0.progress") != nil,
+              "the missing short-window explanation fills the second metric row without fabricating a progress bar")
+        let regions = ["header.codex", "header.claude", "codex.availability", "claude.0", "codex.1.progress", "claude.1.progress", "footer.codex", "footer.claude"]
         let measured = regions.map { $0 + "=" + String(describing: frame("fc.ai.quota." + $0)) }.joined(separator: " ")
         let axMetricIDs = accessibilityObjects(in: host).compactMap { string("accessibilityIdentifier", from: $0) }.filter { $0.hasPrefix("fc.ai.quota.") }.sorted()
         print("DETAIL AI quota native regions at \(Int(pageWidth)) pt: \(measured); AX metric IDs=\(axMetricIDs)")
