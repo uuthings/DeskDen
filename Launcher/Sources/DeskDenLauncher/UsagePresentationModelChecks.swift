@@ -38,7 +38,7 @@ import UniformTypeIdentifiers
             let legacyRegistrationDate = Date(timeIntervalSince1970: 1_700_000_000)
             check(legacy.registerSources([key], now: legacyRegistrationDate), "explicit source registration can persist the legacy presentation in the current format")
             let registeredLegacy = UsagePresentationModel(dataDirectory: legacyDirectory)
-            check(registeredLegacy.preferences.schemaVersion == 2 && registeredLegacy.appearance(for: key).addedAt == legacyRegistrationDate
+            check(registeredLegacy.preferences.schemaVersion == 3 && registeredLegacy.appearance(for: key).addedAt == legacyRegistrationDate
                   && registeredLegacy.appearance(for: key).displayName == "Legacy research" && !registeredLegacy.appearance(for: key).visible
                   && registeredLegacy.isCollapsed(.ai), "explicit legacy registration preserves display and compatibility choices across restart")
 
@@ -88,6 +88,12 @@ import UniformTypeIdentifiers
                   "category ordering sorts by category and then by source name")
             check(list.setOrdering(.category, ascending: false) && list.orderedSourceIDs(entries) == [serviceKey, key, apiKey],
                   "descending category ordering also reverses names within a category")
+            var reordered = list.preferences.categories.filter { $0.id != research.id && $0.id != network.id }
+            reordered.insert(network, at: 0); reordered.insert(.init(id: research.id, title: "Renamed research"), at: 1)
+            check(list.replaceCategories(reordered) && list.setOrdering(.category, ascending: true)
+                  && list.orderedSourceIDs(entries) == [serviceKey, apiKey, key]
+                  && list.categoryTitle(for: apiKey, defaultID: "api-balance") == "Renamed research",
+                  "category order and renaming update the shared catalog without changing assignments")
             check(list.setOrdering(.category, ascending: true) && list.setCategoryFilter(research.id)
                   && list.orderedSourceIDs(entries) == [apiKey, key], "category filter selects assigned AI and API sources from one combined list")
             let filteredReload = UsagePresentationModel(dataDirectory: listDirectory)
@@ -95,15 +101,32 @@ import UniformTypeIdentifiers
                   && filteredReload.appearance(for: serviceKey).categoryID == network.id && filteredReload.appearance(for: apiKey).categoryID == research.id,
                   "reload preserves the custom filter and independent API and service assignments sharing a UUID")
             check(list.replaceCategories(list.preferences.categories.filter { $0.id != research.id })
-                  && list.preferences.filterCategoryID == nil && list.appearance(for: key).categoryID == "uncategorized"
+                  && list.preferences.filterCategoryID == "uncategorized" && list.appearance(for: key).categoryID == "uncategorized"
                   && list.appearance(for: apiKey).categoryID == "uncategorized" && list.appearance(for: serviceKey).categoryID == network.id,
-                  "deleting a category moves its assigned cards to uncategorized and clears its active filter")
+                  "deleting a category moves its assigned cards and active filter to uncategorized")
             let deletionReload = UsagePresentationModel(dataDirectory: listDirectory)
-            check(deletionReload.preferences.filterCategoryID == nil && deletionReload.orderedSourceIDs(entries).count == entries.count
+            check(deletionReload.preferences.filterCategoryID == "uncategorized" && deletionReload.orderedSourceIDs(entries).count == 2
                   && deletionReload.appearance(for: key).categoryID == "uncategorized"
                   && deletionReload.appearance(for: apiKey).addedAt == laterAdded
                   && deletionReload.preferences.categories.contains(network) && !deletionReload.preferences.categories.contains(research),
                   "category deletion, uncategorized migration and original creation dates persist after restart")
+            let implicit = UsagePresentationModel(dataDirectory: directory.appendingPathComponent("Implicit categories"))
+            check(implicit.registerSources([key, serviceKey], defaultCategoryIDs: [key: "ai-subscription", serviceKey: "vps-traffic"])
+                  && implicit.appearance(for: key).categoryID == "ai-subscription"
+                  && implicit.appearance(for: serviceKey).categoryID == "traffic-services",
+                  "registration materializes legacy implicit categories using the shared catalog")
+            check(implicit.replaceCategories(implicit.preferences.categories.filter { $0.id != "traffic-services" })
+                  && implicit.categoryID(for: serviceKey, defaultID: "vps-traffic") == "uncategorized"
+                  && implicit.appearance(for: serviceKey).categoryID == "uncategorized",
+                  "deleting a default category cannot let implicit cards return through an old service default")
+            let categoryEditor = UsageCategoryEditor(UsageCardCategory.defaults)
+            categoryEditor.newCategoryName = "Work"; categoryEditor.addCategory()
+            let workID = categoryEditor.categories.first { $0.title == "Work" }!.id
+            categoryEditor.move(workID, by: -1)
+            check(categoryEditor.hasChanges && categoryEditor.categories.last?.id == "uncategorized"
+                  && categoryEditor.categories.firstIndex(where: { $0.id == workID }) == 2
+                  && !categoryEditor.canMove("uncategorized", by: -1),
+                  "category editing keeps uncategorized fixed while new categories can move")
             let beforeInvalidEdit = list.preferences, beforeInvalidBytes = try Data(contentsOf: listURL)
             let duplicateRejected = !list.replaceCategories(list.preferences.categories + [.init(id: network.id, title: "Duplicate identity")])
             let missingFilterRejected = !list.setCategoryFilter("missing-category")

@@ -35,7 +35,7 @@ for name in connector_files:
         raise SystemExit(f'Missing regular connector template: BrowserConnectors/IPRoyal/{name}')
 required = ['Info.plist', 'PanelLogo.png', 'AppIcon.icns', 'AppIcons/desk.icns', 'AppIcons/desk-small.png', 'AppIcons/desk-small-1x.png', 'AppIcons/desk-menubar.png', 'AppIcons/desk-menubar-1x.png', 'Workbench/ar-world.jpg',
             'Workbench/thunder-cabin.jpg', 'Workbench/qingbi-chenwu.jpg', 'Workbench/yuebai-yunhai.jpg',
-            'Workbench/nuanxia-xuanshan.jpg', 'Workbench/claude.png', 'Workbench/chatgpt.png']
+            'Workbench/nuanxia-xuanshan.jpg', 'Workbench/claude.png', 'Workbench/chatgpt.png', 'Workbench/deepseek.png']
 for name in required:
     path = root / 'Resources' / name
     if not path.is_file() or path.is_symlink():
@@ -75,7 +75,7 @@ mkdir -p "$app_path/Contents/Resources/AppIcons"
 for icon_resource in desk.icns desk-small.png desk-small-1x.png desk-menubar.png desk-menubar-1x.png; do
     cp "$PWD/Resources/AppIcons/$icon_resource" "$app_path/Contents/Resources/AppIcons/$icon_resource"
 done
-for resource_name in ar-world.jpg thunder-cabin.jpg qingbi-chenwu.jpg yuebai-yunhai.jpg nuanxia-xuanshan.jpg claude.png chatgpt.png; do
+for resource_name in ar-world.jpg thunder-cabin.jpg qingbi-chenwu.jpg yuebai-yunhai.jpg nuanxia-xuanshan.jpg claude.png chatgpt.png deepseek.png; do
     cp "$PWD/Resources/Workbench/$resource_name" "$app_path/Contents/Resources/Workbench/$resource_name"
 done
 mkdir -p "$app_path/Contents/Resources/BrowserConnectors/IPRoyal"
@@ -119,7 +119,7 @@ after = dict(before, files=files)
 (evidence / 'source-inputs-after.json').write_text(json.dumps(after, ensure_ascii=False, indent=2) + '\n')
 if before != after:
     raise SystemExit('Source inputs changed during the build; this candidate is not verified')
-resources = ['PanelLogo.png', 'AppIcon.icns', 'AppIcons/desk.icns', 'AppIcons/desk-small.png', 'AppIcons/desk-small-1x.png', 'AppIcons/desk-menubar.png', 'AppIcons/desk-menubar-1x.png', 'Workbench/ar-world.jpg', 'Workbench/thunder-cabin.jpg', 'Workbench/qingbi-chenwu.jpg', 'Workbench/yuebai-yunhai.jpg', 'Workbench/nuanxia-xuanshan.jpg', 'Workbench/claude.png', 'Workbench/chatgpt.png']
+resources = ['PanelLogo.png', 'AppIcon.icns', 'AppIcons/desk.icns', 'AppIcons/desk-small.png', 'AppIcons/desk-small-1x.png', 'AppIcons/desk-menubar.png', 'AppIcons/desk-menubar-1x.png', 'Workbench/ar-world.jpg', 'Workbench/thunder-cabin.jpg', 'Workbench/qingbi-chenwu.jpg', 'Workbench/yuebai-yunhai.jpg', 'Workbench/nuanxia-xuanshan.jpg', 'Workbench/claude.png', 'Workbench/chatgpt.png', 'Workbench/deepseek.png']
 connector_resources = ['BrowserConnectors/IPRoyal/' + name for name in connector_files]
 expected = {'Contents/Info.plist': root / 'Resources/Info.plist'}
 expected.update({'Contents/Resources/' + name: root / 'Resources' / name for name in resources})

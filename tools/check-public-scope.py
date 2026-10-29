@@ -20,7 +20,7 @@ ALLOWED = [
     r"Launcher/BrowserConnectors/IPRoyal/(?:manifest\.json|extension-id\.txt|(?:protocol(?:-isolated)?|observer|content|background|popup)\.js|popup\.(?:html|css)|icon-(?:16|32|64|128)\.png|(?:README|INSTALL)\.md|install\.command|prepare-kit\.py|tests/(?:protocol\.test\.cjs|native-host\.test\.py))",
     r"Launcher/Signing/DeskDen\.entitlements",
     r"Launcher/Resources/(?:Info\.plist|AppIcon\.icns|PanelLogo\.png)",
-    r"Launcher/Resources/Workbench/(?:(?:ar-world|thunder-cabin|qingbi-chenwu|yuebai-yunhai|nuanxia-xuanshan)\.jpg|(?:chatgpt|claude)\.png)",
+    r"Launcher/Resources/Workbench/(?:(?:ar-world|thunder-cabin|qingbi-chenwu|yuebai-yunhai|nuanxia-xuanshan)\.jpg|(?:chatgpt|claude|deepseek)\.png)",
     r"Launcher/Artwork/Workbench/(?:(?:qingbi-chenwu|yuebai-yunhai|nuanxia-xuanshan)\.png|README\.md|provenance\.json)",
     r"Launcher/(?:Resources/AppIcons/minimal-(?:ink|frame)(?:\.icns|-menubar\.png)|Artwork/AppIcons/(?:Minimal/minimal-(?:ink|frame)\.png|provenance-minimal\.json))",
     r"Launcher/Artwork/AppIcons/Desk/(?:app-(?:master|small)\.svg|menu-template-(?:16|18|20)\.svg|desk-(?:panel|small(?:-1x)?|menubar(?:-1x)?)\.png|desk\.iconset/icon_(?:16x16|32x32|128x128|256x256|512x512)(?:@2x)?\.png)",

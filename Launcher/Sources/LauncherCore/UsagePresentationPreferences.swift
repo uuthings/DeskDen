@@ -6,8 +6,13 @@ public enum UsageCardGroup: String, Codable, CaseIterable, Sendable {
     case ai, service
 }
 
+public enum UsageBrandIcon: String, Codable, CaseIterable, Sendable {
+    case chatgpt, claude, deepseek
+}
+
 public enum UsageCardIcon: Codable, Equatable, Sendable {
     case automatic
+    case brand(UsageBrandIcon)
     case symbol(String)
     case image(String)
 
@@ -15,7 +20,7 @@ public enum UsageCardIcon: Codable, Equatable, Sendable {
 
     public func validate() throws {
         switch self {
-        case .automatic: break
+        case .automatic, .brand: break
         case .symbol(let name):
             guard Self.presetSymbols.contains(name) else { throw UsagePresentationError.invalid }
         case .image(let name):
@@ -82,8 +87,13 @@ public struct UsageCardCategory: Codable, Equatable, Sendable, Identifiable {
     public var title: String
     public init(id: String = UUID().uuidString.lowercased(), title: String) { self.id = id; self.title = title }
     public static let defaults: [Self] = [
+        .init(id: "ai-subscription", title: "订阅"), .init(id: "api-balance", title: "API"),
+        .init(id: "traffic-services", title: "流量服务"), .init(id: "uncategorized", title: "未分类")
+    ]
+    fileprivate static let legacyDefaults: [Self] = [
         .init(id: "ai-subscription", title: "AI 订阅"), .init(id: "static-isp", title: "静态 ISP"),
-        .init(id: "vps-traffic", title: "VPS 流量"), .init(id: "api-balance", title: "API 余额"), .init(id: "uncategorized", title: "未分类")
+        .init(id: "vps-traffic", title: "VPS 流量"), .init(id: "api-balance", title: "API 余额"),
+        .init(id: "uncategorized", title: "未分类")
     ]
     public func validate() throws {
         guard !id.isEmpty, id.count <= 80, id.utf8.allSatisfy({ (48...57).contains($0) || (97...122).contains($0) || $0 == 45 }),
@@ -97,7 +107,7 @@ public enum UsageCardSort: String, Codable, CaseIterable, Sendable {
 }
 
 public struct UsagePresentationPreferences: Codable, Equatable, Sendable {
-    public var schemaVersion = 2
+    public var schemaVersion = 3
     public var aiCollapsed = false
     public var serviceCollapsed = false
     public var cards: [String: UsageCardAppearance] = [:]
@@ -115,15 +125,44 @@ public struct UsagePresentationPreferences: Codable, Equatable, Sendable {
         aiCollapsed = try values.decodeIfPresent(Bool.self, forKey: .aiCollapsed) ?? false
         serviceCollapsed = try values.decodeIfPresent(Bool.self, forKey: .serviceCollapsed) ?? false
         cards = try values.decodeIfPresent([String: UsageCardAppearance].self, forKey: .cards) ?? [:]
-        categories = try values.decodeIfPresent([UsageCardCategory].self, forKey: .categories) ?? UsageCardCategory.defaults
+        categories = try values.decodeIfPresent([UsageCardCategory].self, forKey: .categories)
+            ?? (schemaVersion <= 2 ? UsageCardCategory.legacyDefaults : UsageCardCategory.defaults)
         sourceOrder = try values.decodeIfPresent([String].self, forKey: .sourceOrder) ?? []
         sort = try values.decodeIfPresent(UsageCardSort.self, forKey: .sort) ?? .added
         ascending = try values.decodeIfPresent(Bool.self, forKey: .ascending) ?? true
         filterCategoryID = try values.decodeIfPresent(String.self, forKey: .filterCategoryID)
+        if schemaVersion <= 2 { try validate(); migrateDefaultCategories() }
+    }
+
+    /// Preserve renamed and user-created categories. Only untouched stock entries
+    /// participate in the old ISP/VPS-to-traffic consolidation.
+    private mutating func migrateDefaultCategories() {
+        for (id, oldTitle, newTitle) in [("ai-subscription", "AI 订阅", "订阅"), ("api-balance", "API 余额", "API")] {
+            if let index = categories.firstIndex(where: { $0.id == id && $0.title == oldTitle }),
+               !categories.contains(where: { $0.title == newTitle }) { categories[index].title = newTitle }
+        }
+        let oldTitles = ["static-isp": "静态 ISP", "vps-traffic": "VPS 流量"]
+        let mergedIDs = Set(categories.filter { oldTitles[$0.id] == $0.title }.map(\.id))
+        guard !mergedIDs.isEmpty, !categories.contains(where: { $0.id == "traffic-services" || $0.title == "流量服务" }) else { return }
+        let insertion = categories.firstIndex(where: { mergedIDs.contains($0.id) }) ?? categories.count
+        categories.removeAll { mergedIDs.contains($0.id) }
+        categories.insert(.init(id: "traffic-services", title: "流量服务"), at: min(insertion, categories.count))
+        for (key, var card) in cards {
+            if let category = card.categoryID, mergedIDs.contains(category) {
+                card.categoryID = "traffic-services"; cards[key] = card
+            }
+        }
+        if filterCategoryID.map(mergedIDs.contains) == true { filterCategoryID = "traffic-services" }
+    }
+
+    public func resolvedCategoryID(_ id: String) -> String {
+        if categories.contains(where: { $0.id == id }) { return id }
+        if ["static-isp", "vps-traffic"].contains(id), categories.contains(where: { $0.id == "traffic-services" }) { return "traffic-services" }
+        return "uncategorized"
     }
 
     public func validate() throws {
-        guard (1...2).contains(schemaVersion), cards.count <= 128, (1...40).contains(categories.count),
+        guard (1...3).contains(schemaVersion), cards.count <= 128, (1...40).contains(categories.count),
               Set(categories.map(\.id)).count == categories.count, Set(categories.map(\.title)).count == categories.count,
               categories.contains(where: { $0.id == "uncategorized" }), sourceOrder.count <= 128,
               Set(sourceOrder).count == sourceOrder.count, sourceOrder.allSatisfy(UsagePresentationSourceID.isValid),

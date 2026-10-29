@@ -11,8 +11,32 @@ enum UsageConnectionKind: String, CaseIterable {
     let id = UUID()
     let original: [UsageCardCategory]
     @Published var categories: [UsageCardCategory]
+    @Published var newCategoryName = ""
+    @Published var validationMessage: String?
     init(_ categories: [UsageCardCategory]) { original = categories; self.categories = categories }
-    var hasChanges: Bool { original != categories }
+    var hasChanges: Bool { original != categories || !newCategoryName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    func addCategory() {
+        let name = newCategoryName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let category = UsageCardCategory(title: name)
+        guard categories.count < 40, (try? category.validate()) != nil,
+              !categories.contains(where: { $0.title.trimmingCharacters(in: .whitespacesAndNewlines) == name }) else {
+            validationMessage = "分类名称不可重复或留空，最多 24 个字。"; return
+        }
+        let index = categories.firstIndex { $0.id == "uncategorized" } ?? categories.count
+        categories.insert(category, at: index); newCategoryName = ""; validationMessage = nil
+    }
+    func canMove(_ id: String, by offset: Int) -> Bool {
+        let movable = categories.filter { $0.id != "uncategorized" }
+        guard let index = movable.firstIndex(where: { $0.id == id }) else { return false }
+        return movable.indices.contains(index + offset)
+    }
+    func move(_ id: String, by offset: Int) {
+        guard canMove(id, by: offset) else { return }
+        var movable = categories.filter { $0.id != "uncategorized" }
+        guard let index = movable.firstIndex(where: { $0.id == id }) else { return }
+        movable.swapAt(index, index + offset)
+        categories = movable + categories.filter { $0.id == "uncategorized" }
+    }
 }
 @MainActor final class UsageAPIBalanceEditor: ObservableObject, Identifiable {
     let id = UUID()
@@ -180,39 +204,118 @@ struct UsageIconPicker: View {
     @ObservedObject var appearance: UsagePresentationModel
     var aiProvider: AIProvider?
     var serviceKind: ProviderUsageKind?
+    var defaultBrand: UsageBrandIcon?
+    var compact = false
     @Environment(\.workbenchPalette) private var palette
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var showingChoices = false
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("卡片图标").font(.system(size: 12))
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 40, maximum: 40), spacing: 8)], alignment: .leading, spacing: 8) {
-                iconButton(.automatic, label: "使用服务默认图标") {
-                    UsageSourceIcon(appearance: appearance, icon: .automatic, aiProvider: aiProvider, serviceKind: serviceKind, size: 24)
+        VStack(alignment: .leading, spacing: 6) {
+            if !compact { Text("卡片图标").font(.system(size: 12)) }
+            Button { showingChoices = true } label: {
+                HStack(spacing: 8) {
+                    UsageSourceIcon(appearance: appearance, icon: selection, aiProvider: aiProvider,
+                                    serviceKind: serviceKind, defaultBrand: defaultBrand, size: 22)
+                    if !compact {
+                        Text(selectionTitle).font(.system(size: 12)).lineLimit(1)
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.down").font(.system(size: 10)).foregroundStyle(palette.secondary)
+                    }
+                }.padding(.horizontal, compact ? 5 : 10).frame(height: 32)
+                    .background(WorkbenchMaterialSurface(kind: .control, radius: 8))
+            }.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel("选择卡片图标")
+                .accessibilityValue(selectionTitle).accessibilityIdentifier("fc.usage.icon.picker")
+                .popover(isPresented: $showingChoices, arrowEdge: .bottom) {
+                    choices.preferredColorScheme(colorScheme)
                 }
-                ForEach(UsageCardIcon.presetSymbols, id: \.self) { symbol in
-                    iconButton(.symbol(symbol), label: "使用 " + symbol + " 图标") {
-                        Image(systemName: symbol).font(.system(size: 20)).foregroundStyle(palette.secondary)
+        }
+    }
+    private var selectionTitle: String {
+        switch selection {
+        case .automatic: "服务默认图标"
+        case .brand(let brand): brand.title
+        case .symbol(let symbol): Self.symbolTitle(symbol)
+        case .image: "自定义图片"
+        }
+    }
+    private var choices: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("选择图标").font(.system(size: 13, weight: .medium))
+                Spacer()
+                Button { showingChoices = false } label: { Image(systemName: "xmark") }
+                    .buttonStyle(WBIconButtonStyle(size: 28)).accessibilityLabel("关闭图标选择")
+            }
+            Button { select(.automatic) } label: {
+                HStack(spacing: 8) {
+                    UsageSourceIcon(appearance: appearance, icon: .automatic, aiProvider: aiProvider,
+                                    serviceKind: serviceKind, defaultBrand: defaultBrand, size: 22)
+                    Text("服务默认图标").font(.system(size: 12))
+                    Spacer()
+                    if selection == .automatic { Image(systemName: "checkmark").foregroundStyle(palette.accent) }
+                }.padding(.horizontal, 10).frame(height: 32)
+                    .background(WorkbenchMaterialSurface(kind: .control, radius: 8))
+            }.buttonStyle(ClickablePlainButtonStyle()).accessibilityIdentifier("fc.usage.icon.automatic")
+            Text("常用品牌").font(.system(size: 11)).foregroundStyle(palette.secondary)
+            HStack(spacing: 8) {
+                ForEach(UsageBrandIcon.allCases, id: \.self) { brand in
+                    choiceButton(.brand(brand), title: brand.title, identifier: "brand." + brand.rawValue) {
+                        UsageBrandLogo(brand: brand, size: 27)
                     }
                 }
             }
-            HStack(spacing: 10) {
-                Button { appearance.chooseImage { selection = $0 } } label: { Label("选择本地图片", systemImage: "photo") }
-                    .buttonStyle(WBButtonStyle(compact: true)).accessibilityIdentifier("fc.usage.icon.choose")
-                if case .image = selection {
-                    UsageSourceIcon(appearance: appearance, icon: selection, aiProvider: aiProvider, serviceKind: serviceKind, size: 24)
-                    Text("已选择自定义图片").font(.system(size: 11)).foregroundStyle(palette.secondary)
+            Text("通用图标").font(.system(size: 11)).foregroundStyle(palette.secondary)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 5), spacing: 8) {
+                ForEach(UsageCardIcon.presetSymbols, id: \.self) { symbol in
+                    Button { select(.symbol(symbol)) } label: {
+                        Image(systemName: symbol).font(.system(size: 19)).foregroundStyle(palette.secondary)
+                            .frame(maxWidth: .infinity).frame(height: 36)
+                            .background(WorkbenchMaterialSurface(kind: .control, radius: 8))
+                            .overlay { RoundedRectangle(cornerRadius: 8).stroke(selection == .symbol(symbol) ? palette.accent : Color.clear, lineWidth: 1) }
+                    }.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel(Self.symbolTitle(symbol))
+                        .help(Self.symbolTitle(symbol)).accessibilityIdentifier("fc.usage.icon.symbol." + symbol)
+                        .accessibilityAddTraits(selection == .symbol(symbol) ? [.isSelected] : [])
                 }
-                Spacer(minLength: 0)
             }
+            Rectangle().fill(palette.line).frame(height: 1)
+            Button {
+                showingChoices = false
+                appearance.chooseImage { selection = $0 }
+            } label: { Label("选择本地图片…", systemImage: "photo") }
+                .buttonStyle(WBButtonStyle()).accessibilityIdentifier("fc.usage.icon.choose")
             Text("PNG、JPEG 或 WebP · 图标仅用于显示").font(.system(size: 11)).foregroundStyle(palette.muted)
-        }
+        }.foregroundStyle(palette.text).padding(14).frame(width: 296)
+            .background(WorkbenchMaterialSurface(kind: .control, radius: 12))
+            .accessibilityIdentifier("fc.usage.icon.choices")
     }
-    private func iconButton<Content: View>(_ value: UsageCardIcon, label: String, @ViewBuilder content: () -> Content) -> some View {
-        Button { selection = value } label: {
-            content().frame(width: 40, height: 40)
+    private func choiceButton<Content: View>(_ value: UsageCardIcon, title: String, identifier: String,
+                                           @ViewBuilder content: () -> Content) -> some View {
+        Button { select(value) } label: {
+            VStack(spacing: 6) {
+                content().frame(height: 28)
+                Text(title).font(.system(size: 11)).lineLimit(1)
+            }.frame(maxWidth: .infinity).frame(height: 62)
                 .background(WorkbenchMaterialSurface(kind: .control, radius: 8))
                 .overlay { RoundedRectangle(cornerRadius: 8).stroke(selection == value ? palette.accent : Color.clear, lineWidth: 1) }
-        }.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel(label)
+        }.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel(title)
+            .accessibilityIdentifier("fc.usage.icon." + identifier)
             .accessibilityAddTraits(selection == value ? [.isSelected] : [])
+    }
+    private func select(_ value: UsageCardIcon) { selection = value; showingChoices = false }
+    private static func symbolTitle(_ symbol: String) -> String {
+        switch symbol {
+        case "sparkles": "星光"
+        case "terminal": "终端"
+        case "server.rack": "服务器"
+        case "globe": "地球"
+        case "network": "网络"
+        case "externaldrive": "磁盘"
+        case "cpu": "芯片"
+        case "bolt": "闪电"
+        case "cloud": "云朵"
+        case "square.stack.3d.up": "层叠"
+        default: "通用图标"
+        }
     }
 }
 
@@ -232,7 +335,7 @@ struct UsageCategoryPicker: View {
             Text("分类").font(.system(size: 12))
             WBSelect("卡片分类", selection: Binding(get: {
                 let id = selection ?? defaultID
-                return appearance.preferences.categories.contains { $0.id == id } ? id : "uncategorized"
+                return appearance.preferences.resolvedCategoryID(id)
             }, set: { selection = $0 }), options: appearance.preferences.categories.map { ($0.id, $0.title) })
         }
     }
@@ -241,29 +344,55 @@ struct UsageCategoryEditorView: View {
     @ObservedObject var editor: UsageCategoryEditor
     @ObservedObject var presentation: ProviderUsagePresentation
     @ObservedObject var appearance: UsagePresentationModel
+    var onClose: (() -> Void)? = nil
+    var onSaved: (() -> Void)? = nil
     @Environment(\.workbenchPalette) private var palette
     var body: some View {
-        WorkbenchDialogFrame(title: "管理分类", dismiss: presentation.requestCloseCategoryEditor) {
+        WorkbenchDialogFrame(title: "管理分类", dismiss: close) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("分类只整理卡片，不改变连接、计量方式或凭据。删除分类后，卡片归入未分类。").font(.system(size: 11)).foregroundStyle(palette.secondary)
+                Text("分类用于卡片标签与列表筛选。删除分类后，连接保留并归入未分类。").font(.system(size: 11)).foregroundStyle(palette.secondary)
                 ForEach($editor.categories) { $category in
-                    HStack(spacing: 10) {
-                        TextField("分类名称", text: $category.title).textFieldStyle(UsageFieldStyle())
-                        if category.id != "uncategorized" {
-                            Button { editor.categories.removeAll { $0.id == category.id } } label: { Image(systemName: "minus.circle") }
+                    if category.id != "uncategorized" {
+                        HStack(spacing: 8) {
+                            TextField("分类名称", text: $category.title).textFieldStyle(UsageFieldStyle())
+                                .accessibilityIdentifier("fc.usage.category.name." + category.id)
+                            Text("\(appearance.preferences.cards.values.filter { $0.categoryID == category.id }.count) 项")
+                                .font(.system(size: 11)).foregroundStyle(palette.muted).frame(width: 34)
+                            Button { editor.move(category.id, by: -1) } label: { Image(systemName: "arrow.up") }
+                                .buttonStyle(WBIconButtonStyle(size: 28)).disabled(!editor.canMove(category.id, by: -1))
+                                .accessibilityLabel("上移" + category.title)
+                            Button { editor.move(category.id, by: 1) } label: { Image(systemName: "arrow.down") }
+                                .buttonStyle(WBIconButtonStyle(size: 28)).disabled(!editor.canMove(category.id, by: 1))
+                                .accessibilityLabel("下移" + category.title)
+                            Button { editor.categories.removeAll { $0.id == category.id } } label: { Image(systemName: "trash") }
                                 .buttonStyle(WBIconButtonStyle(size: 28)).accessibilityLabel("删除" + category.title)
-                        } else { Color.clear.frame(width: 28, height: 28) }
+                        }
                     }
                 }
-                Button("添加分类") { editor.categories.append(.init(title: "新分类")) }.buttonStyle(WBButtonStyle(compact: true)).disabled(editor.categories.count >= 40)
-                    .accessibilityIdentifier("fc.usage.category.add")
-                if let error = appearance.errorMessage { Text(error).font(.system(size: 11)).foregroundStyle(palette.warning) }
+                Divider().overlay(palette.line)
+                HStack(spacing: 8) {
+                    TextField("新分类名称", text: $editor.newCategoryName).textFieldStyle(UsageFieldStyle()).onSubmit(editor.addCategory)
+                        .onChange(of: editor.newCategoryName) { _, _ in editor.validationMessage = nil }
+                    Button("新增", action: editor.addCategory).buttonStyle(WBButtonStyle()).disabled(editor.categories.count >= 40)
+                        .accessibilityIdentifier("fc.usage.category.add")
+                }
+                Text("“未分类”保留为默认归属。").font(.system(size: 11)).foregroundStyle(palette.muted)
+                if let error = editor.validationMessage ?? appearance.errorMessage { Text(error).font(.system(size: 11)).foregroundStyle(palette.warning) }
             }
         } actions: {
-            Spacer(); Button("取消", action: presentation.requestCloseCategoryEditor).buttonStyle(WBButtonStyle())
-            Button("保存分类") { if appearance.replaceCategories(editor.categories) { presentation.categoryEditor = nil } }
+            Spacer(); Button("取消", action: close).buttonStyle(WBButtonStyle())
+            Button("保存分类") {
+                if !editor.newCategoryName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { editor.addCategory() }
+                guard editor.validationMessage == nil else { return }
+                if appearance.replaceCategories(editor.categories) {
+                    if let onSaved { onSaved() } else { presentation.categoryEditor = nil }
+                }
+            }
                 .buttonStyle(WBButtonStyle(primary: true)).accessibilityIdentifier("fc.usage.category.save")
         }.accessibilityIdentifier("fc.usage.category.editor")
+    }
+    private func close() {
+        if let onClose { onClose() } else { presentation.requestCloseCategoryEditor() }
     }
 }
 struct UsageAPIBalanceEditorView: View {
@@ -317,11 +446,13 @@ struct UsageAPIBalanceCard: View {
     let display: UsageCardAppearance
     @ObservedObject var appearance: UsagePresentationModel
     let timeZone: TimeZone
+    var categoryTitle: String = "API"
     @Environment(\.workbenchPalette) private var palette
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            UsageCategoryTag(title: categoryTitle)
             HStack(spacing: 8) {
-                UsageSourceIcon(appearance: appearance, icon: display.icon)
+                UsageSourceIcon(appearance: appearance, icon: display.icon, defaultBrand: .deepseek)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(display.displayName ?? source.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
                     Text("DeepSeek API").font(.system(size: 11)).foregroundStyle(palette.muted)

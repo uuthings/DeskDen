@@ -14,6 +14,7 @@ import UniformTypeIdentifiers
     private let store: UsagePresentationStore
     private let iconDirectory: URL
     private let cache = NSCache<NSString, NSImage>()
+    private var defaultCategoryIDs: [String: String] = [:]
     static let maximumImportBytes = 2_097_152
     static let maximumStoredImageBytes = 524_288
     static let maximumPixelDimension = 8_192
@@ -31,20 +32,26 @@ import UniformTypeIdentifiers
     func appearance(for key: String) -> UsageCardAppearance { preferences.cards[key] ?? .init() }
 
     func categoryID(for key: String, defaultID: String) -> String {
+        defaultCategoryIDs[key] = defaultID
         let id = appearance(for: key).categoryID ?? defaultID
-        return preferences.categories.contains { $0.id == id } ? id : "uncategorized"
+        return preferences.resolvedCategoryID(id)
     }
     func categoryTitle(for key: String, defaultID: String) -> String {
         preferences.categories.first { $0.id == categoryID(for: key, defaultID: defaultID) }?.title ?? "未分类"
     }
-    @discardableResult func registerSources(_ keys: [String], now: Date = Date()) -> Bool {
+    @discardableResult func registerSources(_ keys: [String], defaultCategoryIDs suppliedDefaults: [String: String] = [:], now: Date = Date()) -> Bool {
+        defaultCategoryIDs.merge(suppliedDefaults) { _, new in new }
         var next = preferences
-        let missing = keys.filter { !next.sourceOrder.contains($0) }
-        guard !missing.isEmpty else { return true }
-        for key in missing {
-            next.sourceOrder.append(key)
-            var display = next.cards[key] ?? .init(); display.addedAt = display.addedAt ?? now; next.cards[key] = display
+        for key in keys {
+            if !next.sourceOrder.contains(key) { next.sourceOrder.append(key) }
+            var display = next.cards[key] ?? .init()
+            display.addedAt = display.addedAt ?? now
+            if display.categoryID == nil {
+                display.categoryID = preferences.resolvedCategoryID(defaultCategoryIDs[key] ?? inferredDefaultCategoryID(for: key))
+            }
+            next.cards[key] = display
         }
+        guard next != preferences else { return storageError == nil }
         return persist(next)
     }
     @discardableResult func setOrdering(_ sort: UsageCardSort, ascending: Bool) -> Bool {
@@ -57,14 +64,17 @@ import UniformTypeIdentifiers
         var next = preferences
         next.categories = categories.map { .init(id: $0.id, title: $0.title.trimmingCharacters(in: .whitespacesAndNewlines)) }
         let retained = Set(categories.map(\.id))
-        for (key, var card) in next.cards where card.categoryID.map({ !retained.contains($0) }) == true {
-            card.categoryID = "uncategorized"; next.cards[key] = card
+        for (key, var card) in next.cards {
+            let current = preferences.resolvedCategoryID(card.categoryID ?? defaultCategoryIDs[key] ?? inferredDefaultCategoryID(for: key))
+            card.categoryID = retained.contains(current) ? current : "uncategorized"
+            next.cards[key] = card
         }
-        if let filter = next.filterCategoryID, !retained.contains(filter) { next.filterCategoryID = nil }
+        if let filter = next.filterCategoryID, !retained.contains(filter) { next.filterCategoryID = "uncategorized" }
         return persist(next)
     }
     func orderedSourceIDs(_ entries: [(id: String, name: String, category: String)]) -> [String] {
         let order = Dictionary(uniqueKeysWithValues: preferences.sourceOrder.enumerated().map { ($0.element, $0.offset) })
+        let categoryOrder = Dictionary(uniqueKeysWithValues: preferences.categories.enumerated().map { ($0.element.id, $0.offset) })
         let filtered = entries.filter { entry in
             preferences.filterCategoryID.map { categoryID(for: entry.id, defaultID: entry.category) == $0 } ?? true
         }
@@ -80,9 +90,9 @@ import UniformTypeIdentifiers
                 }
             case .name: result = first.name.localizedStandardCompare(second.name)
             case .category:
-                let a = categoryTitle(for: first.id, defaultID: first.category), b = categoryTitle(for: second.id, defaultID: second.category)
-                let category = a.localizedStandardCompare(b)
-                result = category == .orderedSame ? first.name.localizedStandardCompare(second.name) : category
+                let a = categoryOrder[categoryID(for: first.id, defaultID: first.category)] ?? Int.max
+                let b = categoryOrder[categoryID(for: second.id, defaultID: second.category)] ?? Int.max
+                result = a == b ? first.name.localizedStandardCompare(second.name) : a < b ? .orderedAscending : .orderedDescending
             }
             if result == .orderedSame { return first.id < second.id }
             return preferences.ascending ? result == .orderedAscending : result == .orderedDescending
@@ -105,9 +115,15 @@ import UniformTypeIdentifiers
     @discardableResult func removeAppearance(for key: String) -> Bool {
         var next = preferences; next.cards.removeValue(forKey: key); next.sourceOrder.removeAll { $0 == key }; return persist(next)
     }
+    private func inferredDefaultCategoryID(for key: String) -> String {
+        if key.hasPrefix("ai.") { return "ai-subscription" }
+        if key.hasPrefix("api.") { return "api-balance" }
+        if key.hasPrefix("service.") { return "traffic-services" }
+        return "uncategorized"
+    }
     private func persist(_ next: UsagePresentationPreferences) -> Bool {
         guard storageError == nil else { errorMessage = storageError; return false }
-        var next = next; next.schemaVersion = 2
+        var next = next; next.schemaVersion = 3
         do { try store.save(next); preferences = next; errorMessage = nil; return true }
         catch let error as UsagePresentationError { errorMessage = error.localizedDescription; return false }
         catch { errorMessage = UsagePresentationError.storage.localizedDescription; return false }

@@ -91,6 +91,20 @@ class PublicGateTests(unittest.TestCase):
         self.git("add", "README.md")
         self.assertEqual(self.check("--staged").returncode, 0)
 
+    def test_usage_brand_icons_have_an_exact_public_scope(self):
+        prefix = "Launcher/Resources/Workbench/"
+        for name in ["chatgpt.png", "claude.png", "deepseek.png"]:
+            target = self.repo / prefix / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / prefix / name, target)
+            self.git("add", prefix + name)
+        result = self.check("--staged")
+        self.assertEqual(result.returncode, 0, result.stdout.decode())
+        extra = prefix + "private-account.png"
+        shutil.copyfile(ROOT / prefix / "deepseek.png", self.repo / extra)
+        self.git("add", extra)
+        self.assertNotEqual(self.check("--staged").returncode, 0)
+
     def test_mountain_assets_have_a_named_public_scope(self):
         for folder, name in [("Artwork/Workbench", "qingbi-chenwu.png"),
                              ("Resources/Workbench", "qingbi-chenwu.jpg")]:
