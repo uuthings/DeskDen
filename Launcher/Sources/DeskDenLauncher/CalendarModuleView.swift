@@ -8,64 +8,88 @@ struct CalendarModuleView:View {
     var context:WorkbenchContextModel? = nil
     var returnToSettingsPrivacy:(()->Void)?=nil
     @Environment(\.workbenchPalette) private var palette
-    @State private var width:CGFloat=864
+    @Environment(\.workbenchPageWidth) private var width
+    @Environment(\.workbenchContentHeight) private var contentHeight
+    @State private var introHeight:CGFloat=72
+    @State private var messagesHeight:CGFloat=0
     private var compact:Bool {width < 800}
-    private var expanded:Bool {width >= 1100}
     private var horizontalWorkspace:Bool {width >= 760}
-    private var sideWidth:CGFloat {max(0, (width - 12) * 0.34)}
-    private var calendarWidth:CGFloat {horizontalWorkspace ? max(0, width - sideWidth - 12) : width}
+    private var calendarWidth:CGFloat {horizontalWorkspace ? min(720,max(500,(width-12)*0.58)) : width}
+    private var sideWidth:CGFloat {max(0,width-calendarWidth-12)}
     private var dayWidth:CGFloat {max(0, (calendarWidth - 28 - 24) / 7)}
     private var dayHeight:CGFloat {WorkbenchCalendarDayMetrics.height(forWidth: dayWidth)}
     private var monthHeight:CGFloat {
         let rows = max(1, model.monthDays.count / 7)
         return 134 + CGFloat(rows) * dayHeight + CGFloat(rows - 1) * 4
     }
-    private var calendarHeight:CGFloat {model.presentationMode == .month ? monthHeight : max(500, min(680, monthHeight))}
+    private var calendarHeight:CGFloat {model.presentationMode == .month ? min(600,monthHeight) : max(500,min(600,monthHeight))}
+    // Read only the shell's real viewport; the page's intrinsic height must not
+    // feed back into its own size after a resize or a connection banner appears.
+    private var workspaceHeight:CGFloat {max(calendarHeight+144,contentHeight-introHeight-messagesHeight)}
+    private var pendingItems:[ReminderItem] {ReminderQueries.upcoming(model.reminders,limit:model.reminders.count)}
+    private var upcomingInterval:DateInterval {model.overviewInterval}
+    private var hasUpcomingCoverage:Bool {
+        guard let loaded=model.overviewLoadedInterval else {return false}
+        return loaded.start <= upcomingInterval.start && loaded.end >= upcomingInterval.end
+    }
+    private var upcomingEvents:[CalendarEventItem] {
+        guard hasUpcomingCoverage else {return []}
+        return model.overviewEvents.filter {$0.start < upcomingInterval.end && $0.end > upcomingInterval.start}
+            .sorted {$0.start == $1.start ? $0.id < $1.id:$0.start < $1.start}
+    }
     var body:some View {
         VStack(alignment:.leading,spacing:0) {
             if model.showSources { CalendarSourcesPage(model:model,onBack:{model.showSources=false;if model.sourcesReturnToPrivacy {model.sourcesReturnToPrivacy=false;returnToSettingsPrivacy?()}}) }
             else {
-                WBPageHeader(title:"日历与提醒",subtitle:"安排日程，留出真正重要的时间") {
-                    HStack(spacing:8) {
-                        if let context {
-                            Button {context.showClock=true} label:{Label(zoneTitle,systemImage:"globe")}
-                                .buttonStyle(WBButtonStyle()).accessibilityLabel("更改日历显示时区")
+                VStack(alignment:.leading,spacing:0) {
+                    WBPageHeader(title:"日历与提醒",subtitle:"安排日程，留出真正重要的时间") {
+                        HStack(spacing:8) {
+                            if let context {
+                                Button {context.showClock=true} label:{Label(zoneTitle,systemImage:"globe")}
+                                    .buttonStyle(WBButtonStyle()).accessibilityLabel("更改日历显示时区")
+                            }
+                            Button {model.errorMessage=nil;model.openSources()} label:{Label("来源",systemImage:"square.3.layers.3d")}.buttonStyle(WBButtonStyle())
+                            Button {model.showNewChoice=true} label:{Label("新建",systemImage:"plus")}.buttonStyle(WBButtonStyle(primary:true)).disabled(model.storageError != nil)
                         }
-                        Button {model.errorMessage=nil;model.openSources()} label:{Label("来源",systemImage:"square.3.layers.3d")}.buttonStyle(WBButtonStyle())
-                        Button {model.showNewChoice=true} label:{Label("新建",systemImage:"plus")}.buttonStyle(WBButtonStyle(primary:true)).disabled(model.storageError != nil)
                     }
+                    if let error=model.storageError {storageWarning(error).padding(.bottom,12)}
+                    if model.needsSystemConnection {systemConnectionCard.padding(.bottom,12)}
                 }
-                if let error=model.storageError {storageWarning(error).padding(.bottom,12)}
-                if model.needsSystemConnection {systemConnectionCard.padding(.bottom,12)}
+                .background(CalendarSectionHeightProbe(section:"intro"))
                 if !horizontalWorkspace {
                     VStack(spacing:12) {
                         monthCard.frame(height:calendarHeight)
                         HStack(alignment:.top,spacing:12) {selectedCard;pendingCard}.frame(height:300)
                             .accessibilityElement(children:.contain).accessibilityIdentifier("fc.calendar.sideColumn")
+                        upcomingCard.frame(height:180)
                     }.accessibilityElement(children:.contain).accessibilityIdentifier("fc.calendar.workspace")
                 } else {
                     HStack(alignment:.top,spacing:12) {
-                        monthCard.frame(maxWidth:.infinity).frame(height:calendarHeight)
                         VStack(spacing:12) {
-                            selectedCard.frame(height:(calendarHeight-12)*1.1/2.1)
-                            pendingCard.frame(maxHeight:.infinity)
-                        }.frame(width:sideWidth,height:calendarHeight)
+                            monthCard.frame(height:calendarHeight)
+                            upcomingCard.frame(height:workspaceHeight-calendarHeight-12)
+                        }.frame(width:calendarWidth,height:workspaceHeight)
+                            .accessibilityElement(children:.contain).accessibilityIdentifier("fc.calendar.monthColumn")
+                        VStack(spacing:12) {
+                            selectedCard.frame(height:(workspaceHeight-12)*1.1/2.1)
+                            pendingCard.frame(height:(workspaceHeight-12)/2.1)
+                        }.frame(width:sideWidth,height:workspaceHeight)
                             .accessibilityElement(children:.contain).accessibilityIdentifier("fc.calendar.sideColumn")
                     }.accessibilityElement(children:.contain).accessibilityIdentifier("fc.calendar.workspace")
                 }
-                if let message=model.undoMessage {
-                    HStack {Text(message);Spacer();Button("撤销"){Task {await model.undoLastChange()}}.buttonStyle(WBButtonStyle(compact:true)).disabled(model.isWorking)}
-                        .font(.system(size:11)).padding(.top,10).accessibilityElement(children:.contain).accessibilityIdentifier("fc.calendar.undo")
+                VStack(alignment:.leading,spacing:0) {
+                    if let message=model.undoMessage {
+                        HStack {Text(message);Spacer();Button("撤销"){Task {await model.undoLastChange()}}.buttonStyle(WBButtonStyle(compact:true)).disabled(model.isWorking)}
+                            .font(.system(size:11)).padding(.top,10).accessibilityElement(children:.contain).accessibilityIdentifier("fc.calendar.undo")
+                    }
+                    if let message=model.notificationMessage {Text(message).font(.system(size:11)).foregroundStyle(palette.warning).padding(.top,8)}
                 }
-                if let message=model.notificationMessage {Text(message).font(.system(size:11)).foregroundStyle(palette.warning).padding(.top,8)}
+                .background(CalendarSectionHeightProbe(section:"messages"))
             }
         }.frame(maxWidth:.infinity,alignment:.leading).foregroundStyle(palette.text)
-            .background {
-                GeometryReader {geometry in
-                    Color.clear
-                        .onAppear {width=geometry.size.width}
-                        .onChange(of:geometry.size.width) {_,value in width=value}
-                }
+            .onPreferenceChange(CalendarSectionHeightKey.self) {heights in
+                if let height=heights["intro"],height.isFinite,height>0,abs(introHeight-height)>0.25 {introHeight=height}
+                if let height=heights["messages"],height.isFinite,abs(messagesHeight-height)>0.25 {messagesHeight=height}
             }
             .accessibilityElement(children:.contain).accessibilityIdentifier(model.showSources ? "fc.page.calendar.sources":"fc.page.calendar")
     }
@@ -152,26 +176,72 @@ struct CalendarModuleView:View {
         return calendarFormat(date,"M 月 d 日 · EEEE",calendar:model.displayCalendar)
     }
     private var selectedCard:some View {
-        CalendarSideCard(title:calendarFormat(model.selectedDay,"M 月 d 日",calendar:model.displayCalendar),symbol:"calendar") {
+        CalendarSideCard(title:calendarFormat(model.selectedDay,"M 月 d 日",calendar:model.displayCalendar),symbol:"calendar",scrollIdentifier:"fc.calendar.selected.scroll") {
             let civilDay=CalendarCivilDay(date:model.selectedDay,calendar:model.displayCalendar,showsHolidays:model.holidaysEnabled)
             if let text=civilDay.namedLabel {
                 Text(text).font(.system(size:11)).foregroundStyle(civilDay.color(palette)).padding(.horizontal,7).padding(.vertical,5).frame(maxWidth:.infinity,alignment:.leading).background(civilDay.holidayKind == nil ? palette.soft:civilDay.color(palette).opacity(0.08),in:RoundedRectangle(cornerRadius:6)).padding(.bottom,4)
             }
             if model.selectedEntries.isEmpty {
                 calendarEmpty("这一天还没有安排")
-                Button {model.showNewChoice=true} label:{Label("添加安排",systemImage:"plus")}.buttonStyle(WBButtonStyle(compact:true))
+                HStack {Spacer(minLength:0);Button {model.showNewChoice=true} label:{Label("添加安排",systemImage:"plus")}.buttonStyle(WBButtonStyle(compact:true)).accessibilityIdentifier("fc.calendar.empty.add-action");Spacer(minLength:0)}
             } else {ForEach(model.selectedEntries){CalendarAgendaRow(model:model,entry:$0)}}
         }.accessibilityElement(children:.contain).accessibilityIdentifier("fc.calendar.selectedAgenda")
     }
     private var pendingCard:some View {
-        CalendarSideCard(title:"待办提醒",symbol:"list.bullet.rectangle") {
+        CalendarSideCard(title:"待办提醒",symbol:"list.bullet.rectangle",scrollIdentifier:"fc.calendar.pending.scroll") {
             HStack {Text("本机与系统提醒");Spacer();Text("\(model.reminders.filter{!$0.isCompleted}.count) 项")}.font(.system(size:11)).foregroundStyle(palette.muted).padding(.bottom,6)
-            if model.upcomingReminders.isEmpty {calendarEmpty("暂无待办提醒")}
-            ForEach(Array(model.upcomingReminders.prefix(3))){item in CalendarAgendaRow(model:model,entry:.reminder(item),showTime:false)}
-            Button("查看全部提醒"){model.filter = .all;model.search="";model.showReminderList=true}.buttonStyle(WBButtonStyle(compact:true)).padding(.top,7)
+            if pendingItems.isEmpty {calendarEmpty("暂无待办提醒")}
+            ForEach(pendingItems){item in CalendarAgendaRow(model:model,entry:.reminder(item),showTime:false)}
+            HStack {Spacer(minLength:0);Button("查看全部提醒"){model.filter = .all;model.search="";model.showReminderList=true}.buttonStyle(WBButtonStyle(compact:true)).accessibilityIdentifier("fc.calendar.pending.all-action");Spacer(minLength:0)}.padding(.top,7)
         }.accessibilityElement(children:.contain).accessibilityIdentifier("fc.calendar.pendingReminders")
     }
+    private var upcomingCard:some View {
+        CalendarSideCard(title:"接下来 7 天",symbol:"calendar.badge.clock",scrollIdentifier:"fc.calendar.upcoming.scroll") {
+            let end=model.displayCalendar.date(byAdding:.day,value:-1,to:upcomingInterval.end) ?? upcomingInterval.start
+            let events=upcomingEvents
+            Text(calendarFormat(upcomingInterval.start,"M 月 d 日",calendar:model.displayCalendar)+" — "+calendarFormat(end,"M 月 d 日",calendar:model.displayCalendar)+" · 系统日历")
+                .font(.system(size:11)).foregroundStyle(palette.muted).padding(.bottom,7)
+                .accessibilityIdentifier("fc.calendar.upcoming.range")
+            if !model.preferences.calendarConnected || model.calendarAccess != .granted {
+                upcomingStatus("接入系统日历后，显示今天起 7 天的安排")
+            } else if model.isLoading && !hasUpcomingCoverage {
+                upcomingStatus("正在读取今天起 7 天的日程")
+            } else if model.overviewReadError != nil {
+                upcomingStatus("七天日程读取失败，请在来源中重试",warning:true)
+            } else if !hasUpcomingCoverage {
+                upcomingStatus("七天日程尚未完整载入，暂不能确认空闲")
+            } else if events.isEmpty {
+                upcomingStatus("今天起 7 天暂无日程")
+            } else {
+                ForEach(Array(events.enumerated()),id:\.element.id) {index,event in
+                    let day=max(event.start,upcomingInterval.start)
+                    if index == 0 || !model.displayCalendar.isDate(max(events[index-1].start,upcomingInterval.start),inSameDayAs:day) {
+                        Text(calendarFormat(day,"M 月 d 日 · EEEE",calendar:model.displayCalendar))
+                            .font(.system(size:11,weight:.medium)).foregroundStyle(palette.muted).padding(.top,index == 0 ? 0:8).padding(.bottom,3)
+                    }
+                    CalendarAgendaRow(model:model,entry:.event(event))
+                }
+            }
+        }.accessibilityElement(children:.contain).accessibilityIdentifier("fc.calendar.upcomingAgenda")
+    }
+    private func upcomingStatus(_ text:String,warning:Bool=false)->some View {
+        Text(text).font(.system(size:12)).foregroundStyle(warning ? palette.warning:palette.muted)
+            .frame(maxWidth:.infinity,alignment:.center).multilineTextAlignment(.center).padding(.vertical,14)
+            .accessibilityIdentifier("fc.calendar.upcoming.status")
+    }
     private func calendarEmpty(_ text:String)->some View {Text(text).font(.system(size:12)).foregroundStyle(palette.muted).frame(maxWidth:.infinity).padding(.vertical,20)}
+}
+
+private struct CalendarSectionHeightKey:PreferenceKey {
+    static let defaultValue:[String:CGFloat]=[:]
+    static func reduce(value:inout [String:CGFloat],nextValue:()->[String:CGFloat]) {value.merge(nextValue(),uniquingKeysWith:max)}
+}
+private struct CalendarSectionHeightProbe:View {
+    let section:String
+    var body:some View {
+        GeometryReader {geometry in Color.clear.preference(key:CalendarSectionHeightKey.self,value:[section:geometry.size.height])}
+            .allowsHitTesting(false)
+    }
 }
 
 private struct CalendarSegment<Value:Hashable>:View {
@@ -190,12 +260,14 @@ private struct CalendarSegment<Value:Hashable>:View {
 private struct CalendarSideCard<Content:View>:View {
     let title:String
     let symbol:String
+    var scrollIdentifier:String=""
     @ViewBuilder var content:()->Content
     @Environment(\.workbenchPalette) private var palette
     var body:some View {
         VStack(alignment:.leading,spacing:0) {
             HStack(spacing:7){Image(systemName:symbol).font(.system(size:16)).foregroundStyle(palette.accent);Text(title).font(.system(size:12,weight:.medium));Spacer()}.frame(height:22).padding(.bottom,10)
-            WorkbenchScrollView {VStack(alignment:.leading,spacing:0,content:content).frame(maxWidth:.infinity,alignment:.leading)}.scrollBounceBehavior(.basedOnSize)
+            WorkbenchScrollView {LazyVStack(alignment:.leading,spacing:0,content:content).frame(maxWidth:.infinity,alignment:.leading)}.scrollBounceBehavior(.basedOnSize)
+                .accessibilityIdentifier(scrollIdentifier)
         }.padding(14).frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).background(WorkbenchMaterialSurface())
     }
 }

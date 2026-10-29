@@ -179,6 +179,7 @@ private struct CalendarDisplayPreferences:Codable {
     @Published private(set) var events:[CalendarEventItem] = []
     @Published private(set) var todayEvents:[CalendarEventItem] = []
     @Published private(set) var overviewEventValues:[CalendarEventItem] = []
+    @Published private(set) var overviewLoadedInterval:DateInterval?
     @Published private(set) var overviewReadError:String?
     @Published private(set) var remindersReadError:String?
     @Published private(set) var calendarSources:[CalendarSourceDescriptor] = []
@@ -191,6 +192,7 @@ private struct CalendarDisplayPreferences:Codable {
     @Published var displayTimeZone:TimeZone = .current {
         didSet {
             guard oldValue != displayTimeZone else {return}
+            overviewLoadedInterval=nil
             var previous=displayCalendar;previous.timeZone=oldValue
             let day=previous.dateComponents([.year,.month,.day],from:selectedDay)
             let month=previous.dateComponents([.year,.month,.day],from:displayedMonth)
@@ -374,13 +376,14 @@ private struct CalendarDisplayPreferences:Codable {
             if let today=displayCalendar.dateInterval(of:.day,for:Date()) {
                 do { todayEvents=try system.events(in:today) } catch { errorMessage="今日系统日历读取失败：\(error.localizedDescription)" }
             }
-            do {overviewEventValues=try system.events(in:overviewInterval);overviewReadError=nil}
-            catch {overviewReadError="日程读取失败";errorMessage="首页七天日历读取失败：\(error.localizedDescription)"}
+            let interval=overviewInterval
+            do {overviewEventValues=try system.events(in:interval);overviewLoadedInterval=interval;overviewReadError=nil}
+            catch {overviewLoadedInterval=nil;overviewReadError="日程读取失败";errorMessage="首页七天日历读取失败：\(error.localizedDescription)"}
             calendarSources=system.calendarSources()
             let known=Set(calendarSources.map(\.id))
             let inferred=Dictionary(grouping:events+todayEvents+overviewEventValues,by:{$0.calendarID ?? $0.calendarName})
             calendarSources += inferred.filter {!known.contains($0.key)}.map {CalendarSourceDescriptor(id:$0.key,title:$0.value.first?.calendarName ?? "系统日历")}.sorted {$0.title < $1.title}
-        } else {events=[];todayEvents=[];overviewEventValues=[];calendarSources=[];overviewReadError=nil}
+        } else {events=[];todayEvents=[];overviewEventValues=[];overviewLoadedInterval=nil;calendarSources=[];overviewReadError=nil}
         if preferences.remindersConnected && remindersAccess == .granted {
             do {
                 let loaded=try await system.reminders()
@@ -439,9 +442,12 @@ private struct CalendarDisplayPreferences:Codable {
                   key.remindersConnected == preferences.remindersConnected else {return}
             calendarAccess=system.access(reminders:false);remindersAccess=system.access(reminders:true)
             if preferences.calendarConnected && calendarAccess == .granted {
-                if let events=result.events {overviewEventValues=events}
+                if let events=result.events {
+                    overviewEventValues=events
+                    overviewLoadedInterval=DateInterval(start:key.start,end:miniCalendar.date(byAdding:.day,value:7,to:key.start)!)
+                } else {overviewLoadedInterval=nil}
                 overviewReadError=result.eventError
-            } else {overviewEventValues=[];overviewReadError=nil}
+            } else {overviewEventValues=[];overviewLoadedInterval=nil;overviewReadError=nil}
             if preferences.remindersConnected && remindersAccess == .granted {
                 if let reminders=result.reminders {systemReminders=reminders}
                 writableCalendars=system.writableReminderCalendars();remindersReadError=result.reminderError
@@ -483,7 +489,7 @@ private struct CalendarDisplayPreferences:Codable {
             // disconnected state. Existing system items are never deleted.
             refreshVersion += 1
             if reminders {systemReminders=[];writableCalendars=[];if selectedReminder?.origin == .system {selectedReminder=nil}}
-            else {events=[];todayEvents=[];overviewEventValues=[];calendarSources=[];selectedEvent=nil}
+            else {events=[];todayEvents=[];overviewEventValues=[];overviewLoadedInterval=nil;calendarSources=[];selectedEvent=nil}
             await refresh()
         } catch { errorMessage=error.localizedDescription }
     }
