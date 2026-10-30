@@ -58,6 +58,8 @@ DMG/PKG signing and notarization have independent container records, which are n
 
 For subsequent direct-distribution releases, provide a drag-install DMG containing the App and an `Applications` link. Declare the manual installer, updater artifact, public checksum manifest and release notes before preparing a release. Sparkle supports DMG as well as ZIP: the same verified DMG may serve both installation and updating. Separate ZIP update artifacts remain supported when deliberately selected and tested; ZIP is a valid distribution format, but generating an update ZIP alone does not satisfy the DMG first-install delivery requirement.
 
+Publish the same final installers, update archives and checksum file to the UUThings R2 release directory and GitHub Releases; both are required delivery channels, with matching sizes and SHA-256 values. R2 provides the primary download and stable update feed, while GitHub retains the backup and historical downloads. Starting with 0.4.0, retain the legacy GitHub feed as an identical signed mirror of the UUThings feed. This migration adds only 0.4.0 to R2 and leaves existing historical packages and URLs unchanged. See [software updates](updating.md) for exact paths and feed publication order.
+
 To prepare a DMG from an existing durable Organizer release without rebuilding or changing that release:
 
 ```sh

@@ -27,7 +27,9 @@ SPARKLE_URL = "https://github.com/sparkle-project/Sparkle"
 SPARKLE_VERSION = "2.10.0"
 # Public commit resolved from the official 2.10.0 tag, not a local checkout path.
 SPARKLE_REVISION = "eef1a539a373c1f1a320624b1130fc5de7b2e100"
-FEED_URL = "https://raw.githubusercontent.com/uuthings/DeskDen/main/updates/appcast.xml"
+FEED_URL = "https://updates.uuthings.com/deskden/macos/stable/appcast.xml"
+RELEASE_URL_PREFIX = "https://updates.uuthings.com/deskden/macos/releases/"
+GITHUB_RELEASE_URL_PREFIX = "https://github.com/uuthings/DeskDen/releases/download/"
 SOURCE_FILES = ["Launcher/Sources/DeskDenLauncher/" + name for name in
                 ("AppUpdateController.swift", "WorkbenchUpdateSettings.swift")]
 SIGNING_SCRIPT = "Launcher/scripts/sign-sparkle-build.py"
@@ -203,11 +205,25 @@ def project_errors(project):
         return ["Xcode package or source graph is incomplete"]
 
 
+def reviewed_archive_url(value):
+    if not secure_public_url(value):
+        return False
+    version = r"[0-9]+\.[0-9]+\.[0-9]+"
+    build = r"[0-9]+(?:\.[0-9]+)*"
+    filename = r"[A-Za-z0-9][A-Za-z0-9._-]*"
+    # New releases use their immutable version/Build directory. Preserve the
+    # exact GitHub namespace used by historical signed enclosures and mirrors.
+    return any(re.fullmatch(pattern, value) for pattern in (
+        re.escape(RELEASE_URL_PREFIX) + version + "-" + build + "/" + filename,
+        re.escape(GITHUB_RELEASE_URL_PREFIX) + "v" + version + "/" + filename,
+    ))
+
+
 def archive_errors(enclosure):
     errors = []
     url = enclosure.get("url")
-    if not secure_public_url(url) or urlsplit(url).path in ("", "/"):
-        errors.append("each archive must have a real credential-free public HTTPS download URL")
+    if not reviewed_archive_url(url):
+        errors.append("each archive must use a reviewed DeskDen UUThings release or GitHub mirror HTTPS URL")
     if not signature_shape(enclosure.get(SPARKLE_NAMESPACE + "edSignature")):
         errors.append("each archive must have a non-placeholder 64-byte Ed25519 signature")
     length = enclosure.get("length", "")
@@ -464,6 +480,16 @@ def run_fixtures(check):
         return xml.replace(b'<rss version="2.0">', b'<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">').replace(b"</channel>", contents.encode() + b"</channel>")
 
     check(not feed_errors(signed_fixture(release_feed(item))), "a structurally valid future release passes the same feed policy")
+    r2_item = item.replace('https://github.com/uuthings/DeskDen/releases/download/v0.1.1/',
+                          RELEASE_URL_PREFIX + '0.1.1-3/')
+    check(not feed_errors(signed_fixture(release_feed(r2_item))), "a signed UUThings release URL passes while historical GitHub enclosures remain supported")
+    for name, changed in [
+        ("another application's release", r2_item.replace('/deskden/', '/tsx/')),
+        ("non-release directory", r2_item.replace('/releases/', '/qa/')),
+        ("encoded path traversal", r2_item.replace('/0.1.1-3/', '/0.1.1-3/%2e%2e/')),
+        ("download query", r2_item.replace('DeskDen-0.1.1.zip', 'DeskDen-0.1.1.zip?credential=unexpected')),
+    ]:
+        check(bool(feed_errors(signed_fixture(release_feed(changed)))), "release URL policy rejects " + name)
     legacy = item.replace('<sparkle:version>3</sparkle:version>', '').replace('<sparkle:shortVersionString>0.1.1</sparkle:shortVersionString>', '').replace('<enclosure ', '<enclosure sparkle:version="3" sparkle:shortVersionString="0.1.1" ')
     check(not feed_errors(signed_fixture(release_feed(legacy))), "valid legacy enclosure version attributes remain compatible")
     delta = '<sparkle:deltas><enclosure url="https://github.com/uuthings/DeskDen/releases/download/v0.1.1/DeskDen-3-2.delta" length="2048" type="application/octet-stream" sparkle:deltaFrom="2" sparkle:edSignature="' + archive_signature + '"/></sparkle:deltas>'
