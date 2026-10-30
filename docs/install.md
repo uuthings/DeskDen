@@ -4,7 +4,7 @@ DeskDen（方寸）要求 **macOS 14 或更高版本**。正式下载包同时�
 
 ## 首次安装
 
-1. 从 [v0.4.0 Release](https://github.com/uuthings/DeskDen/releases/tag/v0.4.0) 下载 `DeskDen-0.4.0-macos-universal.dmg`。`Source code` 压缩包是源码，不是安装包。
+1. 下载 [DeskDen 0.4.0 DMG](https://updates.uuthings.com/deskden/macos/releases/0.4.0-5/DeskDen-0.4.0-macos-universal.dmg)；备用下载见 [v0.4.0 GitHub Release](https://github.com/uuthings/DeskDen/releases/tag/v0.4.0)，历史版本保留在 [GitHub Releases](https://github.com/uuthings/DeskDen/releases)。两端正式安装包的文件内容和校验值相同。`Source code` 压缩包是源码，不是安装包。
 2. 打开 DMG 后将「方寸.app」拖入「应用程序」，再打开 App。该版本的签名与公证状态见 Release 说明；系统首次打开时仍可能要求确认。
 3. 新配置默认使用 `⌥ D` 呼出启动器，`⌥ F` 打开工作台。也可以从状态栏或顶部入口进入。关闭窗口仅收起界面，后台继续运行；彻底退出通过方寸菜单确认。
 
@@ -30,7 +30,7 @@ DeskDen（方寸）要求 **macOS 14 或更高版本**。正式下载包同时�
 
 ## 校验下载
 
-从同一 Release 下载 `SHA256SUMS.txt`，在下载目录执行：
+下载本版 [SHA256SUMS.txt](https://updates.uuthings.com/deskden/macos/releases/0.4.0-5/SHA256SUMS.txt)，也可从对应 GitHub Release 获取同一份校验文件，在下载目录执行：
 
 ```sh
 shasum -a 256 -c SHA256SUMS.txt --ignore-missing

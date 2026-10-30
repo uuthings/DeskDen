@@ -12,7 +12,6 @@ import re
 import runpy
 import shutil
 import subprocess
-import urllib.parse
 
 ROOT = Path(__file__).resolve().parent.parent
 EXPECTED_TEAM = '97K37J92QD'
@@ -50,6 +49,16 @@ def exported_identity_errors(identifier, team, architectures):
     return errors
 
 
+def download_url_prefix(requested, version, build):
+    primary = UPDATE_POLICY['RELEASE_URL_PREFIX'] + version + '-' + build + '/'
+    mirror = UPDATE_POLICY['GITHUB_RELEASE_URL_PREFIX'] + 'v' + version + '/'
+    if requested is None:
+        return primary
+    if requested not in (primary, mirror):
+        raise ValueError('Download prefix must be the exact DeskDen UUThings version/Build directory or matching GitHub Release directory')
+    return requested
+
+
 def verify_exported_app(app, info, runner=subprocess.run, read_output=subprocess.check_output):
     # Verification never signs or mutates the Organizer export. Gatekeeper and
     # notarization alone cannot establish the required installed signing team.
@@ -78,6 +87,7 @@ def main():
     parser.add_argument('--signing-account', required=True, help='Existing Sparkle Keychain account; never create or rotate a key')
     parser.add_argument('--notes', type=Path, required=True, help='Public plain-text release notes')
     parser.add_argument('--output', type=Path, required=True, help='New persistent directory outside Git')
+    parser.add_argument('--download-url-prefix', help='Trusted release directory; defaults to the DeskDen UUThings version-Build path')
     args = parser.parse_args()
     root = ROOT
     app, output = args.app.resolve(), args.output.resolve()
@@ -91,6 +101,10 @@ def main():
     version, build = info['CFBundleShortVersionString'], info['CFBundleVersion']
     if not re.fullmatch(r'\d+\.\d+\.\d+', version) or not re.fullmatch(r'\d+(?:\.\d+)*', build):
         raise SystemExit('Invalid release version or Build')
+    try:
+        prefix = download_url_prefix(args.download_url_prefix, version, build)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
     tools = args.sparkle_bin.resolve()
     for name in ['generate_appcast', 'sign_update', 'generate_keys']:
         if not (tools / name).is_file():
@@ -111,7 +125,6 @@ def main():
     feed = output / 'appcast.xml'
     feed.write_text(feed.read_text().replace('Signed updates for DeskDen. No public update has been published.',
                                              'Official signed software updates for DeskDen.'))
-    prefix = 'https://github.com/uuthings/DeskDen/releases/download/v' + urllib.parse.quote(version) + '/'
     command = [str(tools / 'generate_appcast'), '--account', args.signing_account,
                '--download-url-prefix', prefix, '--embed-release-notes', str(output)]
     result = subprocess.run(command, capture_output=True)

@@ -85,6 +85,23 @@ class ExportPreparationTests(unittest.TestCase):
             with self.subTest(executable=executable):
                 self.assertTrue(PREPARATION['exported_metadata_errors'](changed, changed))
 
+    def test_download_prefix_defaults_to_matching_uuthings_release_and_accepts_github_mirror(self):
+        primary = 'https://updates.uuthings.com/deskden/macos/releases/0.4.0-5/'
+        mirror = 'https://github.com/uuthings/DeskDen/releases/download/v0.4.0/'
+        resolve = PREPARATION['download_url_prefix']
+        self.assertEqual(resolve(None, '0.4.0', '5'), primary)
+        for value in (primary, mirror):
+            self.assertEqual(resolve(value, '0.4.0', '5'), value)
+
+    def test_download_prefix_rejects_other_apps_builds_and_ambiguous_urls(self):
+        primary = 'https://updates.uuthings.com/deskden/macos/releases/0.4.0-5/'
+        for value in [primary.replace('/deskden/', '/tsx/'), primary.replace('-5/', '-4/'),
+                      primary.replace('https:', 'http:'), primary + '../', primary + '?token=fixture',
+                      primary.replace('updates.uuthings.com', 'updates.uuthings.com.example.invalid'),
+                      'https://github.com/uuthings/DeskDen/releases/download/v0.3.0/']:
+            with self.subTest(prefix=value), self.assertRaises(ValueError):
+                PREPARATION['download_url_prefix'](value, '0.4.0', '5')
+
 
 if __name__ == '__main__':
     unittest.main()
