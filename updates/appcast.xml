@@ -9,6 +9,23 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
         <description>Official signed software updates for DeskDen.</description>
         <language>zh-CN</language>
         <item>
+            <title>0.4.0</title>
+            <pubDate>Fri, 30 Oct 2026 06:50:48 +0000</pubDate>
+            <sparkle:version>5</sparkle:version>
+            <sparkle:shortVersionString>0.4.0</sparkle:shortVersionString>
+            <sparkle:fullReleaseNotesLink>https://github.com/uuthings/DeskDen/releases/tag/v0.4.0</sparkle:fullReleaseNotesLink>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="plain-text"><![CDATA[日历与提醒重新安排了页面：左侧查看选中日期的全部安排，右侧查看未来七天，长期待办独立放在下方。日程与待办使用不同浅色卡片，来源筛选、完成与撤销更清楚。
+
+新建待办支持无期限、指定日期和指定天数。输入天数即可预览截止日期，可设置周末、节假日和调休的计算规则；备注自动增高并在六行后滚动。
+
+首页设备、存储与网络卡片采用统一布局；用量来源支持分类、排序和统一连接管理，改进窗口缩放与连接异常提示。私密空间加强剪贴板保护，修改密码时同步保护应用管理的历史备份。
+
+升级前请在旧版导出并另存私密空间加密备份，然后正常退出旧版。新版首次启动在新资料目录尚不存在时复制旧资料，保留原目录。原有 Touch ID 需要重新开启，系统权限可能需要重新授权。迁移后请继续使用新版，新旧资料不会互相同步。已连接 IPRoyal 的用户，请在新版连接设置中点击一次「安装本机连接」。
+]]></description>
+            <enclosure url="https://updates.uuthings.com/deskden/macos/releases/0.4.0-5/DeskDen-0.4.0-macos-universal.zip" length="27139229" type="application/octet-stream" sparkle:edSignature="ItgKcGaoHs1QQEAfWAIttml1+crPdkIkMAtLSpq9ywrB0lU8+Mo3/JgJxV8s3Q98Kn2Ki3RDFaIaIpGLrbESCA=="/>
+        </item>
+        <item>
             <title>0.3.0</title>
             <pubDate>Tue, 27 Oct 2026 18:01:08 +0000</pubDate>
             <sparkle:version>4</sparkle:version>
@@ -58,6 +75,6 @@ IPRoyal 连接器需另行安装并保持官方控制台登录。服务额度存
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: N8gM7WB6gdU4ZRy8k8hJghhhok13znuPBM11nypTxVCrtybzc/sIN7QbY/YMR1Nab4VqEDBC/lahjZ5d3/xTAQ==
-length: 3737
+edSignature: J+MPYDgiimCQo0fUkLxKuEhxpyQZnxRqqUBDPfFyJ37XDCfNRd/qoGQcg0xKztjOnUJtSJYlZ1zl8nl8WeiCBA==
+length: 5652
 -->
