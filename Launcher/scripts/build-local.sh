@@ -47,7 +47,7 @@ if qa_keys.intersection(info):
     raise SystemExit('Production Info.plist contains QA keys: ' + ', '.join(sorted(qa_keys.intersection(info))))
 if info.get('CFBundleExecutable') != 'DeskDenLauncher':
     raise SystemExit('Unexpected production executable name')
-paths = [root / 'Package.swift', root / 'Signing/DeskDen.entitlements']
+paths = [root / 'Package.swift', root / 'Signing/DeskDen.entitlements', root / 'Signing/DeskDen-Debug.entitlements']
 paths.extend(connector_root / name for name in connector_files)
 for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('scripts', '*.swift'), ('Resources', '*')]:
     paths.extend(path for path in (root / directory).rglob(pattern) if path.is_file())
@@ -92,18 +92,23 @@ if hashlib.sha256(copied.read_bytes()).hexdigest() != source_hash:
 (Path(sys.argv[3]) / 'executable-before-signing.json').write_text(json.dumps({'sha256': source_hash, 'matchesCurrentSwiftPMOutput': True}, indent=2) + '\n')
 PY
 python3 ./scripts/embed-sparkle.py "$app_path"
-codesign --force --sign - "$app_path"
+codesign --force --sign - --entitlements "$PWD/Signing/DeskDen-Debug.entitlements" "$app_path"
 codesign --verify --deep --strict "$app_path"
 python3 - "$app_path" "$evidence_path" "${connector_template_files[@]}" <<'PY'
 from pathlib import Path
-import hashlib, json, os, plistlib, sys
+import hashlib, json, os, plistlib, subprocess, sys
 root, app, evidence = Path.cwd(), Path(sys.argv[1]), Path(sys.argv[2])
+signed_entitlements = plistlib.loads(subprocess.check_output(['codesign', '--display', '--entitlements', '-', '--xml', str(app)], stderr=subprocess.DEVNULL))
+expected_entitlements = plistlib.loads((root / 'Signing/DeskDen-Debug.entitlements').read_bytes())
+if signed_entitlements != expected_entitlements:
+    raise SystemExit('The local bundle does not contain exactly the reviewed calendar entitlement')
+(evidence / 'signed-entitlements.json').write_text(json.dumps(signed_entitlements, indent=2) + '\n')
 connector_root = root / 'BrowserConnectors/IPRoyal'
 connector_files = sys.argv[3:]
 if connector_root.is_symlink() or connector_root.parent.is_symlink():
     raise SystemExit('Connector template directory became a symbolic link')
 before = json.loads((evidence / 'source-inputs-before.json').read_text())
-paths = [root / 'Package.swift', root / 'Signing/DeskDen.entitlements']
+paths = [root / 'Package.swift', root / 'Signing/DeskDen.entitlements', root / 'Signing/DeskDen-Debug.entitlements']
 paths.extend(connector_root / name for name in connector_files)
 for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('scripts', '*.swift'), ('Resources', '*')]:
     paths.extend(path for path in (root / directory).rglob(pattern) if path.is_file())

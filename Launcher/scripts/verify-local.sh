@@ -16,7 +16,7 @@ python3 - "$verification_dir" <<'PY'
 from pathlib import Path
 import hashlib, json, sys
 root = Path.cwd()
-paths = [root / 'Package.swift', root / 'Signing/DeskDen.entitlements']
+paths = [root / 'Package.swift', root / 'Signing/DeskDen.entitlements', root / 'Signing/DeskDen-Debug.entitlements']
 connector_files = ['manifest.json', 'extension-id.txt', 'protocol.js', 'protocol-isolated.js', 'observer.js', 'content.js', 'background.js', 'popup.html', 'popup.css', 'popup.js', 'install.command', 'README.md', 'INSTALL.md', 'prepare-kit.py', 'icon-16.png', 'icon-32.png', 'icon-64.png', 'icon-128.png']
 paths.extend(root / 'BrowserConnectors/IPRoyal' / name for name in connector_files)
 for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('scripts', '*.swift'), ('Resources', '*')]:
@@ -60,7 +60,7 @@ from pathlib import Path
 import hashlib, json, os, re, sys
 verification = Path(sys.argv[1])
 source = Path.cwd()
-paths = [source / 'Package.swift', source / 'Signing/DeskDen.entitlements']
+paths = [source / 'Package.swift', source / 'Signing/DeskDen.entitlements', source / 'Signing/DeskDen-Debug.entitlements']
 connector_files = ['manifest.json', 'extension-id.txt', 'protocol.js', 'protocol-isolated.js', 'observer.js', 'content.js', 'background.js', 'popup.html', 'popup.css', 'popup.js', 'install.command', 'README.md', 'INSTALL.md', 'prepare-kit.py', 'icon-16.png', 'icon-32.png', 'icon-64.png', 'icon-128.png']
 paths.extend(source / 'BrowserConnectors/IPRoyal' / name for name in connector_files)
 for directory, pattern in [('Sources', '*.swift'), ('Tests', '*.swift'), ('scripts', '*.sh'), ('scripts', '*.py'), ('scripts', '*.swift'), ('Resources', '*')]:

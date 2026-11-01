@@ -494,7 +494,9 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
             }
         }
         launchEpoch += 1; launchPending = false
-        render(); placePanel(center:true); NSApp.activate(); panel.makeKeyAndOrderFront(nil)
+        // This nonactivating panel can take keyboard focus independently. App-wide
+        // activation would also raise the ordinary workbench behind it.
+        render(); placePanel(center:true); panel.makeKeyAndOrderFront(nil)
         if let editorPanel { editorPanel.makeKeyAndOrderFront(nil) } else { focus() }
         refreshApplications()
         if let storageProblem { toast(storageProblem,persistent:true) } else if let hotKeyProblem { toast(hotKeyProblem,persistent:true) } else if let bindingHotKeyProblem { toast(bindingHotKeyProblem,persistent:true) }
@@ -867,6 +869,7 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
                 if !visibleKeys.contains(key) {continue}
                 let tile = KeyTile(key:key,mode:mode,binding:bindings[key],editing:isEditing,frame:NSRect(x:x+CGFloat(column)*80*scale,y:y,width:80*scale,height:cellHeight*scale))
                 tile.bounds = NSRect(x:0,y:0,width:80,height:cellHeight)
+                tile.reduceMotion = configuration.settings.reduceMotion
                 tile.actionBlock = { [weak self, weak tile] in guard let self, let tile else { return }; if let binding = bindings[key], !isEditing, !tile.missing { launch(binding.target) } else { if bindings[key] == nil { showTypeMenu(key,anchor:tile) } else { openEditor(key) } } }
                 tile.removeBlock = { [weak self] in self?.removeBinding(key) }
                 tile.contextBlock = { [weak self, weak tile] in if let self, let tile { showKeyMenu(key,anchor:tile) } }

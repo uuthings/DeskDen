@@ -14,12 +14,26 @@ let application = NSApplication.shared
         FileHandle.standardError.write(Data("Unable to query the native UI check process accessibility bridge\n".utf8)); exit(2)
     }
 }
-if !CommandLine.arguments.contains("--calendar-deadline-editor-check"), !CommandLine.arguments.contains("--calendar-layout-check"), !CommandLine.arguments.contains("--home-resize-check"), !CommandLine.arguments.contains("--home-feedback-check"), !CommandLine.arguments.contains("--top-entry-check"), !CommandLine.arguments.contains("--usage-ui-check"), !CommandLine.arguments.contains("--mini-data-check"), !CommandLine.arguments.contains("--mini-appearance-check"), !CommandLine.arguments.contains("--context-model-check"), !CommandLine.arguments.contains("--appearance-check"), !CommandLine.arguments.contains("--shortcut-responder-check"), !CommandLine.arguments.contains("--pointer-check"), !CommandLine.arguments.contains("--space-cleaning-system-trash-check"), !CommandLine.arguments.contains("--space-cleaning-model-check"), !CommandLine.arguments.contains("--space-cleaning-check"), !CommandLine.arguments.contains("--self-check"), !CommandLine.arguments.contains("--device-check"), !CommandLine.arguments.contains("--form-check"), !CommandLine.arguments.contains("--vault-signing-check"), let identifier = Bundle.main.bundleIdentifier,
+if !CommandLine.arguments.contains("--update-interface-check"), !CommandLine.arguments.contains("--update-calendar-check"), !CommandLine.arguments.contains("--calendar-deadline-editor-check"), !CommandLine.arguments.contains("--calendar-layout-check"), !CommandLine.arguments.contains("--home-resize-check"), !CommandLine.arguments.contains("--home-feedback-check"), !CommandLine.arguments.contains("--top-entry-check"), !CommandLine.arguments.contains("--usage-ui-check"), !CommandLine.arguments.contains("--mini-data-check"), !CommandLine.arguments.contains("--mini-appearance-check"), !CommandLine.arguments.contains("--context-model-check"), !CommandLine.arguments.contains("--appearance-check"), !CommandLine.arguments.contains("--shortcut-responder-check"), !CommandLine.arguments.contains("--pointer-check"), !CommandLine.arguments.contains("--space-cleaning-system-trash-check"), !CommandLine.arguments.contains("--space-cleaning-model-check"), !CommandLine.arguments.contains("--space-cleaning-check"), !CommandLine.arguments.contains("--self-check"), !CommandLine.arguments.contains("--device-check"), !CommandLine.arguments.contains("--form-check"), !CommandLine.arguments.contains("--vault-signing-check"), let identifier = Bundle.main.bundleIdentifier,
    NSRunningApplication.runningApplications(withBundleIdentifier:identifier).contains(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) {
     DistributedNotificationCenter.default().postNotificationName(Notification.Name(CommandLine.arguments.contains("--launcher") ? "local.deskden.launcher.show":"local.deskden.workbench.show"),object:nil,userInfo:nil,deliverImmediately:true)
     exit(0)
 }
-if CommandLine.arguments.contains("--calendar-deadline-editor-check") {
+if CommandLine.arguments.contains("--update-calendar-check") || CommandLine.arguments.contains("--update-interface-check") {
+    Task {
+        await prepareNativeCheckWindows()
+        let interfaceOnly = CommandLine.arguments.contains("--update-interface-check")
+        let updates = interfaceOnly ? (count: 0, failures: 0) : await AppUpdateChecks.run()
+        let presentation = await WorkbenchUpdatePresentationChecks.run()
+        let calendar = interfaceOnly ? (count: 0, failures: 0) : await CalendarLayoutNativeChecks.run()
+        let launcher = await LauncherPresentationNativeChecks.run()
+        let count = updates.count + presentation.count + calendar.count + launcher.count
+        let failures = updates.failures + presentation.failures + calendar.failures + launcher.failures
+        print("\(interfaceOnly ? "Update interface" : "Update and calendar") checks: \(count) checks, \(failures) failures")
+        exit(count > 0 && failures == 0 ? 0 : 1)
+    }
+    application.run()
+} else if CommandLine.arguments.contains("--calendar-deadline-editor-check") {
     Task {
         await prepareNativeCheckWindows()
         let result = await CalendarDeadlineEditorChecks.run()

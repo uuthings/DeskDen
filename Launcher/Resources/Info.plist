@@ -19,7 +19,7 @@
 <key>NSPrincipalClass</key><string>NSApplication</string>
 <key>SUFeedURL</key><string>https://updates.uuthings.com/deskden/macos/stable/appcast.xml</string>
 <key>SUPublicEDKey</key><string>Pj4xaGxVb+M0Us+oHdjifBnWVCYn7zlY1Bt1TsMZFpU=</string>
-<key>SUEnableAutomaticChecks</key><false/>
+<key>SUEnableAutomaticChecks</key><true/>
 <key>SUAutomaticallyUpdate</key><false/>
 <key>SUAllowsAutomaticUpdates</key><false/>
 <key>SUSendProfileInfo</key><false/>

@@ -786,6 +786,9 @@ final class KeyTile: ClickableButton {
     let editing: Bool
     let missing: Bool
     var hovered = false
+    var reduceMotion = false
+    private(set) var hoverProgress: CGFloat = 0
+    private var hoverTask: Task<Void,Never>?
     var dropHighlight = false
     var actionBlock: (() -> Void)?
     var contextBlock: (() -> Void)?
@@ -807,8 +810,29 @@ final class KeyTile: ClickableButton {
     required init?(coder:NSCoder) { fatalError() }
     @objc func invoke() { actionBlock?() }
     override func updateTrackingAreas() { if let area { removeTrackingArea(area) }; area = NSTrackingArea(rect:bounds,options:[.activeAlways,.mouseEnteredAndExited,.inVisibleRect],owner:self); addTrackingArea(area!); super.updateTrackingAreas() }
-    override func mouseEntered(with event:NSEvent) { hovered = true; needsDisplay = true; hoverBlock?(true) }
-    override func mouseExited(with event:NSEvent) { hovered = false; needsDisplay = true; hoverBlock?(false) }
+    override func mouseEntered(with event:NSEvent) { setHovered(true) }
+    override func mouseExited(with event:NSEvent) { setHovered(false) }
+    private func setHovered(_ value:Bool) {
+        hovered=value;hoverBlock?(value);hoverTask?.cancel();hoverTask=nil
+        guard !reduceMotion,!NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            hoverProgress=0;needsDisplay=true;return
+        }
+        let start=hoverProgress,end:CGFloat=value ? 1:0,started=Date.timeIntervalSinceReferenceDate
+        hoverTask=Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self else {return}
+                let fraction=min(1,(Date.timeIntervalSinceReferenceDate-started)/0.14)
+                let eased=1-pow(1-fraction,3)
+                self.hoverProgress=start+(end-start)*eased;self.needsDisplay=true
+                if fraction >= 1 {self.hoverTask=nil;return}
+                try? await Task.sleep(for:.milliseconds(16))
+            }
+        }
+    }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil {hoverTask?.cancel();hoverTask=nil;hovered=false;hoverProgress=0}
+    }
     override func rightMouseDown(with event:NSEvent) { contextBlock?() }
     override func mouseDown(with event:NSEvent) {
         if event.modifierFlags.contains(.control) { contextBlock?(); return }
@@ -834,6 +858,15 @@ final class KeyTile: ClickableButton {
         let plateSize:CGFloat = mode == .full ? 65 : mode == .key ? 71 : iconSize
         let tileRect = NSRect(x:(size-plateSize)/2,y:(size-plateSize)/2,width:plateSize,height:plateSize)
         let radius: CGFloat = plateSize*0.25
+        // Transform only the key face and its icon. The label, tracking region,
+        // editing controls and neighbouring keys retain their original geometry.
+        NSGraphicsContext.saveGraphicsState()
+        let motion=reduceMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0:hoverProgress
+        let transform=NSAffineTransform()
+        transform.translateX(by:size/2,yBy:size/2-2*motion)
+        transform.scale(by:1+0.03*motion)
+        transform.translateX(by:-size/2,yBy:-size/2)
+        transform.concat()
         let path = NSBezierPath(roundedRect:tileRect,xRadius:radius,yRadius:radius)
         let focus = window?.firstResponder === self
         if binding == nil || mode.showsKey {
@@ -842,12 +875,13 @@ final class KeyTile: ClickableButton {
             if editing && binding == nil { path.setLineDash([3,3],count:2,phase:0) }; path.lineWidth = 0.6; path.stroke()
             if !editing { let inside = NSBezierPath(roundedRect:tileRect.insetBy(dx:0.8,dy:0.8),xRadius:radius-0.8,yRadius:radius-0.8); Palette.ink.withAlphaComponent(0.06).setStroke(); inside.lineWidth=0.5; inside.stroke() }
         }
-        if hovered || dropHighlight || focus || isHighlighted { NSColor.white.withAlphaComponent(isHighlighted ? 0.17 : 0.055).setFill(); path.fill(); NSColor.white.withAlphaComponent(dropHighlight || focus ? 0.65 : 0.25).setStroke(); path.stroke() }
+        if dropHighlight || focus || isHighlighted || (hovered && (reduceMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)) { NSColor.white.withAlphaComponent(isHighlighted ? 0.17 : 0.055).setFill(); path.fill(); NSColor.white.withAlphaComponent(dropHighlight || focus ? 0.65 : 0.25).setStroke(); path.stroke() }
         if let binding {
             let iconRect = NSRect(x:(size-iconSize)/2,y:(size-iconSize)/2+(isHighlighted ? 1 : 0),width:iconSize,height:iconSize)
             drawTarget(binding.target,in:iconRect,normalized:true,opacity:missing ? 0.45 : 1)
             if mode.showsKey { drawText(key,in:NSRect(x:tileRect.maxX-17,y:tileRect.maxY-18,width:15,height:17),size:12,alignment:.center,weight:.bold) }
         } else { drawText(key,in:NSRect(x:0,y:(size-23)/2,width:size,height:23),size:mode.showsKey ? 19 : 16,color:Palette.text,alignment:.center,weight:.semibold) }
+        NSGraphicsContext.restoreGraphicsState()
         if mode.showsName { drawText(binding?.title ?? "绑定",in:NSRect(x:-2,y:mode == .name ? 79 : 78,width:size+4,height:18),size:11,color:Palette.secondary,alignment:.center,weight:.medium) }
         if missing { let dot = NSRect(x:size-12,y:0,width:15,height:15); Palette.warning.setFill(); NSBezierPath(ovalIn:dot).fill(); drawText("!",in:dot,size:11,color:.black,alignment:.center,weight:.medium) }
         if editing && binding != nil { drawSymbol("minus.circle.fill",in:NSRect(x:0,y:0,width:16,height:16),color:Palette.error) }

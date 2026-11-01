@@ -6,7 +6,11 @@ Xcode's final build phase signs the embedded framework's four helpers inside-out
 
 ## User behavior
 
-Settings → General contains **Check for Updates** and **Automatically check for updates**. The application and menu-bar menus also offer a manual check. New installations use manual mode: displaying settings or starting the app does not initiate an updater request or an automatic-check permission prompt. Automatic checks are opt-in, run on Sparkle's daily schedule and persist using Sparkle's own preference key. Automatic downloading/installing and system-profile reporting are disabled. Installation remains an explicit user choice.
+Settings → General contains **Check for Updates** and **Automatically check for updates**. The application and menu-bar menus also offer a manual check. Automatic checking is enabled by default; an explicitly saved opt-out is preserved. Checks run daily, with a due check after launch or wake and a retry after connectivity returns. Manual checks run immediately when no update session is active. Automatic downloading/installing and system-profile reporting remain disabled.
+
+A background result appears as a single download icon and new-version button at the bottom of the sidebar. It does not open a window or interrupt another app. Clicking the button opens the shared themed update dialog with the release version, known publication date and change notes. Short notes stay compact; long notes scroll while actions remain visible. Failed checks are reported when the user opens the update interface, never as “up to date.”
+
+Download and **Install and Relaunch** are separate choices. Closing the dialog keeps an active download running; reopening shows the same session. **Later** leaves the current app running. A normal quit cancels a prepared update session instead of authorizing Sparkle's install-on-quit behavior; the user can check and download again at the next launch. Only an explicit installation choice proceeds through the application's existing save and shutdown protections.
 
 The updater uses HTTPS, validates the signed feed and verifies the archive's Ed25519 signature before extraction. An Install & Relaunch request uses the same encrypted-write, editor-draft, cleaning-transaction and notification shutdown barriers as a normal quit. Cancelling a save decision prevents termination. Checking for updates does not itself quit the app or change local data.
 

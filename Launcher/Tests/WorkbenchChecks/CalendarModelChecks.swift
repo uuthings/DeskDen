@@ -34,6 +34,13 @@ import LauncherCore
         check(model.localReminders.first?.id == item.id,"delete undo restores original local identity")
         await model.connect(reminders:true)
         check(!model.preferences.remindersConnected && model.localReminders.count == 1,"denied system access leaves local reminders usable")
+        model.showSources=true
+        check(model.shouldPresentOperationError && model.permissionSettingsTargets == [.reminders],
+              "a denied source toggle presents an error on the sources page with the matching privacy action")
+        model.errorMessage=nil
+        check(model.permissionSettingsTargets.isEmpty && !model.shouldPresentOperationError,
+              "dismissing a permission failure clears its settings actions")
+        model.showSources=false
         system.granted=true; await model.connect(reminders:true)
         check(model.preferences.remindersConnected && system.permissionRequests == 2,"explicit reconnect can enable system source")
         model.openNewReminder()
@@ -92,6 +99,53 @@ import LauncherCore
         check(!partial.preferences.calendarConnected && partial.systemRemindersAvailable && partialSystem.permissionRequests == 2
               && partial.errorMessage?.contains("未允许访问日历") == true,
               "denying Calendar still connects Reminders and reports the independently denied permission")
+        check(partial.permissionSettingsTargets == [.calendar],"combined setup offers only the failed source's privacy destination")
+
+        var openedSettings:[URL]=[]
+        var settingsLaunches=false
+        let permissionSystem=CalendarCheckSystem()
+        let permissionModel=CalendarModel(dataDirectory:directory.appendingPathComponent("permissions"),system:permissionSystem,notifier:notifications,openSettingsURL:{url in openedSettings.append(url);return settingsLaunches})
+        permissionModel.openSources()
+        await permissionModel.connectSystemSources()
+        check(permissionModel.shouldPresentOperationError && permissionModel.permissionSettingsTargets == [.calendar,.reminders],
+              "combined denials retain both privacy actions in one source-page dialog")
+        permissionModel.openPrivacySettings(reminders:false)
+        check(openedSettings.count == 2 && openedSettings.first?.absoluteString.hasSuffix("?Privacy_Calendars") == true
+              && openedSettings.last?.absoluteString == "x-apple.systempreferences:com.apple.preference.security"
+              && permissionModel.errorMessage?.contains("无法打开系统设置") == true,
+              "failed Settings deep links try the privacy overview and show a manual route if both fail")
+        settingsLaunches=true;openedSettings=[]
+        permissionModel.openPrivacySettings(reminders:true)
+        check(openedSettings.count == 1 && openedSettings[0].absoluteString.hasSuffix("?Privacy_Reminders")
+              && permissionModel.errorMessage == nil,
+              "the reminder privacy action opens its own destination and dismisses the old error")
+        permissionSystem.requestResult=true
+        await permissionModel.connect(reminders:false)
+        check(!permissionModel.preferences.calendarConnected && permissionModel.calendarAccess == .denied
+              && permissionModel.shouldPresentOperationError,
+              "a positive permission callback without actual full access never turns on the connection")
+        permissionSystem.reportedAccess = .restricted
+        await permissionModel.connect(reminders:false)
+        check(permissionModel.errorMessage?.contains("此设备限制") == true && !permissionModel.preferences.calendarConnected,
+              "restricted calendar access has an actionable explanation rather than an inert switch")
+        permissionSystem.reportedAccess = .notDetermined
+        permissionSystem.requestError=ReminderError.unavailable("Synthetic permission request error")
+        await permissionModel.connect(reminders:true)
+        check(permissionModel.remindersAccess == .notDetermined && permissionModel.errorMessage?.contains("无法完成提醒事项授权") == true
+              && permissionModel.permissionSettingsTargets == [.reminders],
+              "permission request errors refresh the actual authorization state and retain a settings action")
+        permissionSystem.requestError=nil;permissionSystem.reportedAccess=nil;permissionSystem.granted=true
+        await permissionModel.refresh()
+        check(permissionModel.calendarAccess == .granted && permissionModel.remindersAccess == .granted
+              && !permissionModel.preferences.calendarConnected && !permissionModel.preferences.remindersConnected,
+              "refreshing after Settings reads new permissions without silently connecting an unconnected source")
+        await permissionModel.connect(reminders:false)
+        permissionSystem.granted=false;await permissionModel.refresh()
+        check(permissionModel.preferences.calendarConnected && permissionModel.calendarAccess == .denied && permissionModel.events.isEmpty,
+              "revoked access hides system data while preserving the explicit connection preference")
+        permissionSystem.granted=true;await permissionModel.refresh()
+        check(permissionModel.preferences.calendarConnected && permissionModel.calendarAccess == .granted,
+              "returning from Settings restores availability for an already connected source")
         model.disableNotifications(); await Task.yield()
         check(notifications.pending.isEmpty && !model.preferences.notificationsEnabled,"explicit notification disable cancels owned pending requests")
         check(system.calendarWrites == 0,"calendar integration never writes calendar events")
@@ -240,13 +294,16 @@ import LauncherCore
     var permissionRequests=0,calendarWrites=0
     var granted=false
     var calendarGranted:Bool?
+    var reportedAccess:CalendarAccess?
+    var requestResult:Bool?
+    var requestError:Error?
     var failWrites=false
     var writeCalls=0
     var writableLists=[ReminderCalendar(id:"fixture",title:"Synthetic fixture")]
     var items:[ReminderItem] = []
     var calendarEvents:[CalendarEventItem] = []
-    func access(reminders:Bool) -> CalendarAccess { (reminders ? granted:(calendarGranted ?? granted)) ? .granted:.denied }
-    func requestAccess(reminders:Bool) async throws -> Bool { permissionRequests += 1; return access(reminders:reminders) == .granted }
+    func access(reminders:Bool) -> CalendarAccess { reportedAccess ?? ((reminders ? granted:(calendarGranted ?? granted)) ? .granted:.denied) }
+    func requestAccess(reminders:Bool) async throws -> Bool { permissionRequests += 1; if let requestError {throw requestError};return requestResult ?? (access(reminders:reminders) == .granted) }
     func events(in interval:DateInterval) throws -> [CalendarEventItem] { calendarEvents.filter { $0.start < interval.end && $0.end > interval.start } }
     func reminders() async throws -> [ReminderItem] { items }
     func writableReminderCalendars() -> [ReminderCalendar] {writableLists}

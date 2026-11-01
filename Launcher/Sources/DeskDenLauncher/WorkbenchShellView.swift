@@ -92,6 +92,7 @@ struct WorkbenchRootView: View {
                 WorkbenchModalHost(coordinator:model.modals)
                 WorkbenchContextDialogs(model:model.context)
                 CalendarDialogs(model:model.calendar,context:model.context)
+                if let owner = model.owner { WorkbenchUpdatePresentation(updates: owner.updates) }
                 WorkbenchStatusMessages(model:model)
                 if model.confirmingQuit { WorkbenchQuitConfirmation(model: model) }
             }
@@ -202,16 +203,9 @@ struct WorkbenchRootView: View {
                 ForEach([WorkbenchRoute.overview,.device,.cleaning,.calendar,.ai,.network,.vault],id:\.self) {route in navigation(route)}
                 navigation(.cards)
                 Spacer(minLength:0)
-                Button {model.launcher()} label:{
-                    HStack(spacing:10) {
-                        Image(systemName:"command").font(.system(size:16,weight:.light)).frame(width:18)
-                            .accessibilityHidden(true)
-                        Text("启动器").font(.system(size:12));Spacer(minLength:0)
-                    }.padding(.horizontal,12).frame(height:42)
-                        .contentShape(RoundedRectangle(cornerRadius:9))
-                }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 9)).foregroundStyle(palette.muted).accessibilityLabel("启动器").accessibilityIdentifier("navigation-launcher")
                 navigation(.settings)
             }
+            if let owner = model.owner { WorkbenchUpdateEntry(updates: owner.updates) }
         }.padding(.horizontal,12).padding(.top,22).padding(.bottom,15)
     }
     private func navigation(_ route: WorkbenchRoute) -> some View {

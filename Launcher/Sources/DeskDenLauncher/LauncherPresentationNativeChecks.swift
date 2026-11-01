@@ -3,7 +3,7 @@ import LauncherCore
 
 /// Exercises physical-key routing against the real list viewport and popover.
 @MainActor enum LauncherPresentationNativeChecks {
-    static func run()->(count:Int,failures:Int) {
+    static func run() async ->(count:Int,failures:Int) {
         var count=0,failures=0
         func check(_ value:Bool,_ message:String){count += 1;if !value {failures += 1};print("\(value ? "PASS":"FAIL") \(message)")}
         let directory=FileManager.default.temporaryDirectory.appendingPathComponent("deskden-launcher-presentation-\(UUID().uuidString)")
@@ -13,6 +13,8 @@ import LauncherCore
         owner.configuration.settings.display = .list
         owner.configuration.settings.defaultView = .keys
         defer {owner.closeOverlay(render:false);owner.panel.orderOut(nil);owner.toastTask?.cancel();owner.hotKey.unregister();owner.bindingHotKeys.unregister();try? FileManager.default.removeItem(at:directory)}
+        let hoverChecks=await checkHoverFeedback(owner:owner)
+        count += hoverChecks.count;failures += hoverChecks.failures
         let application=directory.appendingPathComponent("BoundFixture.app")
         let contents=application.appendingPathComponent("Contents")
         do {
@@ -29,6 +31,8 @@ import LauncherCore
             owner.configuration.bindings=[:];owner.rebuildIndex()
         } catch {check(false,"bound English metadata fixture is readable: \(error)")}
         owner.show()
+        check(owner.panel.isVisible && owner.workbenchController == nil && owner.panel.firstResponder === owner.content,
+              "showing the independent launcher takes keyboard focus without creating the workbench")
         guard let list=owner.content.subviews.compactMap({$0 as? LauncherBindingListView}).first,
               let row=list.rows.first(where:{$0.key == "M"}) else {
             check(false,"physical-key list fixture has its real M row");return(count,failures)
@@ -68,6 +72,52 @@ import LauncherCore
         count += interactions.count;failures += interactions.failures
         return(count,failures)
     }
+    private static func checkHoverFeedback(owner:LauncherController) async ->(count:Int,failures:Int) {
+        var count=0,failures=0
+        func check(_ value:Bool,_ message:String){count += 1;if !value {failures += 1};print("\(value ? "PASS":"FAIL") launcher hover: \(message)")}
+        let target=LaunchTarget(kind:.web,name:"Hover fixture",location:"https://example.invalid")
+        let tile=KeyTile(key:"A",mode:.full,binding:KeyBinding(target:target),editing:false,frame:NSRect(x:80,y:80,width:80,height:98))
+        owner.content.addSubview(tile)
+        defer {tile.removeFromSuperview()}
+        let originalFrame=tile.frame,originalBounds=tile.bounds
+        let nameRect=NSRect(x:0,y:78,width:80,height:20)
+        func pixels(_ rect:NSRect)->Data? {
+            guard let bitmap=tile.bitmapImageRepForCachingDisplay(in:rect) else {return nil}
+            tile.cacheDisplay(in:rect,to:bitmap)
+            return bitmap.representation(using:.png,properties:[:])
+        }
+        func settle(until predicate:()->Bool) async -> Bool {
+            // The production animation runs in a MainActor task. A synchronous
+            // nested RunLoop keeps this actor job occupied, so it cannot drive
+            // the animation; suspend the check instead of blocking its executor.
+            let deadline=ContinuousClock.now.advanced(by:.seconds(1))
+            repeat {
+                try? await Task.sleep(for:.milliseconds(20))
+                if predicate() {return true}
+            } while ContinuousClock.now < deadline
+            return predicate()
+        }
+        let entered=NSEvent.enterExitEvent(with:.mouseEntered,location:.zero,modifierFlags:[],timestamp:0,windowNumber:owner.panel.windowNumber,context:nil,eventNumber:1,trackingNumber:0,userData:nil)!
+        let exited=NSEvent.enterExitEvent(with:.mouseExited,location:.zero,modifierFlags:[],timestamp:0,windowNumber:owner.panel.windowNumber,context:nil,eventNumber:2,trackingNumber:0,userData:nil)!
+        let resting=pixels(tile.bounds),restingName=pixels(nameRect)
+        tile.mouseEntered(with:entered)
+        let expectedProgress:CGFloat=NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0:1
+        let animationSettled=await settle {tile.hoverProgress == expectedProgress}
+        let raised=pixels(tile.bounds),raisedName=pixels(nameRect)
+        let hit=tile.hitTest(NSPoint(x:120,y:120))
+        print("DIAG launcher hover settled=\(animationSettled) progress=\(tile.hoverProgress) expected=\(expectedProgress) restingBytes=\(resting?.count ?? -1) raisedBytes=\(raised?.count ?? -1) faceChanged=\(resting != raised) nameStable=\(restingName != nil && restingName == raisedName) frameStable=\(tile.frame == originalFrame) boundsStable=\(tile.bounds == originalBounds) hit=\(hit.map{String(describing:type(of:$0))} ?? "nil") visible=\(owner.panel.isVisible)")
+        check(animationSettled && resting != nil && raised != nil && resting != raised && restingName != nil && restingName == raisedName && tile.frame == originalFrame && tile.bounds == originalBounds && hit === tile,
+              "hover changes the key face while the name pixels, layout and hit area remain stable")
+        tile.mouseExited(with:exited);tile.mouseEntered(with:entered);tile.mouseExited(with:exited)
+        let restored=await settle {tile.hoverProgress == 0}
+        check(restored && !tile.hovered && pixels(tile.bounds) == resting,
+              "rapid enter/exit returns to the original appearance without leaving a stale lift")
+        tile.reduceMotion=true;tile.mouseEntered(with:entered)
+        _=await settle {tile.hoverProgress == 0}
+        check(tile.hovered && tile.hoverProgress == 0 && tile.frame == originalFrame && pixels(nameRect) == restingName,
+              "reduced motion retains static hover feedback without moving the key or name")
+        return(count,failures)
+    }
     /// Posts only to this app's local queue and dispatches to an owned probe view.
     /// No system pointer, CGEvent, real picker, account source or launcher target is used.
     private static func checkWorkbenchInteraction(owner:LauncherController,directory:URL)->(count:Int,failures:Int) {
@@ -97,6 +147,9 @@ import LauncherCore
         guard let window=workbench.window,let content=window.contentView else {
             check(false,"fixture owns the canonical native workbench window");return(count,failures)
         }
+        window.orderOut(nil);owner.show()
+        check(owner.panel.isVisible && !window.isVisible && !window.isKeyWindow,
+              "opening the launcher leaves an existing closed workbench closed")
         workbench.present()
         let deadline=Date().addingTimeInterval(0.6)
         while window.alphaValue < 0.999 && Date() < deadline {_=RunLoop.main.run(mode:.default,before:Date().addingTimeInterval(0.01))}

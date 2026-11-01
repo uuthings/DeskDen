@@ -177,6 +177,14 @@ struct CalendarReminderDraft:Identifiable,Equatable {
 }
 
 enum CalendarPresentationMode:String,CaseIterable,Identifiable {case month,week,agenda;var id:String {rawValue};var title:String {switch self {case .month:"月";case .week:"周";case .agenda:"日程"}}}
+enum CalendarPermissionTarget:String,CaseIterable,Identifiable {
+    case calendar,reminders
+    var id:String {rawValue}
+    var isReminders:Bool {self == .reminders}
+    var title:String {isReminders ? "提醒事项":"日历"}
+    var privacyPane:String {isReminders ? "Privacy_Reminders":"Privacy_Calendars"}
+}
+
 private struct CalendarDisplayPreferences:Codable {
     var hiddenSources:Set<String> = []
     var holidaysEnabled=true
@@ -233,7 +241,11 @@ private struct CalendarDisplayPreferences:Codable {
     @Published var showSources=false
     @Published var sourcesReturnToPrivacy=false
     @Published var showNotifications=false
-    @Published var errorMessage:String?
+    @Published var errorMessage:String? {
+        didSet {permissionSettingsTargets=[]}
+    }
+    @Published private(set) var permissionSettingsTargets:[CalendarPermissionTarget]=[]
+    @Published private(set) var connectingSource:CalendarPermissionTarget?
     @Published private(set) var storageError:String?
     @Published private(set) var isLoading=false
     @Published private(set) var isWorking=false
@@ -246,6 +258,7 @@ private struct CalendarDisplayPreferences:Codable {
     private var displayPreferencesError:String?
     private let system:any CalendarSystemProviding
     private let notifier:any ReminderNotificationProviding
+    private let openSettingsURL:(URL)->Bool
     private var service:ReminderService?
     private var refreshVersion=0
     private struct MiniReadKey:Equatable {
@@ -276,8 +289,10 @@ private struct CalendarDisplayPreferences:Codable {
     private var notificationsNeedRefresh=false
 
     convenience init(dataDirectory:URL) { self.init(dataDirectory:dataDirectory,system:EventKitCalendarProvider(),notifier:LocalReminderNotificationProvider()) }
-    init(dataDirectory:URL,system:any CalendarSystemProviding,notifier:any ReminderNotificationProviding) {
+    init(dataDirectory:URL,system:any CalendarSystemProviding,notifier:any ReminderNotificationProviding,
+         openSettingsURL:@escaping (URL)->Bool = {NSWorkspace.shared.open($0)}) {
         store=ReminderStore(directory:dataDirectory); self.system=system; self.notifier=notifier
+        self.openSettingsURL=openSettingsURL
         displayPreferencesURL=dataDirectory.appendingPathComponent("calendar-display.json")
         if FileManager.default.fileExists(atPath:displayPreferencesURL.path) {
             do {
@@ -357,6 +372,7 @@ private struct CalendarDisplayPreferences:Codable {
     }
     var connectedSourceCount:Int { (preferences.calendarConnected && calendarAccess == .granted ? 1:0)+(preferences.remindersConnected && remindersAccess == .granted ? 1:0) }
     var systemRemindersAvailable:Bool {preferences.remindersConnected && remindersAccess == .granted}
+    var shouldPresentOperationError:Bool {errorMessage != nil && editor == nil && !showNotifications && !isWorking}
     var needsSystemConnection:Bool {!(preferences.calendarConnected && calendarAccess == .granted && systemRemindersAvailable)}
     var canRecoverBackup:Bool { (try? store.decode(Data(contentsOf:store.backupURL))) != nil }
     func count(on day:Date) -> Int { ReminderQueries.entries(reminders:reminders,events:visibleCalendarEvents,filter:.day,day:day,calendar:displayCalendar).count }
@@ -479,27 +495,63 @@ private struct CalendarDisplayPreferences:Codable {
         }
     }
     func connect(reminders:Bool) async {
-        guard !isWorking else { return }; isWorking=true; defer { isWorking=false }
+        guard !isWorking else { return }; isWorking=true; defer { isWorking=false;connectingSource=nil }
         errorMessage=nil
+        if let failure=await connectSource(reminders:reminders) {presentConnectionFailures([failure])}
+    }
+    private struct ConnectionFailure {
+        var message:String
+        var permissionTarget:CalendarPermissionTarget?
+    }
+    private func connectSource(reminders:Bool) async -> ConnectionFailure? {
+        let target:CalendarPermissionTarget=reminders ? .reminders:.calendar
+        connectingSource=target
         do {
             let allowed=try await system.requestAccess(reminders:reminders)
-            if reminders { remindersAccess=system.access(reminders:true) } else { calendarAccess=system.access(reminders:false) }
-            guard allowed else { errorMessage="未允许访问\(reminders ? "提醒事项":"日历")。本机提醒仍可正常使用。你可以在系统设置的隐私与安全性中更改权限。"; return }
+            let access=refreshSourceAccess(reminders:reminders)
+            guard allowed && access == .granted else {return permissionFailure(target,access:access)}
+        } catch {
+            let access=refreshSourceAccess(reminders:reminders)
+            if access == .denied || access == .restricted {return permissionFailure(target,access:access)}
+            return ConnectionFailure(message:"无法完成\(target.title)授权：\(error.localizedDescription)\n本机提醒仍可正常使用，请稍后重试或检查系统隐私设置。",permissionTarget:target)
+        }
+        do {
             var next=preferences; if reminders { next.remindersConnected=true } else { next.calendarConnected=true }
             try requireService().setPreferences(next); syncLocal(); await refresh()
-        } catch { errorMessage=error.localizedDescription }
+            return nil
+        } catch {return ConnectionFailure(message:"无法保存\(target.title)连接设置：\(error.localizedDescription)",permissionTarget:nil)}
+    }
+    private func refreshSourceAccess(reminders:Bool)->CalendarAccess {
+        let access=system.access(reminders:reminders)
+        if reminders {remindersAccess=access} else {calendarAccess=access}
+        return access
+    }
+    private func permissionFailure(_ target:CalendarPermissionTarget,access:CalendarAccess)->ConnectionFailure {
+        let message:String
+        if access == .restricted {
+            message="此设备限制了\(target.title)访问，方寸无法直接开启。请在系统设置中检查限制，或联系设备管理员。本机提醒仍可正常使用。"
+        } else if access == .denied {
+            message="未允许访问\(target.title)。本机提醒仍可正常使用。请在系统设置 → 隐私与安全性 → \(target.title)中允许方寸访问。"
+        } else {
+            message="\(target.title)授权尚未完成，连接未开启。请重试；如果系统没有显示授权提示，可前往系统设置检查权限。本机提醒仍可正常使用。"
+        }
+        return ConnectionFailure(message:message,permissionTarget:target)
+    }
+    private func presentConnectionFailures(_ failures:[ConnectionFailure]) {
+        errorMessage=failures.map(\.message).joined(separator:"\n\n")
+        permissionSettingsTargets=CalendarPermissionTarget.allCases.filter {target in failures.contains {$0.permissionTarget == target}}
     }
     /// An explicit user action requests the two separate macOS permissions.
     /// A denied source never disconnects the other source or migrates local data.
     func connectSystemSources() async {
-        guard !isWorking else {return}
-        var messages:[String]=[]
+        guard !isWorking else {return};isWorking=true;defer {isWorking=false;connectingSource=nil}
+        errorMessage=nil
+        var failures:[ConnectionFailure]=[]
         for reminders in [false,true] {
             if reminders ? systemRemindersAvailable:(preferences.calendarConnected && calendarAccess == .granted) {continue}
-            await connect(reminders:reminders)
-            if let errorMessage {messages.append(errorMessage)}
+            if let failure=await connectSource(reminders:reminders) {failures.append(failure)}
         }
-        errorMessage=messages.isEmpty ? nil:Array(Set(messages)).sorted().joined(separator:"\n")
+        if !failures.isEmpty {presentConnectionFailures(failures)}
     }
     func disconnect(reminders:Bool) async {
         guard !isWorking else { return }; isWorking=true; defer { isWorking=false }
@@ -633,7 +685,13 @@ private struct CalendarDisplayPreferences:Codable {
     }
     func openSystemCalendar() {NSWorkspace.shared.open(URL(fileURLWithPath:"/System/Applications/Calendar.app"))}
     func openPrivacySettings(reminders:Bool) {
-        if let url=URL(string:"x-apple.systempreferences:com.apple.preference.security?\(reminders ? "Privacy_Reminders":"Privacy_Calendars")") { NSWorkspace.shared.open(url) }
+        let target:CalendarPermissionTarget=reminders ? .reminders:.calendar
+        let destinations=["x-apple.systempreferences:com.apple.preference.security?\(target.privacyPane)","x-apple.systempreferences:com.apple.preference.security"]
+        if destinations.compactMap(URL.init(string:)).contains(where:openSettingsURL) {
+            errorMessage=nil
+        } else {
+            errorMessage="无法打开系统设置。请手动打开「系统设置 → 隐私与安全性 → \(target.title)」，检查方寸的访问权限。"
+        }
     }
     func openNotificationSettings() {
         if let url=URL(string:"x-apple.systempreferences:com.apple.Notifications-Settings.extension") { NSWorkspace.shared.open(url) }

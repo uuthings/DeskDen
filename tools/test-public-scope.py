@@ -177,10 +177,10 @@ class PublicGateTests(unittest.TestCase):
                 self.assertNotEqual(self.check("--staged").returncode, 0)
                 self.git("rm", "--cached", "-q", extra)
 
-    def test_only_reviewed_entitlement_template_is_public(self):
-        path = "Launcher/Signing/DeskDen.entitlements"
-        self.write(path, (ROOT / path).read_text())
-        self.git("add", path)
+    def test_only_reviewed_entitlement_templates_are_public(self):
+        for path in ["Launcher/Signing/DeskDen.entitlements", "Launcher/Signing/DeskDen-Debug.entitlements"]:
+            self.write(path, (ROOT / path).read_text())
+            self.git("add", path)
         self.assertEqual(self.check("--staged").returncode, 0)
         unexpected = "Launcher/Signing/Personal.entitlements"
         self.write(unexpected, "<plist><dict/></plist>\n")

@@ -64,6 +64,7 @@
 !/Launcher/BrowserConnectors/IPRoyal/tests/native-host.test.py
 /Launcher/Signing/*
 !/Launcher/Signing/DeskDen.entitlements
+!/Launcher/Signing/DeskDen-Debug.entitlements
 !/Launcher/Artwork/
 /Launcher/Artwork/*
 !/Launcher/Artwork/AppIcons/

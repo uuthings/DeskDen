@@ -104,7 +104,7 @@ def configuration_errors(info):
     if not decoded_size(info.get("SUPublicEDKey"), 32):
         errors.append("Ed25519 public key must contain exactly 32 canonical Base64 bytes")
     for key, expected in {
-        "SUEnableAutomaticChecks": False, "SUAutomaticallyUpdate": False,
+        "SUEnableAutomaticChecks": True, "SUAutomaticallyUpdate": False,
         "SUAllowsAutomaticUpdates": False, "SUSendProfileInfo": False,
         "SUVerifyUpdateBeforeExtraction": True, "SURequireSignedFeed": True,
     }.items():
@@ -349,12 +349,13 @@ def read_regular(path, limit=2_000_000):
 def run_fixtures(check):
     info = {"SUFeedURL": FEED_URL, "SUPublicEDKey": base64.b64encode(bytes(range(32))).decode(), "LSMinimumSystemVersion": "14.0",
             "SUScheduledCheckInterval": 86_400,
-            **{key: False for key in ("SUEnableAutomaticChecks", "SUAutomaticallyUpdate", "SUAllowsAutomaticUpdates", "SUSendProfileInfo")},
+            "SUEnableAutomaticChecks": True,
+            **{key: False for key in ("SUAutomaticallyUpdate", "SUAllowsAutomaticUpdates", "SUSendProfileInfo")},
             "SUVerifyUpdateBeforeExtraction": True, "SURequireSignedFeed": True}
     check(not configuration_errors(info), "a synthetic safe updater configuration passes the pure policy")
     for key, value in [("SUFeedURL", "http://example.invalid/appcast.xml"), ("SUFeedURL", "https://user:password@example.invalid/feed"),
                        ("SUPublicEDKey", base64.b64encode(bytes(31)).decode()), ("SUPublicEDKey", base64.b64encode(bytes(64)).decode()),
-                       ("SUPublicEDKey", "not-base64"), ("SUEnableAutomaticChecks", True), ("SUEnableAutomaticChecks", 0),
+                       ("SUPublicEDKey", "not-base64"), ("SUEnableAutomaticChecks", False), ("SUEnableAutomaticChecks", 0),
                        ("SUAutomaticallyUpdate", True), ("SUAllowsAutomaticUpdates", True), ("SUSendProfileInfo", True),
                        ("SUVerifyUpdateBeforeExtraction", False), ("SURequireSignedFeed", False),
                        ("SUScheduledCheckInterval", 3600), ("SUScheduledCheckInterval", True), ("SUScheduledCheckInterval", float("nan"))]:
@@ -531,7 +532,7 @@ def main(dependencies_only=False):
 
     if not dependencies_only:
         info = plistlib.loads(read_regular(ROOT / "Launcher/Resources/Info.plist"))
-        policy(configuration_errors(info), "updater uses HTTPS, a 32-byte public key, manual defaults and signed daily checks")
+        policy(configuration_errors(info), "updater uses HTTPS, a 32-byte public key, automatic-check defaults, manual installation and signed daily checks")
     policy(manifest_errors(read_regular(ROOT / "Launcher/Package.swift").decode()), "SwiftPM pins and links official Sparkle 2.10.0")
     first, second = (json.loads(read_regular(ROOT / path)) for path in LOCK_FILES)
     policy(lock_errors(first, second), "SwiftPM and Xcode locks contain identical reviewed dependency pins")

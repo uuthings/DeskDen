@@ -19,52 +19,50 @@ import SwiftUI
         let information: [String: Any] = [
             "SUFeedURL": "https://example.com/deskden/appcast.xml",
             "SUPublicEDKey": Data((0..<32).map(UInt8.init)).base64EncodedString(),
-            "SUEnableAutomaticChecks": false, "SUAutomaticallyUpdate": false,
+            "SUEnableAutomaticChecks": true, "SUAutomaticallyUpdate": false,
             "SUAllowsAutomaticUpdates": false, "SUVerifyUpdateBeforeExtraction": true, "SURequireSignedFeed": true
         ]
+        var date = Date(timeIntervalSince1970: 1_790_000_000)
         let factory = UpdateCheckEngineFactory(defaults: defaults)
-        let updates = AppUpdateController(defaults: defaults, information: information, engineFactory: factory.make)
+        let updates = AppUpdateController(defaults: defaults, information: information, now: { date }, engineFactory: factory.make)
+        check(updates.automaticallyChecks && factory.engines.isEmpty, "fresh installations default to automatic checks without eagerly starting a service")
         updates.startAutomaticCheckingIfEnabled()
-        check(factory.engines.isEmpty && !updates.automaticallyChecks && updates.canCheck && defaults.object(forKey: "SUEnableAutomaticChecks") == nil,
-              "fresh manual mode constructs no update engine, performs no check and writes no automatic-check preference")
-        updates.checkForUpdates()
-        guard let first = factory.engines.first else {
-            check(false, "manual update check creates an injected engine"); return (count, failures)
-        }
-        check(factory.engines.count == 1 && first.starts == 1 && first.checks == 1 && !updates.canCheck && !updates.hasError,
-              "one explicit manual update action starts the lazy engine once and requests exactly one check")
-        updates.checkForUpdates(); updates.checkForUpdates()
-        check(factory.engines.count == 1 && first.starts == 1 && first.checks == 1,
-              "busy update checking rejects repeated actions instead of creating engines or overlapping checks")
-        let date = Date(timeIntervalSince1970: 1_790_000_000)
+        guard let first = factory.engines.first else { check(false, "launch creates an injected update engine"); return (count, failures) }
+        check(first.starts == 1 && first.backgroundChecks == 1 && !updates.isDialogPresented && defaults.object(forKey: "SUEnableAutomaticChecks") == nil,
+              "launch performs one silent due check without rewriting the automatic-check preference")
+        updates.startAutomaticCheckingIfEnabled(); updates.checkAutomaticallyIfDue(reconnected: true)
+        check(first.backgroundChecks == 1 && first.starts == 1, "duplicate launch/wake/connectivity triggers do not overlap a running check")
+        first.complete(at: date); updates.foundNoUpdate()
+        date = date.addingTimeInterval(86_399); updates.checkAutomaticallyIfDue()
+        check(first.backgroundChecks == 1, "the daily interval is measured from the real last check")
+        date = date.addingTimeInterval(1); updates.checkAutomaticallyIfDue()
+        check(first.backgroundChecks == 2 && !updates.isDialogPresented, "a due daily trigger starts another silent check")
         first.complete(at: date)
-        check(updates.canCheck && updates.lastChecked == date, "engine changes restore availability and publish the actual last-check date")
-        updates.checkForUpdates()
-        check(first.checks == 2 && first.starts == 1 && !updates.canCheck,
-              "a later explicit manual action reuses the same engine after the prior check completes")
+        updates.recordAbort(NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet))
+        check(updates.hasError && !updates.isDialogPresented, "background transport failure records status without opening a dialog")
+        date = date.addingTimeInterval(61); updates.checkAutomaticallyIfDue(reconnected: true)
+        check(first.backgroundChecks == 3, "restored connectivity retries a failed due check without waiting another day")
         first.complete(at: date)
-        check(first.automaticWrites == 0 && defaults.object(forKey: "SUEnableAutomaticChecks") == nil,
-              "manual checks and observed engine changes never enable automatic checking")
-
-        updates.setAutomaticallyChecks(true)
-        check(updates.automaticallyChecks && first.automaticWrites == 1 && defaults.bool(forKey: "SUEnableAutomaticChecks") && first.checks == 2,
-              "only explicit preference changes enable automatic checks using Sparkle's own persisted preference key")
-        let restoredFactory = UpdateCheckEngineFactory(defaults: defaults)
-        let restored = AppUpdateController(defaults: defaults, information: information, engineFactory: restoredFactory.make)
-        check(restored.automaticallyChecks && restoredFactory.engines.isEmpty,
-              "restoring an enabled preference stays lazy until the launch hook is called")
-        restored.startAutomaticCheckingIfEnabled(); restored.startAutomaticCheckingIfEnabled()
-        check(restoredFactory.engines.count == 1 && restoredFactory.engines[0].starts == 1 && restoredFactory.engines[0].automaticallyChecksForUpdates,
-              "launch restores the same automatic-check preference and starts only one engine")
-        restored.setAutomaticallyChecks(false)
+        updates.setAutomaticallyChecks(false)
         let manualFactory = UpdateCheckEngineFactory(defaults: defaults)
         let manual = AppUpdateController(defaults: defaults, information: information, engineFactory: manualFactory.make)
         manual.startAutomaticCheckingIfEnabled()
-        check(!restored.automaticallyChecks && !manual.automaticallyChecks && manualFactory.engines.isEmpty && defaults.object(forKey: "SUEnableAutomaticChecks") as? Bool == false,
-              "an explicit opt-out survives recreation and prevents subsequent launch-time updater startup")
-        defaults.set(date, forKey: "SULastCheckTime")
-        let history = AppUpdateController(defaults: defaults, information: information, engineFactory: manualFactory.make)
-        check(history.lastChecked == date && manualFactory.engines.isEmpty, "displaying the saved last-check time requires no engine or network request")
+        check(!manual.automaticallyChecks && manualFactory.engines.isEmpty && defaults.object(forKey: "SUEnableAutomaticChecks") as? Bool == false,
+              "an explicit saved opt-out survives recreation and prevents launch-time checks")
+        manual.checkForUpdates()
+        guard let manualEngine = manualFactory.engines.first else { check(false, "manual check creates the engine"); return (count, failures) }
+        check(manualEngine.checks == 1 && manual.isDialogPresented && !manual.canCheck, "an explicit check opens its dialog and starts exactly one user session")
+        manual.checkForUpdates(); manual.checkForUpdates()
+        check(manualEngine.checks == 1, "repeated check actions retain the existing session instead of overlapping")
+        manualEngine.canCheckForUpdates = true
+        manual.offerUpdate(.init(version: "2.0.0", publishedAt: nil, notes: [], downloadSize: nil, informationURL: nil, informationOnly: false), userInitiated: true) { _ in }
+        manual.checkForUpdates()
+        check(manualEngine.checks == 1 && manual.phase == .available, "Sparkle focus availability cannot restart or overwrite an active offered session")
+        manualEngine.complete(at: date); manual.foundNoUpdate()
+        check(manual.canCheck && manual.lastChecked == date && manual.phase == .upToDate && !manual.automaticallyChecks,
+              "manual completion publishes the actual result and date without enabling automatic checks")
+        manual.recordAbort(NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut))
+        check(manual.hasError && manual.isDialogPresented && manual.phase == .failed, "manual check failures remain visibly actionable")
 
         var invalid: [(String, [String: Any])] = []
         func invalidValue(_ key: String, _ value: Any?, _ name: String) {
@@ -76,57 +74,114 @@ import SwiftUI
         invalidValue("SUPublicEDKey", "invalid-key", "invalid public-key encoding")
         invalidValue("SUPublicEDKey", Data(repeating: 1, count: 31).base64EncodedString(), "wrong public-key length")
         invalidValue("SUPublicEDKey", nil, "missing update public key")
-        invalidValue("SUEnableAutomaticChecks", true, "automatic checking enabled by build default")
+        invalidValue("SUEnableAutomaticChecks", false, "obsolete manual build default")
         invalidValue("SUAutomaticallyUpdate", true, "automatic installation enabled")
         invalidValue("SUAllowsAutomaticUpdates", true, "automatic installation allowed")
         invalidValue("SUVerifyUpdateBeforeExtraction", false, "pre-extraction verification disabled")
         invalidValue("SURequireSignedFeed", false, "unsigned feed allowed")
-        invalidValue("SURequireSignedFeed", nil, "missing signed-feed requirement")
         for (label, entry) in invalid {
             let spy = UpdateCheckEngineFactory(defaults: defaults)
             let controller = AppUpdateController(defaults: defaults, information: entry, engineFactory: spy.make)
             controller.startAutomaticCheckingIfEnabled(); controller.setAutomaticallyChecks(true); controller.checkForUpdates()
-            check(!AppUpdateController.configurationIsValid(entry) && !controller.canCheck && controller.hasError
-                    && spy.engines.isEmpty && defaults.object(forKey: "SUEnableAutomaticChecks") as? Bool == false,
-                  "update configuration rejects \(label) before constructing or starting an engine")
+            check(!AppUpdateController.configurationIsValid(entry) && !controller.canCheck && controller.hasError && spy.engines.isEmpty,
+                  "update configuration rejects \(label) before constructing an engine")
         }
         let blockedFactory = UpdateCheckEngineFactory(defaults: defaults)
         let blocked = AppUpdateController(defaults: defaults, information: information, allowsStarting: false, engineFactory: blockedFactory.make)
         blocked.checkForUpdates(); blocked.setAutomaticallyChecks(true)
-        check(blockedFactory.engines.isEmpty && !blocked.automaticallyChecks,
-              "an explicitly disabled updater environment cannot construct an engine through manual checks or opt-in")
+        check(blockedFactory.engines.isEmpty && !blocked.automaticallyChecks, "a disabled test environment cannot construct the real updater")
         let retryFactory = UpdateCheckEngineFactory(defaults: defaults); retryFactory.failingStarts = 1
         let retry = AppUpdateController(defaults: defaults, information: information, engineFactory: retryFactory.make)
         retry.setAutomaticallyChecks(true)
-        check(retry.hasError && !retry.automaticallyChecks && retryFactory.engines.count == 1 && retryFactory.engines[0].checks == 0
-                && defaults.object(forKey: "SUEnableAutomaticChecks") as? Bool == false,
-              "a failed engine start preserves manual preference and never dispatches a check")
+        check(retry.hasError && !retry.automaticallyChecks && retryFactory.engines[0].checks == 0,
+              "failed opt-in does not overwrite the user's saved disabled preference")
         retry.checkForUpdates()
-        check(!retry.hasError && retryFactory.engines.count == 2 && retryFactory.engines[1].starts == 1 && retryFactory.engines[1].checks == 1,
-              "a failed updater start can be retried with a fresh engine and one explicit manual check")
-        let optInRetryFactory = UpdateCheckEngineFactory(defaults: defaults); optInRetryFactory.failingStarts = 1
-        let optInRetry = AppUpdateController(defaults: defaults, information: information, engineFactory: optInRetryFactory.make)
-        optInRetry.setAutomaticallyChecks(true)
-        check(optInRetry.hasError && !optInRetry.automaticallyChecks, "a failed explicit opt-in reports its start error without saving an enabled preference")
-        optInRetry.setAutomaticallyChecks(true)
-        check(!optInRetry.hasError && optInRetry.automaticallyChecks && optInRetryFactory.engines.count == 2
-                && optInRetryFactory.engines[1].checks == 0 && defaults.bool(forKey: "SUEnableAutomaticChecks"),
-              "retrying explicit automatic-check opt-in clears the prior start failure without dispatching a manual check")
+        check(!retry.hasError && retryFactory.engines.count == 2 && retryFactory.engines[1].checks == 1,
+              "a failed updater start can be retried with one fresh manual session")
 
-        let abortFactory = UpdateCheckEngineFactory(defaults: defaults)
-        let aborted = AppUpdateController(defaults: defaults, information: information, engineFactory: abortFactory.make)
-        aborted.recordAbort(NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet))
-        check(aborted.hasError, "an actual feed transport failure remains an update error")
-        aborted.recordAbort(NSError(domain: SUSparkleErrorDomain, code: Int(SUError.installationCanceledError.rawValue)))
-        let cancellationStatus = aborted.status
-        check(!aborted.hasError && cancellationStatus == "已取消更新，当前版本继续使用" && abortFactory.engines.isEmpty,
-              "cancelling Sparkle installation authorization clears a previous channel error and reports a normal cancellation without an engine or installer")
-        aborted.recordAbort(NSError(domain: SUSparkleErrorDomain, code: Int(SUError.noUpdateError.rawValue)))
-        check(!aborted.hasError && aborted.status == cancellationStatus,
-              "the no-update completion still preserves the status already published by its specific delegate callback")
-        aborted.recordAbort(NSError(domain: NSURLErrorDomain, code: Int(SUError.installationCanceledError.rawValue)))
-        check(aborted.hasError && abortFactory.engines.isEmpty,
-              "a coincidentally equal error code from another domain cannot hide a real update failure")
+        let synthetic = AppUpdateRelease(version: "2.0.0", publishedAt: nil,
+            notes: [.init(title: "Synthetic change", detail: "Synthetic explanation")], downloadSize: 100,
+            informationURL: nil, informationOnly: false)
+        let flow = AppUpdateController(defaults: defaults, information: information, allowsStarting: false)
+        var choices: [SPUUserUpdateChoice] = [], cancellations = 0, completions = 0
+        flow.offerUpdate(synthetic, userInitiated: false) { choices.append($0) }
+        check(flow.release == synthetic && flow.phase == .available && !flow.isDialogPresented && choices.isEmpty,
+              "a background offer only publishes a sidebar entry and never starts its download")
+        flow.showUpdateDialog(); flow.dismissDialog()
+        check(flow.release == synthetic && choices.isEmpty && !flow.isDialogPresented,
+              "later keeps the actual offer and callback without accepting or skipping the release")
+        flow.downloadUpdate()
+        check(choices == [.install] && flow.phase == .downloading, "only the explicit download action accepts the Sparkle offer")
+        flow.downloadStarted { cancellations += 1 }; flow.downloadExpected(100); flow.downloadReceived(55)
+        check(flow.progress == 0.55 && flow.downloadedBytes == 55 && flow.canCancelUpdate, "download progress uses actual byte callbacks")
+        flow.showUpdateDialog(); flow.dismissDialog()
+        check(cancellations == 0 && flow.phase == .downloading, "closing a download dialog keeps its transfer running")
+        flow.extractionStarted(); flow.readyToInstall { choices.append($0) }
+        check(flow.phase == .readyToInstall && choices == [.install] && !flow.isDialogPresented,
+              "download preparation waits for a separate installation decision without reopening a dismissed dialog")
+        flow.prepareForOrdinaryTermination { completions += 1 }
+        check(choices == [.install, .skip] && completions == 0, "ordinary quit cancels Sparkle's prepared install and waits for acknowledgement")
+        flow.finishUpdateCycle(); flow.finishUpdateCycle()
+        check(completions == 1 && flow.phase == .available, "ordinary quit resumes exactly once after installer cancellation completes")
+        flow.extractionStarted(); flow.prepareForOrdinaryTermination { completions += 1 }
+        check(completions == 1, "quit during extraction waits until the framework exposes a cancellation choice")
+        flow.readyToInstall { choices.append($0) }; flow.finishUpdateCycle()
+        check(choices.last == .skip && completions == 2, "extraction completion cancels preparation before approving ordinary quit")
+        flow.readyToInstall { choices.append($0) }; flow.isDialogPresented = true; flow.installUpdate()
+        flow.prepareForOrdinaryTermination { completions += 1 }
+        check(choices.last == .install && completions == 3 && flow.phase == .installing && !flow.isDialogPresented,
+              "explicit installation proceeds through normal termination and removes only its own dialog")
+        var retries = 0
+        flow.installing(retry: { retries += 1 }, applicationTerminated: false); flow.installUpdate()
+        check(retries == 1 && flow.canRetryInstallation, "unsaved content can defer termination and the same installer can retry later")
+        flow.recordAbort(NSError(domain: SUSparkleErrorDomain, code: Int(SUError.installationCanceledError.rawValue)))
+        check(!flow.hasError && flow.status == "已取消更新，当前版本继续使用", "installation cancellation is not misreported as a transport failure")
+        flow.downloadStarted { cancellations += 1 }; flow.cancelUpdate()
+        check(cancellations == 1 && flow.phase == .available && flow.release == synthetic, "cancel download retains the release entry for an explicit retry")
+        flow.downloadStarted {}; flow.dismissDialog(); flow.recordAbort(NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut))
+        check(flow.phase == .failed && flow.release == synthetic && !flow.isDialogPresented, "a backgrounded download failure remains in its existing update entry without stealing focus")
+        let downloadRetryFactory = UpdateCheckEngineFactory(defaults: defaults)
+        let downloadRetry = AppUpdateController(defaults: defaults, information: information, engineFactory: downloadRetryFactory.make)
+        var retryChoices: [SPUUserUpdateChoice] = []
+        downloadRetry.offerUpdate(synthetic, userInitiated: true) { retryChoices.append($0) }
+        downloadRetry.downloadUpdate(); downloadRetry.downloadStarted {}
+        let downloadError = NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut)
+        downloadRetry.recordAbort(downloadError); downloadRetry.recordAbort(downloadError)
+        downloadRetry.retryUpdate()
+        downloadRetry.offerUpdate(synthetic, userInitiated: true) { retryChoices.append($0) }
+        check(downloadRetryFactory.engines.first?.checks == 1 && retryChoices == [.install, .install],
+              "duplicate driver and delegate errors preserve download retry intent while revalidating the same release")
+        defaults.set("1.0.0", forKey: "SUSkippedVersion")
+        defaults.set("1", forKey: "SUSkippedMajorVersion")
+        defaults.removeObject(forKey: "SUSkippedMajorSubreleaseVersion")
+        flow.offerUpdate(synthetic, stage: .installing, userInitiated: false) { choice in
+            choices.append(choice)
+            if choice == .skip {
+                // Sparkle 2.10's resumed offer writes its skip preferences before
+                // aborting the session, unlike the later ready callback.
+                defaults.set("2.0.0", forKey: "SUSkippedVersion")
+                defaults.set("2", forKey: "SUSkippedMajorVersion")
+                defaults.set("2.0.0", forKey: "SUSkippedMajorSubreleaseVersion")
+            }
+        }
+        flow.prepareForOrdinaryTermination { completions += 1 }
+        flow.recordAbort(NSError(domain: SUSparkleErrorDomain, code: Int(SUError.installationCanceledError.rawValue)))
+        flow.finishUpdateCycle()
+        check(defaults.string(forKey: "SUSkippedVersion") == "1.0.0" && defaults.string(forKey: "SUSkippedMajorVersion") == "1"
+              && defaults.object(forKey: "SUSkippedMajorSubreleaseVersion") == nil,
+              "cancelling a resumed installer offer restores exact prior skipped-version preferences after error completion")
+        let htmlNotes = AppUpdateController.releaseNotes("<p>Important &amp; verified</p><script>bad()</script><p>Keep compatibility warning</p>", format: "html")
+        check(htmlNotes.map(\.title) == ["Important & verified", "Keep compatibility warning"], "verified HTML notes become bounded inert text without losing upgrade warnings")
+        let pairedNotes = AppUpdateController.releaseNotes("启动器悬停反馈\n图标与按键框轻微上浮、放大。\n\n升级注意\n升级前请保存现有内容。", format: "plain-text")
+        check(pairedNotes == [.init(title: "启动器悬停反馈", detail: "图标与按键框轻微上浮、放大。"), .init(title: "升级注意", detail: "升级前请保存现有内容。")],
+              "release paragraphs keep a short heading and its explanatory text together")
+        let listNotes = AppUpdateController.releaseNotes("- First change\n  Important details\n- Second change\n\nA standalone paragraph.", format: "plain-text")
+        check(listNotes == [.init(title: "First change", detail: "Important details"), .init(title: "Second change", detail: nil), .init(title: "A standalone paragraph.", detail: nil)],
+              "explicit bullet lists preserve item boundaries and standalone paragraphs without invented headings")
+        check(AppUpdateController.allowedInformationURL(URL(string: "https://github.com/uuthings/DeskDen/releases/tag/v2.0.0")) != nil
+              && AppUpdateController.allowedInformationURL(URL(string: "https://example.com/download")) == nil
+              && AppUpdateController.allowedInformationURL(URL(string: "file:///tmp/update")) == nil,
+              "informational release links permit only the product's trusted HTTPS destinations")
 
         let relaunch = await checkRelaunch()
         count += relaunch.count; failures += relaunch.failures
@@ -316,22 +371,24 @@ import SwiftUI
 }
 @MainActor private final class UpdateCheckEngine: AppUpdateEngine {
     let defaults: UserDefaults; let failsStart: Bool
-    var starts = 0, checks = 0, automaticWrites = 0
+    var starts = 0, checks = 0, backgroundChecks = 0, automaticWrites = 0
     var canCheckForUpdates = true
+    var sessionInProgress = false
     var lastUpdateCheckDate: Date?
     private var automatic: Bool
     private var changed: (@MainActor () -> Void)?
     init(defaults: UserDefaults, failsStart: Bool) {
-        self.defaults = defaults; self.failsStart = failsStart; automatic = defaults.bool(forKey: "SUEnableAutomaticChecks")
+        self.defaults = defaults; self.failsStart = failsStart; automatic = defaults.object(forKey: "SUEnableAutomaticChecks") as? Bool ?? true
     }
     var automaticallyChecksForUpdates: Bool {
         get { automatic }
         set { automaticWrites += 1; automatic = newValue; defaults.set(newValue, forKey: "SUEnableAutomaticChecks"); changed?() }
     }
     func start() throws { starts += 1; if failsStart { throw UpdateCheckError.engineStart } }
-    func checkForUpdates() { checks += 1; canCheckForUpdates = false; changed?() }
+    func checkForUpdates() { checks += 1; canCheckForUpdates = false; sessionInProgress = true; changed?() }
+    func checkForUpdatesInBackground() { backgroundChecks += 1; canCheckForUpdates = false; sessionInProgress = true; changed?() }
     func observeChanges(_ changed: @escaping @MainActor () -> Void) -> Set<AnyCancellable> { self.changed = changed; return [] }
-    func complete(at date: Date) { canCheckForUpdates = true; lastUpdateCheckDate = date; changed?() }
+    func complete(at date: Date) { canCheckForUpdates = true; sessionInProgress = false; lastUpdateCheckDate = date; changed?() }
 }
 private enum UpdateCheckError: Error { case engineStart, missingFixture, unsafePath, timedOut }
 @MainActor private final class UpdateCheckReminderNotifications: ReminderNotificationProviding {

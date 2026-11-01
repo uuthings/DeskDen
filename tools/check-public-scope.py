@@ -18,7 +18,7 @@ ALLOWED = [
     r"Launcher/Tests/(?:LauncherCoreTests|WorkbenchChecks)/[A-Za-z0-9_]+\.swift",
     r"Launcher/scripts/[a-z0-9-]+\.(?:sh|py|swift)",
     r"Launcher/BrowserConnectors/IPRoyal/(?:manifest\.json|extension-id\.txt|(?:protocol(?:-isolated)?|observer|content|background|popup)\.js|popup\.(?:html|css)|icon-(?:16|32|64|128)\.png|(?:README|INSTALL)\.md|install\.command|prepare-kit\.py|tests/(?:protocol\.test\.cjs|native-host\.test\.py))",
-    r"Launcher/Signing/DeskDen\.entitlements",
+    r"Launcher/Signing/DeskDen(?:-Debug)?\.entitlements",
     r"Launcher/Resources/(?:Info\.plist|AppIcon\.icns|PanelLogo\.png)",
     r"Launcher/Resources/Workbench/(?:(?:ar-world|thunder-cabin|qingbi-chenwu|yuebai-yunhai|nuanxia-xuanshan)\.jpg|(?:chatgpt|claude|deepseek)\.png)",
     r"Launcher/Artwork/Workbench/(?:(?:qingbi-chenwu|yuebai-yunhai|nuanxia-xuanshan)\.png|README\.md|provenance\.json)",

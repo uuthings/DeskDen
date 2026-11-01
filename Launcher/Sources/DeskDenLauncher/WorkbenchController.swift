@@ -241,6 +241,13 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
                 try await self.ai.prepareForQuit()
                 try await self.providerUsage.prepareForQuit()
                 try await self.apiBalance.prepareForQuit()
+                if !owner.preparingUpdateRelaunch {
+                    // A downloaded Sparkle update must not install as a side
+                    // effect of an ordinary quit. Wait until its session ends.
+                    await withCheckedContinuation { continuation in
+                        owner.updates.prepareForOrdinaryTermination { continuation.resume() }
+                    }
+                }
                 self.confirmingQuit=false
                 owner.finishConfirmedQuit()
                 // Keep both the UI and notification gate frozen until the OS

@@ -36,6 +36,10 @@ import SwiftUI
         presentations.removeAll { $0.id == id }
         for child in descendants {child.invalidate();remove(child.id)}
     }
+    func updateWidth(_ width: CGFloat, for id: UUID) {
+        guard let index = presentations.firstIndex(where: { $0.id == id }), presentations[index].width != width else { return }
+        presentations[index].width = width
+    }
     func dismissTop() { hostWindow?.makeFirstResponder(nil); top?.requestDismiss() }
     func clear() {let previous=presentations;presentations=[];for item in previous {item.invalidate()}}
 }
@@ -118,6 +122,9 @@ private struct WorkbenchBooleanModal<ModalContent: View>: ViewModifier {
                 if wasPresented { wasPresented = false; onDismiss?() }
             }
         }
+        .onChange(of: width) { _, value in
+            if presented { coordinator?.updateWidth(value, for: identity) }
+        }
     }
 }
 
@@ -182,6 +189,8 @@ struct WorkbenchScrollView<Content: View>: View {
 /// Short confirmations stay compact, while long forms keep header/actions fixed.
 struct WorkbenchDialogBody<Content: View>: View {
     var maximumHeight: CGFloat = 480
+    var horizontalPadding: CGFloat = 18
+    var bottomPadding: CGFloat = 18
     @ViewBuilder var content: () -> Content
     @Environment(\.workbenchModalBodyLimit) private var viewportLimit
     @State private var measuredHeight: CGFloat = 0
@@ -189,7 +198,7 @@ struct WorkbenchDialogBody<Content: View>: View {
         WorkbenchScrollView {
             content().frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 18).padding(.bottom, 18)
+                .padding(.horizontal, horizontalPadding).padding(.bottom, bottomPadding)
                 .background(GeometryReader { geometry in
                     Color.clear.preference(key: WorkbenchDialogBodyHeightKey.self, value: geometry.size.height)
                         .allowsHitTesting(false)

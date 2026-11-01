@@ -586,7 +586,7 @@ enum NativeChecks {
         count += notificationChecks.count;failures += notificationChecks.failures
         let launcherShortcutChecks=LauncherShortcutChecks.run()
         count += launcherShortcutChecks.count;failures += launcherShortcutChecks.failures
-        let launcherPresentationChecks=LauncherPresentationNativeChecks.run()
+        let launcherPresentationChecks=await LauncherPresentationNativeChecks.run()
         count += launcherPresentationChecks.count;failures += launcherPresentationChecks.failures
         let launcherSettingsChecks=await WorkbenchLauncherSettingsChecks.run()
         count += launcherSettingsChecks.count;failures += launcherSettingsChecks.failures

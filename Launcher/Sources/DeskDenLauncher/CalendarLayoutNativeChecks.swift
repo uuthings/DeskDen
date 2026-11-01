@@ -38,7 +38,9 @@ import LauncherCore
             snapshot.preferences.calendarConnected = true; snapshot.preferences.remindersConnected = true
             try ReminderStore(directory: calendarDirectory).save(snapshot)
             let system = CalendarLayoutSystem(), notifier = CalendarLayoutNotifications()
-            let calendar = CalendarModel(dataDirectory: calendarDirectory, system: system, notifier: notifier)
+            var openedSettings: [URL] = []
+            let calendar = CalendarModel(dataDirectory: calendarDirectory, system: system, notifier: notifier,
+                                         openSettingsURL: { openedSettings.append($0); return true })
             let ai = AIUsageModel(dataDirectory: aiDirectory, startServices: false, notifications: CalendarLayoutAINotifications(),
                                   claudeSettingsDirectory: directory.appendingPathComponent("DisabledClaude"))
             let model = WorkbenchAppModel(owner: owner, calendar: calendar, ai: ai, startServices: false)
@@ -183,6 +185,34 @@ import LauncherCore
             check(!model.device.isSampling && !ai.isRefreshing && model.providerUsage.refreshing.isEmpty && model.apiBalance.refreshing.isEmpty
                   && system.permissionRequests == 0 && system.writes == 0 && notifier.permissionRequests == 0 && notifier.nonemptyDeliveries == 0,
                   "calendar fixture never accesses real sources, requests permissions or schedules real notifications")
+
+            // Permissions are rejected by the fixture provider; Settings URLs
+            // are captured rather than opening or changing system preferences.
+            await calendar.disconnect(reminders:false);await calendar.disconnect(reminders:true)
+            system.calendarAccess = .denied;system.remindersAccess = .denied
+            await calendar.refresh();calendar.openSources()
+            check(await settle(window) {frame("calendar-source-system-events",in:host) != nil},
+                  "source management mounts its actual calendar permission switch")
+            for target in CalendarPermissionTarget.allCases {
+                let toggleID=target.isReminders ? "calendar-source-system-reminders":"calendar-source-system-events"
+                check(press(toggleID,in:host),"the actual \(target.rawValue) source switch accepts an enable action")
+                let actionID="fc.calendar.permission.settings."+target.rawValue
+                check(await settle(window) {frame("fc.calendar.error.dialog",in:host) != nil && frame(actionID,in:host) != nil},
+                      "a denied \(target.rawValue) source switch shows its shared error dialog and Settings action")
+                check(calendar.showSources && !calendar.preferences.calendarConnected && !calendar.preferences.remindersConnected
+                      && text("fc.calendar.error.dialog",in:host).contains("未允许访问"+target.title),
+                      "permission failure stays on the source page and does not report a connected source")
+                if let dialog=frame("fc.calendar.error.dialog",in:host),let button=frame(actionID,in:host) {
+                    check(dialog.insetBy(dx:-2,dy:-2).contains(button),"the permission Settings action fits inside its dialog")
+                } else {check(false,"the permission dialog exposes readable action geometry")}
+                if target == .calendar {try NativeUIFixtureAccessibility.saveView(host,name:"calendar-permission-denied.png")}
+                check(press(actionID,in:host),"the \(target.rawValue) privacy button accepts a real UI action")
+                check(await settle(window) {calendar.errorMessage == nil && openedSettings.last?.absoluteString.hasSuffix("?"+target.privacyPane) == true},
+                      "the privacy button routes to the matching Settings pane without opening the real app")
+            }
+            check(system.permissionRequests == 2 && system.writes == 0 && openedSettings.count == 2
+                  && notifier.permissionRequests == 0 && notifier.nonemptyDeliveries == 0,
+                  "permission UI checks use only two synthetic requests and intercepted Settings links")
         } catch { check(false, "calendar layout fixture: \(error.localizedDescription)") }
         return (count, failures)
     }
@@ -274,10 +304,11 @@ import LauncherCore
 
 @MainActor private final class CalendarLayoutSystem: CalendarSystemProviding {
     var permissionRequests = 0, writes = 0
+    var calendarAccess: CalendarAccess = .granted, remindersAccess: CalendarAccess = .granted
     var failEvents = false
     var eventsValue: [CalendarEventItem] = [], remindersValue: [ReminderItem] = []
-    func access(reminders: Bool) -> CalendarAccess { .granted }
-    func requestAccess(reminders: Bool) async throws -> Bool { permissionRequests += 1; return true }
+    func access(reminders: Bool) -> CalendarAccess { reminders ? remindersAccess:calendarAccess }
+    func requestAccess(reminders: Bool) async throws -> Bool { permissionRequests += 1; return access(reminders:reminders) == .granted }
     func calendarSources() -> [CalendarSourceDescriptor] { [.init(id: "fixture-calendar", title: "隔离日历")] }
     func events(in interval: DateInterval) throws -> [CalendarEventItem] {
         if failEvents { throw ReminderError.unavailable("Isolated calendar read failure") }

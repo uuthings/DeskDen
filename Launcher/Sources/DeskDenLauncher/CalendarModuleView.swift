@@ -410,7 +410,7 @@ struct CalendarDialogs:View {
             .workbenchModal(isPresented:$model.showNewChoice) {CalendarNewChoice(model:model)}
             .onAppear {syncZone()}
             .onReceive(context?.objectWillChange.eraseToAnyPublisher() ?? Empty<Void,Never>().eraseToAnyPublisher()) {_ in Task {@MainActor in syncZone()}}
-            .workbenchModal(isPresented:Binding(get:{model.errorMessage != nil && model.editor == nil && !model.showSources && !model.showNotifications},set:{if !$0 {model.errorMessage=nil}}),onRequestDismiss:{model.errorMessage=nil}) {
+            .workbenchModal(isPresented:Binding(get:{model.shouldPresentOperationError},set:{if !$0 {model.errorMessage=nil}}),onRequestDismiss:{model.errorMessage=nil}) {
                 CalendarOperationErrorDialog(model:model)
             }
     }
@@ -421,12 +421,17 @@ private struct CalendarOperationErrorDialog:View {
     @ObservedObject var model:CalendarModel
     @Environment(\.workbenchPalette) private var palette
     var body:some View {
-        CalendarDialog(title:"操作未完成",dismiss:{model.errorMessage=nil}) {
+        CalendarDialog(title:model.permissionSettingsTargets.isEmpty ? "操作未完成":"需要访问权限",dismiss:{model.errorMessage=nil}) {
             Text(model.errorMessage ?? "").font(.system(size:12)).foregroundStyle(palette.secondary)
                 .fixedSize(horizontal:false,vertical:true)
         } actions:{
             Spacer()
-            Button("知道了"){model.errorMessage=nil}.buttonStyle(WBButtonStyle(primary:true))
+            Button("知道了"){model.errorMessage=nil}.buttonStyle(WBButtonStyle(primary:model.permissionSettingsTargets.isEmpty)).keyboardShortcut(.cancelAction)
+            ForEach(model.permissionSettingsTargets) {target in
+                Button(model.permissionSettingsTargets.count == 1 ? "前往系统设置":"\(target.title)设置") {model.openPrivacySettings(reminders:target.isReminders)}
+                    .buttonStyle(WBButtonStyle(primary:true))
+                    .accessibilityIdentifier("fc.calendar.permission.settings."+target.rawValue)
+            }
         }
         .accessibilityElement(children:.contain).accessibilityIdentifier("fc.calendar.error.dialog")
     }
@@ -561,7 +566,6 @@ private struct CalendarSourcesPage:View {
                     Link(WorkbenchChinaHolidays.sourceTitle,destination:WorkbenchChinaHolidays.sourceURL).font(.system(size:11))
                     Text("数据版本："+WorkbenchChinaHolidays.datasetVersion).font(.system(size:11)).foregroundStyle(palette.muted)
                 }.padding(12).frame(maxWidth:.infinity,alignment:.leading).background(palette.soft,in:RoundedRectangle(cornerRadius:8))
-                if let error=model.errorMessage {Text(error).font(.system(size:11)).foregroundStyle(palette.critical).frame(maxWidth:.infinity,alignment:.leading)}
             }
         }
     }
@@ -571,10 +575,15 @@ private struct CalendarSourcesPage:View {
         return sourceRow(reminders ? "系统提醒事项":"系统日历",reminders ? "接入后可在可写列表中创建与完成提醒":"读取日程，保留原日历的来源与只读状态",last:reminders) {
             HStack(spacing:8) {
                 if access == .denied || access == .restricted {Button("隐私设置"){model.openPrivacySettings(reminders:reminders)}.buttonStyle(WBButtonStyle(compact:true))}
-                Text(connected && access == .granted ? (reminders ? "已连接":"已连接 · 只读"):connected ? "权限已关闭":access == .denied ? "未连接 · 未授权":access == .restricted ? "受限":"未连接").font(.system(size:11)).foregroundStyle(connected && access == .granted ? palette.success:palette.muted)
-                Toggle(reminders ? "连接系统提醒事项":"连接系统日历",isOn:Binding(get:{connected},set:{enabled in Task {if enabled {await model.connect(reminders:reminders)}else{await model.disconnect(reminders:reminders)}}}))
+                if model.connectingSource == (reminders ? .reminders:.calendar) {
+                    ProgressView().controlSize(.mini).frame(width:14,height:14)
+                    Text("请求授权…").font(.system(size:11)).foregroundStyle(palette.muted)
+                } else {
+                    Text(connected && access == .granted ? (reminders ? "已连接":"已连接 · 只读"):connected ? "权限已关闭":access == .denied ? "未连接 · 未授权":access == .restricted ? "受限":"未连接").font(.system(size:11)).foregroundStyle(connected && access == .granted ? palette.success:palette.muted)
+                }
+                Toggle(reminders ? "连接系统提醒事项":"连接系统日历",isOn:Binding(get:{connected && access == .granted},set:{enabled in Task {if enabled {await model.connect(reminders:reminders)}else{await model.disconnect(reminders:reminders)}}}))
                     .labelsHidden().toggleStyle(.switch).controlSize(.small).tint(palette.accent).clickableCursor()
-                    .disabled(model.isWorking || (access == .restricted && !connected))
+                    .disabled(model.isWorking)
                     .accessibilityIdentifier(reminders ? "calendar-source-system-reminders":"calendar-source-system-events")
             }
         }
