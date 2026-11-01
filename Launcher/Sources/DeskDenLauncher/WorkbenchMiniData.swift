@@ -189,6 +189,24 @@ struct WorkbenchMiniDeviceData {
 }
 
 extension WorkbenchMiniDeviceData {
+    /// Never interpolate across unavailable samples, recording restarts or gaps.
+    func networkSegments(upload: Bool) -> [[WorkbenchMiniNetworkPoint]] {
+        var result: [[WorkbenchMiniNetworkPoint]] = [], current: [WorkbenchMiniNetworkPoint] = []
+        for point in networkPoints {
+            let value = upload ? point.upload : point.download
+            guard let value, value.isFinite, value >= 0 else {
+                if !current.isEmpty { result.append(current) }; current = []; continue
+            }
+            if let previous = current.last,
+               previous.segment != point.segment || point.date <= previous.date || point.date.timeIntervalSince(previous.date) > 8 {
+                result.append(current); current = []
+            }
+            current.append(point)
+        }
+        if !current.isEmpty { result.append(current) }
+        return result
+    }
+
     init(snapshot: DeviceSnapshot, openedAt: Date, history: [DeviceHistoryPoint] = [],
          summary: DeviceTrafficSummary? = nil, budget: DeviceTrafficBudget? = nil,
          unit: WeatherTemperatureUnit = .celsius, now: Date = Date()) {
@@ -215,11 +233,11 @@ extension WorkbenchMiniDeviceData {
         leftFan = fan(0); rightFan = fan(1)
         thermalState = fresh ? DeviceFormat.thermal(snapshot.thermalState) : "读取中"
         sensorNote = ([snapshot.sensorSource] + [snapshot.unavailableReasons["temperature"], snapshot.unavailableReasons["fan"]].compactMap { $0 }).joined(separator: "\n")
-        download = DeviceFormat.rate(fresh ? snapshot.network.downloadBytesPerSecond : nil)
-        upload = DeviceFormat.rate(fresh ? snapshot.network.uploadBytesPerSecond : nil)
+        download = DeviceFormat.rate(fresh ? snapshot.allNetwork.downloadBytesPerSecond : nil)
+        upload = DeviceFormat.rate(fresh ? snapshot.allNetwork.uploadBytesPerSecond : nil)
         note = fresh ? nil : "正在读取本机数据"
-        if snapshot.network.todayCoverageSeconds > 0 {
-            let total = snapshot.network.todayDownload.addingReportingOverflow(snapshot.network.todayUpload)
+        if snapshot.allNetwork.todayCoverageSeconds > 0 {
+            let total = snapshot.allNetwork.todayDownload.addingReportingOverflow(snapshot.allNetwork.todayUpload)
             todayTraffic = DeviceFormat.storage(total.overflow ? UInt64.max : total.partialValue)
         }
         if let summary, summary.coveredSeconds > 0 {
@@ -238,7 +256,8 @@ extension WorkbenchMiniDeviceData {
         if fresh {
             let cutoff = now.addingTimeInterval(-60)
             networkPoints = history.suffix(64).filter { $0.date >= cutoff && $0.date <= now.addingTimeInterval(1) }.map {
-                .init(date: $0.date, segment: $0.segment, download: $0.downloadBytesPerSecond, upload: $0.uploadBytesPerSecond)
+                .init(date: $0.date, segment: $0.allNetworkSegment ?? $0.segment,
+                      download: $0.allDownloadBytesPerSecond, upload: $0.allUploadBytesPerSecond)
             }
         }
     }
@@ -261,6 +280,7 @@ struct WorkbenchMiniExternalProviderData: Identifiable {
     /// Preserve the source percentage for text and severity; converting a bar
     /// fraction back to percent can turn an exact 58 into 57.999999… .
     var usedPercent: Double? = nil
+    var observedAt: Date? = nil
 }
 
 extension WorkbenchMiniExternalProviderData {
@@ -278,6 +298,7 @@ extension WorkbenchMiniExternalProviderData {
             unit = snapshot.displayUnit.title
             reset = UsageResetTime(snapshot: snapshot).summary(at: now, timeZone: calendar.timeZone)
             usedPercent = snapshot.usedPercent
+            observedAt = snapshot.observedAt
             fraction = snapshot.usedPercent / 100
             let observed = WorkbenchMiniFormat.date(snapshot.observedAt, calendar: calendar, pattern: "M/d HH:mm")
             let resetHelp = UsageResetTime(snapshot: snapshot).help(at: now, timeZone: calendar.timeZone)

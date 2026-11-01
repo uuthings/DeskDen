@@ -371,7 +371,7 @@ enum WorkbenchResponsiveLayoutChecks {
         }
         // Cleaning is a viewport-sized workspace with a fixed page header and
         // footer. Its intentional card-internal scroll regions have separate checks.
-        let routes: [(WorkbenchRoute, String)] = [(.overview, "fc.page.home"), (.device, "fc.page.device"), (.calendar, "fc.page.calendar"), (.ai, "fc.page.usage"), (.network, "fc.page.network"), (.vault, "fc.page.vault"), (.cards, ""), (.settings, "fc.page.settings.general")]
+        let routes: [(WorkbenchRoute, String)] = [(.overview, "fc.page.home"), (.device, "fc.page.device"), (.calendar, "fc.page.calendar"), (.ai, "fc.page.usage"), (.network, "fc.page.network"), (.vault, "fc.page.vault"), (.cards, "fc.page.settings.widgets"), (.settings, "fc.page.settings.general")]
         let samples: [(NSSize, CGFloat)] = [(.init(width: 1120, height: 758), 184), (.init(width: 960, height: 720), 184), (.init(width: 1728, height: 993), 184)]
         for (size, sidebarWidth) in samples {
             window.setContentSize(size)
@@ -382,10 +382,8 @@ enum WorkbenchResponsiveLayoutChecks {
                 model.navigate(route)
                 let mounted = await wait(window) {
                     guard let scroll = outerPageScrollView(in: host) else { return false }
-                    if identifier.isEmpty {
-                        return scroll.documentView.map { containsAccessibilityText("把常用信息留在桌面，也可设为悬浮显示", in: $0) } == true
-                    }
                     return frame(identifier, in: host) != nil
+                        && (route != .cards || (model.route == .settings && model.settingsTab == .widgets))
                 }
                 guard mounted, let scroll = outerPageScrollView(in: host) else {
                     check(false, "\(route.rawValue) mounts its actual outer scroll viewport in \(label)"); continue

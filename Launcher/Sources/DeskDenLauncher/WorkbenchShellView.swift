@@ -206,13 +206,13 @@ struct WorkbenchRootView: View {
         }.padding(.horizontal,12).padding(.top,22).padding(.bottom,15)
     }
     private var sidebarBrand: some View {
-        HStack(spacing: 8) {
-            WorkbenchBrandMark(pointSize: 25)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("方寸").font(.system(size: 12, weight: .medium)).foregroundStyle(palette.text)
+        HStack(alignment: .bottom, spacing: 8) {
+            WorkbenchBrandMark(pointSize: 30)
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Text("方寸").font(.system(size: 13, weight: .medium)).foregroundStyle(palette.text)
                 Text("v" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"))
                     .font(.system(size: 11)).foregroundStyle(palette.muted)
-            }
+            }.padding(.bottom, 2).lineLimit(1)
             Spacer(minLength: 0)
         }.padding(.horizontal, 12).padding(.vertical, 8)
             .accessibilityElement(children: .combine).accessibilityIdentifier("window-brand")
@@ -220,7 +220,7 @@ struct WorkbenchRootView: View {
     private func navigation(_ route: WorkbenchRoute) -> some View {
         Button { if route == .ai {model.openUsageOverview()} else {model.navigate(route)} } label: {
             HStack(spacing: 10) {
-                WorkbenchNavigationIcon(symbol: route.symbol)
+                WorkbenchNavigationIcon(route: route)
                     .foregroundStyle(model.route == route ? palette.accent : palette.secondary)
                     .accessibilityHidden(true)
                 Text(route == .overview ? "首页" : route == .vault ? "私密空间" : route.title).font(.system(size: 12))

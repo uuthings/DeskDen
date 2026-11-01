@@ -251,14 +251,14 @@ import LauncherCore
                   && expandedTarget.map { abs($0.maxY - screen.frame.maxY) <= 1 } == true,
                   "intent confirmation targets the complete mini card directly at the screen top")
             let notchWidth = screen.auxiliaryTopRightArea.flatMap { right in screen.auxiliaryTopLeftArea.map { right.minX - $0.maxX } } ?? 0
-            let miniSize = WorkbenchMiniLayout.size(cards: WorkbenchMiniCardID.builtIn, screenWidth: screen.frame.width,
+            let miniSize = WorkbenchMiniLayout.size(cards: WorkbenchMiniCardID.defaultVisible, screenWidth: screen.frame.width,
                                                     safeTop: screen.safeAreaInsets.top, notchWidth: notchWidth)
             check((expandedTarget?.width ?? 0) == miniSize.width && expandedTarget?.height == miniSize.height
                   && (controller.islandContentTopInset ?? -1) >= screen.safeAreaInsets.top,
                   "direct mini information has the intended width and reserves the physical camera area")
             check(miniSize.height == max(44, screen.safeAreaInsets.top + 12) + 236 + 12
                   && (screen.frame.width < 780 || miniSize.width == 748),
-                  "the default eight-card Mini uses three fixed-width columns and the modular safe-area height")
+                  "the default seven-card Mini uses three fixed-width columns and the modular safe-area height")
             if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
                 try? await Task.sleep(for: .milliseconds(80))
                 let intermediate = controller.islandPresentationFrame
@@ -325,6 +325,7 @@ import LauncherCore
             owner.configuration.settings.workbenchAppearance = initialAppearance
             model.syncAppearance(); controller.refreshAppearance()
             if let miniWindow = NSApp.windows.first(where: { $0.windowNumber == controller.islandWindowNumber }), let host = miniWindow.contentView {
+                let beforeEditing = controller.preferences
                 check(press("mini-configure", in: host), "the real Mini enters layout editing through its native control")
                 await settle()
                 check(press("mini-card-codex", in: host), "the real Mini focuses a card without opening the workbench while editing")
@@ -337,23 +338,49 @@ import LauncherCore
                 }
                 await settle()
                 print("DETAIL mini keyboard after order=\(controller.preferences.cardOrder.map(\.rawValue).joined(separator:","))")
-                check(controller.preferences.cardOrder.prefix(2) == [.claude, .codex] && !ordinary.isVisible,
-                      "a down-arrow through the real Mini responder path reorders the focused card without navigation")
-                for card in [WorkbenchMiniCardID.codex, .claude, .traffic] { controller.setMiniCard(card, visible: false) }
-                check(press("mini-configure", in: host), "finishing native layout editing applies the selected card set")
+                check(controller.preferences == beforeEditing && !ordinary.isVisible,
+                      "a real Mini down-arrow edits only the draft without opening the workbench or saving early")
+                check(press("mini-configure", in: host), "the real Mini confirms the keyboard-reordered draft")
+                await settle()
+                check(controller.preferences.cardOrder == [.network, .thermal, .disk, .memory, .todo, .claude, .codex, .traffic]
+                      && controller.preferences.visibleCards == WorkbenchMiniCardID.defaultVisible && !ordinary.isVisible,
+                      "saving persists the real down-arrow reorder within the quota column without navigation")
+                guard let editingHost = miniWindow.contentView else {
+                    check(false, "the Mini retains its content host after saving the keyboard layout")
+                    return (count, failures)
+                }
+                check(press("mini-configure", in: editingHost), "the real Mini reopens a draft to hide quota cards")
+                await settle()
+                for card in [WorkbenchMiniCardID.codex, .claude] {
+                    check(press("mini-hide-" + card.rawValue, in: editingHost), "the native hide control edits \(card.rawValue) visibility")
+                    await settle()
+                }
+                check(controller.preferences.visibleCards == WorkbenchMiniCardID.defaultVisible && controller.islandTargetFrame == expandedTarget,
+                      "native hide controls keep the saved card set and stable editing width until confirmation")
+                check(press("mini-configure", in: editingHost), "finishing native layout editing applies the selected card set")
                 await settle()
                 let compact = WorkbenchMiniLayout.size(cards: controller.preferences.activeCards(available: controller.availableMiniCards),
                     screenWidth: screen.frame.width, safeTop: screen.safeAreaInsets.top, notchWidth: notchWidth)
-                check(controller.islandTargetFrame?.width == compact.width && controller.islandTargetFrame?.height == miniSize.height,
+                check(controller.preferences.activeCards(available: controller.availableMiniCards) == [.network, .thermal, .disk, .memory, .todo]
+                      && controller.islandTargetFrame?.width == compact.width && controller.islandTargetFrame?.height == miniSize.height,
                       "hiding a column contracts the real Mini width while preserving its fixed safe-area height")
-                controller.restoreMiniSections()
                 if let resizedHost = miniWindow.contentView {
-                    _ = press("mini-configure", in: resizedHost); await settle()
-                    _ = press("mini-configure", in: resizedHost); await settle()
+                    let beforeRestore = controller.preferences
+                    check(press("mini-configure", in: resizedHost), "restoring defaults begins a native Mini draft")
+                    await settle()
+                    check(press("mini-show-configuration", in: resizedHost), "the native Mini opens its card configuration")
+                    await settle()
+                    check(press("mini-restore", in: resizedHost), "the native configuration restores default cards in its draft")
+                    await settle()
+                    check(controller.preferences == beforeRestore, "restoring default cards also waits for confirmation")
+                    check(press("mini-configure", in: resizedHost), "the native Mini confirms restored defaults")
+                    await settle()
                 }
-                check(controller.preferences.visibleCards == WorkbenchMiniCardID.builtIn && controller.islandTargetFrame == expandedTarget
+                check(controller.preferences.visibleCards == WorkbenchMiniCardID.defaultVisible
+                      && controller.preferences.cardOrder == WorkbenchMiniCardID.builtIn && controller.preferences.usesDefaultLayout
+                      && controller.islandTargetFrame == expandedTarget
                       && controller.islandWindowNumber == anticipationWindow,
-                      "restoring all cards reuses the same native panel and restores its default three-column geometry")
+                      "restoring seven default cards reuses the same native panel and restores its three-column geometry")
             } else { check(false, "the real Mini exposes its own native content for modular interactions") }
             controller.handleApplicationActivation(processIdentifier: ProcessInfo.processInfo.processIdentifier + 100_000)
             await settle()

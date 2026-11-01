@@ -225,7 +225,6 @@ struct UsageAIQuotaCard: View {
                     UsageObservationAgeLabel(date: date, prefix: !enabled ? "已暂停 · 上次读数 " : summary.state == .ready ? "更新于 " : summary.state.title + " · 上次读数 ", timeZone: timeZone)
                 } else { Text(!enabled ? "自动读取关闭" : summary.state.title) }
                 Spacer(minLength: 0)
-                Image(systemName: "arrow.up.right").font(.system(size: 11)).accessibilityHidden(true)
             }.font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
                 .padding(.top, 8)
         }
@@ -310,7 +309,6 @@ struct ProviderQuotaCard: View {
                     Text(footer(at: current)).lineLimit(1)
                 }
                 Spacer(minLength: 0)
-                Image(systemName: "arrow.up.right").font(.system(size: 11)).accessibilityHidden(true)
             }.font(.system(size: 11)).foregroundStyle(state.refresh.authenticationRequired || state.refresh.failureCount > 0 ? palette.warning : palette.muted)
                 .padding(.top, 8)
         }

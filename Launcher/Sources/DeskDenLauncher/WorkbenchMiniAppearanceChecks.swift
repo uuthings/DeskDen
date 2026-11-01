@@ -281,7 +281,7 @@ import SwiftUI
             let providers=AIProvider.allCases.enumerated().map { index,provider in
                 WorkbenchMiniAIData(provider:provider,title:provider.title,stateText:missing ? "不可用":"已用",detail:"Synthetic quota fixture",isStale:false,windows:[.init(label:"5小时",value:missing ? "—":"70%",fraction:missing ? nil:0.70,reset:"23时59分后"),.init(label:"每周",value:missing ? "—":"90%",fraction:missing ? nil:0.90,reset:"等待更新")])
             }
-            let externalProviders:[WorkbenchMiniExternalProviderData] = scenario == .fourColumns ? [.init(id:UUID(),title:"示例流量服务",stateText:"已连接",amount:"899.95 / 1,000 GB",fraction:0.89995,detail:"Synthetic traffic fixture",isStale:false,remaining:"100.05",unit:"GB",reset:"1小时13分钟后重置")] : []
+            let externalProviders:[WorkbenchMiniExternalProviderData] = scenario == .fourColumns ? [.init(id:UUID(),title:"示例流量服务",stateText:"已连接",amount:"899.95 / 1,000 GB",fraction:0.89995,detail:"Synthetic traffic fixture",isStale:false,remaining:"100.05",unit:"GB",reset:"1小时13分钟后重置",observedAt:Date().addingTimeInterval(-125))] : []
             let balances:[WorkbenchMiniAPIBalanceData] = scenario == .fourColumns ? [.init(id:UUID(),title:"示例余额服务",amount:"¥ 48.32",stateText:"已连接",detail:"Synthetic balance fixture",isStale:false)] : []
             availableCards = WorkbenchMiniCardID.builtIn + externalProviders.map { .provider($0.id) } + balances.map { .apiBalance($0.id) }
             let thermalStatus:DeviceThermalPresentation

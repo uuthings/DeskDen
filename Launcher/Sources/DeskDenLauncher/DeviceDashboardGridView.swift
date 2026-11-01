@@ -240,21 +240,20 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
     private var editing = false
     private var scale: CGFloat = 1
     private var host: NSHostingView<AnyView>?
-    private var hover = false
     private var bodyClickPending = false
-    private var area: NSTrackingArea?
-    private let actionButton = DeviceCardActionButton(), styleButton = DeviceCardActionButton()
+    private var focusColor = ThemePalette().nsAccent
+    private let hideButton = DeviceCardActionButton(), styleButton = DeviceCardActionButton()
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
     override var canBecomeKeyView: Bool { !isGhost }
     override var mouseDownCanMoveWindow: Bool { false }
     init(id: DeviceCardID) {
         self.id = id; super.init(frame: .zero); wantsLayer = true
-        for button in [actionButton, styleButton] {
+        for button in [hideButton, styleButton] {
             button.isBordered = false; button.imagePosition = .imageOnly
             button.bezelStyle = .inline; button.target = self; addSubview(button)
         }
-        actionButton.action = #selector(activate); styleButton.action = #selector(style)
+        hideButton.action = #selector(hide); styleButton.action = #selector(style)
         setAccessibilityElement(true); setAccessibilityRole(.button)
         setAccessibilityLabel(id.title + "卡片"); setAccessibilityIdentifier("fc.device.card.\(id.rawValue)")
         ButtonCursorPolicy.shared.register(self)
@@ -269,23 +268,25 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
         if let host { host.rootView = content }
         else {
             let host = NSHostingView(rootView: content); host.sizingOptions = []; self.host = host
-            addSubview(host, positioned: .below, relativeTo: actionButton)
+            addSubview(host, positioned: .below, relativeTo: hideButton)
         }
         appearance = NSAppearance(named: light ? .aqua : .darkAqua)
         let actionPalette = ThemePalette(theme: theme, opacity: opacity, light: light)
-        actionButton.configure(symbol: editing ? "xmark" : "arrow.up.right", palette: actionPalette, scale: scale)
-        actionButton.setAccessibilityLabel((editing ? "隐藏" : "打开") + id.title)
-        actionButton.setAccessibilityIdentifier("fc.device.card.\(id.rawValue).\(editing ? "hide" : "open")")
-        actionButton.toolTip = (editing ? "隐藏" : "打开") + id.title
+        focusColor = actionPalette.nsAccent
+        hideButton.configure(symbol: "xmark", palette: actionPalette, scale: scale)
+        hideButton.setAccessibilityLabel("隐藏" + id.title)
+        hideButton.setAccessibilityIdentifier("fc.device.card.\(id.rawValue).hide")
+        hideButton.toolTip = "隐藏" + id.title
+        hideButton.isHidden = !editing || isGhost
         styleButton.configure(symbol: "slider.horizontal.3", palette: actionPalette, scale: scale)
         styleButton.isHidden = !editing || !id.supportsMeterStyle || isGhost
         styleButton.setAccessibilityLabel(id.title + "显示设置"); styleButton.toolTip = "进度显示设置"
-        updateActionVisibility()
+        updateFocusCue()
         needsLayout = true; window?.invalidateCursorRects(for: self)
     }
     override func layout() {
         super.layout(); host?.frame = bounds
-        actionButton.frame = NSRect(x: bounds.width - 41 * scale, y: 11 * scale, width: 28 * scale, height: 28 * scale)
+        hideButton.frame = NSRect(x: bounds.width - 41 * scale, y: 11 * scale, width: 28 * scale, height: 28 * scale)
         styleButton.frame = NSRect(x: bounds.width - 73 * scale, y: 11 * scale, width: 28 * scale, height: 28 * scale)
     }
     private func edge(at point: CGPoint) -> DeviceResizeEdge? {
@@ -300,7 +301,7 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
         let local = convert(point, from: parent)
         guard bounds.contains(local) else { return nil }
         if edge(at: local) != nil { return self }
-        for button in [actionButton, styleButton] where !button.isHidden && button.frame.contains(local) { return button }
+        for button in [hideButton, styleButton] where !button.isHidden && button.frame.contains(local) { return button }
         return self
     }
     override func resetCursorRects() {
@@ -348,20 +349,14 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
         }
         if [36, 49].contains(event.keyCode) && !editing { grid?.activate(id); return }; super.keyDown(with: event)
     }
-    override func updateTrackingAreas() {
-        if let area { removeTrackingArea(area) }
-        area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self, userInfo: nil)
-        addTrackingArea(area!); super.updateTrackingAreas()
+    override func becomeFirstResponder() -> Bool { let result = super.becomeFirstResponder(); DispatchQueue.main.async { [weak self] in self?.updateFocusCue() }; return result }
+    override func resignFirstResponder() -> Bool { let result = super.resignFirstResponder(); DispatchQueue.main.async { [weak self] in self?.updateFocusCue() }; return result }
+    private func updateFocusCue() {
+        layer?.cornerRadius = 15
+        layer?.borderColor = focusColor.withAlphaComponent(0.7).cgColor
+        layer?.borderWidth = !editing && !isGhost && window?.firstResponder === self ? 1 : 0
     }
-    override func mouseEntered(with event: NSEvent) { hover = true; updateActionVisibility() }
-    override func mouseExited(with event: NSEvent) { hover = false; updateActionVisibility() }
-    override func becomeFirstResponder() -> Bool { let result = super.becomeFirstResponder(); updateActionVisibility(); return result }
-    override func resignFirstResponder() -> Bool { let result = super.resignFirstResponder(); DispatchQueue.main.async { [weak self] in self?.updateActionVisibility() }; return result }
-    private func updateActionVisibility() {
-        let focused = window?.firstResponder === self || window?.firstResponder === actionButton
-        actionButton.isHidden = isGhost || !(editing || hover || focused)
-    }
-    @objc private func activate() { grid?.activate(id) }
+    @objc private func hide() { guard editing else { return }; grid?.activate(id) }
     @objc private func style() { grid?.style(id, anchor: styleButton) }
 }
 /// Native card chrome uses the same bounded icon feedback as WBIconButtonStyle.
@@ -369,7 +364,7 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
 @MainActor final class DeviceCardActionButton: ClickableButton {
     private var palette = ThemePalette()
     private var displayScale: CGFloat = 1
-    private var symbol = "arrow.up.right"
+    private var symbol = "xmark"
     private var hovering = false
     private var hoverArea: NSTrackingArea?
 

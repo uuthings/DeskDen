@@ -507,7 +507,7 @@ struct UsageAPIBalanceCard: View {
                 else if let snapshot = state.snapshot {
                     UsageObservationAgeLabel(date: snapshot.observedAt, prefix: state.message != nil ? "更新失败 · 上次读数 " : !source.enabled ? "已暂停 · 上次读数 " : "更新于 ", timeZone: timeZone).lineLimit(1)
                 } else { Text(state.message != nil ? "更新失败 · 尚无有效读数" : "尚无有效读数") }
-                Spacer(minLength: 0); Image(systemName: "arrow.up.right").font(.system(size: 11)).accessibilityHidden(true)
+                Spacer(minLength: 0)
             }.font(.system(size: 11)).foregroundStyle(palette.muted).padding(.top, 8)
         }.foregroundStyle(palette.text).padding(14).frame(maxWidth: .infinity).frame(height: UsageCardGrid.cardSize.height, alignment: .topLeading)
             .background(WorkbenchMaterialSurface(radius: 15)).contentShape(RoundedRectangle(cornerRadius: 15))

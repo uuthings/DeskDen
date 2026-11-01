@@ -11,15 +11,21 @@ import LauncherCore
             count += 1; if !condition { failures += 1 }
             print("\(condition ? "PASS" : "FAIL") \(message)")
         }
-        @MainActor func checkLinkedArrow(_ identifier: String, in host: NSView, label: String) {
-            let card = frame(identifier, in: host), action = frame(identifier + ".action", in: host)
-            check(action.map { abs($0.width - 28) < 1 && abs($0.height - 28) < 1 } == true,
-                  "mounted \(label) navigation Button remains accessible with its shared 28×28 pt icon target")
-            check(card.flatMap { surface in action.map { button in
-                // Shared 14 pt card padding and the unchanged 22 pt title row.
-                abs(surface.maxX - button.maxX - 14) < 1 && abs(surface.maxY - button.midY - 25) < 1
-            } } == true, "mounted \(label) arrow target stays in the 22 pt title row with the shared right inset and without growing the header")
-            print("DETAIL device-detail linked-arrow \(label) card=\(String(describing: card)) action=\(String(describing: action))")
+        @MainActor func checkLinkedCard(_ identifier: String, peerIdentifier: String, expectedWidth: CGFloat, in host: NSView, label: String) {
+            let card = frame(identifier, in: host), peer = frame(peerIdentifier, in: host)
+            check(card.map { $0.width > 100 && $0.height > 28 } == true
+                  && role(identifier, in: host) == NSAccessibility.Role.button.rawValue
+                  && frame(identifier + ".action", in: host) == nil,
+                  "mounted \(label) exposes one complete summary Button without a separate corner action")
+            // SwiftUI combines the Button's content into its single AX element.
+            // Its actual frame must fill the same row as the neighboring static
+            // card, including all 14 pt padding, rather than a text-only target.
+            check(card.flatMap { button in peer.map { neighbor in
+                abs(button.width - expectedWidth) < 1.5 && abs(neighbor.width - expectedWidth) < 1.5
+                    && abs(button.minX - neighbor.maxX - 12) < 1
+                    && abs(button.minY - neighbor.minY) < 1 && abs(button.maxY - neighbor.maxY) < 1
+            } } == true, "mounted \(label) action fills its entire equal-width card row including header and padding")
+            print("DETAIL device-detail linked-card \(label) button=\(String(describing: card)) peer=\(String(describing: peer))")
         }
         guard let host = window.contentView, !model.device.isSampling, !model.modals.isPresented else {
             check(false, "device detail layout fixture is mounted, service-disabled and has no modal")
@@ -76,7 +82,7 @@ import LauncherCore
                 let identifiers: [String]
                 switch route {
                 case .cpu: identifiers = ["当前使用率", "用户进程", "系统"].map { "fc.device.detail.card." + $0 }
-                case .thermal: identifiers = ["CPU 温度", "GPU 温度", "温度提醒"].map { "fc.device.detail.card." + $0 }
+                case .thermal: identifiers = ["CPU 温度", "GPU 温度", "散热状态"].map { "fc.device.detail.card." + $0 }
                 default: identifiers = ["fc.device.detail.card.storage-usage", "fc.device.detail.card.卷信息"]
                 }
                 _ = await wait(window) {
@@ -103,7 +109,11 @@ import LauncherCore
                         return !texts.isEmpty && texts.allSatisfy { surface.insetBy(dx: -1, dy: -1).contains($0) }
                     }, "mounted storage card text remains inside its surface without clipping in \(label)")
                 } else {
-                    check(cards.count == identifiers.count && cards.allSatisfy { abs($0.height - 128.25) < 1 },
+                    // Thermal's approved status card includes a 20 pt badge,
+                    // 14 pt caption, 28 pt compact button and two 8 pt gaps,
+                    // plus the shared 32 pt header and 28 pt card padding.
+                    let expectedHeight: CGFloat = route == .thermal ? 138 : 128.25
+                    check(cards.count == identifiers.count && cards.allSatisfy { abs($0.height - expectedHeight) < 1 },
                           "mounted \(route.rawValue) cards keep the same compact reading height across window sizes in \(label)")
                 }
                 print("DETAIL device-detail \(route.rawValue) \(label) surfaces=\(cards)")
@@ -121,7 +131,7 @@ import LauncherCore
                     check(lower.count == 2 && lower.allSatisfy { abs($0.height - 132) < 1 },
                           "mounted CPU lower cards retain the native 132 pt short-content structure in \(label)")
                     print("DETAIL device-detail cpu-lower \(label) surfaces=\(lower)")
-                    checkLinkedArrow("fc.device.detail.card.cpu-processes", in: host, label: "CPU related processes \(label)")
+                    checkLinkedCard("fc.device.detail.card.cpu-processes", peerIdentifier: "fc.device.detail.card.cpu-processor", expectedWidth: (sample.pageWidth - 12) / 2, in: host, label: "CPU related processes \(label)")
                 }
                 if route == .thermal {
                     check(frame("device-battery-cycle-count", in: host) != nil,
@@ -161,7 +171,7 @@ import LauncherCore
             check(picker.map { abs($0.height - 32) < 1 && abs($0.width - 174) < 1.5 } == true,
                   "mounted speed interface summary stays one 32 pt control instead of expanding for multiple interface names in \(label)")
             print("DETAIL device-detail network \(label) interfacePicker=\(String(describing: picker))")
-            checkLinkedArrow("fc.device.detail.card.network-traffic", in: host, label: "network traffic \(label)")
+            checkLinkedCard("fc.device.detail.card.network-traffic", peerIdentifier: "fc.device.detail.card.接口信息", expectedWidth: (sample.pageWidth - 12) / 2, in: host, label: "network traffic \(label)")
         }
         print("Device detail layout checks: \(count - failures)/\(count) passed")
         return (count, failures)
@@ -210,6 +220,18 @@ import LauncherCore
     }
     private static func nativeGlyphHeight(_ text: String, size: CGFloat) -> CGFloat {
         ceil((text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: size)]).height)
+    }
+    private static func role(_ identifier: String, in root: NSView) -> String? {
+        var pending: [NSObject] = [root], seen = Set<ObjectIdentifier>()
+        while let object = pending.popLast(), seen.count < 8_192 {
+            guard seen.insert(ObjectIdentifier(object)).inserted else { continue }
+            if object.responds(to: NSSelectorFromString("accessibilityIdentifier")),
+               object.value(forKey: "accessibilityIdentifier") as? String == identifier,
+               object.responds(to: NSSelectorFromString("accessibilityRole")),
+               let role = object.value(forKey: "accessibilityRole") as? String { return role }
+            pending.append(contentsOf: accessibilityChildren(object))
+        }
+        return nil
     }
     private static func frame(_ identifier: String, in root: NSView) -> NSRect? {
         var pending: [NSObject] = [root], seen = Set<ObjectIdentifier>(), result: [NSRect] = []

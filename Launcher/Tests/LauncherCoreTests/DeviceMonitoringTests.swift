@@ -26,12 +26,33 @@ final class DeviceMonitoringTests: XCTestCase {
     }
     func testIndependentScopesIncludeBothDirectionsWithoutVPNDoubleCounting() {
         var a = DeviceTrafficAccumulator(ledger: .init(now: start, timeZone: utc))
-        a.ingest(wifi: counter(100), ethernet: ["en1": .init(received: 500, sent: 200)], at: start, maximumGap: 6)
-        a.ingest(wifi: counter(1100), ethernet: ["en1": .init(received: 2500, sent: 600)], at: start.addingTimeInterval(2), maximumGap: 6)
+        XCTAssertNil(a.ingest(wifi: counter(100), ethernet: ["en1": .init(received: 500, sent: 200)], at: start, maximumGap: 6))
+        let delta = a.ingest(wifi: counter(1100), ethernet: ["en1": .init(received: 2500, sent: 600)], at: start.addingTimeInterval(2), maximumGap: 6)
+        XCTAssertEqual(delta?.downloadBytesPerSecond, 1500)
+        XCTAssertEqual(delta?.uploadBytesPerSecond, 250)
         let all = a.ledger.summary(period: .day, scope: .all, at: start.addingTimeInterval(2))
         XCTAssertEqual(all.received, 3000); XCTAssertEqual(all.sent, 500); XCTAssertEqual(all.totalBytes, 3500)
         XCTAssertEqual(a.ledger.summary(period: .day, scope: .wifi, at: start).totalBytes, 1100)
         XCTAssertEqual(a.ledger.summary(period: .day, scope: .ethernet, at: start).totalBytes, 2400)
+    }
+    func testAllNetworkRatesPreserveMissingIntervalsAndGenuineZeroTraffic() {
+        var all = DeviceTrafficAccumulator(ledger: .init(now: start, timeZone: utc))
+        var filtered = DeviceNetworkAccumulator()
+        XCTAssertNil(all.ingest(wifi: counter(100), ethernet: [:], at: start, maximumGap: 6))
+        _ = filtered.ingest(counter(100), at: start, maximumGap: 6)
+        filtered.selectInterfaces([])
+        let next = start.addingTimeInterval(2)
+        XCTAssertNil(filtered.ingest([:], at: next, maximumGap: 6))
+        let independent = all.ingest(wifi: counter(1100), ethernet: [:], at: next, maximumGap: 6)
+        XCTAssertEqual(independent?.downloadBytesPerSecond, 500)
+        XCTAssertEqual(independent?.uploadBytesPerSecond, 50)
+        XCTAssertNil(all.ingest(wifi: counter(5000), ethernet: [:], at: start.addingTimeInterval(30), maximumGap: 6))
+        let zero = all.ingest(wifi: counter(5000), ethernet: [:], at: start.addingTimeInterval(32), maximumGap: 6)
+        XCTAssertEqual(zero?.downloadBytesPerSecond, 0)
+        XCTAssertEqual(zero?.uploadBytesPerSecond, 0)
+        all.breakContinuity()
+        XCTAssertNil(all.ingest(wifi: counter(8000), ethernet: [:], at: start.addingTimeInterval(34), maximumGap: 6))
+        XCTAssertNil(all.ingest(wifi: counter(10), ethernet: [:], at: start.addingTimeInterval(36), maximumGap: 6))
     }
     func testScopeSwitchPreservesHistoricalBucketsAndRestartExcludesGap() throws {
         var a = DeviceTrafficAccumulator(ledger: .init(now: start, timeZone: utc))

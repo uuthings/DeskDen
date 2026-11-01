@@ -56,6 +56,7 @@ struct DeviceNetworkSnapshot: Sendable {
 struct DeviceSnapshot: Sendable {
     var sampledAt: Date?
     var performanceSampledAt: Date?
+    var thermalSampledAt: Date?
     var deviceName = "Mac"
     var modelIdentifier = "—"
     var osVersion = ProcessInfo.processInfo.operatingSystemVersionString
@@ -76,6 +77,8 @@ struct DeviceSnapshot: Sendable {
     var memory: DeviceMemorySnapshot?
     var disk: DeviceDiskSnapshot?
     var network = DeviceNetworkSnapshot()
+    /// Fixed local physical-network scope, independent of the detail page's interface filter.
+    var allNetwork = DeviceNetworkSnapshot()
     var battery: DeviceBatterySnapshot?
     var thermalState: DeviceThermalState = .unknown
     var processes: [DeviceProcess] = []
@@ -86,6 +89,12 @@ struct DeviceSnapshot: Sendable {
         "temperature": "当前硬件未返回有效温度读数。",
         "fan": "当前硬件未返回有效风扇读数；仍由系统自动控制。"
     ]
+
+    func thermalPresentation(rule: DeviceTemperatureRule = .init()) -> DeviceThermalPresentation {
+        .init(cpu: cpuTemperature, gpu: gpuTemperature, state: thermalState, rule: rule,
+              isLoading: thermalSampledAt == nil,
+              unavailableReason: unavailableReasons["temperature"])
+    }
 }
 
 struct DeviceHistoryPoint: Identifiable, Sendable {
@@ -97,10 +106,14 @@ struct DeviceHistoryPoint: Identifiable, Sendable {
     var cpuTemperature: Double? = nil
     var gpuTemperature: Double? = nil
     var memoryPercent: Double? = nil
+    var allDownloadBytesPerSecond: Double? = nil
+    var allUploadBytesPerSecond: Double? = nil
+    /// Independent of the main window's selectable interface scope.
+    var allNetworkSegment: UUID? = nil
 }
 
 /// One shared model serves the overview, device page and desktop widgets.
-/// Hidden workbench windows retain low-frequency network accounting, without process scans or charts.
+/// With no visible consumer, retain low-frequency network accounting without process scans or charts.
 @MainActor
 final class DeviceStatusModel: ObservableObject {
     @Published private(set) var snapshot = DeviceSnapshot()
@@ -139,6 +152,7 @@ final class DeviceStatusModel: ObservableObject {
     private var workspaceEvents = Set<AnyCancellable>()
     private var systemSleeping = false
     private var historySegment = UUID()
+    private var allNetworkHistorySegment = UUID()
     private var lastHistoryDate: Date?
     private var resumeSamplingAfterCancelledQuit = false
     private var preparingForQuit = false
@@ -171,7 +185,8 @@ final class DeviceStatusModel: ObservableObject {
     private func systemWillSleep() {
         let pendingLoop = loop, pendingSample = samplingTask
         systemSleeping = true; generation = UUID(); evaluator.breakContinuity()
-        historySegment = UUID(); lastHistoryDate = nil; loop?.cancel(); loop = nil; samplingTask?.cancel(); samplingTask = nil
+        historySegment = UUID(); allNetworkHistorySegment = UUID(); lastHistoryDate = nil
+        loop?.cancel(); loop = nil; samplingTask?.cancel(); samplingTask = nil
         Task { [weak self] in
             guard let self else { return }
             await pendingLoop?.value; await pendingSample?.value
@@ -225,7 +240,7 @@ final class DeviceStatusModel: ObservableObject {
     func stop() {
         isSampling = false; generation = UUID()
         loop?.cancel(); loop = nil; samplingTask?.cancel(); samplingTask = nil
-        historySegment = UUID(); lastHistoryDate = nil; evaluator.breakContinuity()
+        historySegment = UUID(); allNetworkHistorySegment = UUID(); lastHistoryDate = nil; evaluator.breakContinuity()
         Task { [sampler] in try? await sampler.flush() }
     }
 
@@ -245,24 +260,33 @@ final class DeviceStatusModel: ObservableObject {
 
     func setWindowVisible(_ visible: Bool) {
         guard visible != isWindowVisible else { return }
+        let previouslyActive = wantsPerformance
         isWindowVisible = visible
-        historySegment = UUID(); lastHistoryDate = nil
-        if isSampling { scheduleLoop() } else if visible { refresh() }
+        updateSamplingDemand(previouslyActive: previouslyActive)
     }
 
     /// Widgets can keep current readings available while the workbench is hidden.
-    /// Performance history is still appended only while the workbench itself is visible.
     func setWidgetsVisible(_ visible: Bool) {
         guard visible != visibleWidgetConsumers else { return }
+        let previouslyActive = wantsPerformance
         visibleWidgetConsumers = visible
-        if isSampling { scheduleLoop() } else if visible { refresh() }
+        updateSamplingDemand(previouslyActive: previouslyActive)
     }
 
     /// A transient top summary is an independent consumer; it never changes widget preferences.
     func setQuickSummaryVisible(_ visible: Bool) {
         guard visible != visibleQuickSummary else { return }
+        let previouslyActive = wantsPerformance
         visibleQuickSummary = visible
-        if isSampling { scheduleLoop() } else if visible { refresh() }
+        updateSamplingDemand(previouslyActive: previouslyActive)
+    }
+
+    private func updateSamplingDemand(previouslyActive: Bool) {
+        guard previouslyActive != wantsPerformance else { return }
+        // A main-window route change must not interrupt a still-visible Mini.
+        // Once all consumers leave, resumed charts begin a separate segment.
+        historySegment = UUID(); allNetworkHistorySegment = UUID(); lastHistoryDate = nil
+        if isSampling { scheduleLoop() } else if wantsPerformance { refresh() }
     }
 
     func refresh() {
@@ -431,15 +455,18 @@ final class DeviceStatusModel: ObservableObject {
         }
         await evaluateMonitoring(at: snapshot.sampledAt ?? Date(), maximumGap: maximumGap)
         guard generation == token, !Task.isCancelled else { return }
-        guard isWindowVisible, full, let now = snapshot.sampledAt else { return }
+        guard wantsPerformance, full, let now = snapshot.sampledAt else { return }
         if let lastHistoryDate {
             let gap = now.timeIntervalSince(lastHistoryDate)
-            if gap < 0 { history.removeAll(); historySegment = UUID() }
-            else if gap > max(6, samplingInterval * 2.5) { historySegment = UUID() }
+            if gap < 0 { history.removeAll(); historySegment = UUID(); allNetworkHistorySegment = UUID() }
+            else if gap > max(6, samplingInterval * 2.5) { historySegment = UUID(); allNetworkHistorySegment = UUID() }
         }
         history.append(.init(date: now, segment: historySegment, cpuPercent: snapshot.cpuPercent,
                              downloadBytesPerSecond: snapshot.network.downloadBytesPerSecond,
-                             uploadBytesPerSecond: snapshot.network.uploadBytesPerSecond, cpuTemperature: snapshot.cpuTemperature, gpuTemperature: snapshot.gpuTemperature, memoryPercent: snapshot.memory?.percent))
+                             uploadBytesPerSecond: snapshot.network.uploadBytesPerSecond, cpuTemperature: snapshot.cpuTemperature, gpuTemperature: snapshot.gpuTemperature, memoryPercent: snapshot.memory?.percent,
+                             allDownloadBytesPerSecond: snapshot.allNetwork.downloadBytesPerSecond,
+                             allUploadBytesPerSecond: snapshot.allNetwork.uploadBytesPerSecond,
+                             allNetworkSegment: allNetworkHistorySegment))
         history.removeAll { now.timeIntervalSince($0.date) > 3600 }
         lastHistoryDate = now
     }
@@ -537,7 +564,7 @@ private actor DeviceSampler {
         let physical = read.filter { $0.value.active && interfaceMetadata[$0.key]?.physical == true }
         let wifi = physical.filter { interfaceMetadata[$0.key]?.scope == .wifi }.mapValues(\.counter)
         let ethernet = physical.filter { interfaceMetadata[$0.key]?.scope == .ethernet }.mapValues(\.counter)
-        trafficAccumulator.ingest(wifi: wifi, ethernet: ethernet, at: now, maximumGap: maximumGap)
+        let allDelta = trafficAccumulator.ingest(wifi: wifi, ethernet: ethernet, at: now, maximumGap: maximumGap)
         let delta = accumulator.ingest(counters, at: now, maximumGap: maximumGap)
         trafficWrites.markChanged(); networkWrites.markChanged()
         let ledger = accumulator.ledger, today = ledger.today(at: now)
@@ -549,12 +576,23 @@ private actor DeviceSampler {
                                  recordedSince: ledger.recordingStartedAt, todayFirstSample: today.firstSample,
                                  todayLastSample: today.lastSample, excludedIntervals: today.excludedIntervals,
                                  interfaceNames: chosen.map { "\($0.name) · \($0.id)" })
+        if let allLedger = trafficAccumulator.ledger.scopes[.all] {
+            let allToday = allLedger.today(at: now, calendar: trafficAccumulator.ledger.calendar)
+            snapshot.allNetwork = .init(downloadBytesPerSecond: allDelta?.downloadBytesPerSecond,
+                                       uploadBytesPerSecond: allDelta?.uploadBytesPerSecond,
+                                       sessionDownload: allLedger.recordingReceived, sessionUpload: allLedger.recordingSent,
+                                       todayDownload: allToday.received, todayUpload: allToday.sent,
+                                       todayCoverageSeconds: allToday.coveredSeconds, sessionCoverageSeconds: allLedger.recordingCoveredSeconds,
+                                       recordedSince: allLedger.recordingStartedAt, todayFirstSample: allToday.firstSample,
+                                       todayLastSample: allToday.lastSample, excludedIntervals: allToday.excludedIntervals,
+                                       interfaceNames: interfaces.filter { physical[$0.id] != nil }.map { "\($0.name) · \($0.id)" })
+        } else { snapshot.allNetwork = .init() }
         snapshot.uptime = ProcessInfo.processInfo.systemUptime
         snapshot.sampledAt = now
         if full { samplePerformance(now: now, maximumGap: maximumGap) }
         else {
             previousCPU = nil; previousPerformanceDate = nil; previousProcesses.removeAll(); previousDisk = nil
-            if thermal { sampleThermal() }
+            if thermal { sampleThermal(now: now) }
         }
         persist()
         return .init(snapshot: snapshot, interfaces: interfaces, selection: ledger.selectedInterfaceIDs, error: [persistenceError, trafficError].compactMap { $0 }.joined(separator: "；").nilIfEmpty, trafficLedger: trafficAccumulator.ledger)
@@ -649,18 +687,20 @@ private actor DeviceSampler {
         snapshot.memory = memory()
         snapshot.disk = disk(now: now, maximumGap: maximumGap)
         snapshot.battery = battery()
-        sampleThermal()
+        sampleThermal(now: now)
         snapshot.processes = processes(now: now, elapsed: continuous ? elapsed : nil)
         snapshot.performanceSampledAt = now; previousPerformanceDate = now
     }
 
-    private func sampleThermal() {
+    private func sampleThermal(now: Date) {
         if snapshot.chipName == "正在读取" { snapshot.chipName = sysctlString("machdep.cpu.brand_string") ?? "Mac 处理器" }
         let thermal = sensors.read(chip: snapshot.chipName)
         snapshot.cpuTemperature = thermal.cpu; snapshot.gpuTemperature = thermal.gpu
         snapshot.fanRPM = thermal.fans; snapshot.sensorSource = thermal.source
         snapshot.cpuSensorKeys = thermal.cpuKeys; snapshot.gpuSensorKeys = thermal.gpuKeys
-        snapshot.unavailableReasons["temperature"] = thermal.cpu == nil || thermal.gpu == nil ? "当前硬件未返回有效温度传感器读数。" : nil
+        let missingTemperatures = [("CPU", thermal.cpu), ("GPU", thermal.gpu)].compactMap { $0.1 == nil ? $0.0 : nil }
+        snapshot.unavailableReasons["temperature"] = missingTemperatures.isEmpty ? nil :
+            "\(missingTemperatures.joined(separator: "、")) 温度传感器未返回有效读数。\(thermal.source.contains("不可用") ? thermal.source + "。" : "")"
         snapshot.unavailableReasons["fan"] = thermal.fans == nil ? "当前硬件未返回有效风扇读数。" : nil
         switch ProcessInfo.processInfo.thermalState {
         case .nominal: snapshot.thermalState = .nominal
@@ -669,6 +709,7 @@ private actor DeviceSampler {
         case .critical: snapshot.thermalState = .critical
         @unknown default: snapshot.thermalState = .unknown
         }
+        snapshot.thermalSampledAt = now
     }
 
     private func hardwareName() -> String? {

@@ -202,8 +202,8 @@ struct WBCard<Content:View>: View {
     }
 }
 
-/// One destination belongs to the entire compact card. The arrow is only a
-/// visual cue; compound workspaces continue to use their explicit controls.
+/// One destination belongs to the entire compact card, including its header.
+/// Compound workspaces continue to use their explicit controls.
 struct WBActionCard<Content: View>: View {
     let title: String
     let symbol: String
@@ -214,18 +214,13 @@ struct WBActionCard<Content: View>: View {
     let action: () -> Void
     @ViewBuilder let content: () -> Content
     @Environment(\.workbenchPalette) private var palette
-    @State private var hovering = false
-    @FocusState private var focused: Bool
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 9) {
                 HStack(spacing: 7) {
-                    Image(systemName: symbol).font(.system(size: 15, weight: .light)).foregroundStyle(palette.secondary)
+                    WorkbenchContentIcon(symbol: symbol).foregroundStyle(palette.secondary)
                     Text(title).font(.system(size: 12, weight: .medium))
                     Spacer(minLength: 0)
-                    Image(systemName: "arrow.up.right").font(.system(size: 12))
-                        .foregroundStyle(palette.secondary).opacity(hovering || focused ? 1 : 0)
-                        .accessibilityHidden(true)
                 }.frame(height: 20)
                 content()
             }.frame(maxWidth: .infinity, alignment: .leading).padding(14)
@@ -234,8 +229,7 @@ struct WBActionCard<Content: View>: View {
                 .contentShape(RoundedRectangle(cornerRadius: 15))
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier(contentIdentifier ?? identifier + ".content")
-        }.buttonStyle(ClickablePlainButtonStyle()).focused($focused)
-            .onHover { hovering = $0 }.help(actionLabel)
+        }.buttonStyle(ClickablePlainButtonStyle()).help(actionLabel)
             .accessibilityHint(actionLabel).accessibilityIdentifier(identifier)
     }
 }

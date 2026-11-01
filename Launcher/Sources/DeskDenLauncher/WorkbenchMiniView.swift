@@ -33,6 +33,14 @@ struct WorkbenchMiniView: View {
         self.open = open; self.openContext = openContext; self.finishConfiguration = finishConfiguration
     }
 
+    private var currentThermalStatus: DeviceThermalPresentation {
+        guard let sampledAt = device.snapshot.thermalSampledAt, sampledAt >= openedAt,
+              Date().timeIntervalSince(sampledAt) < 90 else {
+            return .init(cpu: nil, gpu: nil, state: .unknown, isLoading: true)
+        }
+        return .init(snapshot: device.snapshot, rule: device.temperatureRule)
+    }
+
     var body: some View {
         TimelineView(.periodic(from: Date(timeIntervalSinceReferenceDate: 0),
                                by: controller.preferences.showDate && controller.preferences.showSeconds ? 1 : 60)) { timeline in
@@ -49,7 +57,7 @@ struct WorkbenchMiniView: View {
                                                       now: timeline.date, calendar: context.dateContext.calendar)
                 }, balances: balances.sources.map {
                     WorkbenchMiniAPIBalanceData(configuration: $0, state: balances.state(for: $0.id), now: timeline.date, calendar: context.dateContext.calendar)
-                }, appearance: appearance, sourceKinds: Dictionary(uniqueKeysWithValues: providerUsage.sources.map { ($0.id, $0.kind) }), thermalStatus: .init(snapshot: device.snapshot, rule: device.temperatureRule), preferences: controller.preferences, safeTop: safeTop, notchWidth: notchWidth,
+                }, appearance: appearance, sourceKinds: Dictionary(uniqueKeysWithValues: providerUsage.sources.map { ($0.id, $0.kind) }), thermalStatus: currentThermalStatus, preferences: controller.preferences, safeTop: safeTop, notchWidth: notchWidth,
                 error: controller.error, open: open, openContext: openContext, setVisible: controller.setMiniCard,
                 setHeaderVisible: controller.setMiniHeader, setSeconds: controller.setMiniSeconds, reorder: controller.moveMiniCard,
                 restore: controller.restoreMiniSections, finishConfiguration: finishConfiguration, saveLayout: controller.saveMiniLayout
@@ -62,7 +70,7 @@ struct WorkbenchMiniView: View {
 }
 
 /// Production and isolated render fixtures use this same modular panel.
-/// WorkbenchNotchSurface supplies the outer glass; cards only add a soft tint.
+/// WorkbenchNotchSurface supplies the outer glass; cards share a soft tint and fine border.
 struct WorkbenchMiniPanelView: View {
     var context: WorkbenchMiniContextData
     var agenda: WorkbenchMiniAgendaData
@@ -294,6 +302,7 @@ struct WorkbenchMiniPanelView: View {
         cardContent(id).padding(.horizontal, 12).padding(.vertical, 8)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(palette.soft, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(palette.line, lineWidth: 1).allowsHitTesting(false))
             .contentShape(RoundedRectangle(cornerRadius: 12))
     }
     private func card(_ id: WorkbenchMiniCardID, capacity: Int) -> some View {
@@ -309,9 +318,9 @@ struct WorkbenchMiniPanelView: View {
         return Group {
             if editing {
                 content
-                    .accessibilityAction(named: Text("前移")) { move(id, forward: false, capacity: capacity) }
-                    .accessibilityAction(named: Text("后移")) { move(id, forward: true, capacity: capacity) }
-                    .accessibilityAction(named: Text("隐藏卡片")) { editVisibility(id, false) }
+                    .accessibilityAction(named: Text("前移")) { Task { @MainActor in guard editing else { return }; move(id, forward: false, capacity: capacity) } }
+                    .accessibilityAction(named: Text("后移")) { Task { @MainActor in guard editing else { return }; move(id, forward: true, capacity: capacity) } }
+                    .accessibilityAction(named: Text("隐藏卡片")) { Task { @MainActor in guard editing else { return }; editVisibility(id, false) } }
             } else { content }
         }
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(editing && focusedCard == id ? palette.accent.opacity(0.5) : .clear, lineWidth: 1).allowsHitTesting(false))
@@ -388,17 +397,21 @@ struct WorkbenchMiniPanelView: View {
                     temperature("GPU", device.gpuTemperature, level: thermalStatus.gpuLevel, trailing: true)
                 }
                 valueRow("左 " + device.leftFan, "右 " + device.rightFan)
-            }.help(device.sensorNote)
+            }.help(thermalStatus.detail + "\n" + device.sensorNote)
         default:
             if let value = externalProviders.first(where: { $0.id == id.providerID }) {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 2) {
                     heading(id, value.isStale ? value.stateText : "")
                     HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        Text(value.remaining).font(.system(size: 21)).monospacedDigit()
+                        Text(value.remaining).font(.system(size: 17)).monospacedDigit()
                         Text(value.unit + " 剩余").font(.system(size: 11)).foregroundStyle(palette.secondary)
-                    }.lineLimit(1).frame(height: 24)
+                    }.lineLimit(1).frame(height: 20)
                     valueRow(value.amount, value.usedPercent.map { UsagePercentage.text($0) } ?? percent(value.fraction)); meter(value.fraction, stale: value.isStale)
-                    Text(value.reset).font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(1)
+                    Text(value.reset).font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(1).frame(height: 14)
+                    UsageResetClock(interval: 1) { now in
+                        Text(value.observedAt.map { (value.isStale ? "上次读数 " : "更新于 ") + UsageObservationAge.text(since: $0, now: now) } ?? "尚无更新时间")
+                            .font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1).monospacedDigit().frame(height: 14)
+                    }
                 }.help(value.detail)
             } else if let value = balances.first(where: { $0.id == id.apiBalanceID }) {
                 VStack(alignment: .leading, spacing: 6) {
@@ -438,10 +451,7 @@ struct WorkbenchMiniPanelView: View {
                 aiProvider: id == .codex ? .codex : id == .claude ? .claude : nil,
                 serviceKind: id.providerID.flatMap { sourceKinds[$0] }, defaultBrand: id.apiBalanceID != nil ? .deepseek : nil, size: 16)
         } else if id == .codex || id == .claude { AIProviderLogo(provider: id == .codex ? .codex : .claude, size: 16) }
-        else { Image(systemName: symbol(id)).font(.system(size: 14)).frame(width: 16, height: 16).foregroundStyle(palette.secondary) }
-    }
-    private func symbol(_ id: WorkbenchMiniCardID) -> String {
-        switch id { case .network: "arrow.up.arrow.down"; case .thermal: "thermometer.medium"; case .disk: "internaldrive"; case .memory: "memorychip"; case .todo: "calendar"; case .traffic: "chart.bar"; default: "server.rack" }
+        else { WorkbenchContentIcon(mini: id, size: 16).foregroundStyle(palette.secondary) }
     }
     private func titleLabel(_ id: WorkbenchMiniCardID) -> some View {
         HStack(spacing: 6) { sourceIcon(id); Text(title(id)).font(.system(size: 12, weight: .medium)).lineLimit(1) }
@@ -472,27 +482,36 @@ struct WorkbenchMiniPanelView: View {
         }.frame(maxWidth: .infinity, alignment: trailing ? .trailing : .leading)
     }
     private var networkTrend: some View {
-        Group {
-            if device.networkPoints.count < 2 {
-                Text("暂无趋势").font(.system(size: 11)).foregroundStyle(palette.muted).frame(maxWidth: .infinity, maxHeight: .infinity)
+        let downloads = device.networkSegments(upload: false), uploads = device.networkSegments(upload: true)
+        return Group {
+            if downloads.isEmpty && uploads.isEmpty {
+                Text(device.download == "—" && device.upload == "—" ? "正在采集网络读数" : "正在采集趋势")
+                    .font(.system(size: 11)).foregroundStyle(palette.muted).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Canvas { drawing, size in
                     let points = device.networkPoints
                     let maximum = max(1, points.flatMap { [$0.download, $0.upload].compactMap { $0 }.filter { $0.isFinite && $0 >= 0 } }.max() ?? 1)
                     let first = points.first!.date, duration = max(1, points.last!.date.timeIntervalSince(first))
                     for upload in [false, true] {
-                        var path = Path(), previous: WorkbenchMiniNetworkPoint?
-                        for point in points {
-                            let value = upload ? point.upload : point.download
-                            guard let value, value.isFinite, value >= 0 else { previous = nil; continue }
-                            let location = CGPoint(x: point.date.timeIntervalSince(first) / duration * size.width, y: size.height - 1 - min(1, value / maximum) * (size.height - 2))
-                            if let previous, previous.segment == point.segment, point.date.timeIntervalSince(previous.date) <= 8 { path.addLine(to: location) }
-                            else { path.move(to: location) }
-                            previous = point
+                        let color = upload ? palette.secondary : palette.accent
+                        for segment in upload ? uploads : downloads {
+                            let locations = segment.map { point in
+                                let value = (upload ? point.upload : point.download)!
+                                return CGPoint(x: point.date.timeIntervalSince(first) / duration * size.width,
+                                               y: size.height - 1 - min(1, value / maximum) * (size.height - 2))
+                            }
+                            guard let start = locations.first else { continue }
+                            var path = Path(); path.move(to: start)
+                            for curve in DeviceTrendCurve.segments(locations) {
+                                path.addCurve(to: curve.end, control1: curve.control1, control2: curve.control2)
+                            }
+                            if locations.count == 1 {
+                                drawing.fill(Path(ellipseIn: CGRect(x: start.x - 1, y: start.y - 1, width: 2, height: 2)), with: .color(color))
+                            }
+                            drawing.stroke(path, with: .color(color), style: .init(lineWidth: 1.4, lineCap: .round, lineJoin: .round, dash: upload ? [3, 2] : []))
                         }
-                        drawing.stroke(path, with: .color(upload ? palette.secondary : palette.accent), style: .init(lineWidth: 1.4, dash: upload ? [3, 2] : []))
                     }
-                }.accessibilityLabel("最近60秒网络趋势：下载实线、上传虚线")
+                }.accessibilityLabel("最近60秒网络曲线：下载实线、上传虚线")
             }
         }
     }
@@ -546,7 +565,7 @@ struct WorkbenchMiniPanelView: View {
         default:
             if let value = balances.first(where: { $0.id == id.apiBalanceID }) { return "\(value.stateText)；\(value.amount)" }
             guard let value = externalProviders.first(where: { $0.id == id.providerID }) else { return "来源已移除" }
-            return "\(value.stateText)；\(value.amount)"
+            return "\(value.stateText)；\(value.amount)" + (value.observedAt.map { "；更新于 " + UsageObservationAge.text(since: $0) } ?? "")
         }
     }
 }

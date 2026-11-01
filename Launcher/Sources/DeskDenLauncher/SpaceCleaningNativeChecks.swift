@@ -74,8 +74,16 @@ import LauncherCore
             }
             app.navigate(.overview)
             _ = await settle(window) { exists("home-open-cleaning", in: host) }
-            check(try await hoverCardCue("home-open-cleaning", host: host, window: window, output: output),
-                  "home's disk card reveals its detail arrow on hover while its material and hit area stay fixed")
+            check(try await hoverCardSurface("home-open-cleaning", host: host, window: window, output: output),
+                  "home's disk card retains its clear corner, material and full hit area while showing the configured hover cursor")
+            window.ignoresMouseEvents = false
+            let diskCardClicked = clickBackground("home-open-cleaning", in: host)
+            _ = await settle(window) { app.route == .cleaning }
+            check(diskCardClicked && app.route == .cleaning,
+                  "home's disk card opens space cleaning from its empty trailing padding without a detail arrow")
+            window.ignoresMouseEvents = true
+            app.navigate(.overview)
+            _ = await settle(window) { exists("home-open-cleaning", in: host) }
             let homeBoundaryIDs = ["fc.page.home", "fc.home.agenda", "fc.home.calendar.strip", "home-device-detail"]
             let homeBoundaryFrames = homeBoundaryIDs.map { frame($0, in: host) }
             let homePageScroll = objects(host).compactMap { $0 as? NSScrollView }.max { $0.bounds.width * $0.bounds.height < $1.bounds.width * $1.bounds.height }
@@ -574,12 +582,10 @@ import LauncherCore
         } while ContinuousClock.now < deadline
         return predicate()
     }
-    /// Compare an empty padding strip from the production view before/after
-    /// an OS-delivered mouse move. Text color changes alone cannot pass this.
-    /// Compact destination cards communicate hover through their trailing
-    /// arrow, not through a second background fill. Compare both regions using
-    /// real pointer events, and require the cue to disappear when the pointer exits.
-    private static func hoverCardCue(_ identifier: String, host: NSView, window: NSWindow, output: URL) async throws -> Bool {
+    /// Whole-card destinations retain their material and empty trailing corner.
+    /// Real pointer entry changes only the configured cursor, not the layout or
+    /// a duplicate action icon; pointer exit keeps the same visible surface.
+    private static func hoverCardSurface(_ identifier: String, host: NSView, window: NSWindow, output: URL) async throws -> Bool {
         guard let rect = frame(identifier, in: host), rect.width >= 60, rect.height >= 60 else { return false }
         let original = CGEvent(source: nil)?.location, ignored = window.ignoresMouseEvents
         window.ignoresMouseEvents = false; window.acceptsMouseMovedEvents = true
@@ -605,19 +611,21 @@ import LauncherCore
             window.ignoresMouseEvents = ignored
         }
         let outside = NSPoint(x: window.frame.minX + 4, y: window.frame.maxY - 4)
-        let arrow = NSRect(x: rect.maxX - 36, y: rect.maxY - 36, width: 24, height: 24)
+        let corner = NSRect(x: rect.maxX - 36, y: rect.maxY - 36, width: 24, height: 24)
         let padding = NSRect(x: rect.minX + 3, y: rect.midY - 4, width: 5, height: 8)
         post(outside); try? await Task.sleep(for: .milliseconds(140))
-        let originalArrow = pixels(arrow), originalPadding = pixels(padding)
+        let originalCorner = pixels(corner), originalPadding = pixels(padding)
         post(NSPoint(x: rect.midX, y: rect.midY)); try? await Task.sleep(for: .milliseconds(180))
-        let activeArrow = pixels(arrow), activePadding = pixels(padding)
+        let activeCorner = pixels(corner), activePadding = pixels(padding)
+        let expectedCursor = ButtonCursorPolicy.shared.cursor, actualCursor = NSCursor.currentSystem
+        let correctCursor = actualCursor?.hotSpot == expectedCursor.hotSpot && actualCursor?.image.tiffRepresentation == expectedCursor.image.tiffRepresentation
         let stable = frame(identifier, in: host) == rect
-        try capture(host: host, name: "hover-cue-" + identifier, output: output)
+        try capture(host: host, name: "hover-card-" + identifier, output: output)
         post(outside); try? await Task.sleep(for: .milliseconds(140))
-        let appeared = changed(originalArrow, activeArrow), disappeared = changed(activeArrow, pixels(arrow))
+        let entered = changed(originalCorner, activeCorner), exited = changed(activeCorner, pixels(corner))
         let surface = changed(originalPadding, activePadding)
-        print("DETAIL compact card hover \(identifier) arrowAppeared=\(appeared ?? -1) arrowDisappeared=\(disappeared ?? -1) surfaceChanged=\(surface ?? -1) stable=\(stable)")
-        return appeared.map { $0 >= 12 } == true && disappeared.map { $0 >= 12 } == true && surface.map { $0 < 12 } == true && stable
+        print("DETAIL compact card hover \(identifier) cornerEntryChanged=\(entered ?? -1) cornerExitChanged=\(exited ?? -1) surfaceChanged=\(surface ?? -1) cursor=\(correctCursor) stable=\(stable)")
+        return entered.map { $0 < 12 } == true && exited.map { $0 < 12 } == true && surface.map { $0 < 12 } == true && correctCursor && stable
     }
 
     private static func hoverBackground(_ identifier: String, host: NSView, window: NSWindow, output: URL, expectedChange: Bool = true) async throws -> Bool {

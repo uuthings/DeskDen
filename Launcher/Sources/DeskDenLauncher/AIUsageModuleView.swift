@@ -225,8 +225,8 @@ struct AIUsageModuleView: View {
     private func tokenCard(_ records: [AITokenRecord], title: String, showChart: Bool) -> some View {
         let totals = records.reduce(AITokenCounts()) { $0 + $1.tokens }
         let buckets = AIUsageAggregation.buckets(records, period: model.selectedPeriod, now: Date())
-        return AIActionCard {
-            AICardTitle(title: title, symbol: "chart.bar.xaxis", actionTitle: "查看 Token 记录") { model.show(.history) }
+        return AIActionCard(actionTitle: "查看 Token 记录", action: { model.show(.history) }) {
+            AICardTitle(title: title, symbol: "chart.bar.xaxis")
             Group {
                 if contentWidth >= 800 {
                     HStack(alignment: .center, spacing: 14) {
@@ -283,8 +283,8 @@ struct AIUsageModuleView: View {
     private var modelDistribution: some View {
         let total = visibleRecords.reduce(Int64(0)) { $0 + $1.tokens.total }
         let estimate = model.estimate(visibleRecords)
-        return AIActionCard {
-            AICardTitle(title: "模型分布", symbol: "square.stack.3d.up", actionTitle: "管理模型单价") { model.show(.prices) }
+        return AIActionCard(actionTitle: "管理模型单价", action: { model.show(.prices) }) {
+            AICardTitle(title: "模型分布", symbol: "square.stack.3d.up")
             if distribution.isEmpty {
                 Text("读取到有效计量记录后显示模型组成。").aiText(11, color: palette.muted).frame(maxWidth: .infinity, minHeight: 112, alignment: .center)
             } else {
@@ -310,8 +310,8 @@ struct AIUsageModuleView: View {
         }.frame(maxHeight: .infinity, alignment: .top)
     }
     private var recentActivity: some View {
-        AIActionCard {
-            AICardTitle(title: "最近活动", symbol: "clock.arrow.circlepath", actionTitle: "全部活动记录") { model.show(.history) }
+        AIActionCard(actionTitle: "全部活动记录", action: { model.show(.history) }) {
+            AICardTitle(title: "最近活动", symbol: "clock.arrow.circlepath")
             AITokenTable(records: Array(visibleRecords.sorted { $0.timestamp > $1.timestamp }.prefix(3)), model: model, compact: contentWidth < 800, scrollHeight: nil)
         }
     }
@@ -783,9 +783,6 @@ private struct AIProviderQuotaCard: View {
     @Environment(\.timeZone) private var timeZone
     var action: () -> Void
     @Environment(\.workbenchPalette) private var palette
-    @State private var hovering = false
-    @State private var arrowHovered = false
-    @FocusState private var actionFocused: Bool
     private var windows: [AIQuotaWindow] { summary.snapshot?.availableWindows ?? [] }
     private var rowGap: CGFloat { expanded ? 18 : 14 }
     private var sourceText: String {
@@ -797,12 +794,11 @@ private struct AIProviderQuotaCard: View {
             if showsAction {
                 Button(action: action) { cardContent }
                     .buttonStyle(ClickablePlainButtonStyle())
-                    .focused($actionFocused)
                     .help("查看 " + summary.title + " 用量详情")
                     .accessibilityLabel("查看 " + summary.title + " 用量详情")
                     .accessibilityIdentifier("fc.ai.provider." + summary.provider.rawValue)
             } else { cardContent }
-        }.onHover { hovering = $0 }
+        }
     }
     private var cardContent: some View {
         WBCard(spacing: 0) {
@@ -822,14 +818,6 @@ private struct AIProviderQuotaCard: View {
                     Text(sourceText).aiText(11, color: palette.muted).lineLimit(1).truncationMode(.middle).help(sourceText).frame(height: 16)
                 }
                 Spacer()
-                if showsAction {
-                    Image(systemName: "arrow.up.right").font(.system(size: 14))
-                        .foregroundStyle(arrowHovered ? palette.text : palette.secondary)
-                        .frame(width: 28, height: 28)
-                        .overlay(WBIconFeedbackSurface(hovering: arrowHovered || actionFocused).allowsHitTesting(false))
-                        .onHover { arrowHovered = $0 }
-                        .opacity(hovering || actionFocused ? 1 : 0).accessibilityHidden(true)
-                }
             }.frame(height: 40)
                 .aiQuotaMeasuredRegion("fc.ai.quota.header." + summary.provider.rawValue)
                 .padding(.bottom, 14)
@@ -906,44 +894,56 @@ private struct AIQuotaRow: View {
             .accessibilityElement(children: .contain).accessibilityIdentifier(identifier)
     }
 }
-private struct AIHoveredCardKey: EnvironmentKey { static let defaultValue = false }
-private extension EnvironmentValues {
-    var aiCardHovered: Bool {
-        get { self[AIHoveredCardKey.self] }
-        set { self[AIHoveredCardKey.self] = newValue }
-    }
-}
 private struct AIActionCard<Content: View>: View {
+    let actionTitle: String
+    let action: () -> Void
     let content: Content
-    @State private var hovering = false
-    init(@ViewBuilder content: () -> Content) { self.content = content() }
+    @Environment(\.workbenchPalette) private var palette
+    @FocusState private var actionFocused: Bool
+    init(actionTitle: String, action: @escaping () -> Void, @ViewBuilder content: () -> Content) {
+        self.actionTitle = actionTitle
+        self.action = action
+        self.content = content()
+    }
     var body: some View {
-        WBCard(spacing: 0) { content.environment(\.aiCardHovered, hovering) }
-            .onHover { hovering = $0 }
+        WBCard(spacing: 0) { content }
+            .contentShape(RoundedRectangle(cornerRadius: 15))
+            .onTapGesture(perform: action)
+            .focusable()
+            .focusEffectDisabled()
+            .focused($actionFocused)
+            .onKeyPress(.return) {
+                guard actionFocused else { return .ignored }
+                action(); return .handled
+            }
+            .onKeyPress(.space) {
+                guard actionFocused else { return .ignored }
+                action(); return .handled
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 15)
+                    .stroke(actionFocused ? palette.accent : .clear, lineWidth: 1)
+                    .allowsHitTesting(false)
+            }
+            .help(actionTitle)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(actionTitle)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { action() }
     }
 }
 private struct AICardTitle: View {
     var title: String
     var symbol: String
     var trailing: String? = nil
-    var actionTitle: String? = nil
-    var action: (() -> Void)? = nil
     @Environment(\.workbenchPalette) private var palette
-    @Environment(\.aiCardHovered) private var cardHovered
-    @FocusState private var actionFocused: Bool
     var body: some View {
         HStack(spacing: 7) {
             Image(systemName: symbol).font(.system(size: 16)).foregroundStyle(palette.accent)
             Text(title).aiText(12, weight: .medium, color: palette.secondary)
             Spacer()
             if let trailing { Text(trailing).aiText(11, color: palette.muted) }
-            if let actionTitle, let action {
-                Button(action: action) {
-                    Image(systemName: "arrow.up.right").opacity(cardHovered || actionFocused ? 1 : 0)
-                }.buttonStyle(WBIconButtonStyle(size: 28))
-                    .focused($actionFocused).help(actionTitle).accessibilityLabel(actionTitle)
-            }
-        }.frame(height: action == nil ? 22 : 28).padding(.bottom, 10)
+        }.frame(height: 22).padding(.bottom, 10)
     }
 }
 private struct AITokenTable: View {

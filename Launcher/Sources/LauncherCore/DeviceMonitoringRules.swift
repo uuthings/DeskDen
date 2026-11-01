@@ -281,13 +281,19 @@ public struct DeviceTrafficAccumulator: Sendable {
         })
     }
     public mutating func breakContinuity() { for scope in DeviceTrafficScope.allCases { accumulators[scope]?.breakContinuity() } }
-    public mutating func ingest(wifi: [String: DeviceNetworkCounter], ethernet: [String: DeviceNetworkCounter], at date: Date, maximumGap: TimeInterval) {
+    /// Returns the same all-physical-interface delta used by the accounting ledger.
+    /// A baseline or excluded interval remains nil, never a synthetic zero rate.
+    @discardableResult
+    public mutating func ingest(wifi: [String: DeviceNetworkCounter], ethernet: [String: DeviceNetworkCounter], at date: Date, maximumGap: TimeInterval) -> DeviceNetworkDelta? {
         let all = wifi.merging(ethernet) { first, _ in first }
+        var allDelta: DeviceNetworkDelta?
         for scope in DeviceTrafficScope.allCases {
             let counters = switch scope { case .all: all; case .wifi: wifi; case .ethernet: ethernet }
-            _ = accumulators[scope]?.ingest(counters, at: date, maximumGap: maximumGap, calendar: ledger.calendar)
+            let delta = accumulators[scope]?.ingest(counters, at: date, maximumGap: maximumGap, calendar: ledger.calendar)
+            if scope == .all { allDelta = delta }
             ledger.scopes[scope] = accumulators[scope]?.ledger
         }
+        return allDelta
     }
 }
 

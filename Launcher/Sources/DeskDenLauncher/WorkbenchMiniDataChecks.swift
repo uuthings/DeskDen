@@ -61,25 +61,55 @@ import LauncherCore
             check(ai.windows[0].reset == "20分钟后重置" && ai.windows[1].reset == "1天后重置", "quota reset labels use the shared full relative countdown on either side of 24 hours")
 
             var snapshot = DeviceSnapshot()
+            check(snapshot.thermalPresentation().title == "读取中", "thermal initialization is distinct from a completed unavailable reading")
+            snapshot.thermalSampledAt = now
+            check(snapshot.thermalPresentation().title == "状态未知", "a completed missing thermal read does not remain loading indefinitely")
+            snapshot.thermalState = .nominal
+            check(snapshot.thermalPresentation().title == "系统正常" && snapshot.thermalPresentation().cpuLevel == .unknown,
+                  "system thermal pressure is reported separately from unavailable temperature sensors")
             let unavailable = WorkbenchMiniDeviceData(snapshot: snapshot, openedAt: now, now: now)
             check(unavailable.memory == "—" && unavailable.disk == "—" && unavailable.download == "—" && unavailable.periodTraffic == "—" && unavailable.memoryFraction == nil, "missing device readings never become zero usage")
             snapshot.performanceSampledAt = now
             snapshot.cpuTemperature = 50; snapshot.gpuTemperature = 40; snapshot.fanRPM = [0, nil]
             snapshot.memory = .init(total: 16_000, used: 8_000, available: 8_000, application: 5_000, wired: 2_000, compressed: 1_000, cached: 0, swapUsed: nil, pageIns: 0, pageOuts: 0, pressure: .normal)
             snapshot.disk = .init(name: "Fixture", fileSystem: "APFS", total: 1_000_000_000_000, used: 700_000_000_000, available: 300_000_000_000, readBytesPerSecond: nil, writeBytesPerSecond: nil)
-            snapshot.network.downloadBytesPerSecond = 0; snapshot.network.uploadBytesPerSecond = 0
-            snapshot.network.todayCoverageSeconds = 10
+            snapshot.network.downloadBytesPerSecond = 999; snapshot.network.uploadBytesPerSecond = 999
+            snapshot.allNetwork.downloadBytesPerSecond = 0; snapshot.allNetwork.uploadBytesPerSecond = 0
+            snapshot.allNetwork.todayCoverageSeconds = 10
             let live = WorkbenchMiniDeviceData(snapshot: snapshot, openedAt: now, unit: .fahrenheit, now: now)
             check(live.memoryFraction == 0.5 && live.memoryPressureState == .normal && live.diskFraction == 0.7 && live.disk.contains("1 TB"), "device fractions and decimal storage use the actual capacity snapshot")
             check(live.temperature == "122°F" && live.gpuTemperature == "104°F" && live.leftFan == "0 RPM" && live.rightFan == "—", "sensor units and genuine zero RPM remain distinct from unavailable readings")
-            check(live.download == DeviceFormat.rate(0) && live.todayTraffic == DeviceFormat.storage(0), "covered zero network traffic remains a valid zero")
+            check(live.download == DeviceFormat.rate(0) && live.todayTraffic == DeviceFormat.storage(0), "Mini uses all-interface rates even when the workbench selects a different interface; covered zero remains valid")
             let segment = UUID()
             let history = (0..<1_000).map { index in
                 DeviceHistoryPoint(date: now.addingTimeInterval(Double(index - 999)), segment: segment,
-                    cpuPercent: nil, downloadBytesPerSecond: index == 999 ? nil : 0, uploadBytesPerSecond: 1)
+                    cpuPercent: nil, downloadBytesPerSecond: 999, uploadBytesPerSecond: 999, allDownloadBytesPerSecond: index == 999 ? nil : 0, allUploadBytesPerSecond: 1)
             }
             let graph = WorkbenchMiniDeviceData(snapshot: snapshot, openedAt: now, history: history, now: now)
             check(graph.networkPoints.count == 61 && graph.networkPoints.first?.date == now.addingTimeInterval(-60) && graph.networkPoints.last?.download == nil, "Mini graph reads a bounded sixty-second tail and retains unavailable samples as gaps")
+            let allSegment = UUID()
+            let filteredChange = [0, 1].map { index in
+                DeviceHistoryPoint(date: now.addingTimeInterval(Double(index - 1)), segment: UUID(), cpuPercent: nil,
+                                   downloadBytesPerSecond: nil, uploadBytesPerSecond: nil,
+                                   allDownloadBytesPerSecond: 10, allUploadBytesPerSecond: 0, allNetworkSegment: allSegment)
+            }
+            let independentGraph = WorkbenchMiniDeviceData(snapshot: snapshot, openedAt: now, history: filteredChange, now: now)
+            check(independentGraph.networkSegments(upload: false).map(\.count) == [2]
+                  && independentGraph.networkSegments(upload: true).map(\.count) == [2],
+                  "changing selected-interface segments does not split Mini's continuous all-network curves")
+            var interrupted = WorkbenchMiniDeviceData()
+            let restarted = UUID()
+            interrupted.networkPoints = [
+                .init(date: now.addingTimeInterval(-5), segment: segment, download: 0, upload: 1),
+                .init(date: now.addingTimeInterval(-4), segment: segment, download: 4, upload: 2),
+                .init(date: now.addingTimeInterval(-3), segment: segment, download: nil, upload: 3),
+                .init(date: now.addingTimeInterval(-2), segment: segment, download: 2, upload: 4),
+                .init(date: now.addingTimeInterval(-1), segment: restarted, download: 1, upload: 5),
+                .init(date: now.addingTimeInterval(10), segment: restarted, download: 3, upload: 6),
+                .init(date: now.addingTimeInterval(9), segment: restarted, download: 2, upload: 7)
+            ]
+            check(interrupted.networkSegments(upload: false).map(\.count) == [2,1,1,1,1], "Mini curves split at missing rates, source changes, long gaps and clock reversal")
+            check(interrupted.networkSegments(upload: true).map(\.count) == [4,1,1,1], "each network series retains its own available samples and genuine zero rates")
             let old = WorkbenchMiniDeviceData(snapshot: snapshot, openedAt: now.addingTimeInterval(1), history: history, now: now.addingTimeInterval(100))
             check(old.networkPoints.isEmpty && old.download == "—" && old.temperature == "—", "stale pre-open samples cannot appear as current readings")
             var budget = DeviceTrafficBudget(); budget.enabled = true; budget.limitGB = 100
@@ -93,6 +123,7 @@ import LauncherCore
             let source = ProviderUsageConfiguration(kind: .bandwagon, name: "Fixture source", resourceID: "123")
             var externalSnapshot = ProviderUsageSnapshot(sourceID: source.id, observedAt: now, usedBytes: 1_073_741_824, limitBytes: 10_737_418_240, resetDateText: "2026-11-01", displayUnit: .binaryGB, sourceDescription: "Synthetic provider fixture")
             let external = WorkbenchMiniExternalProviderData(configuration: source, state: .init(snapshot: externalSnapshot), now: now, calendar: zone)
+            check(external.observedAt == now, "Mini service observation time comes from the verified snapshot")
             check(external.amount == "1 / 10 GB" && external.fraction == 0.1 && !external.isStale, "external cards project the provider's binary unit without adding local network bytes")
             check(external.remaining == "9" && external.reset == "11月1日重置 · 具体时间未提供", "external Mini cards keep the authoritative remaining amount and date-only reset")
             for percentage in [UInt64(29), UInt64(58)] {
@@ -114,13 +145,13 @@ import LauncherCore
             var slowSource = source; slowSource.refreshPolicy.maximumInterval = 43_200
             check(!WorkbenchMiniExternalProviderData(configuration: slowSource, state: .init(snapshot: externalSnapshot), now: now.addingTimeInterval(25_200), calendar: zone).isStale, "Mini freshness respects the source's configured maximum refresh interval")
             let absent = WorkbenchMiniExternalProviderData(configuration: source, state: .init(), now: now, calendar: zone)
-            check(absent.amount == "尚无读数" && absent.fraction == nil, "unconnected external source remains reachable without an invented balance")
+            check(absent.amount == "尚无读数" && absent.fraction == nil && absent.observedAt == nil, "unconnected external source remains reachable without an invented balance")
             var failedRefresh = ProviderUsageRefreshState(); failedRefresh.failed(.transport, at: now)
             let failed = WorkbenchMiniExternalProviderData(configuration: source, state: .init(snapshot: externalSnapshot, refresh: failedRefresh), now: now, calendar: zone)
-            check(failed.isStale && failed.stateText == "更新失败" && failed.detail.contains("上次有效读数"), "retained provider balances disclose refresh failure")
+            check(failed.observedAt == now && failed.isStale && failed.stateText == "更新失败" && failed.detail.contains("上次有效读数"), "retained provider balances disclose refresh failure")
             externalSnapshot.sourceID = UUID()
             let mismatched = WorkbenchMiniExternalProviderData(configuration: source, state: .init(snapshot: externalSnapshot), now: now, calendar: zone)
-            check(mismatched.fraction == nil && mismatched.stateText == "尚无有效读数", "a mismatched provider identity cannot display another source's balance")
+            check(mismatched.observedAt == nil && mismatched.fraction == nil && mismatched.stateText == "尚无有效读数", "a mismatched provider identity cannot display another source's balance")
 
             let context=WorkbenchContextModel(dataDirectory:root.appendingPathComponent("Context"),provider:MiniCheckWeather())
             defer {context.stop()}

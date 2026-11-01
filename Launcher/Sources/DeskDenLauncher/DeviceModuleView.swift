@@ -104,7 +104,7 @@ struct DeviceModuleView: View {
             VStack(spacing: 0) {
                 ForEach(DeviceDashboardLayout.defaultCards.map(\.id), id: \.self) { id in
                     HStack(spacing: 8) {
-                        Image(systemName: id.symbol).frame(width: 16)
+                        WorkbenchContentIcon(device: id, size: 16)
                         VStack(alignment: .leading, spacing: 3) {
                             Text(id.title).font(.system(size: 12))
                             if id == .network || id == .traffic { Text("也可在网络监控集中查看").font(.system(size: 11)).foregroundStyle(palette.muted) }
@@ -363,8 +363,7 @@ private struct DeviceContentWidth: PreferenceKey {
     static let defaultValue: CGFloat = 864
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
-/// Related-detail actions use the same bounded icon surface as the overview
-/// and native dashboard cards, while retaining hover/focus disclosure.
+/// A related summary has one destination across its complete card surface.
 private struct DeviceLinkedDetailCard<Content: View>: View {
     let title: String
     let symbol: String
@@ -373,28 +372,13 @@ private struct DeviceLinkedDetailCard<Content: View>: View {
     var spacing: CGFloat = 8
     let action: () -> Void
     @ViewBuilder let content: Content
-    @Environment(\.workbenchPalette) private var palette
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var cardHovered = false
-    @FocusState private var actionFocused: Bool
-
     var body: some View {
-        DeviceDetailCard(spacing: 0, identifier: identifier) {
-            HStack(spacing: 7) {
-                Image(systemName: symbol).font(.system(size: 16)).frame(width: 16, height: 16).foregroundStyle(palette.accent).accessibilityHidden(true)
-                Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(palette.text)
-                Spacer(minLength: 0)
-                Button(action: action) {
-                    Image(systemName: "arrow.up.right")
-                        .opacity(cardHovered || actionFocused ? 1 : 0)
-                        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: cardHovered || actionFocused)
-                        .accessibilityHidden(true)
-                }.buttonStyle(WBIconButtonStyle(size: 28)).focused($actionFocused)
-                    .help(actionTitle).accessibilityLabel(actionTitle)
-                    .accessibilityIdentifier(identifier + ".action")
-            }.frame(height: 22).padding(.bottom, 10)
-            VStack(alignment: .leading, spacing: spacing) { content }
-        }.onHover { cardHovered = $0 }
+        Button(action: action) {
+            DeviceDetailCard(title: title, symbol: symbol, spacing: spacing) { content }
+                .contentShape(RoundedRectangle(cornerRadius: 15))
+        }.buttonStyle(ClickablePlainButtonStyle())
+            .help(actionTitle).accessibilityHint(actionTitle)
+            .accessibilityIdentifier(identifier)
     }
 }
 /// Accepts the row's proposed height before drawing its surface. An outer frame
@@ -413,7 +397,7 @@ struct DeviceDetailCard<Content: View>: View {
         VStack(alignment: .leading, spacing: 0) {
             if let title {
                 HStack(spacing: 7) {
-                    if let symbol { Image(systemName: symbol).font(.system(size: 16)).foregroundStyle(palette.accent) }
+                    if let symbol { WorkbenchContentIcon(symbol: symbol).foregroundStyle(palette.accent) }
                     Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(palette.text)
                     Spacer(minLength: 0)
                 }.frame(height: 22).padding(.bottom, 10)

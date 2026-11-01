@@ -238,7 +238,13 @@ import SwiftUI
             let primaryTop = NSScreen.screens.first?.frame.maxY ?? 0
             CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
                 mouseCursorPosition: CGPoint(x: zeroFrame.midX, y: primaryTop - zeroFrame.midY), mouseButton: .left)?.post(tap: .cghidEventTap)
-            let expectedCaption = zero.date.formatted(.dateTime.month().day()) + " · 窗口已用 0%"
+            // The rendered caption uses a localized Md template. Date.FormatStyle
+            // can choose a different month spelling under the same system locale.
+            let captionDate = DateFormatter()
+            captionDate.calendar = .current
+            captionDate.timeZone = captionDate.calendar.timeZone
+            captionDate.setLocalizedDateFormatFromTemplate("Md")
+            let expectedCaption = captionDate.string(from: zero.date) + " · 窗口已用 0%"
             let showsObservation = await wait(window) {
                 dailyCaptionText(in: host).contains { normalizedDailyCaption($0.text).contains(normalizedDailyCaption(expectedCaption)) }
             }

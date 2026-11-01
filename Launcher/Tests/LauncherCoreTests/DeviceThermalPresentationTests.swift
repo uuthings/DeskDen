@@ -33,13 +33,47 @@ final class DeviceThermalPresentationTests: XCTestCase {
         for value: Double? in [nil, .nan, .infinity, -1, 0, 151] {
             let status = DeviceThermalPresentation(cpu: value, gpu: 60, state: .nominal)
             XCTAssertEqual(status.cpuLevel, .unknown)
-            XCTAssertEqual(status.level, .unknown)
+            XCTAssertEqual(status.level, .normal)
+            XCTAssertEqual(status.title, "系统正常")
+            XCTAssertTrue(status.detail.contains("CPU"))
+            XCTAssertTrue(status.detail.contains("不能据此判断"))
         }
         let critical = DeviceThermalPresentation(cpu: nil, gpu: nil, state: .critical)
         XCTAssertEqual(critical.level, .critical)
         XCTAssertEqual(critical.cpuLevel, .unknown)
         XCTAssertEqual(critical.gpuLevel, .unknown)
-        XCTAssertEqual(DeviceThermalPresentation(cpu: 60, gpu: 50, state: .unknown).level, .unknown)
+        let temperaturesOnly = DeviceThermalPresentation(cpu: 60, gpu: 50, state: .unknown)
+        XCTAssertEqual(temperaturesOnly.level, .normal)
+        XCTAssertEqual(temperaturesOnly.title, "温度正常")
+        XCTAssertTrue(temperaturesOnly.detail.contains("macOS 热压力状态暂不可用"))
+    }
+
+    func testKnownSystemStateAndMissingTemperaturesHaveSeparateEvidence() {
+        let systemOnly = DeviceThermalPresentation(cpu: nil, gpu: nil, state: .nominal,
+                                                 unavailableReason: "AppleSMC 传感器连接不可用。")
+        XCTAssertEqual(systemOnly.title, "系统正常")
+        XCTAssertEqual(systemOnly.level, .normal)
+        XCTAssertEqual(systemOnly.cpuLevel, .unknown)
+        XCTAssertEqual(systemOnly.gpuLevel, .unknown)
+        XCTAssertTrue(systemOnly.detail.contains("AppleSMC"))
+        let partial = DeviceThermalPresentation(cpu: 60, gpu: nil, state: .unknown)
+        XCTAssertEqual(partial.title, "温度正常")
+        XCTAssertEqual(partial.gpuLevel, .unknown)
+        XCTAssertTrue(partial.detail.contains("仅依据已读到"))
+        XCTAssertTrue(partial.detail.contains("GPU"))
+        XCTAssertEqual(DeviceThermalPresentation(cpu: 85, gpu: nil, state: .unknown).level, .warning)
+    }
+
+    func testInitializationEndsInUnknownWhenNeitherSourceReturnsEvidence() {
+        let loading = DeviceThermalPresentation(cpu: nil, gpu: nil, state: .unknown, isLoading: true)
+        XCTAssertEqual(loading.title, "读取中")
+        XCTAssertEqual(loading.level, .unknown)
+        let failed = DeviceThermalPresentation(cpu: nil, gpu: nil, state: .unknown, isLoading: false,
+                                             unavailableReason: "传感器连接不可用。")
+        XCTAssertEqual(failed.title, "状态未知")
+        XCTAssertEqual(failed.level, .unknown)
+        XCTAssertTrue(failed.detail.contains("传感器连接不可用"))
+        XCTAssertEqual(DeviceThermalPresentation(cpu: nil, gpu: nil, state: .critical, isLoading: true).level, .critical)
     }
 
     func testCustomThresholdChangesPresentationWithoutChangingSystemState() {

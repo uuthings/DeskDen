@@ -3,7 +3,7 @@ import LauncherCore
 
 extension DeviceThermalPresentation {
     init(snapshot: DeviceSnapshot, rule: DeviceTemperatureRule = .init()) {
-        self.init(cpu: snapshot.cpuTemperature, gpu: snapshot.gpuTemperature, state: snapshot.thermalState, rule: rule)
+        self = snapshot.thermalPresentation(rule: rule)
     }
 }
 
@@ -27,7 +27,9 @@ struct DeviceThermalStatusBadge: View {
             .foregroundStyle(status.level.color(palette: palette))
             .padding(.horizontal, 5).padding(.vertical, 3)
             .background(status.level.color(palette: palette).opacity(0.12), in: RoundedRectangle(cornerRadius: 5))
+            .help(status.detail)
             .accessibilityElement(children: .combine)
+            .accessibilityHint(status.detail)
             .accessibilityIdentifier("device-thermal-status")
     }
 }

@@ -37,13 +37,13 @@ struct DeviceCardContent: View {
             let size = CGSize(width: max(0, geometry.size.width - 28), height: max(0, geometry.size.height - 60))
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 7) {
-                    Image(systemName: card.id.symbol).font(.system(size: 15, weight: .light)).frame(width: 16, height: 18)
+                    WorkbenchContentIcon(device: card.id)
                     Text(card.id.title).font(.system(size: 12, weight: .medium)).lineLimit(1)
                     if card.id == .thermal {
                         Spacer(minLength: 4)
                         DeviceThermalStatusBadge(status: .init(snapshot: snapshot, rule: temperatureRule))
-                        Color.clear.frame(width: 24)
-                    } else { Spacer(minLength: editing && card.id.supportsMeterStyle ? 47 : 24) }
+                        if editing { Color.clear.frame(width: 24) }
+                    } else { Spacer(minLength: editing ? (card.id.supportsMeterStyle ? 60 : 28) : 0) }
                 }.frame(height: 22)
                 content(size: size).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }.padding(14).frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)

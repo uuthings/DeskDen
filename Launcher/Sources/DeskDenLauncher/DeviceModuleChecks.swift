@@ -54,11 +54,18 @@ import LauncherCore
         check(model.dashboardLayout == original, "normal mode rejects keyboard layout mutations")
         let cpuTile = grid.cards[.cpu]!
         let detailButton = cpuTile.subviews.compactMap { $0 as? NSButton }.first { $0.accessibilityLabel() == "打开CPU 使用率" }
-        check(detailButton?.isHidden == true, "detail action is hidden at rest")
+        let cpuFrame = cpuTile.frame
+        check(detailButton == nil && cpuTile.subviews.compactMap { $0 as? NSButton }.allSatisfy(\.isHidden),
+              "ordinary cards have no separate detail arrow and keep edit controls hidden")
         cpuTile.mouseEntered(with: mouse(cpuTile.frame.center))
-        check(detailButton?.isHidden == false, "hover reveals the detail action without changing layout")
+        let formerArrowPoint = NSPoint(x: cpuFrame.maxX - 20, y: cpuFrame.minY + 24)
+        check(cpuTile.subviews.compactMap { $0 as? NSButton }.allSatisfy(\.isHidden) && cpuTile.frame == cpuFrame
+              && cpuTile.hitTest(formerArrowPoint) === cpuTile,
+              "hover keeps the former arrow area part of the whole card without adding a control or changing layout")
         cpuTile.mouseExited(with: mouse(cpuTile.frame.center))
-        check(detailButton?.isHidden == true, "detail action hides after hover ends")
+        check(cpuTile.hitTest(cpuFrame.center) === cpuTile && cpuTile.accessibilityPerformPress() && opened == .cpu
+              && model.dashboardLayout == original,
+              "leaving the card preserves its full body hit target and accessible destination without a layout change")
         model.changeCard(.network) { $0.visible = true }
         grid.configure(model: model, editing: false, light: false, open: { opened = $0 }, heightChanged: { _ in })
         check(grid.cards[.network] != nil, "an explicitly added optional network card mounts without deleting the hardware cards")
@@ -112,8 +119,55 @@ import LauncherCore
         check(model.dashboardLayout == original && grid.cards[.processes]?.frame.width == 728, "compact projection preserves preferences and gives processes a full-width row")
         grid.detachObservers()
         // Exercise the real read-only sampler separately from deterministic fixtures.
+        // No main window or network page is visited: Mini is the only consumer.
+        let miniOpenedAt = Date()
+        model.setWindowVisible(false)
+        model.setQuickSummaryVisible(true)
         model.start(interval: 1)
-        try? await Task.sleep(for: .seconds(3.2)); model.stop()
+        let firstSamplesDeadline = ContinuousClock.now.advanced(by: .seconds(8))
+        while model.history.count < 2 && ContinuousClock.now < firstSamplesDeadline {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        check(!model.isWindowVisible && model.history.count >= 2, "Mini alone records real trend samples before any workbench page is opened")
+        let initialSegment = model.history.last?.allNetworkSegment, initialDate = model.history.last?.date
+        model.setWindowVisible(true); model.setWindowVisible(false)
+        let continuedDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while model.history.last?.date == initialDate && ContinuousClock.now < continuedDeadline {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        check(initialSegment != nil && model.history.last?.allNetworkSegment == initialSegment && model.history.last?.date != initialDate,
+              "closing the workbench preserves the independent Mini sampling segment")
+        let filteredSegment = model.history.last?.segment, beforeSelection = model.history.last?.date
+        model.setSelectedInterfaces([])
+        let selectedDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while (model.history.last?.date == beforeSelection || model.history.last?.segment == filteredSegment
+               || model.selectedInterfaceIDs != [] || model.snapshot.network.downloadBytesPerSecond != nil) && ContinuousClock.now < selectedDeadline {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        check(initialSegment != nil && model.history.last?.allNetworkSegment == initialSegment
+              && model.history.last?.segment != filteredSegment && model.history.last?.date != beforeSelection
+              && model.selectedInterfaceIDs == [] && model.snapshot.network.downloadBytesPerSecond == nil,
+              "changing the real workbench interface filter starts only its own segment and preserves Mini's all-network segment")
+        let beforeAutomatic = model.history.last?.date
+        model.setSelectedInterfaces(nil)
+        let automaticDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while (model.history.last?.date == beforeAutomatic || model.selectedInterfaceIDs != nil) && ContinuousClock.now < automaticDeadline {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        check(model.selectedInterfaceIDs == nil && model.history.last?.allNetworkSegment == initialSegment && model.history.last?.date != beforeAutomatic,
+              "restoring automatic interface selection also leaves the Mini network segment continuous")
+        let resumedAfter = model.history.last?.date
+        model.setQuickSummaryVisible(false); model.setQuickSummaryVisible(true)
+        let resumedDeadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while model.history.last?.date == resumedAfter && ContinuousClock.now < resumedDeadline {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        check(initialSegment != nil && model.history.last?.allNetworkSegment != initialSegment && model.history.last?.date != resumedAfter,
+              "resuming after all chart consumers leave starts a new segment without filling the gap")
+        let mini = WorkbenchMiniDeviceData(snapshot: model.snapshot, openedAt: miniOpenedAt, history: model.history)
+        check(mini.networkPoints.count >= 2 && mini.networkPoints.allSatisfy { $0.date >= Date().addingTimeInterval(-61) },
+              "Mini's sixty-second projection receives independently collected real history")
+        model.stop()
         let s = model.snapshot
         check(s.sampledAt != nil && s.memory != nil && s.physicalCPUCount > 0, "real CPU / memory / identity sampler returns data")
         check(!s.processes.isEmpty && s.processes.allSatisfy { $0.startedMicroseconds > 0 && $0.ownerUID != nil }, "real process sampler captures start identities and ownership")
@@ -121,6 +175,7 @@ import LauncherCore
         let realGroups = DeviceProcessExplorer.groups(s.processes, grouped: true, filter: .all, query: "", sort: .cpu, ascending: false)
         check(realGroups.reduce(0) { $0 + $1.processes.count } == s.processes.count, "real app grouping preserves every readable process without pagination")
         check(s.cpuTemperature.map { (0..<130).contains($0) } ?? true, "temperature is valid or explicitly unavailable")
+        check(s.thermalSampledAt != nil && s.thermalPresentation().title != "读取中", "a completed real thermal read leaves initialization even when a sensor is unavailable")
         check(s.fanRPM?.allSatisfy { $0.map { (0...20000).contains($0) } ?? true } ?? true, "fan values preserve unavailable versus zero RPM")
         print("SENSOR EVIDENCE cpu=\(s.cpuTemperature.map { String(format:"%.1f",$0) } ?? "unavailable") gpu=\(s.gpuTemperature.map { String(format:"%.1f",$0) } ?? "unavailable") fans=\(s.fanRPM?.map { $0.map { String(Int($0)) } ?? "unavailable" }.joined(separator:",") ?? "unavailable") source=\(s.sensorSource)")
         print("Device module checks: \(count-failures)/\(count) passed")
@@ -130,8 +185,8 @@ import LauncherCore
 }
 private extension CGRect { var center: CGPoint { CGPoint(x:midX,y:midY) } }
 
-/// Exercises the production AppKit card action, including its actual padding
-/// hit target and a rendered hover surface. It does not start sensor sampling.
+/// Exercises the complete production AppKit card hit target, keyboard and AX
+/// activation. Detail arrows are absent; edit controls remain separate.
 @MainActor enum DeviceCardActionInteractionChecks {
     static func run() async -> (count: Int, failures: Int) {
         var count = 0, failures = 0
@@ -162,59 +217,72 @@ private extension CGRect { var center: CGPoint { CGPoint(x:midX,y:midY) } }
         let mounted = await NativeUIFixtureWindow.prepare(window: window) { grid.cards.count == 6 }
         check(mounted, "native card-action fixture mounts the production six-card dashboard")
         guard mounted, let tile = grid.cards[.cpu],
-              let action = tile.subviews.compactMap({ $0 as? DeviceCardActionButton }).first(where: { $0.accessibilityIdentifier() == "fc.device.card.cpu.open" }) else {
-            check(false, "production CPU detail action is available in the native dashboard")
+              let hideButton = tile.subviews.compactMap({ $0 as? DeviceCardActionButton }).first(where: { $0.accessibilityIdentifier() == "fc.device.card.cpu.hide" }) else {
+            check(false, "production CPU card and its separate edit-only hide control are available")
             return (count, failures)
         }
         let savedLayout = model.dashboardLayout
         ButtonCursorPolicy.shared.apply(.pointingHand)
         await movePointer(to: NSPoint(x: 4, y: 4), in: window)
-        check(action.isHidden, "native detail action remains hidden when its card is neither hovered nor focused")
+        check(hideButton.isHidden, "native card has no visible detail arrow or hide control in ordinary mode")
         await movePointer(to: tile.convert(NSPoint(x: 40, y: 90), to: nil), in: window)
-        check(!action.isHidden && action.frame.size == NSSize(width: 28, height: 28), "card hover reveals a stable shared 28-point detail target")
+        window.makeFirstResponder(tile)
+        check(hideButton.isHidden && tile.subviews.compactMap { $0 as? NSButton }.allSatisfy(\.isHidden),
+              "hovering or keyboard-focusing a card does not restore a duplicate corner action")
         for light in [false, true] {
             grid.configure(model: model, editing: false, light: light, theme: .qingbiMist, open: { opened.append($0) }, heightChanged: { _ in })
             grid.layoutSubtreeIfNeeded()
             await movePointer(to: tile.convert(NSPoint(x: 40, y: 90), to: nil), in: window)
-            let originalFrame = action.frame
-            let strip = action.convert(NSRect(x: 3, y: 10, width: 3, height: 8), to: grid)
-            let outside = tile.convert(NSRect(x: 20, y: 30, width: 6, height: 6), to: grid)
-            let normal = pixels(in: strip, view: grid), normalOutside = pixels(in: outside, view: grid)
-            let paddingPoint = action.convert(NSPoint(x: 3, y: 14), to: nil)
+            let originalFrame = tile.frame
+            let paddingPoint = tile.convert(NSPoint(x: tile.bounds.width - 20, y: 24), to: nil)
             await movePointer(to: paddingPoint, in: window)
-            check(changed(normal, pixels(in: strip, view: grid)), "native \(light ? "light" : "dark") detail hover draws a surface in empty button padding")
-            check(!changed(normalOutside, pixels(in: outside, view: grid)) && action.frame == originalFrame,
-                  "native \(light ? "light" : "dark") detail feedback stays inside its target without changing card layout")
+            check(tile.frame == originalFrame && tile.subviews.compactMap { $0 as? NSButton }.allSatisfy(\.isHidden),
+                  "native \(light ? "light" : "dark") corner hover preserves layout without showing a detail button")
             let actualCursor = NSCursor.currentSystem
             check(actualCursor?.hotSpot == NSCursor.pointingHand.hotSpot && actualCursor?.image.tiffRepresentation == NSCursor.pointingHand.image.tiffRepresentation,
-                  "native \(light ? "light" : "dark") detail padding displays the configured pointing-hand cursor")
+                  "native \(light ? "light" : "dark") whole-card padding displays the configured pointing-hand cursor")
             capture(grid, name: light ? "light" : "dark")
             let before = opened.count
             click(at: paddingPoint, in: window)
             try? await Task.sleep(for: .milliseconds(80))
-            check(opened.count == before + 1 && opened.last == .cpu, "native \(light ? "light" : "dark") detail padding routes exactly one CPU detail action")
+            check(opened.count == before + 1 && opened.last == .cpu, "native \(light ? "light" : "dark") former arrow area routes exactly one whole-card CPU action")
             let beforeBody = opened.count
             click(at: tile.convert(NSPoint(x: 24, y: 90), to: nil), in: window)
             try? await Task.sleep(for: .milliseconds(80))
             check(opened.count == beforeBody + 1 && opened.last == .cpu,
                   "native \(light ? "light" : "dark") card body opens its single destination without requiring the arrow")
         }
+        for code: UInt16 in [36, 49] {
+            window.makeFirstResponder(tile)
+            let beforeKey = opened.count
+            if let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, characters: code == 36 ? "\r" : " ", charactersIgnoringModifiers: code == 36 ? "\r" : " ", isARepeat: false, keyCode: code) {
+                NSApp.sendEvent(event)
+            }
+            check(opened.count == beforeKey + 1 && opened.last == .cpu,
+                  "the whole native card opens once with \(code == 36 ? "Return" : "Space")")
+        }
         let beforeAccessiblePress = opened.count
         check(tile.accessibilityPerformPress() && opened.count == beforeAccessiblePress + 1 && opened.last == .cpu,
               "the whole native card exposes its destination as an accessibility press action")
         check(model.dashboardLayout == savedLayout && !grid.isInteracting && !model.isSampling,
               "native detail clicks preserve layout and never start a drag or sensor sampling")
-        action.isEnabled = false
+        grid.configure(model: model, editing: true, light: false, theme: .qingbiMist, open: { opened.append($0) }, heightChanged: { _ in })
+        grid.layoutSubtreeIfNeeded()
+        check(!hideButton.isHidden && hideButton.frame.size == NSSize(width: 28, height: 28),
+              "edit mode keeps the separate compact hide control")
+        check(!tile.accessibilityPerformPress(), "editing a card cannot accidentally open its detail through AX")
+        hideButton.isEnabled = false
         await movePointer(to: tile.convert(NSPoint(x: 40, y: 90), to: nil), in: window)
-        let disabledStrip = action.convert(NSRect(x: 3, y: 10, width: 3, height: 8), to: grid)
+        let disabledStrip = hideButton.convert(NSRect(x: 3, y: 10, width: 3, height: 8), to: grid)
         let disabledNormal = pixels(in: disabledStrip, view: grid)
-        let disabledPoint = action.convert(NSPoint(x: 3, y: 14), to: nil)
+        let disabledPoint = hideButton.convert(NSPoint(x: 3, y: 14), to: nil)
         await movePointer(to: disabledPoint, in: window)
         let beforeDisabled = opened.count
         click(at: disabledPoint, in: window)
-        check(!changed(disabledNormal, pixels(in: disabledStrip, view: grid)) && opened.count == beforeDisabled,
-              "disabled native detail action neither highlights nor executes from its padding")
-        action.isEnabled = true
+        check(!changed(disabledNormal, pixels(in: disabledStrip, view: grid)) && opened.count == beforeDisabled && model.dashboardLayout == savedLayout,
+              "disabled edit hide control neither highlights, hides a card nor opens details from its padding")
+        hideButton.isEnabled = true
         print("Native device card-action checks: \(count - failures)/\(count) passed")
         return (count, failures)
     }
