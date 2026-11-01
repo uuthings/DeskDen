@@ -29,6 +29,7 @@ struct DeviceCardContent: View {
     let editing: Bool
     var trafficSummary: DeviceTrafficSummary?
     var budget = DeviceTrafficBudget()
+    var temperatureRule = DeviceTemperatureRule()
     var expanded = false
     @Environment(\.workbenchPalette) private var palette
     var body: some View {
@@ -38,7 +39,11 @@ struct DeviceCardContent: View {
                 HStack(spacing: 7) {
                     Image(systemName: card.id.symbol).font(.system(size: 15, weight: .light)).frame(width: 16, height: 18)
                     Text(card.id.title).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                    Spacer(minLength: editing && card.id.supportsMeterStyle ? 47 : 24)
+                    if card.id == .thermal {
+                        Spacer(minLength: 4)
+                        DeviceThermalStatusBadge(status: .init(snapshot: snapshot, rule: temperatureRule))
+                        Color.clear.frame(width: 24)
+                    } else { Spacer(minLength: editing && card.id.supportsMeterStyle ? 47 : 24) }
                 }.frame(height: 22)
                 content(size: size).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }.padding(14).frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
@@ -110,11 +115,11 @@ struct DeviceCardContent: View {
     }
     private func thermal(_ size: CGSize) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            DeviceTemperatureReadings(snapshot: snapshot, size: 26, alignedColumns: true).frame(height: 49)
+            DeviceTemperatureReadings(snapshot: snapshot, size: 26, alignedColumns: true, rule: temperatureRule).frame(height: 49)
             DeviceFanRows(snapshot: snapshot, paired: true, alignedColumns: true).frame(height: 32, alignment: .top)
             VStack(alignment: .leading, spacing: 6) {
                 DevicePowerLine(snapshot: snapshot, compact: true)
-                Text("热状态：\(DeviceFormat.thermal(snapshot.thermalState)) · 系统调节")
+                Text("macOS 自动调节散热")
                     .font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
             }
         }
@@ -202,7 +207,7 @@ struct DeviceCardContent: View {
             HStack(spacing: 8) {
                 Text(label).foregroundStyle(palette.secondary)
                 Spacer(minLength: 0)
-                Text(percent.map { "已用 \(String(format: "%.1f", $0))%" } ?? "等待采样").foregroundStyle(palette.muted).monospacedDigit()
+                Text(percent.map { "已用 " + UsagePercentage.text($0) } ?? "等待采样").foregroundStyle(palette.muted).monospacedDigit()
             }.font(.system(size: 11)).lineLimit(1).frame(height: 16)
                 .accessibilityElement(children: .contain).accessibilityIdentifier("fc.device.capacity.\(card.id.rawValue).label")
             HStack(alignment: .firstTextBaseline, spacing: 3) {
@@ -313,7 +318,7 @@ struct DeviceUsageBar: View {
             Capsule().fill(palette.progressTrack).overlay(alignment: .leading) {
                 if let value { Capsule().fill((tone ?? palette.usageColor(forPercent: value)).opacity(0.85)).frame(width: g.size.width * min(1, max(0, value / 100))) }
             }
-        }.frame(height: 5).accessibilityLabel(value.map { "已用 \(Int($0))%" } ?? "暂无读数")
+        }.frame(height: 5).accessibilityLabel(value.map { "已用 " + UsagePercentage.text($0) } ?? "暂无读数")
     }
 }
 struct DeviceUsageRing: View {
@@ -324,7 +329,7 @@ struct DeviceUsageRing: View {
         ZStack {
             Circle().stroke(palette.progressTrack, lineWidth: 5)
             if let value { Circle().trim(from: 0, to: min(1, max(0, value / 100))).stroke(tone ?? palette.usageColor(forPercent: value), style: StrokeStyle(lineWidth: 5, lineCap: .round)).rotationEffect(.degrees(-90)) }
-            Text(value.map { "\(Int($0.rounded()))%" } ?? "—").font(.system(size: 13)).monospacedDigit()
+            Text(UsagePercentage.text(value)).font(.system(size: 13)).monospacedDigit()
         }.padding(3)
     }
 }
@@ -333,16 +338,19 @@ struct DeviceTemperatureReadings: View {
     let snapshot: DeviceSnapshot
     var size: CGFloat = 30
     var alignedColumns = false
+    var rule = DeviceTemperatureRule()
     var body: some View {
         HStack(spacing: 16) {
-            reading("CPU 温度", snapshot.cpuTemperature, trailing: false)
-            reading("GPU 温度", snapshot.gpuTemperature, trailing: !alignedColumns)
+            reading("CPU 温度", snapshot.cpuTemperature, level: status.cpuLevel, trailing: false)
+            reading("GPU 温度", snapshot.gpuTemperature, level: status.gpuLevel, trailing: !alignedColumns)
         }
     }
-    private func reading(_ name: String, _ value: Double?, trailing: Bool) -> some View {
+    private var status: DeviceThermalPresentation { .init(snapshot: snapshot, rule: rule) }
+    private func reading(_ name: String, _ value: Double?, level: DeviceThermalLevel, trailing: Bool) -> some View {
         VStack(alignment: trailing ? .trailing : .leading, spacing: 4) {
             Text(name).font(.system(size: 11)).foregroundStyle(palette.secondary).frame(height: 16)
             DeviceReading(value: value.map { String(format: "%.0f °C", $0) } ?? "— °C", size: size)
+                .foregroundStyle(level == .normal ? palette.text : level.color(palette: palette))
         }.frame(maxWidth: .infinity, alignment: trailing ? .trailing : .leading)
     }
 }

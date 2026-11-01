@@ -538,6 +538,16 @@ private struct CalendarSourcesPage:View {
     @ObservedObject var model:CalendarModel
     let onBack:()->Void
     @Environment(\.workbenchPalette) private var palette
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var calendarsExpanded = false
+    @State private var sourceSearch = ""
+    private var filteredSources: [CalendarSourceDescriptor] {
+        let query = sourceSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        return model.calendarSources.filter { query.isEmpty || $0.title.localizedStandardContains(query) || $0.account.localizedStandardContains(query) }
+            .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    }
+    private func accountName(_ source: CalendarSourceDescriptor) -> String { source.account.isEmpty ? "其他日历" : source.account }
+    private var accounts: [String] { Array(Set(filteredSources.map(accountName))).sorted { $0.localizedStandardCompare($1) == .orderedAscending } }
     var body:some View {
         VStack(alignment:.leading,spacing:0) {
             Button {model.errorMessage=nil;onBack()} label:{Label(model.sourcesReturnToPrivacy ? "返回隐私与锁定":"返回日历与提醒",systemImage:"chevron.left")}.buttonStyle(WBQuietButtonStyle()).padding(.bottom,12)
@@ -545,7 +555,7 @@ private struct CalendarSourcesPage:View {
             VStack(spacing:12) {
                 WBCard(title:"系统来源",symbol:"calendar") {
                     systemSource(reminders:false)
-                    ForEach(model.calendarSources){source in sourceRow(source.title,source.account.isEmpty ? "系统日历 · 只读显示":source.account+" · 只读显示") {Toggle("显示\(source.title)",isOn:Binding(get:{model.isSourceVisible(source.id)},set:{model.setSourceVisible(source.id,$0)})).labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.small).tint(palette.accent)}}
+                    if calendarsExpanded { calendarSourceList }
                     systemSource(reminders:true)
                 }
                 WBCard(title:"中国大陆节假日",symbol:"calendar") {
@@ -569,24 +579,94 @@ private struct CalendarSourcesPage:View {
             }
         }
     }
-    private func systemSource(reminders:Bool)->some View {
-        let access=reminders ? model.remindersAccess:model.calendarAccess
-        let connected=reminders ? model.preferences.remindersConnected:model.preferences.calendarConnected
-        return sourceRow(reminders ? "系统提醒事项":"系统日历",reminders ? "接入后可在可写列表中创建与完成提醒":"读取日程，保留原日历的来源与只读状态",last:reminders) {
-            HStack(spacing:8) {
-                if access == .denied || access == .restricted {Button("隐私设置"){model.openPrivacySettings(reminders:reminders)}.buttonStyle(WBButtonStyle(compact:true))}
-                if model.connectingSource == (reminders ? .reminders:.calendar) {
-                    ProgressView().controlSize(.mini).frame(width:14,height:14)
-                    Text("请求授权…").font(.system(size:11)).foregroundStyle(palette.muted)
-                } else {
-                    Text(connected && access == .granted ? (reminders ? "已连接":"已连接 · 只读"):connected ? "权限已关闭":access == .denied ? "未连接 · 未授权":access == .restricted ? "受限":"未连接").font(.system(size:11)).foregroundStyle(connected && access == .granted ? palette.success:palette.muted)
-                }
-                Toggle(reminders ? "连接系统提醒事项":"连接系统日历",isOn:Binding(get:{connected && access == .granted},set:{enabled in Task {if enabled {await model.connect(reminders:reminders)}else{await model.disconnect(reminders:reminders)}}}))
-                    .labelsHidden().toggleStyle(.switch).controlSize(.small).tint(palette.accent).clickableCursor()
-                    .disabled(model.isWorking)
-                    .accessibilityIdentifier(reminders ? "calendar-source-system-reminders":"calendar-source-system-events")
-            }
+    @ViewBuilder private var calendarSourceList: some View {
+        if model.preferences.calendarConnected && model.calendarAccess == .granted {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 7) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(palette.muted)
+                    TextField("搜索日历或账号", text: $sourceSearch).textFieldStyle(.plain)
+                        .accessibilityIdentifier("calendar-source-search")
+                }.font(.system(size: 12)).padding(.horizontal, 10).frame(height: 32)
+                    .background(palette.soft, in: RoundedRectangle(cornerRadius: 8))
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        if filteredSources.isEmpty {
+                            Text(sourceSearch.isEmpty ? "此来源暂无可用日历" : "未找到匹配的日历")
+                                .font(.system(size: 11)).foregroundStyle(palette.muted).padding(.vertical, 14)
+                        }
+                        ForEach(accounts, id: \.self) { account in
+                            Text(account).font(.system(size: 11, weight: .medium)).foregroundStyle(palette.muted)
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 10).padding(.bottom, 6)
+                            ForEach(filteredSources.filter { accountName($0) == account }) { source in
+                                HStack(spacing: 10) {
+                                    Image(systemName: "calendar").font(.system(size: 14)).foregroundStyle(palette.accent)
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(source.title).font(.system(size: 12)).lineLimit(1).help(source.title)
+                                        Text("只读显示").font(.system(size: 11)).foregroundStyle(palette.muted)
+                                    }
+                                    Spacer(minLength: 8)
+                                    Toggle("显示" + source.title, isOn: Binding(get: { model.isSourceVisible(source.id) }, set: { model.setSourceVisible(source.id, $0) }))
+                                        .labelsHidden().toggleStyle(.switch).controlSize(.small).tint(palette.accent).clickableCursor()
+                                }.frame(height: 44).padding(.horizontal, 4)
+                                    .accessibilityElement(children: .contain)
+                            }
+                        }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }.frame(height: min(300, max(44, CGFloat(filteredSources.count * 44 + accounts.count * 32))))
+                    .scrollBounceBehavior(.basedOnSize).accessibilityIdentifier("calendar-source-list")
+            }.padding(.vertical, 12)
+        } else {
+            Text("连接系统日历后，在此选择要显示的日历。")
+                .font(.system(size: 11)).foregroundStyle(palette.muted).padding(.vertical, 12)
         }
+    }
+    @ViewBuilder private func systemSource(reminders: Bool) -> some View {
+        if reminders {
+            sourceRow("系统提醒事项", "接入后可在可写列表中创建与完成提醒", last: true) { connectionControls(reminders: true) }
+        } else {
+            HStack(spacing: 12) {
+                Button {
+                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.16)) { calendarsExpanded.toggle() }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: calendarsExpanded ? "chevron.down" : "chevron.right").font(.system(size: 10, weight: .medium)).frame(width: 12)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("系统日历").font(.system(size: 12))
+                            Text(model.preferences.calendarConnected && model.calendarAccess == .granted
+                                ? "显示 \(model.calendarSources.filter { model.isSourceVisible($0.id) }.count) / \(model.calendarSources.count) 个日历"
+                                : "读取日程，保留原日历的来源与只读状态")
+                                .font(.system(size: 11)).foregroundStyle(palette.muted)
+                        }
+                        Spacer(minLength: 0)
+                    }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                }.buttonStyle(.plain).clickableCursor().accessibilityLabel("系统日历列表")
+                    .accessibilityValue(calendarsExpanded ? "已展开" : "已折叠")
+                    .accessibilityIdentifier("calendar-source-disclosure")
+                connectionControls(reminders: false)
+            }.padding(.vertical, 13)
+                .onChange(of: model.preferences.calendarConnected) { _, _ in calendarsExpanded = false; sourceSearch = "" }
+            palette.line.frame(height: 1)
+        }
+    }
+    private func connectionControls(reminders: Bool) -> some View {
+        let access = reminders ? model.remindersAccess : model.calendarAccess
+        let connected = reminders ? model.preferences.remindersConnected : model.preferences.calendarConnected
+        return HStack(spacing: 8) {
+            if access == .denied || access == .restricted { Button("隐私设置") { model.openPrivacySettings(reminders: reminders) }.buttonStyle(WBButtonStyle(compact: true)) }
+            if model.connectingSource == (reminders ? .reminders : .calendar) {
+                ProgressView().controlSize(.mini).frame(width: 14, height: 14)
+                Text("请求授权…").font(.system(size: 11)).foregroundStyle(palette.muted)
+            } else {
+                Text(connected && access == .granted ? (reminders ? "已连接" : "已连接 · 只读") : connected ? "权限已关闭" : access == .denied ? "未连接 · 未授权" : access == .restricted ? "受限" : "未连接")
+                    .font(.system(size: 11)).foregroundStyle(connected && access == .granted ? palette.success : palette.muted)
+            }
+            Toggle(reminders ? "连接系统提醒事项" : "连接系统日历", isOn: Binding(get: { connected && access == .granted }, set: { enabled in
+                if !reminders { calendarsExpanded = false; sourceSearch = "" }
+                Task { if enabled { await model.connect(reminders: reminders) } else { await model.disconnect(reminders: reminders) } }
+            })).labelsHidden().toggleStyle(.switch).controlSize(.small).tint(palette.accent).clickableCursor()
+                .disabled(model.isWorking)
+                .accessibilityIdentifier(reminders ? "calendar-source-system-reminders" : "calendar-source-system-events")
+        }.fixedSize(horizontal: true, vertical: false)
     }
     private func sourceRow<Content:View>(_ title:String,_ subtitle:String,last:Bool=false,@ViewBuilder control:()->Content)->some View {
         VStack(spacing:0){HStack(spacing:16){VStack(alignment:.leading,spacing:4){Text(title).font(.system(size:12));Text(subtitle).font(.system(size:11)).foregroundStyle(palette.muted)};Spacer(minLength:8);control()}.frame(maxWidth:.infinity,alignment:.leading).padding(.vertical,13);if !last {palette.line.frame(height:1)}}

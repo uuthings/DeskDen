@@ -286,7 +286,7 @@ private struct DesktopCardContent: View {
             } else {
                 Capsule().fill(palette.progressTrack).frame(height: 4)
             }
-            Text(window.map { String(format: "%.0f%%", $0.usedPercent) } ?? "—")
+            Text(UsagePercentage.text(window?.usedPercent))
                 .font(.system(size: 10)).monospacedDigit().frame(width: 30, alignment: .trailing)
                 .foregroundStyle(current ? palette.usageColor(forPercent: window?.usedPercent) : palette.muted)
         }.frame(height: 14)
@@ -335,7 +335,7 @@ private struct DesktopCardContent: View {
             if parts.count > 1 { Text(parts[1]).font(.system(size: 11)).foregroundStyle(palette.muted) }
         }
     }
-    private func metricColor(_ value: Double?) -> Color { guard let value else { return palette.muted }; return value >= 90 ? palette.critical : value >= 75 ? palette.warning : palette.text }
+    private func metricColor(_ value: Double?) -> Color { palette.usageColor(forPercent: value) }
     private func pressureColor(_ pressure: DevicePressure) -> Color { pressure == .critical ? palette.critical : pressure == .warning ? palette.warning : pressure == .normal ? palette.accent : palette.muted }
 }
 
@@ -346,17 +346,23 @@ struct DesktopCardsView: View {
     @ObservedObject var device: DeviceStatusModel
     @ObservedObject var calendar: CalendarModel
     @ObservedObject var ai: AIUsageModel
+    var showsHeader = true
     @State private var editing: DesktopCardPreference?
     @StateObject private var dialogControl=DesktopCardDialogControl()
     @Environment(\.workbenchPalette) private var palette
 
+    private var desktopButton: some View {
+        Button(action: openDesktop) { Label("查看桌面", systemImage: "rectangle.on.rectangle") }.buttonStyle(WBButtonStyle())
+    }
     private var ordered: [DesktopCardPreference] {
         [.device, .today, .ai].compactMap { kind in cards.first { $0.id == kind } }
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            WBPageHeader(title: "桌面组件", subtitle: "把常用信息留在桌面，也可设为悬浮显示") {
-                Button(action: openDesktop) { Label("查看桌面", systemImage: "rectangle.on.rectangle") }.buttonStyle(WBButtonStyle())
+            if showsHeader {
+                WBPageHeader(title: "桌面组件", subtitle: "把常用信息留在桌面，也可设为悬浮显示") { desktopButton }
+            } else {
+                HStack { Spacer(); desktopButton }.padding(.bottom, 18)
             }
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top, spacing: 12) {

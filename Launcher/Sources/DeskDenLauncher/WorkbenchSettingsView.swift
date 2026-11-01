@@ -13,6 +13,7 @@ struct WorkbenchSettingsView: View {
         case .general: "管理启动方式、工作台入口与数据更新"
         case .material: "工作台、启动器与浮层使用同一套外观"
         case .launcher: "调整启动方式、按键绑定与搜索"
+        case .widgets: "管理桌面组件的显示、位置与行为"
         case .privacy: "管理个人内容、数据来源与访问权限"
         case .audit: "查看各模块的数据来源与可用状态"
         }
@@ -25,6 +26,7 @@ struct WorkbenchSettingsView: View {
             case .general: general
             case .material: material
             case .launcher: launcher
+            case .widgets: DesktopCardsView(cards: model.preferences.cards, update: model.updateCard, openDesktop: { model.showDesktop?() }, device: model.device, calendar: model.calendar, ai: model.ai, showsHeader: false)
             case .privacy: privacy
             case .audit: audit
             }
@@ -61,7 +63,7 @@ struct WorkbenchSettingsView: View {
                 }
             }
             if let controller = model.owner?.topEntryController {
-                WorkbenchMiniDisplaySettings(controller: controller, providers: model.providerUsage)
+                WorkbenchMiniDisplaySettings(controller: controller, providers: model.providerUsage, balances: model.apiBalance)
             }
             WBCard(title: "数据更新", symbol: "arrow.clockwise", spacing: 10) {
                 VStack(spacing: 0) {
@@ -258,6 +260,7 @@ struct WorkbenchSettingsView: View {
 private struct WorkbenchMiniDisplaySettings: View {
     @ObservedObject var controller: WorkbenchTopEntryController
     @ObservedObject var providers: ProviderUsageModel
+    @ObservedObject var balances: APIBalanceModel
     @Environment(\.workbenchPalette) private var palette
     var body: some View {
         WBCard(title: "Mini 显示内容", symbol: "rectangle.topthird.inset.filled", spacing: 14) {
@@ -270,11 +273,12 @@ private struct WorkbenchMiniDisplaySettings: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), alignment: .leading)], alignment: .leading, spacing: 12) {
                 ForEach(WorkbenchMiniCardID.builtIn) { card in cardToggle(card, title: card.title) }
             }
-            if !providers.sources.isEmpty {
+            if !providers.sources.isEmpty || !balances.sources.isEmpty {
                 Text("服务额度").font(.system(size: 11, weight: .medium)).foregroundStyle(palette.muted)
                 WorkbenchScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), alignment: .leading)], alignment: .leading, spacing: 12) {
                         ForEach(providers.sources) { source in cardToggle(.provider(source.id), title: source.name) }
+                        ForEach(balances.sources) { source in cardToggle(.apiBalance(source.id), title: source.name) }
                     }.padding(.vertical, 2)
                 }.frame(maxHeight: 180)
             }
@@ -284,7 +288,7 @@ private struct WorkbenchMiniDisplaySettings: View {
         }
     }
     private func cardToggle(_ card: WorkbenchMiniCardID, title: String) -> some View {
-        Toggle(title, isOn: Binding(get: { controller.preferences.visibleCards.contains(card) }, set: { controller.setMiniCard(card, visible: $0) }))
+        Toggle(title, isOn: Binding(get: { controller.preferences.activeCards(available: controller.availableMiniCards).contains(card) }, set: { controller.setMiniCard(card, visible: $0) }))
             .toggleStyle(.checkbox).font(.system(size: 12)).lineLimit(1).help(title)
     }
 }

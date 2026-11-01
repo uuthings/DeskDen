@@ -215,19 +215,20 @@ struct WorkbenchTopEntryInput {
     func restoreMiniSections() {
         var value = preferences
         value.cardOrder = WorkbenchMiniCardID.builtIn
-        value.visibleCards = WorkbenchMiniCardID.builtIn
+        value.visibleCards = WorkbenchMiniCardID.defaultVisible
+        value.usesDefaultLayout = true
         value.showDate = true; value.showWeather = true; value.showSeconds = false
         save(value, dismiss: false)
     }
     var availableMiniCards: [WorkbenchMiniCardID] {
-        WorkbenchMiniCardID.builtIn + (owner?.workbenchController?.model.providerUsage.sources.map { .provider($0.id) } ?? [])
+        WorkbenchMiniCardID.builtIn + (owner?.workbenchController?.model.providerUsage.sources.map { .provider($0.id) } ?? []) + (owner?.workbenchController?.model.apiBalance.sources.map { .apiBalance($0.id) } ?? [])
     }
     func miniCardTitle(_ card: WorkbenchMiniCardID) -> String {
-        owner?.workbenchController?.model.providerUsage.sources.first { $0.id == card.providerID }?.name ?? card.title
+        owner?.workbenchController?.model.providerUsage.sources.first { $0.id == card.providerID }?.name ?? owner?.workbenchController?.model.apiBalance.sources.first { $0.id == card.apiBalanceID }?.name ?? card.title
     }
     func setMiniCard(_ card: WorkbenchMiniCardID, visible: Bool) {
         guard availableMiniCards.contains(card) else { return }
-        var value = preferences; value.setCard(card, visible: visible)
+        var value = preferences; value.materializeLayout(available: availableMiniCards); value.setCard(card, visible: visible)
         save(value, dismiss: false)
     }
     func setMiniHeader(date: Bool, weather: Bool) {
@@ -240,8 +241,15 @@ struct WorkbenchTopEntryInput {
     }
     func moveMiniCard(_ card: WorkbenchMiniCardID, target: WorkbenchMiniCardID, after: Bool) {
         guard availableMiniCards.contains(card), availableMiniCards.contains(target) else { return }
-        var value = preferences; value.moveCard(card, relativeTo: target, after: after)
+        var value = preferences; value.materializeLayout(available: availableMiniCards); value.moveCard(card, relativeTo: target, after: after)
         save(value, dismiss: false)
+    }
+    @discardableResult func saveMiniLayout(_ layout: WorkbenchTopEntryPreferences) -> Bool {
+        var value = preferences
+        value.cardOrder = layout.cardOrder; value.visibleCards = layout.visibleCards; value.usesDefaultLayout = layout.usesDefaultLayout
+        value.showDate = layout.showDate; value.showWeather = layout.showWeather; value.showSeconds = layout.showSeconds
+        do { try store.save(value); preferences = value; error = nil; updateMiniConsumers(); return true }
+        catch { self.error = error.localizedDescription; return false }
     }
     private func save(_ value: WorkbenchTopEntryPreferences, dismiss: Bool = true) {
         do {
@@ -427,11 +435,16 @@ struct WorkbenchTopEntryInput {
                             if model.route == .ai { model.ai.show(.provider(card == .codex ? .codex : .claude)) }
                         }
                     case .traffic, .network: model.navigate(.network)
-                    case .disk: model.openDeviceReading(.storage)
-                    case .memory: model.openDeviceReading(.memory)
-                    case .thermal: model.openDeviceReading(.thermal)
+                    case .disk: model.openDeviceReading(.storage, fromMini: true)
+                    case .memory: model.openDeviceReading(.memory, fromMini: true)
+                    case .thermal: model.openDeviceReading(.thermal, fromMini: true)
                     case .todo: model.navigate(.calendar)
-                    default: if let id = card.providerID { model.openProviderUsage(id) }
+                    default:
+                        if let id = card.providerID { model.openProviderUsage(id) }
+                        else if let id = card.apiBalanceID, !model.modals.isPresented, !model.usagePresentation.blocksNavigation {
+                            model.openUsageOverview()
+                            if model.route == .ai { model.usagePresentation.selectedAPIID = id }
+                        }
                     }
                 }
                 self.owner?.showWorkbenchFromTopEntry(originFrame: self.islandPresentationFrame)
@@ -517,7 +530,7 @@ struct WorkbenchTopEntrySettingsRow: View {
                 }.font(.system(size: 11)).toggleStyle(.checkbox).clickableCursor().disabled(!controller.preferences.enabled)
                 LazyVGrid(columns: [.init(.adaptive(minimum: 125), alignment: .leading)], alignment: .leading, spacing: 8) {
                     ForEach(controller.availableMiniCards) { card in
-                        Toggle(controller.miniCardTitle(card), isOn: Binding(get: { controller.preferences.visibleCards.contains(card) },
+                        Toggle(controller.miniCardTitle(card), isOn: Binding(get: { controller.preferences.activeCards(available: controller.availableMiniCards).contains(card) },
                             set: { controller.setMiniCard(card, visible: $0) }))
                             .font(.system(size: 11)).toggleStyle(.checkbox).clickableCursor()
                     }

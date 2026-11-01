@@ -14,9 +14,18 @@ final class UsageResetTimeTests: XCTestCase {
         let reset = UsageResetTime(resetsAt: date("2026-11-02T00:00:00Z"))
         XCTAssertEqual(reset.state(at: now, timeZone: shanghai), .relative)
         XCTAssertEqual(reset.summary(at: now, timeZone: shanghai), "23小时59分钟后重置")
-        XCTAssertEqual(reset.summary(at: now.addingTimeInterval(-60), timeZone: shanghai), "24小时后重置")
-        XCTAssertEqual(reset.state(at: now.addingTimeInterval(-61), timeZone: shanghai), .absolute)
-        XCTAssertEqual(reset.summary(at: now.addingTimeInterval(-61), timeZone: shanghai), "11月2日 08:00 重置")
+        XCTAssertEqual(reset.summary(at: now.addingTimeInterval(-60), timeZone: shanghai), "1天后重置")
+        XCTAssertEqual(reset.state(at: now.addingTimeInterval(-61), timeZone: shanghai), .relative)
+        XCTAssertEqual(reset.summary(at: now.addingTimeInterval(-61), timeZone: shanghai), "1天后重置")
+    }
+
+    func testLongCountdownUsesDaysAndHoursWithoutRoundingUp() {
+        let now = date("2026-11-01T00:00:00Z")
+        for zone in [shanghai, losAngeles, utc] {
+            XCTAssertEqual(UsageResetTime(resetsAt: now.addingTimeInterval(51 * 3600 + 59 * 60)).summary(at: now, timeZone: zone), "2天3小时后重置")
+            XCTAssertEqual(UsageResetTime(resetsAt: now.addingTimeInterval(24 * 3600 - 1)).summary(at: now, timeZone: zone), "23小时59分钟后重置")
+            XCTAssertEqual(UsageResetTime(resetsAt: now.addingTimeInterval(7 * 86400)).summary(at: now, timeZone: zone), "7天后重置")
+        }
     }
 
     func testCrossMidnightCountdownIncludesMinutes() {
@@ -50,13 +59,13 @@ final class UsageResetTimeTests: XCTestCase {
         XCTAssertEqual(reset.details(at: now, timeZone: losAngeles).sourceZone, "America/Los_Angeles · UTC−07:00")
     }
 
-    func testSameDayRuleCoversTwentyFiveHourAutumnDay() {
+    func testAutumnDayUsesElapsedDurationInEveryTimezone() {
         // LA repeats 01:00. Both instants are on Nov 1 locally, 24h20m apart.
         let now = date("2026-11-01T07:10:00Z")
         let reset = UsageResetTime(resetsAt: date("2026-11-02T07:30:00Z"), sourceTimeZoneIdentifier: "America/Los_Angeles")
         XCTAssertEqual(reset.state(at: now, timeZone: losAngeles), .relative)
-        XCTAssertEqual(reset.summary(at: now, timeZone: losAngeles), "24小时20分钟后重置")
-        XCTAssertEqual(reset.state(at: now, timeZone: utc), .absolute)
+        XCTAssertEqual(reset.summary(at: now, timeZone: losAngeles), "1天后重置")
+        XCTAssertEqual(reset.state(at: now, timeZone: utc), .relative)
         XCTAssertEqual(reset.details(at: now, timeZone: losAngeles).sourceZone, "America/Los_Angeles · UTC−08:00")
     }
 

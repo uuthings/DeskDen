@@ -42,9 +42,7 @@ public struct UsageResetTime: Equatable, Sendable {
         let remaining = reset.timeIntervalSince(now)
         if remaining <= 0 { return .waiting }
         if remaining < 60 { return .imminent }
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
-        return remaining <= 86_400 || calendar.isDate(now, inSameDayAs: reset) ? .relative : .absolute
+        return .relative
     }
 
     public func summary(at now: Date = Date(), timeZone: TimeZone) -> String {
@@ -53,13 +51,15 @@ public struct UsageResetTime: Equatable, Sendable {
         case .dateOnly: return Self.shortDate(validDateText!) + "重置 · 具体时间未提供"
         case .waiting: return "已到重置时间，等待更新"
         case .imminent: return "即将重置"
-        case .relative:
+        case .relative, .absolute:
             let minutes = Int(validInstant!.timeIntervalSince(now) / 60)
             let hours = minutes / 60
+            if hours >= 24 {
+                let days = hours / 24, remainder = hours % 24
+                return "\(days)天" + (remainder > 0 ? "\(remainder)小时" : "") + "后重置"
+            }
             let remainder = minutes % 60
             return (hours > 0 ? "\(hours)小时" : "") + (remainder > 0 ? "\(remainder)分钟" : "") + "后重置"
-        case .absolute:
-            return Self.timestamp(validInstant!, timeZone: timeZone, includeYear: false) + " 重置"
         }
     }
 

@@ -72,7 +72,7 @@ enum ClaudeQuotaStatusLineHost {
         }
         let safe: [String: Any] = ["observedAt": ISO8601DateFormatter().string(from: now), "rate_limits": safeRates]
         try ProtectedAtomicFile.write(JSONSerialization.data(withJSONObject: safe, options: [.sortedKeys]), to: outputURL)
-        return snapshot.availableWindows.map { "\($0.durationMinutes == 300 ? "5h" : "7d"): \(Int($0.usedPercent.rounded()))%" }.joined(separator: " · ")
+        return snapshot.availableWindows.map { "\($0.durationMinutes == 300 ? "5h" : "7d"): \(UsagePercentage.text($0.usedPercent))" }.joined(separator: " · ")
     }
 }
 
@@ -231,7 +231,7 @@ enum AIQuotaNotificationPermission: String {
     func deliver(_ event: AIQuotaAlertEvent) async throws {
         let content = UNMutableNotificationContent()
         content.title = event.provider.title + (event.level == .critical ? " 额度紧张" : " 额度接近关注阈值")
-        content.body = "\(event.window.title)已用 \(Int(event.usedPercent.rounded()))%，达到 \(event.threshold)% 提醒阈值。来源：\(event.source.title)。"
+        content.body = "\(event.window.title)已用 \(UsagePercentage.text(event.usedPercent))，达到 \(event.threshold)% 提醒阈值。来源：\(event.source.title)。"
         content.sound = .default; content.threadIdentifier = "deskden-ai-quota"
         content.userInfo = ["deskdenRoute": "ai", "provider": event.provider.rawValue]
         try await center.add(UNNotificationRequest(identifier: event.id, content: content, trigger: nil))

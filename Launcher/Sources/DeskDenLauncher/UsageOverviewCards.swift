@@ -221,8 +221,9 @@ struct UsageAIQuotaCard: View {
             }
             Spacer(minLength: 0)
             HStack(spacing: 4) {
-                Text(!enabled ? "自动读取关闭" : summary.state == .ready ? "额度可用" : summary.state.title)
-                if let date = summary.updatedAt { Text("· 更新于 " + ProviderUsageFormatting.time(date, timeZone: timeZone)) }
+                if let date = summary.updatedAt {
+                    UsageObservationAgeLabel(date: date, prefix: !enabled ? "已暂停 · 上次读数 " : summary.state == .ready ? "更新于 " : summary.state.title + " · 上次读数 ", timeZone: timeZone)
+                } else { Text(!enabled ? "自动读取关闭" : summary.state.title) }
                 Spacer(minLength: 0)
                 Image(systemName: "arrow.up.right").font(.system(size: 11)).accessibilityHidden(true)
             }.font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
@@ -243,7 +244,7 @@ private struct UsageAIWindowRow: View {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text(window.title).font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(1)
                     Spacer(minLength: 3)
-                    Text("已用 " + window.usedPercent.formatted(.number.precision(.fractionLength(0...1))) + "%")
+                    Text("已用 " + UsagePercentage.text(window.usedPercent))
                         .font(.system(size: 12, weight: .medium)).monospacedDigit()
                 }.frame(height: 20)
                 WBProgress(value: window.usedPercent / 100, color: palette.usageColor(forPercent: window.usedPercent), height: 5)
@@ -282,7 +283,7 @@ struct ProviderQuotaCard: View {
                 HStack {
                     Text("本周期已用").foregroundStyle(palette.secondary)
                     Spacer(minLength: 3)
-                    Text(snapshot.usedPercent.formatted(.number.precision(.fractionLength(0...1))) + "%")
+                    Text(UsagePercentage.text(snapshot.usedPercent))
                         .fontWeight(.medium).monospacedDigit()
                 }.font(.system(size: 12)).lineLimit(1)
                 Text(ProviderUsageFormatting.amount(snapshot.usedBytes, unit: snapshot.displayUnit) + " GB / " + ProviderUsageFormatting.amount(snapshot.limitBytes, unit: snapshot.displayUnit) + " GB")
@@ -305,8 +306,8 @@ struct ProviderQuotaCard: View {
             }
             Spacer(minLength: 3)
             HStack(spacing: 4) {
-                TimelineView(.periodic(from: .now, by: 60)) { tick in
-                    Text(footer(at: tick.date)).lineLimit(1)
+                UsageResetClock(interval: 1) { current in
+                    Text(footer(at: current)).lineLimit(1)
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "arrow.up.right").font(.system(size: 11)).accessibilityHidden(true)
@@ -327,11 +328,12 @@ struct ProviderQuotaCard: View {
     }
     private func footer(at date: Date) -> String {
         if refreshing { return "正在更新" }
-        if state.refresh.authenticationRequired { return "需要重新连接" }
-        if state.refresh.failureCount > 0 { return state.snapshot == nil ? "更新失败 · 尚无有效读数" : "更新失败 · 保留上次读数" }
-        if !source.enabled { return "已暂停自动更新" }
-        guard let snapshot = state.snapshot else { return "尚无有效读数" }
+        let age = state.snapshot.map { UsageObservationAge.text(since: $0.observedAt, now: date) }
+        if state.refresh.authenticationRequired { return "需重连" + (age.map { " · 上次读数 " + $0 } ?? "") }
+        if state.refresh.failureCount > 0 { return age.map { "更新失败 · 上次读数 " + $0 } ?? "更新失败 · 尚无有效读数" }
+        if !source.enabled { return "已暂停" + (age.map { " · 上次读数 " + $0 } ?? "") }
+        guard let age else { return "尚无有效读数" }
         let stale = state.status(at: date, maximumAge: source.refreshPolicy.maximumInterval) == .stale
-        return (stale ? "旧读数 · " : "更新于 ") + ProviderUsageFormatting.time(snapshot.observedAt, timeZone: timeZone)
+        return (stale ? "上次读数 " : "更新于 ") + age
     }
 }

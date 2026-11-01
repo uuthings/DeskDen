@@ -100,14 +100,14 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
             let tile: DeviceDashboardTile
             if let old = cards[placement.id] { tile = old }
             else { tile = DeviceDashboardTile(id: placement.id); tile.grid = self; cards[placement.id] = tile; addSubview(tile); tile.frame = placement.frame }
-            tile.update(preference: preference, snapshot: model.snapshot, history: model.history, trafficSummary: model.trafficSummary(period: .day, scope: .all), budget: model.budget, editing: editing, light: light, expanded: expanded, scale: scale, theme: theme, opacity: opacity)
+            tile.update(preference: preference, snapshot: model.snapshot, history: model.history, trafficSummary: model.trafficSummary(period: .day, scope: .all), budget: model.budget, temperatureRule: model.temperatureRule, editing: editing, light: light, expanded: expanded, scale: scale, theme: theme, opacity: opacity)
             if animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
                 NSAnimationContext.runAnimationGroup { context in context.duration = 0.18; context.timingFunction = CAMediaTimingFunction(name: .easeOut); tile.animator().frame = placement.frame }
             } else { tile.frame = placement.frame }
             tile.alphaValue = interaction?.started == true && interaction?.id == placement.id ? 0.18 : 1
         }
         if let ghost, let gesture = interaction, let preference = layoutValue.cards.first(where: { $0.id == gesture.id }) {
-            ghost.update(preference: preference, snapshot: model.snapshot, history: model.history, trafficSummary: model.trafficSummary(period: .day, scope: .all), budget: model.budget, editing: editing, light: light, expanded: expanded, scale: scale, theme: theme, opacity: opacity)
+            ghost.update(preference: preference, snapshot: model.snapshot, history: model.history, trafficSummary: model.trafficSummary(period: .day, scope: .all), budget: model.budget, temperatureRule: model.temperatureRule, editing: editing, light: light, expanded: expanded, scale: scale, theme: theme, opacity: opacity)
         }
         let height = max(interaction.flatMap { gridPlacements($0.original).map(\.frame.maxY).max() } ?? 0, placements.map(\.frame.maxY).max() ?? 180 * scale)
         if abs(height - lastHeight) > 0.5 {
@@ -135,7 +135,7 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
             guard hypot(dx,dy) > 4 * scale else { return }
             gesture.started = true; interaction = gesture
             let preview = DeviceDashboardTile(id: gesture.id); preview.isGhost = true
-            if let pref = layoutValue.cards.first(where: { $0.id == gesture.id }) { preview.update(preference: pref, snapshot: model.snapshot, history: model.history, trafficSummary: model.trafficSummary(period: .day, scope: .all), budget: model.budget, editing: editing, light: light, expanded: expanded, scale: scale, theme: theme, opacity: opacity) }
+            if let pref = layoutValue.cards.first(where: { $0.id == gesture.id }) { preview.update(preference: pref, snapshot: model.snapshot, history: model.history, trafficSummary: model.trafficSummary(period: .day, scope: .all), budget: model.budget, temperatureRule: model.temperatureRule, editing: editing, light: light, expanded: expanded, scale: scale, theme: theme, opacity: opacity) }
             preview.frame = gesture.origin; preview.wantsLayer = true
             preview.layer?.shadowColor = NSColor.black.cgColor; preview.layer?.shadowOpacity = 0.35; preview.layer?.shadowRadius = 15; preview.layer?.shadowOffset = CGSize(width: 0, height: -7)
             ghost = preview; addSubview(preview, positioned: .above, relativeTo: nil)
@@ -260,11 +260,11 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
         ButtonCursorPolicy.shared.register(self)
     }
     required init?(coder: NSCoder) { fatalError() }
-    func update(preference: DeviceCardPreference, snapshot: DeviceSnapshot, history: [DeviceHistoryPoint], trafficSummary: DeviceTrafficSummary, budget: DeviceTrafficBudget, editing: Bool, light: Bool, expanded: Bool = false, scale: CGFloat = 1, theme: LauncherTheme = .arWorld, opacity: Double = 0.70) {
+    func update(preference: DeviceCardPreference, snapshot: DeviceSnapshot, history: [DeviceHistoryPoint], trafficSummary: DeviceTrafficSummary, budget: DeviceTrafficBudget, temperatureRule: DeviceTemperatureRule = .init(), editing: Bool, light: Bool, expanded: Bool = false, scale: CGFloat = 1, theme: LauncherTheme = .arWorld, opacity: Double = 0.70) {
         if self.editing != editing { bodyClickPending = false }
         self.editing = editing; self.scale = scale
         setAccessibilityRole(editing ? .group : .button)
-        let content = AnyView(DeviceCardContent(card: preference, snapshot: snapshot, history: history, editing: editing, trafficSummary: trafficSummary, budget: budget, expanded: expanded)
+        let content = AnyView(DeviceCardContent(card: preference, snapshot: snapshot, history: history, editing: editing, trafficSummary: trafficSummary, budget: budget, temperatureRule: temperatureRule, expanded: expanded)
             .environment(\.workbenchTheme, theme).environment(\.workbenchOpacity, opacity).preferredColorScheme(light ? .light : .dark))
         if let host { host.rootView = content }
         else {

@@ -23,18 +23,26 @@ public struct WorkbenchMiniCardID: RawRepresentable, Codable, Hashable, Identifi
     public static let todo = Self(rawValue: "todo")
     public static let network = Self(rawValue: "network")
     public static let thermal = Self(rawValue: "thermal")
-    public static let builtIn: [Self] = [.codex, .claude, .traffic, .disk, .memory, .todo, .network, .thermal]
+    public static let builtIn: [Self] = [.network, .thermal, .disk, .memory, .todo, .codex, .claude, .traffic]
+    public static let defaultVisible: [Self] = [.network, .thermal, .disk, .memory, .todo, .codex, .claude]
+    private static let legacyOrder: [Self] = [.codex, .claude, .traffic, .disk, .memory, .todo, .network, .thermal]
     /// Leaves room for all configured sources and retained positions of removed
     /// sources, while keeping the serialized layout below the store size limit.
     public static let maximumLayoutCount = 256
     public static func provider(_ id: UUID) -> Self { .init(rawValue: "provider:" + id.uuidString.lowercased()) }
+    public static func apiBalance(_ id: UUID) -> Self { .init(rawValue: "balance:" + id.uuidString.lowercased()) }
+    public var apiBalanceID: UUID? {
+        guard rawValue.hasPrefix("balance:") else { return nil }
+        return UUID(uuidString: String(rawValue.dropFirst(8)))
+    }
     public var providerID: UUID? {
         guard rawValue.hasPrefix("provider:") else { return nil }
         return UUID(uuidString: String(rawValue.dropFirst(9)))
     }
-    public var isValid: Bool { Self.builtIn.contains(self) || providerID.map { Self.provider($0) == self } == true }
+    public var isValid: Bool { Self.builtIn.contains(self) || providerID.map { Self.provider($0) == self } == true || apiBalanceID.map { Self.apiBalance($0) == self } == true }
     /// Six units fit one column: three small cards or two medium cards.
-    public var span: Int { self == .network || self == .thermal ? 3 : 2 }
+    public var span: Int { [.disk, .memory, .todo, .traffic].contains(self) ? 2 : 3 }
+    static func isLegacyDefault(_ order: [Self], visible: [Self]) -> Bool { order == legacyOrder && Set(visible) == Set(legacyOrder) }
     public init(from decoder: Decoder) throws { rawValue = try decoder.singleValueContainer().decode(String.self) }
     public func encode(to encoder: Encoder) throws { var value = encoder.singleValueContainer(); try value.encode(rawValue) }
 }
@@ -46,51 +54,27 @@ public struct WorkbenchMiniPlacement: Equatable, Sendable {
     public var span: Int { card.span }
 }
 
-/// Exact small/medium bin packing, preferring earlier cards and earlier columns.
-/// Memoized symmetric states keep arbitrary user orders bounded and deterministic.
+/// Preserve the user's visual order. Filling a hole with a later card would make
+/// a drag insertion jump across columns and change the intended grouping.
 public enum WorkbenchMiniPacking {
     public static func pack(_ cards: [WorkbenchMiniCardID]) -> [WorkbenchMiniPlacement] {
         guard !cards.isEmpty, cards.count <= WorkbenchMiniCardID.maximumLayoutCount else { return [] }
-        let total = cards.reduce(0) { $0 + $1.span }
-        for count in max(1, (total + 5) / 6)...cards.count {
-            var bins = Array(repeating: [WorkbenchMiniCardID](), count: count)
-            var used = Array(repeating: 0, count: count)
-            var failed = Set<String>()
-            func place(_ index: Int) -> Bool {
-                if index == cards.count { return true }
-                let key = "\(index):" + used.sorted().map(String.init).joined(separator: ",")
-                if failed.contains(key) { return false }
-                let card = cards[index]
-                var tried = Set<Int>()
-                for column in bins.indices where used[column] + card.span <= 6 {
-                    guard tried.insert(used[column]).inserted else { continue }
-                    bins[column].append(card); used[column] += card.span
-                    if place(index + 1) { return true }
-                    used[column] -= card.span; bins[column].removeLast()
-                }
-                failed.insert(key)
-                return false
-            }
-            if place(0) {
-                return bins.enumerated().flatMap { column, cards -> [WorkbenchMiniPlacement] in
-                    var row = 0
-                    return cards.map { card in
-                        defer { row += card.span }
-                        return .init(card: card, column: column, row: row)
-                    }
-                }
-            }
+        var column = 0, row = 0
+        return cards.map { card in
+            if row + card.span > 6 { column += 1; row = 0 }
+            defer { row += card.span }
+            return .init(card: card, column: column, row: row)
         }
-        return []
     }
 }
 
 public struct WorkbenchTopEntryPreferences: Codable, Equatable, Sendable {
-    public var schemaVersion = 2
+    public var schemaVersion = 3
     public var enabled = true
     public var mode: WorkbenchTopEntryMode = .summary
     public var cardOrder = WorkbenchMiniCardID.builtIn
-    public var visibleCards = WorkbenchMiniCardID.builtIn
+    public var visibleCards = WorkbenchMiniCardID.defaultVisible
+    public var usesDefaultLayout = true
     public var showDate = true
     public var showWeather = true
     public var showSeconds = false
@@ -107,6 +91,7 @@ public struct WorkbenchTopEntryPreferences: Codable, Equatable, Sendable {
             }
         }
         set {
+            usesDefaultLayout = false
             showDate = newValue.contains(.context); showWeather = showDate
             visibleCards = cardOrder.filter { card in
                 if card == .todo { return newValue.contains(.agenda) }
@@ -118,12 +103,12 @@ public struct WorkbenchTopEntryPreferences: Codable, Equatable, Sendable {
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, enabled, mode, visibleSections, cardOrder, visibleCards, showDate, showWeather, showSeconds
+        case schemaVersion, enabled, mode, visibleSections, cardOrder, visibleCards, showDate, showWeather, showSeconds, usesDefaultLayout
     }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         let version = try values.decode(Int.self, forKey: .schemaVersion)
-        guard (1...2).contains(version) else { throw LauncherError.storage("顶部入口设置版本无法读取，原文件已保留。") }
+        guard (1...3).contains(version) else { throw LauncherError.storage("顶部入口设置版本无法读取，原文件已保留。") }
         enabled = try values.decode(Bool.self, forKey: .enabled)
         mode = try values.decode(WorkbenchTopEntryMode.self, forKey: .mode)
         // This additive field keeps existing enabled/mode choices intact. An
@@ -141,7 +126,12 @@ public struct WorkbenchTopEntryPreferences: Codable, Equatable, Sendable {
             showWeather = try values.decode(Bool.self, forKey: .showWeather)
         }
         showSeconds = try values.decodeIfPresent(Bool.self, forKey: .showSeconds) ?? false
-        schemaVersion = 2
+        usesDefaultLayout = try values.decodeIfPresent(Bool.self, forKey: .usesDefaultLayout)
+            ?? (version == 1 ? visibleSections == WorkbenchMiniSection.allCases : WorkbenchMiniCardID.isLegacyDefault(cardOrder, visible: visibleCards))
+        if version < 3 && usesDefaultLayout {
+            cardOrder = WorkbenchMiniCardID.builtIn; visibleCards = WorkbenchMiniCardID.defaultVisible
+        }
+        schemaVersion = 3
     }
     public func encode(to encoder: Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
@@ -153,9 +143,10 @@ public struct WorkbenchTopEntryPreferences: Codable, Equatable, Sendable {
         try values.encode(showDate, forKey: .showDate)
         try values.encode(showWeather, forKey: .showWeather)
         try values.encode(showSeconds, forKey: .showSeconds)
+        try values.encode(usesDefaultLayout, forKey: .usesDefaultLayout)
     }
     public func validate() throws {
-        guard schemaVersion == 2 else { throw LauncherError.storage("顶部入口设置版本无法读取，原文件已保留。") }
+        guard schemaVersion == 3 else { throw LauncherError.storage("顶部入口设置版本无法读取，原文件已保留。") }
         guard cardOrder.count <= WorkbenchMiniCardID.maximumLayoutCount, Set(cardOrder).count == cardOrder.count,
               cardOrder.allSatisfy(\.isValid), Set(WorkbenchMiniCardID.builtIn).isSubset(of: Set(cardOrder)),
               Set(visibleCards).count == visibleCards.count, Set(visibleCards).isSubset(of: Set(cardOrder)) else {
@@ -164,16 +155,29 @@ public struct WorkbenchTopEntryPreferences: Codable, Equatable, Sendable {
     }
     public func activeCards(available: [WorkbenchMiniCardID]) -> [WorkbenchMiniCardID] {
         let selected = Set(visibleCards), valid = Set(available)
-        return cardOrder.filter { selected.contains($0) && valid.contains($0) }
+        let stored = cardOrder.filter { selected.contains($0) && valid.contains($0) }
+        return usesDefaultLayout ? stored + available.filter { !cardOrder.contains($0) } : stored
+    }
+    public mutating func materializeLayout(available: [WorkbenchMiniCardID]) {
+        let active = activeCards(available: available)
+        let missing = available.filter { !cardOrder.contains($0) }
+        if cardOrder.count + missing.count > WorkbenchMiniCardID.maximumLayoutCount {
+            let retained = Set(available)
+            cardOrder.removeAll { !WorkbenchMiniCardID.builtIn.contains($0) && !retained.contains($0) }
+        }
+        for card in available where !cardOrder.contains(card) && cardOrder.count < WorkbenchMiniCardID.maximumLayoutCount { cardOrder.append(card) }
+        visibleCards = active.filter { cardOrder.contains($0) }; usesDefaultLayout = false
     }
     public mutating func setCard(_ card: WorkbenchMiniCardID, visible: Bool) {
         guard card.isValid else { return }
+        usesDefaultLayout = false
         if !cardOrder.contains(card), cardOrder.count < WorkbenchMiniCardID.maximumLayoutCount { cardOrder.append(card) }
         visibleCards.removeAll { $0 == card }
         if visible, cardOrder.contains(card) { visibleCards.append(card) }
     }
     public mutating func moveCard(_ card: WorkbenchMiniCardID, relativeTo target: WorkbenchMiniCardID, after: Bool) {
         guard card != target, cardOrder.contains(card), cardOrder.contains(target) else { return }
+        usesDefaultLayout = false
         cardOrder.removeAll { $0 == card }
         guard let index = cardOrder.firstIndex(of: target) else { return }
         cardOrder.insert(card, at: index + (after ? 1 : 0))

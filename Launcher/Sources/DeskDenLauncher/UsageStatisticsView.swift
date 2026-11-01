@@ -238,6 +238,7 @@ struct UsageStatisticsView: View {
         .onChange(of: api.sources.map(\.id)) { _, ids in
             if let selected = presentation.selectedAPIID, !ids.contains(selected) { presentation.selectedAPIID = nil }
         }
+        .environment(\.usageDisplayLocation, context.locationTitle)
         .accessibilityElement(children: .contain).accessibilityIdentifier("fc.page.usage")
     }
     private var overviewError: String? {
@@ -352,7 +353,7 @@ struct UsageStatisticsView: View {
                         Text(balance.totalBalance).font(.system(size: 30, weight: .medium)).monospacedDigit()
                         apiValue("赠送余额", value: balance.grantedBalance + " " + balance.currency)
                         apiValue("充值余额", value: balance.toppedUpBalance + " " + balance.currency)
-                        apiValue("查询时间", value: ProviderUsageFormatting.timestamp(snapshot.observedAt, timeZone: context.dateContext.timeZone))
+                        apiValue("查询时间", value: UsageDatePresentation.absolute(snapshot.observedAt, timeZone: context.dateContext.timeZone, location: context.locationTitle))
                     }
                 }
             }
@@ -409,7 +410,7 @@ struct UsageStatisticsView: View {
                             .accessibilityIdentifier("fc.usage.bandwagon.reset-explanation")
                     }
                     detailRow("计量来源", snapshot.sourceDescription)
-                    detailRow("查询时间", ProviderUsageFormatting.timestamp(snapshot.observedAt, timeZone: context.dateContext.timeZone))
+                    detailRow("查询时间", UsageDatePresentation.absolute(snapshot.observedAt, timeZone: context.dateContext.timeZone, location: context.locationTitle))
                     detailRow("单位口径", snapshot.displayUnit.explanation)
                 }
                 detailRow("连接方式", source.kind == .bandwagon ? "实例 API Key · 本机钥匙串" : "Chrome 网页助手 · 浏览器登录会话")
@@ -453,13 +454,13 @@ struct UsageStatisticsView: View {
                         }
                     }.frame(minWidth: 190, alignment: .leading)
                     VStack(alignment: .leading, spacing: 8) {
-                        HStack { Text("本周期消耗"); Spacer(); Text(snapshot.usedPercent.formatted(.number.precision(.fractionLength(0...1))) + "%") }
+                        HStack { Text("本周期消耗"); Spacer(); Text(UsagePercentage.text(snapshot.usedPercent)) }
                             .font(.system(size: 11)).foregroundStyle(palette.secondary)
                         WBProgress(value: snapshot.usedPercent / 100, color: palette.usageColor(forPercent: snapshot.usedPercent), height: 5)
                         HStack {
                             Text(ProviderUsageFormatting.amount(snapshot.usedBytes, unit: snapshot.displayUnit) + " / " + ProviderUsageFormatting.amount(snapshot.limitBytes, unit: snapshot.displayUnit) + " GB")
                             Spacer()
-                            Text("更新于 " + ProviderUsageFormatting.time(snapshot.observedAt, timeZone: context.dateContext.timeZone))
+                            Text("更新于 " + UsageDatePresentation.absolute(snapshot.observedAt, timeZone: context.dateContext.timeZone, location: context.locationTitle))
                         }.font(.system(size: 11)).foregroundStyle(palette.muted).monospacedDigit()
                     }
                 }

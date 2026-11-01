@@ -68,22 +68,19 @@ struct DeviceBudgetDraft: Equatable {
 }
 
 struct DeviceTemperatureDraft: Equatable {
-    var enabled = false
-    var cpu = "90"
-    var gpu = "85"
+    var cpu = "85"
+    var gpu = "80"
     var duration = "30"
     var cooldown = "15"
-    var notifications = true
+    var notifications = false
     init() { }
     init(_ value: DeviceTemperatureRule) {
-        enabled = value.enabled
         cpu = DeviceBudgetDraft.numberText(value.cpuThreshold)
         gpu = DeviceBudgetDraft.numberText(value.gpuThreshold)
         duration = String(value.sustainedSeconds); cooldown = String(value.cooldownMinutes)
-        notifications = value.notificationsEnabled
+        notifications = value.enabled && value.notificationsEnabled
     }
     var errors: [String: String] {
-        guard enabled else { return [:] }
         var result: [String: String] = [:]
         for (key, text) in [("cpu", cpu), ("gpu", gpu)] {
             if let value = DeviceBudgetDraft.number(text), value.isFinite, (40...110).contains(value) { } else { result[key] = "请输入 40–110°C 的温度。" }
@@ -93,14 +90,12 @@ struct DeviceTemperatureDraft: Equatable {
         return result
     }
     func rule(from saved: DeviceTemperatureRule) -> DeviceTemperatureRule {
-        var value = saved; value.enabled = enabled
-        if enabled {
-            value.cpuThreshold = DeviceBudgetDraft.number(cpu) ?? saved.cpuThreshold
-            value.gpuThreshold = DeviceBudgetDraft.number(gpu) ?? saved.gpuThreshold
-            value.sustainedSeconds = Int(duration) ?? saved.sustainedSeconds
-            value.cooldownMinutes = Int(cooldown) ?? saved.cooldownMinutes
-            value.notificationsEnabled = notifications
-        }
+        var value = saved; value.enabled = notifications
+        value.cpuThreshold = DeviceBudgetDraft.number(cpu) ?? saved.cpuThreshold
+        value.gpuThreshold = DeviceBudgetDraft.number(gpu) ?? saved.gpuThreshold
+        value.sustainedSeconds = Int(duration) ?? saved.sustainedSeconds
+        value.cooldownMinutes = Int(cooldown) ?? saved.cooldownMinutes
+        value.notificationsEnabled = notifications
         return value
     }
 }
@@ -133,6 +128,10 @@ struct DeviceTemperatureDraft: Equatable {
     func restoreTemperature(_ model: DeviceStatusModel) {
         temperature = DeviceTemperatureDraft(model.temperatureRule); savedTemperature = temperature
         temperatureErrors = [:]; temperatureStatus = "已保存"
+    }
+    func resetTemperatureDefaults() {
+        temperature = DeviceTemperatureDraft(DeviceTemperatureRule())
+        temperatureErrors = [:]; temperatureStatus = "默认设置尚未保存"
     }
     func saveBudget(_ model: DeviceStatusModel) async {
         guard !savingBudget else { return }
@@ -268,18 +267,18 @@ struct DeviceTemperatureSettingsView: View {
             HStack {
                 Label("温度提醒", systemImage: "bell").font(.system(size: 12, weight: .medium))
                 Spacer()
-                Toggle("启用提醒", isOn: $drafts.temperature.enabled).toggleStyle(.switch).clickableCursor().controlSize(.small).font(.system(size: 11))
+                Button("恢复默认") { drafts.resetTemperatureDefaults() }.buttonStyle(WBButtonStyle(compact: true))
             }
             LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)], alignment: .leading, spacing: 16) {
                 DeviceRuleNumberField(title: "CPU 温度阈值", value: $drafts.temperature.cpu, unit: "°C", error: drafts.temperatureErrors["cpu"])
                 DeviceRuleNumberField(title: "GPU 温度阈值", value: $drafts.temperature.gpu, unit: "°C", error: drafts.temperatureErrors["gpu"])
                 DeviceRuleNumberField(title: "持续超过阈值", value: $drafts.temperature.duration, unit: "秒", error: drafts.temperatureErrors["duration"])
                 DeviceRuleNumberField(title: "提醒冷却时间", value: $drafts.temperature.cooldown, unit: "分钟", error: drafts.temperatureErrors["cooldown"])
-            }.disabled(!drafts.temperature.enabled)
+            }
             Toggle("满足条件时发送系统通知", isOn: $drafts.temperature.notifications).clickableCursor()
-                .font(.system(size: 12)).disabled(!drafts.temperature.enabled)
-            DeviceRuleHelp(text: drafts.temperature.enabled ? "任一温度持续超阈值后提醒；短暂升温不提醒。恢复正常后重新计时，同一项在冷却期内不重复提醒。" : "提醒已关闭，温度监测继续保留。")
-            DeviceRuleHelp(text: "仅使用实际传感器读数。缺少读数时暂停该项判断，不以 0 或旧读数代替。")
+                .font(.system(size: 12))
+            DeviceRuleHelp(text: "状态颜色始终显示；关闭通知仍可调整阈值。CPU 85°C、GPU 80°C 是方寸默认提醒值，并非 Apple 安全上限。")
+            DeviceRuleHelp(text: "连续超温达到设定时长才通知；缺失读数中断计时。恢复正常后重新计时，冷却期内不重复提醒。")
             DeviceRuleActions(dirty: drafts.temperatureDirty, saving: drafts.savingTemperature, status: drafts.temperatureStatus,
                               cancel: { drafts.restoreTemperature(model) }, save: { Task { await drafts.saveTemperature(model) } })
         }.disabled(drafts.savingTemperature).accessibilityIdentifier("device-temperature-settings")

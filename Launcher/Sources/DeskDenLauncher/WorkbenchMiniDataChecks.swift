@@ -58,7 +58,7 @@ import LauncherCore
             check(wrong.windows.allSatisfy {$0.fraction == nil && $0.value == "—"},"a provider mismatch cannot display another provider's quota")
             let error=WorkbenchMiniAIData(summary:.init(provider:.codex,state:.error,snapshot:reversed,detail:"夹具失败"),provider:.codex,now:now)
             check(error.stateText == "读取失败" && error.detail.contains("夹具失败"),"retained quota does not conceal its source failure")
-            check(ai.windows[0].reset == "20分后" && ai.windows[1].reset == "24时后", "quota reset labels use the same rolling 24-hour countdown across calendar dates")
+            check(ai.windows[0].reset == "20分钟后重置" && ai.windows[1].reset == "1天后重置", "quota reset labels use the shared full relative countdown on either side of 24 hours")
 
             var snapshot = DeviceSnapshot()
             let unavailable = WorkbenchMiniDeviceData(snapshot: snapshot, openedAt: now, now: now)
@@ -93,7 +93,23 @@ import LauncherCore
             let source = ProviderUsageConfiguration(kind: .bandwagon, name: "Fixture source", resourceID: "123")
             var externalSnapshot = ProviderUsageSnapshot(sourceID: source.id, observedAt: now, usedBytes: 1_073_741_824, limitBytes: 10_737_418_240, resetDateText: "2026-11-01", displayUnit: .binaryGB, sourceDescription: "Synthetic provider fixture")
             let external = WorkbenchMiniExternalProviderData(configuration: source, state: .init(snapshot: externalSnapshot), now: now, calendar: zone)
-            check(external.amount == "1.0 / 10.0 GB" && external.fraction == 0.1 && !external.isStale, "external cards project the provider's binary unit without adding local network bytes")
+            check(external.amount == "1 / 10 GB" && external.fraction == 0.1 && !external.isStale, "external cards project the provider's binary unit without adding local network bytes")
+            check(external.remaining == "9" && external.reset == "11月1日重置 · 具体时间未提供", "external Mini cards keep the authoritative remaining amount and date-only reset")
+            for percentage in [UInt64(29), UInt64(58)] {
+                let integerSnapshot = ProviderUsageSnapshot(sourceID: source.id, observedAt: now, usedBytes: percentage, limitBytes: 100,
+                                                            displayUnit: .decimalGB, sourceDescription: "Synthetic integer percentage fixture")
+                let integer = WorkbenchMiniExternalProviderData(configuration: source, state: .init(snapshot: integerSnapshot), now: now, calendar: zone)
+                check(integer.usedPercent == Double(percentage) && UsagePercentage.text(integer.usedPercent) == "\(percentage)%",
+                      "Mini preserves exact \(percentage)% before converting it to a bar fraction")
+            }
+            let balanceSource = APIBalanceConfiguration(name: "Balance fixture")
+            let balanceSnapshot = APIBalanceSnapshot(sourceID: balanceSource.id, observedAt: now, isAvailable: true,
+                balances: [.init(currency: "CNY", totalBalance: "48.32", grantedBalance: "0", toppedUpBalance: "48.32"),
+                           .init(currency: "USD", totalBalance: "2.10", grantedBalance: "0", toppedUpBalance: "2.10")])
+            let balance = WorkbenchMiniAPIBalanceData(configuration: balanceSource, state: .init(snapshot: balanceSnapshot), now: now, calendar: zone)
+            check(balance.amount == "CNY 48.32\nUSD 2.10" && !balance.isStale, "Mini preserves separate currencies and source precision without inventing a quota")
+            var wrongBalance = balanceSnapshot; wrongBalance.sourceID = UUID()
+            check(WorkbenchMiniAPIBalanceData(configuration: balanceSource, state: .init(snapshot: wrongBalance), now: now, calendar: zone).amount == "—", "Mini rejects another API source's balance")
             check(external.detail.contains("服务商日期：2026-11-01") && external.detail.contains("具体时间与来源时区未提供") && external.detail.contains("1,073,741,824"), "provider date-only reset and byte convention stay explicit")
             var slowSource = source; slowSource.refreshPolicy.maximumInterval = 43_200
             check(!WorkbenchMiniExternalProviderData(configuration: slowSource, state: .init(snapshot: externalSnapshot), now: now.addingTimeInterval(25_200), calendar: zone).isStale, "Mini freshness respects the source's configured maximum refresh interval")

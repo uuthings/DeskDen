@@ -117,14 +117,15 @@ enum WorkbenchResponsiveLayoutChecks {
             check(frame("fc.page.usage", in: host).map { abs($0.width - sample.page) < 2 } == true,
                   "mounted usage overview follows the shared \(Int(sample.page)) pt content boundary in \(label)")
             for route in WorkbenchRoute.allCases {
+                let effectiveRoute:WorkbenchRoute = route == .cards ? .settings : route
                 model.navigate(route)
                 _ = await wait(window) {
                     frame("workbench-sidebar", in: host) != nil && frame("workbench-chrome", in: host) != nil
-                        && frame(route == .settings ? "settings-navigation-general" : "navigation-" + route.rawValue, in: host) != nil
-                        && (route != .settings || model.settingsTab != .general || frame("updates-current-version", in: host) != nil)
+                        && frame(effectiveRoute == .settings ? "settings-navigation-general" : "navigation-" + route.rawValue, in: host) != nil
+                        && (effectiveRoute != .settings || model.settingsTab != .general || frame("updates-current-version", in: host) != nil)
                 }
                 let chrome = frame("workbench-chrome", in: host), sidebar = frame("workbench-sidebar", in: host)
-                let navigation = frames(prefix: route == .settings ? "settings-navigation-" : "navigation-", in: host)
+                let navigation = frames(prefix: effectiveRoute == .settings ? "settings-navigation-" : "navigation-", in: host)
                 let hostScreen = window.convertToScreen(host.convert(host.bounds, to: nil))
                 // SwiftUI exposes a containing AX group's children as its
                 // frame, so the chrome's accessibility height can be its 32 pt
@@ -141,6 +142,8 @@ enum WorkbenchResponsiveLayoutChecks {
                 print("DETAIL responsive shell \(route.rawValue) \(label) hostScreen=\(hostScreen) chromeAX=\(String(describing: chrome)) sidebarAX=\(String(describing: sidebar)) measuredChromeHeight=\(String(describing: chromeHeight)) outerViewport=\(String(describing: outerViewport))")
                 check(!navigation.isEmpty && navigation.allSatisfy { abs($0.height - 42) < 1 },
                       "\(route.rawValue) keeps 42 pt navigation rows across resize in \(label)")
+                check(frame("navigation-cards", in: host) == nil && (effectiveRoute != .settings || frame("settings-navigation-widgets", in: host) != nil),
+                      "desktop widgets live only in Settings across resize in \(label)")
                 check(frame("navigation-health", in: host) == nil && !containsAccessibilityText("体检中心", in: host),
                       "\(route.rawValue) exposes no obsolete health navigation or page in \(label)")
                 let version = "v" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")

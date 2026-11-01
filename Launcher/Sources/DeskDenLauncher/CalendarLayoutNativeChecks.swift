@@ -186,6 +186,21 @@ import LauncherCore
                   && system.permissionRequests == 0 && system.writes == 0 && notifier.permissionRequests == 0 && notifier.nonemptyDeliveries == 0,
                   "calendar fixture never accesses real sources, requests permissions or schedules real notifications")
 
+            // Retain the source of existing fixture events: CalendarModel also
+            // infers source entries for loaded events missing from this directory.
+            // Many source calendars remain a bounded, explicitly expanded list.
+            system.sourceValues=(0..<100).map { CalendarSourceDescriptor(id: $0 == 0 ? "fixture-calendar" : "fixture-source-\($0)", title: "日历 \($0 + 1)", account: $0.isMultiple(of: 2) ? "个人账号" : "工作账号") }
+            await calendar.refresh();calendar.openSources()
+            check(await settle(window) {frame("calendar-source-disclosure",in:host) != nil && frame("calendar-source-list",in:host) == nil},
+                  "one hundred connected calendars are initially collapsed")
+            check(press("calendar-source-disclosure",in:host),"the source title expands its calendar list independently of its switch")
+            check(await settle(window) {frame("calendar-source-list",in:host).map {$0.height > 0 && $0.height <= 302} == true && frame("calendar-source-search",in:host) != nil},
+                  "expanded sources provide search and a bounded 300 pt scrolling viewport")
+            check(calendar.preferences.calendarConnected && calendar.calendarSources.count == 100 && system.permissionRequests == 0,
+                  "expanding connected sources never changes connection state or requests permission")
+            check(press("calendar-source-disclosure",in:host),"the source title collapses the list again")
+            check(await settle(window) {frame("calendar-source-list",in:host) == nil},"collapsed sources remove the long list from layout")
+
             // Permissions are rejected by the fixture provider; Settings URLs
             // are captured rather than opening or changing system preferences.
             await calendar.disconnect(reminders:false);await calendar.disconnect(reminders:true)
@@ -309,7 +324,8 @@ import LauncherCore
     var eventsValue: [CalendarEventItem] = [], remindersValue: [ReminderItem] = []
     func access(reminders: Bool) -> CalendarAccess { reminders ? remindersAccess:calendarAccess }
     func requestAccess(reminders: Bool) async throws -> Bool { permissionRequests += 1; return access(reminders:reminders) == .granted }
-    func calendarSources() -> [CalendarSourceDescriptor] { [.init(id: "fixture-calendar", title: "隔离日历")] }
+    var sourceValues:[CalendarSourceDescriptor]=[.init(id: "fixture-calendar", title: "隔离日历")]
+    func calendarSources() -> [CalendarSourceDescriptor] { sourceValues }
     func events(in interval: DateInterval) throws -> [CalendarEventItem] {
         if failEvents { throw ReminderError.unavailable("Isolated calendar read failure") }
         return eventsValue.filter { $0.start < interval.end && $0.end > interval.start }

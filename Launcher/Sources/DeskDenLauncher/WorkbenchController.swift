@@ -8,10 +8,10 @@ import LauncherCore
 
 extension Notification.Name { static let deskdenConfigurationChanged=Notification.Name("local.deskden.configuration.changed") }
 enum WorkbenchSettingsTab:String,CaseIterable {
-    case general,material,launcher,privacy,audit
-    var title:String {switch self {case .general:"通用";case .material:"外观与材质";case .launcher:"启动器";case .privacy:"隐私与锁定";case .audit:"功能审计"}}
-    var symbol:String {switch self {case .general:"slider.horizontal.3";case .material:"circle.lefthalf.filled";case .launcher:"command";case .privacy:"checkmark.shield";case .audit:"list.bullet.rectangle"}}
-    var subtitle:String {switch self {case .general:"管理启动方式、工作台入口与数据更新";case .material:"工作台、启动器与浮层使用同一套外观";case .launcher:"调整启动方式、按键绑定与搜索";case .privacy:"管理个人内容、数据来源与访问权限";case .audit:"查看各模块的数据来源与可用状态"}}
+    case general,material,launcher,widgets,privacy,audit
+    var title:String {switch self {case .general:"通用";case .material:"外观与材质";case .launcher:"启动器";case .widgets:"桌面组件";case .privacy:"隐私与锁定";case .audit:"功能审计"}}
+    var symbol:String {switch self {case .general:"slider.horizontal.3";case .material:"rectangle.on.rectangle";case .launcher:"keyboard";case .widgets:"square.grid.2x2";case .privacy:"checkmark.shield";case .audit:"list.bullet.clipboard"}}
+    var subtitle:String {switch self {case .general:"管理启动方式、工作台入口与数据更新";case .material:"工作台、启动器与浮层使用同一套外观";case .launcher:"调整启动方式、按键绑定与搜索";case .widgets:"管理桌面组件的显示、位置与行为";case .privacy:"管理个人内容、数据来源与访问权限";case .audit:"查看各模块的数据来源与可用状态"}}
 }
 
 struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;var state:String;var detail:String}
@@ -36,7 +36,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     @Published var route:WorkbenchRoute = .overview
     @Published var deviceDetail:DeviceCardID?
     private var readingReturnRoute:WorkbenchRoute?
-    @Published var settingsTab:WorkbenchSettingsTab = .general
+    @Published var settingsTab:WorkbenchSettingsTab = .general {didSet {updateSamplingVisibility()}}
     @Published private(set) var settingsReturnRoute:WorkbenchRoute = .overview
     @Published var isFullScreen=false
     @Published private(set) var isTopEntryPresentation=false
@@ -112,7 +112,8 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         }
         if startServices {refreshLoginStatus()};applyPreferences()
     }
-    func navigate(_ next:WorkbenchRoute) {
+    func navigate(_ destination:WorkbenchRoute) {
+        let next: WorkbenchRoute = destination == .cards ? .settings : destination
         guard !quitting else {return}
         modals.prune()
         if next != route, modals.isPresented {revealWindow?();return}
@@ -120,6 +121,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         if route == .vault && next != .vault { vault.lock(reason:"离开私密资料") }
         if route == .settings && next != .settings { owner?.settingsWindowController?.stopEmbedding() }
         if next == .settings, route != .settings {settingsReturnRoute=route}
+        if destination == .cards { settingsTab = .widgets }
         route=next;updateSamplingVisibility()
     }
     func openContextSettings() {
@@ -158,7 +160,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
             return "本机连接已安装。请在 Chrome 加载连接包的 Extension 文件夹，并在扩展弹窗启用连接；无需双击 install.command。"
         } catch { return "安装失败：" + error.localizedDescription }
     }
-    func openDeviceReading(_ detail:DeviceCardID) {readingReturnRoute=route;deviceDetail=detail;navigate(.device)}
+    func openDeviceReading(_ detail:DeviceCardID, fromMini:Bool=false) {readingReturnRoute=fromMini ? .device:route;deviceDetail=detail;navigate(.device)}
     var requestedReadingReturnTitle:String {"返回"+(readingReturnRoute?.title ?? "设备状态")}
     func closeRequestedDeviceDetail() {
         guard let previous=readingReturnRoute else {return}
@@ -178,7 +180,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         guard startServices else {return}
         context.setVisible(miniContextVisible || windowVisible)
         device.setWindowVisible(windowVisible && [.overview,.device,.cleaning,.network].contains(route))
-        device.setWidgetsVisible(preferences.cards.contains(where:{$0.visible && $0.id == .device}) || (windowVisible && route == .cards))
+        device.setWidgetsVisible(preferences.cards.contains(where:{$0.visible && $0.id == .device}) || (windowVisible && route == .settings && settingsTab == .widgets))
     }
     func syncAppearance() {
         guard let owner else {return};opacity=owner.configuration.settings.glassOpacity;appearance=owner.configuration.settings.workbenchAppearance
@@ -518,9 +520,25 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
                 self.finishOrdinaryPresentationActivation(target,generation:generation)
             }
         }
-        activationExpiryTask=Task { @MainActor [weak self] in
-            do {try await Task.sleep(for:.seconds(1))} catch {return}
-            guard let self,self.pendingActivationGeneration == generation else {return}
+        let requestedFromPID=NSWorkspace.shared.frontmostApplication?.processIdentifier
+        activationExpiryTask=Task { @MainActor [weak self,weak target] in
+            do {try await Task.sleep(for:.milliseconds(250))} catch {return}
+            guard let self,let target,self.canCompletePresentationActivation(target,generation:generation) else {return}
+            if !NSApp.isActive {
+                // A first accessory-to-regular transition can remain visible but
+                // inactive after the cooperative request. This is a user-requested
+                // ordinary window, so make one explicit public AppKit request.
+                // A subsequent switch to a different app or a closed window must
+                // never be overridden by this delayed completion.
+                let foregroundPID=NSWorkspace.shared.frontmostApplication?.processIdentifier
+                guard foregroundPID == requestedFromPID || foregroundPID == ProcessInfo.processInfo.processIdentifier else {
+                    self.cancelPendingPresentationActivation();return
+                }
+                NSApp.activate(ignoringOtherApps:true)
+            }
+            if NSApp.isActive {self.finishOrdinaryPresentationActivation(target,generation:generation);return}
+            do {try await Task.sleep(for:.milliseconds(750))} catch {return}
+            guard self.pendingActivationGeneration == generation else {return}
             self.cancelPendingPresentationActivation()
         }
         DispatchQueue.main.async { [weak self,weak target] in

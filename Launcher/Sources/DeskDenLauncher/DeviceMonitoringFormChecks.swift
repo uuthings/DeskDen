@@ -80,20 +80,24 @@ import LauncherCore
         drafts.budget.customEnd = calendar.date(from: DateComponents(year: 2026, month: 12, day: 1))!
         drafts.restoreBudget(model)
         check(DeviceBudgetDate(drafts.budget.customEnd, calendar: calendar) == .init(year: 2026, month: 11, day: 14), "cancel restores the saved inclusive ending date")
-        drafts.temperature.enabled = true; drafts.temperature.cpu = "NaN"; drafts.temperature.duration = "3.5"
+        drafts.temperature.cpu = "NaN"; drafts.temperature.duration = "3.5"
         await drafts.saveTemperature(model)
         check(drafts.temperatureErrors["cpu"] != nil && drafts.temperatureErrors["duration"] != nil && !model.temperatureRule.enabled, "invalid temperature values never become active monitoring rules")
         drafts.temperature.cpu = "40"; drafts.temperature.gpu = "110"; drafts.temperature.duration = "3600"; drafts.temperature.cooldown = "1440"
         drafts.temperature.notifications = false
         await drafts.saveTemperature(model)
-        check(model.temperatureRule.enabled && model.temperatureRule.sustainedSeconds == 3600 && model.temperatureRule.cooldownMinutes == 1440, "temperature editor accepts the same legal limits as the core rule")
+        check(!model.temperatureRule.enabled && model.temperatureRule.cpuThreshold == 40 && model.temperatureRule.gpuThreshold == 110 && model.temperatureRule.sustainedSeconds == 3600 && model.temperatureRule.cooldownMinutes == 1440, "temperature editor saves visual thresholds with notifications disabled")
+        check(service.requests == 0, "changing visual temperature thresholds never requests notification permission")
         drafts.temperature.gpu = "90"; drafts.restoreTemperature(model)
         check(!drafts.temperatureDirty && drafts.temperature.gpu == "110", "temperature cancel restores the saved rule")
+        drafts.resetTemperatureDefaults()
+        check(drafts.temperatureDirty && drafts.temperature.cpu == "85" && drafts.temperature.gpu == "80" && !drafts.temperature.notifications && model.temperatureRule.gpuThreshold == 110, "restore defaults only updates the temperature draft until saved")
+        drafts.restoreTemperature(model)
         let restored = DeviceStatusModel(dataDirectory: dir, notifications: service)
         check(restored.budget == model.budget && restored.temperatureRule == model.temperatureRule, "rules saved by forms survive model recreation")
         drafts.temperature.notifications = true
         await drafts.saveTemperature(model)
-        check(service.requests == 1 && model.notificationPermission == .denied && !drafts.temperatureDirty, "explicit notification enabling saves rules even when authorization is denied")
+        check(service.requests == 1 && model.temperatureRule.enabled && model.notificationPermission == .denied && !drafts.temperatureDirty, "explicit notification enabling saves rules even when authorization is denied")
         service.state = .authorized
         await model.refreshNotificationPermission()
         check(model.notificationPermission == .authorized, "permission status recovers after a system-settings change")

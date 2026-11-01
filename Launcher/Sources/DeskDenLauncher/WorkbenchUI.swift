@@ -461,27 +461,41 @@ extension View {func workbenchSheetSurface()->some View {modifier(WorkbenchSheet
 
 /// Real AppKit traffic lights share the 46 pt chrome baseline instead of the system's short titlebar.
 struct WorkbenchWindowControls:NSViewRepresentable {
+    var close: () -> Void
+    var minimize: () -> Void
+    var fullScreen: () -> Void
     func makeNSView(context:Context)->WorkbenchTrafficLights {WorkbenchTrafficLights()}
-    func updateNSView(_ view:WorkbenchTrafficLights,context:Context) {view.refresh()}
+    func updateNSView(_ view:WorkbenchTrafficLights,context:Context) {
+        view.closeAction=close;view.minimizeAction=minimize;view.fullScreenAction=fullScreen;view.refresh()
+    }
 }
 final class WorkbenchTrafficLights:NSView {
     private var controls:[NSButton]=[]
+    var closeAction:(()->Void)?
+    var minimizeAction:(()->Void)?
+    var fullScreenAction:(()->Void)?
     override init(frame:NSRect) {
         super.init(frame:frame)
         for (index,type) in [NSWindow.ButtonType.closeButton,.miniaturizeButton,.zoomButton].enumerated() {
             guard let button=NSWindow.standardWindowButton(type,for:[.titled,.closable,.miniaturizable,.resizable]) else {continue}
-            button.frame=NSRect(x:CGFloat(index)*20,y:1,width:12,height:12)
+            button.frame=NSRect(x:CGFloat(index)*20,y:2,width:12,height:12)
             button.target=self;button.action=[#selector(closeWindow),#selector(minimizeWindow),#selector(fullScreenWindow)][index]
+            button.setAccessibilityIdentifier(["window-close","window-minimize","window-fullscreen"][index])
+            button.setAccessibilityLabel(["关闭窗口","最小化","全屏"][index])
+            button.toolTip=["关闭窗口，后台继续运行","最小化","全屏 / 返回窗口"][index]
             addSubview(button);controls.append(button)
         }
     }
-    convenience init(){self.init(frame:NSRect(x:0,y:0,width:52,height:14))}
+    convenience init(){self.init(frame:NSRect(x:0,y:0,width:52,height:16))}
     required init?(coder:NSCoder){fatalError()}
     override func viewDidMoveToWindow(){super.viewDidMoveToWindow();refresh()}
-    func refresh(){if controls.indices.contains(1) {controls[1].isEnabled=window?.styleMask.contains(.fullScreen) != true}}
-    @objc private func closeWindow(){window?.performClose(nil)}
-    @objc private func minimizeWindow(){window?.performMiniaturize(nil)}
-    @objc private func fullScreenWindow(){window?.toggleFullScreen(nil)}
+    func refresh(){
+        if controls.indices.contains(1) {controls[1].isEnabled=window?.styleMask.contains(.fullScreen) != true}
+        if controls.indices.contains(2) {controls[2].setAccessibilityLabel(window?.styleMask.contains(.fullScreen) == true ? "返回窗口":"全屏")}
+    }
+    @objc private func closeWindow(){closeAction?()}
+    @objc private func minimizeWindow(){minimizeAction?()}
+    @objc private func fullScreenWindow(){fullScreenAction?()}
 }
 
 /// Cursor rectangles let AppKit restore text, resize and drag cursors naturally.

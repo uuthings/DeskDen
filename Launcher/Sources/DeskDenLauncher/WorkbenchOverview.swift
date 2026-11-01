@@ -75,7 +75,7 @@ struct WorkbenchOverview:View {
             HStack {
                 Text("运行内存").font(.system(size: 11)).foregroundStyle(palette.secondary)
                 Spacer(minLength: 4)
-                Text(memory.map { String(format: "%.0f%%", $0.percent) } ?? "读数不可用")
+                Text(memory.map { UsagePercentage.text($0.percent) } ?? "读数不可用")
                     .font(.system(size: 12, weight: .medium)).monospacedDigit()
             }
             HStack(alignment: .firstTextBaseline, spacing: 4) {
@@ -85,7 +85,7 @@ struct WorkbenchOverview:View {
             }.monospacedDigit()
             WBProgress(value: (memory?.percent ?? 0) / 100, color: DeviceAppearance.pressure(memory?.pressure, palette: palette), height: 6)
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("运行内存已用比例，" + (memory.map { String(format: "%.0f%%", $0.percent) } ?? "读数不可用"))
+                .accessibilityLabel("运行内存已用比例，" + (memory.map { UsagePercentage.text($0.percent) } ?? "读数不可用"))
                 .accessibilityIdentifier("home-memory-progress")
             Text(memoryPressureTitle(memory?.pressure ?? .unknown)).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
         }.accessibilityElement(children: .combine).accessibilityIdentifier("home-memory-usage")
@@ -250,14 +250,14 @@ private struct WorkbenchStorageGauge: View {
             }
             VStack(spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 2) {
-                    Text(validPercent.map { String(format: "%.0f", $0) } ?? "—").font(.system(size: 30, weight: .medium))
+                    Text(UsagePercentage.valueText(validPercent)).font(.system(size: 30, weight: .medium))
                     if validPercent != nil { Text("%").font(.system(size: 13)) }
                 }.monospacedDigit()
                 Text(validPercent == nil ? "读数不可用" : "已用空间").font(.system(size: 11)).foregroundStyle(palette.muted)
             }
         }.frame(width: 180, height: 102)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("磁盘已用比例，" + (validPercent.map { String(format: "%.0f%%", $0) } ?? "读数不可用"))
+            .accessibilityLabel("磁盘已用比例，" + (validPercent.map { UsagePercentage.text($0) } ?? "读数不可用"))
     }
 }
 private struct WorkbenchStorageArc: Shape {

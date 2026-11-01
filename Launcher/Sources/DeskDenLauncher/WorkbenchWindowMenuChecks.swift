@@ -60,21 +60,23 @@ import LauncherCore
         let expected=["打开工作台","打开启动器","设置","检查更新","退出方寸"]
         check(menu.items.filter{!$0.isSeparatorItem}.map(baseTitle) == expected && menu.items.filter(\.isSeparatorItem).count == 2,
               "the native menu has exactly five actions and two separators without duplicate settings or rescan")
-        check(menu.items.prefix(2).allSatisfy{$0.keyEquivalent.isEmpty} && menu.items[0].attributedTitle?.string.contains(owner.configuration.settings.workbenchHotKey!.title) == true,
-              "shortcut hints reflect configuration without registering another menu shortcut")
+        check(menu.items[0].title == "打开工作台" && menu.items[0].keyEquivalent == "f"
+              && menu.items[0].keyEquivalentModifierMask == .option
+              && menu.items[0].attributedTitle == nil && menu.minimumWidth == 180,
+              "compact menu uses AppKit's native shortcut column instead of tabbed titles")
         let initialTitles=menu.items.map(\.title)
-        let initialHints=menu.items.map{$0.attributedTitle?.string}
+        let initialHints=menu.items.map(\.keyEquivalent)
         owner.menuNeedsUpdate(menu);owner.menuNeedsUpdate(menu)
-        check(menu.items.map(\.title) == initialTitles && menu.items.map{$0.attributedTitle?.string} == initialHints
-              && menu.items.prefix(2).allSatisfy{$0.title.components(separatedBy:"\t").count == 2},
-              "repeated menu updates keep exactly one shortcut hint per action")
+        check(menu.items.map(\.title) == initialTitles && menu.items.map(\.keyEquivalent) == initialHints
+              && menu.items.prefix(2).allSatisfy{!$0.title.contains("\t")},
+              "repeated menu updates keep one native shortcut per action")
         owner.configuration.settings.workbenchHotKey=nil
         owner.configuration.settings.launcherHotKey=BindingHotKey(keyCode:46,control:true,option:true)
-        owner.menuNeedsUpdate(menu)
-        owner.menuNeedsUpdate(menu)
-        check(menu.items[0].title == "打开工作台" && menu.items[0].attributedTitle == nil
-              && menu.items[1].attributedTitle?.string == "打开启动器\t⌃⌥M",
-              "disabled and changed shortcuts are reflected when the menu updates")
+        owner.menuNeedsUpdate(menu);owner.menuNeedsUpdate(menu)
+        check(menu.items[0].title == "打开工作台" && menu.items[0].keyEquivalent.isEmpty
+              && menu.items[1].title == "打开启动器" && menu.items[1].keyEquivalent == "m"
+              && menu.items[1].keyEquivalentModifierMask == [.control,.option],
+              "disabled and changed shortcuts update the native shortcut column")
 
         NSApp.setActivationPolicy(.accessory)
         window.orderOut(nil)
@@ -85,11 +87,23 @@ import LauncherCore
         check(firstAction && !window.isVisible,"the menu action waits until its tracking session ends")
         owner.menuDidClose(menu)
         let firstForeground=await wait {foreground()}
+        if !firstForeground || NSApp.activationPolicy() != .regular || window.level != .normal {
+            print("DETAIL first menu presentation ready=\(firstForeground) policy=\(NSApp.activationPolicy().rawValue) active=\(NSApp.isActive) visible=\(window.isVisible) key=\(window.isKeyWindow) appKeyMatches=\(NSApp.keyWindow === window) level=\(window.level.rawValue) frontPID=\(String(describing:NSWorkspace.shared.frontmostApplication?.processIdentifier)) ownPID=\(ProcessInfo.processInfo.processIdentifier)")
+        }
         check(firstForeground && NSApp.activationPolicy() == .regular && window.level == .normal,
               "one first menu action activates and fronts the ordinary workbench at normal window level")
         let identity=ObjectIdentifier(window),frame=window.frame
 
-        let backgrounded=await activatePeer()
+        let peerActivated=await activatePeer()
+        // Workspace activation and AppKit resignation arrive before the
+        // WindowServer finishes ordering the peer's ordinary windows. Establish
+        // the actual background-window precondition before invoking the launcher;
+        // otherwise the baseline can still contain the preceding foreground frame.
+        let peerOrdered=await wait {
+            NSWorkspace.shared.frontmostApplication?.processIdentifier == peer.processIdentifier
+                && workbenchOrder(window,peerPID:peer.processIdentifier).behind
+        }
+        let backgrounded=peerActivated && peerOrdered
         let foregroundPID=NSWorkspace.shared.frontmostApplication?.processIdentifier
         let baselineOrder=workbenchOrder(window,peerPID:peer.processIdentifier)
         owner.menuWillOpen(menu);let launcherAction=invoke("打开启动器");owner.menuDidClose(menu)

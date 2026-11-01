@@ -117,13 +117,8 @@ struct WorkbenchRootView: View {
     }
     private var chrome: some View {
         HStack(spacing: 12) {
-            HStack(spacing: 8) {
-                WorkbenchBrandMark(pointSize: 25)
-                Text("方寸").font(.system(size: 12, weight: .medium))
-                (Text("v").font(.system(size:10)).kerning(0.8) + Text(Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String ?? "—").font(.system(size:11)))
-                    .foregroundStyle(palette.muted)
-            }.padding(.leading, 4).frame(height: 32)
-                .accessibilityElement(children: .combine).accessibilityIdentifier("window-brand")
+            WorkbenchWindowControls(close: { model.closeWindow?() }, minimize: { model.minimizeWindow?() }, fullScreen: { model.toggleFullScreen?() })
+                .frame(width: 52, height: 16).padding(.leading, 4)
             Spacer(minLength: 8)
             WorkbenchTopBarContext(context:model.context).layoutPriority(1)
             if model.isTopEntryPresentation {
@@ -131,7 +126,6 @@ struct WorkbenchRootView: View {
                     .buttonStyle(WBQuietButtonStyle()).help("转为普通窗口，切换应用时按系统窗口顺序显示")
             }
             WorkbenchUptime(device: model.device)
-            WorkbenchWindowIconControls(model: model)
         }.padding(.horizontal, 14)
     }
     @ViewBuilder private var content: some View {
@@ -144,6 +138,8 @@ struct WorkbenchRootView: View {
                 .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.top)
         } else if model.route == .network {
             NetworkMonitorView(model:model.device)
+                .environment(\.timeZone, model.context.dateContext.timeZone)
+                .environment(\.usageDisplayLocation, model.context.locationTitle)
                 .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.top)
         } else {
             ScrollViewReader {scroll in
@@ -151,7 +147,7 @@ struct WorkbenchRootView: View {
               WorkbenchScrollView {
                 Group {
                     switch model.route {
-                    case .overview: WorkbenchOverview(device: model.device, calendar: model.calendar,context:model.context,navigate:model.navigate,openDevice:model.openDeviceReading)
+                    case .overview: WorkbenchOverview(device: model.device, calendar: model.calendar,context:model.context,navigate:model.navigate,openDevice:{model.openDeviceReading($0)})
                     case .device: EmptyView()
                     case .cleaning: EmptyView()
                     case .calendar: CalendarModuleView(model: model.calendar,context:model.context,returnToSettingsPrivacy:{model.navigate(.settings);model.settingsTab = .privacy})
@@ -187,7 +183,7 @@ struct WorkbenchRootView: View {
                 ForEach(WorkbenchSettingsTab.allCases,id:\.self) {tab in
                     Button {model.settingsTab=tab} label:{
                         HStack(spacing:10) {
-                            Image(systemName:tab.symbol).font(.system(size:16,weight:.light)).frame(width:18)
+                            WorkbenchNavigationIcon(symbol:tab.symbol)
                                 .foregroundStyle(model.settingsTab == tab ? palette.accent:palette.secondary)
                                 .accessibilityHidden(true)
                             Text(tab.title).font(.system(size:12));Spacer(minLength:0)
@@ -199,19 +195,32 @@ struct WorkbenchRootView: View {
                         .accessibilityIdentifier("settings-navigation-"+tab.rawValue)
                 }
                 Spacer(minLength:24)
+                sidebarBrand
             } else {
                 ForEach([WorkbenchRoute.overview,.device,.cleaning,.calendar,.ai,.network,.vault],id:\.self) {route in navigation(route)}
-                navigation(.cards)
                 Spacer(minLength:0)
+                sidebarBrand
                 navigation(.settings)
             }
             if let owner = model.owner { WorkbenchUpdateEntry(updates: owner.updates) }
         }.padding(.horizontal,12).padding(.top,22).padding(.bottom,15)
     }
+    private var sidebarBrand: some View {
+        HStack(spacing: 8) {
+            WorkbenchBrandMark(pointSize: 25)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("方寸").font(.system(size: 12, weight: .medium)).foregroundStyle(palette.text)
+                Text("v" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"))
+                    .font(.system(size: 11)).foregroundStyle(palette.muted)
+            }
+            Spacer(minLength: 0)
+        }.padding(.horizontal, 12).padding(.vertical, 8)
+            .accessibilityElement(children: .combine).accessibilityIdentifier("window-brand")
+    }
     private func navigation(_ route: WorkbenchRoute) -> some View {
         Button { if route == .ai {model.openUsageOverview()} else {model.navigate(route)} } label: {
             HStack(spacing: 10) {
-                Image(systemName: route.symbol).font(.system(size: 16, weight: .light)).frame(width: 18)
+                WorkbenchNavigationIcon(symbol: route.symbol)
                     .foregroundStyle(model.route == route ? palette.accent : palette.secondary)
                     .accessibilityHidden(true)
                 Text(route == .overview ? "首页" : route == .vault ? "私密空间" : route.title).font(.system(size: 12))

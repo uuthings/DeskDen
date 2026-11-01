@@ -109,6 +109,7 @@ struct AIUsageModuleView: View {
     @Environment(\.workbenchPalette) private var palette
     @Environment(\.workbenchDeviceExpanded) private var expanded
     @Environment(\.timeZone) private var timeZone
+    @Environment(\.usageDisplayLocation) private var displayLocation
     @State private var selectedResetWindow = 1
     @State private var contentWidth: CGFloat = 864
     @State private var selectedBucket: Date?
@@ -341,7 +342,7 @@ struct AIUsageModuleView: View {
                     }.frame(height: 22).padding(.bottom, 10)
                     AIFactRow(title: "来源类型", value: value.sourceDescription)
                     AIFactRow(title: "会员方案", value: value.accountPlanDescription)
-                    AIFactRow(title: "最后有效采样", value: value.updatedAt?.formatted(date: .abbreviated, time: .shortened) ?? "尚无读数")
+                    AIFactRow(title: "最后有效采样", value: value.updatedAt.map { UsageDatePresentation.absolute($0, timeZone: timeZone, location: displayLocation) } ?? "尚无读数")
                     AIFactRow(title: "当前状态", value: value.state.title + (model.configuration(for: provider).enabled ? "" : " · 自动读取关闭"), color: value.state == .ready ? palette.accent : palette.warning)
                     AIFactRow(title: "过期判定", value: "15 分钟未更新或窗口已重置")
                     AIFactRow(title: "额度提醒", value: model.alertRule.enabled ? "\(model.alertRule.warningPercent)% / \(model.alertRule.criticalPercent)% · " + model.notificationPermission.title : "未开启", last: true)
@@ -738,7 +739,7 @@ struct AIDailyUsageBars: View {
                 if let day = focusedDay {
                     HStack(spacing: 12) {
                         Text(formatted(day.date, template: "Md") + (showsTokens ? "" : " · " + (day.reading.map {
-                            "窗口已用 " + $0.window.usedPercent.formatted(.number.precision(.fractionLength(0...1))) + "%"
+                            "窗口已用 " + UsagePercentage.text($0.window.usedPercent)
                         } ?? "无额度读数")))
                         Text(tokens[day.date].map { $0.total.formatted() + " Token" } ?? "Token 无记录")
                         Spacer(minLength: 0)
@@ -769,7 +770,7 @@ struct AIDailyUsageBars: View {
         if showsTokens { return date + token }
         guard let reading = day.reading else { return date + "，无额度读数；无读数不代表 0。" + token }
         let reset = reading.window.resetsAt.map { "；该窗口重置时间 " + UsageResetTime.timestamp($0, timeZone: calendar.timeZone) } ?? "；来源未提供重置时间"
-        return date + "，" + title + " " + reading.window.usedPercent.formatted(.number.precision(.fractionLength(0...1))) + "%；当天最后观测 " + UsageResetTime.timestamp(reading.observedAt, timeZone: calendar.timeZone) + "；" + reading.source.title + reset + token
+        return date + "，" + title + " " + UsagePercentage.text(reading.window.usedPercent) + "；当天最后观测 " + UsageResetTime.timestamp(reading.observedAt, timeZone: calendar.timeZone) + "；" + reading.source.title + reset + token
     }
 }
 
@@ -779,6 +780,7 @@ private struct AIProviderQuotaCard: View {
     let expanded: Bool
     var automaticReadingEnabled = true
     var showsAction = true
+    @Environment(\.timeZone) private var timeZone
     var action: () -> Void
     @Environment(\.workbenchPalette) private var palette
     @State private var hovering = false
@@ -837,7 +839,7 @@ private struct AIProviderQuotaCard: View {
             HStack(spacing: 5) {
                 Circle().fill(summary.state == .ready ? palette.accent : summary.state == .error ? palette.warning : palette.muted).frame(width: 5, height: 5)
                 Text(summary.state.title)
-                if let updated = summary.updatedAt { Text("· " + updated.formatted(.dateTime.month(.twoDigits).day(.twoDigits).hour().minute())).monospacedDigit() }
+                if let updated = summary.updatedAt { UsageObservationAgeLabel(date: updated, prefix: "· ", timeZone: timeZone) }
                 Spacer(minLength: 0)
                 Text(summary.snapshot?.source == .manual ? "手动记录" : summary.snapshot?.source == .imported ? "导入读数" : "本机来源")
             }.font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1).frame(height: 16)
@@ -888,17 +890,17 @@ private struct AIQuotaRow: View {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(window.title).aiText(12, color: palette.secondary).lineLimit(1)
                 Spacer()
-                Text(window.usedPercent.formatted(.number.precision(.fractionLength(0...1))) + "%").font(.system(size: 21)).monospacedDigit()
+                Text(UsagePercentage.text(window.usedPercent)).font(.system(size: 21)).monospacedDigit()
                 Text("已用").aiText(11, color: palette.muted)
             }.frame(height: 26)
             WBProgress(value: window.usedPercent / 100, color: color, height: 6)
                 .aiQuotaMeasuredRegion(identifier + ".progress")
-                .accessibilityElement(children: .ignore).accessibilityLabel(window.title + "已用 " + window.usedPercent.formatted() + "%")
+                .accessibilityElement(children: .ignore).accessibilityLabel(window.title + "已用 " + UsagePercentage.text(window.usedPercent))
                 .accessibilityIdentifier(identifier + ".progress")
             HStack(spacing: 6) {
                 UsageResetLabel(reset: .init(window: window), timeZone: timeZone).lineLimit(1)
                 Spacer(minLength: 0)
-                Text("剩余 " + window.remainingPercent.formatted(.number.precision(.fractionLength(0...1))) + "%").foregroundStyle(color).lineLimit(1)
+                Text("剩余 " + UsagePercentage.text(window.remainingPercent)).foregroundStyle(color).lineLimit(1)
             }.font(.system(size: 11)).foregroundStyle(palette.muted).frame(height: 16)
         }.frame(height: 64).aiQuotaMeasuredRegion(identifier)
             .accessibilityElement(children: .contain).accessibilityIdentifier(identifier)
@@ -1221,7 +1223,7 @@ private struct AIUsageDialogContent: View {
                     }
                     VStack(spacing: 0) {
                         if preview.quotaFile {
-                            AIFactRow(title: "有效读数", value: preview.windows.map { $0.title + " " + $0.usedPercent.formatted(.number.precision(.fractionLength(0...1))) + "%" }.joined(separator: " · "))
+                            AIFactRow(title: "有效读数", value: preview.windows.map { $0.title + " " + UsagePercentage.text($0.usedPercent) }.joined(separator: " · "))
                             AIFactRow(title: "采集时间", value: preview.observedAt?.formatted(date: .abbreviated, time: .shortened) ?? "未提供")
                             AIFactRow(title: "读数来源", value: preview.quotaSource?.title ?? "尚无读数", last: true)
                         } else {

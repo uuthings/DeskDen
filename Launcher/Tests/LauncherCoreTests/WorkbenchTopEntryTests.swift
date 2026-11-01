@@ -79,9 +79,9 @@ final class WorkbenchTopEntryTests: XCTestCase {
     func testLegacyGroupsMigrateToIndependentCardsAndHeaderChoices() throws {
         let data = Data(#"{"schemaVersion":1,"enabled":true,"mode":"summary","visibleSections":["agenda","ai"]}"#.utf8)
         let value = try JSONDecoder().decode(WorkbenchTopEntryPreferences.self, from: data)
-        XCTAssertEqual(value.schemaVersion, 2)
+        XCTAssertEqual(value.schemaVersion, 3)
         XCTAssertFalse(value.showDate); XCTAssertFalse(value.showWeather)
-        XCTAssertEqual(value.visibleCards, [.codex, .claude, .todo])
+        XCTAssertEqual(value.visibleCards, [.todo, .codex, .claude])
         let empty = Data(#"{"schemaVersion":1,"enabled":true,"mode":"summary","visibleSections":[]}"#.utf8)
         XCTAssertTrue(try JSONDecoder().decode(WorkbenchTopEntryPreferences.self, from: empty).visibleCards.isEmpty)
     }
@@ -89,7 +89,7 @@ final class WorkbenchTopEntryTests: XCTestCase {
         var value = WorkbenchTopEntryPreferences()
         let external = WorkbenchMiniCardID.provider(UUID())
         value.setCard(external, visible: true)
-        value.moveCard(.thermal, relativeTo: .codex, after: false)
+        value.moveCard(.thermal, relativeTo: .network, after: false)
         value.setCard(.memory, visible: false)
         value.showDate = false
         let decoded = try JSONDecoder().decode(WorkbenchTopEntryPreferences.self, from: JSONEncoder().encode(value))
@@ -107,8 +107,8 @@ final class WorkbenchTopEntryTests: XCTestCase {
         for _ in 0..<100 { preferences.setCard(.provider(UUID()), visible: true) }
         try preferences.validate()
         let placements = WorkbenchMiniPacking.pack(preferences.visibleCards)
-        XCTAssertEqual(placements.count, 108)
-        XCTAssertEqual(Set(placements.map(\.column)).count, 37)
+        XCTAssertEqual(placements.count, 107)
+        XCTAssertEqual(Set(placements.map(\.column)).count, 53)
         XCTAssertTrue(placements.allSatisfy { $0.row + $0.span <= 6 })
         XCTAssertLessThan(try JSONEncoder().encode(preferences).count, 65_536)
     }
@@ -124,35 +124,104 @@ final class WorkbenchTopEntryTests: XCTestCase {
         XCTAssertThrowsError(try JSONDecoder().decode(WorkbenchTopEntryPreferences.self, from: future))
     }
     func testDefaultPackingIsThreeColumnsWithApprovedCardHeights() {
-        let packed = WorkbenchMiniPacking.pack(WorkbenchMiniCardID.builtIn)
-        XCTAssertEqual(packed.filter { $0.column == 0 }.map(\.card), [.codex, .claude, .traffic])
+        let packed = WorkbenchMiniPacking.pack(WorkbenchMiniCardID.defaultVisible)
+        XCTAssertEqual(packed.filter { $0.column == 0 }.map(\.card), [.network, .thermal])
         XCTAssertEqual(packed.filter { $0.column == 1 }.map(\.card), [.disk, .memory, .todo])
-        XCTAssertEqual(packed.filter { $0.column == 2 }.map(\.card), [.network, .thermal])
-        XCTAssertEqual(packed.filter { $0.column == 0 }.map(\.row), [0, 2, 4])
+        XCTAssertEqual(packed.filter { $0.column == 2 }.map(\.card), [.codex, .claude])
+        XCTAssertEqual(packed.filter { $0.column == 0 }.map(\.row), [0, 3])
+        XCTAssertEqual(packed.filter { $0.column == 1 }.map(\.row), [0, 2, 4])
         XCTAssertEqual(packed.filter { $0.column == 2 }.map(\.row), [0, 3])
+        XCTAssertFalse(packed.map(\.card).contains(.traffic))
     }
-    func testAllCardSubsetsUseMinimumNonoverlappingColumns() {
+    func testAllCardSubsetsPreserveVisualOrderWithoutOverlap() {
         let all = WorkbenchMiniCardID.builtIn
         for mask in 0..<(1 << all.count) {
             let active = all.enumerated().compactMap { mask & (1 << $0.offset) != 0 ? $0.element : nil }
             for order in [active, active.reversed().map { $0 }] {
                 let packed = WorkbenchMiniPacking.pack(order)
                 XCTAssertEqual(Set(packed.map(\.card)), Set(active))
-                let small = active.filter { $0.span == 2 }.count, medium = active.count - small
-                // Independently enumerate pair/single-medium columns; every
-                // remaining column holds at most three small cards.
-                let minimum = (0...(medium / 2)).map { pairs in
-                    let singles = medium - pairs * 2
-                    return pairs + singles + max(0, small - singles + 2) / 3
-                }.min() ?? 0
-                XCTAssertEqual((packed.map(\.column).max() ?? -1) + 1, minimum, "mask \(mask)")
+                let visualOrder = packed.sorted { ($0.column, $0.row) < ($1.column, $1.row) }.map(\.card)
+                XCTAssertEqual(visualOrder, order, "mask \(mask): filling holes must not reorder cards")
                 for column in Set(packed.map(\.column)) {
                     let items = packed.filter { $0.column == column }.sorted { $0.row < $1.row }
+                    XCTAssertEqual(items.first?.row, 0)
                     XCTAssertLessThanOrEqual(items.last.map { $0.row + $0.span } ?? 0, 6)
                     for (a, b) in zip(items, items.dropFirst()) { XCTAssertLessThanOrEqual(a.row + a.span, b.row) }
+                    if let last = items.last, let next = packed.first(where: { $0.column == column + 1 }) {
+                        XCTAssertGreaterThan(last.row + last.span + next.span, 6, "a new column starts only when the next card cannot fit")
+                    }
                 }
             }
         }
+    }
+    func testLegacyDefaultMigratesWhileCustomizedOrderAndHiddenCardsRemain() throws {
+        let legacyOrder = ["codex", "claude", "traffic", "disk", "memory", "todo", "network", "thermal"]
+        func decode(order: [String], visible: [String]) throws -> WorkbenchTopEntryPreferences {
+            let data = try JSONSerialization.data(withJSONObject: ["schemaVersion": 2, "enabled": false, "mode": "workbench", "cardOrder": order, "visibleCards": visible, "showDate": false, "showWeather": true, "showSeconds": true])
+            return try JSONDecoder().decode(WorkbenchTopEntryPreferences.self, from: data)
+        }
+        let migrated = try decode(order: legacyOrder, visible: legacyOrder)
+        XCTAssertEqual(migrated.schemaVersion, 3)
+        XCTAssertEqual(migrated.cardOrder, WorkbenchMiniCardID.builtIn)
+        XCTAssertEqual(migrated.visibleCards, WorkbenchMiniCardID.defaultVisible)
+        XCTAssertTrue(migrated.usesDefaultLayout)
+        XCTAssertFalse(migrated.enabled); XCTAssertEqual(migrated.mode, .workbench)
+        XCTAssertFalse(migrated.showDate); XCTAssertTrue(migrated.showWeather); XCTAssertTrue(migrated.showSeconds)
+        let reversed = Array(legacyOrder.reversed())
+        let custom = try decode(order: reversed, visible: legacyOrder.filter { $0 != "memory" })
+        XCTAssertEqual(custom.cardOrder.map(\.rawValue), reversed)
+        XCTAssertFalse(custom.visibleCards.contains(.memory)); XCTAssertFalse(custom.usesDefaultLayout)
+    }
+    func testDefaultSourcesFillFourthColumnAndCustomLayoutStopsAutoAdding() throws {
+        let provider = WorkbenchMiniCardID.provider(UUID()), balance = WorkbenchMiniCardID.apiBalance(UUID())
+        let available = WorkbenchMiniCardID.builtIn + [provider, balance]
+        var value = WorkbenchTopEntryPreferences()
+        let active = value.activeCards(available: available)
+        XCTAssertEqual(active, WorkbenchMiniCardID.defaultVisible + [provider, balance])
+        let packed = WorkbenchMiniPacking.pack(active)
+        XCTAssertEqual(packed.filter { $0.column == 3 }.map(\.card), [provider, balance])
+        XCTAssertEqual(packed.filter { $0.column == 3 }.map(\.span), [3, 3])
+        value.materializeLayout(available: available)
+        value.setCard(.codex, visible: false)
+        try value.validate()
+        XCTAssertFalse(value.usesDefaultLayout)
+        XCTAssertTrue(value.activeCards(available: available).contains(balance))
+        let later = WorkbenchMiniCardID.provider(UUID())
+        XCTAssertFalse(value.activeCards(available: available + [later]).contains(later))
+        XCTAssertEqual(try JSONDecoder().decode(WorkbenchTopEntryPreferences.self, from: JSONEncoder().encode(value)), value)
+    }
+    func testMaterializingFullLayoutReclaimsOnlyUnavailableHistoricalSources() throws {
+        let oldSources = (0..<(WorkbenchMiniCardID.maximumLayoutCount - WorkbenchMiniCardID.builtIn.count))
+            .map { _ in WorkbenchMiniCardID.provider(UUID()) }
+        let retained = try XCTUnwrap(oldSources.first)
+        let newProvider = WorkbenchMiniCardID.provider(UUID())
+        let newBalance = WorkbenchMiniCardID.apiBalance(UUID())
+        let available = WorkbenchMiniCardID.builtIn + [retained, newProvider, newBalance]
+        var full = WorkbenchTopEntryPreferences()
+        full.cardOrder += oldSources
+        full.visibleCards = WorkbenchMiniCardID.defaultVisible.filter { $0 != .memory } + oldSources
+        try full.validate()
+        XCTAssertEqual(full.cardOrder.count, WorkbenchMiniCardID.maximumLayoutCount)
+
+        full.materializeLayout(available: available)
+
+        XCTAssertEqual(full.cardOrder, WorkbenchMiniCardID.builtIn + [retained, newProvider, newBalance])
+        XCTAssertEqual(full.activeCards(available: available), WorkbenchMiniCardID.defaultVisible.filter { $0 != .memory } + [retained, newProvider, newBalance])
+        XCTAssertFalse(full.visibleCards.contains(.memory), "Capacity recovery must preserve existing hidden choices.")
+        XCTAssertTrue(Set(full.visibleCards).isSubset(of: Set(full.cardOrder)))
+        XCTAssertLessThanOrEqual(full.cardOrder.count, WorkbenchMiniCardID.maximumLayoutCount)
+        try full.validate()
+        XCTAssertEqual(try JSONDecoder().decode(WorkbenchTopEntryPreferences.self, from: JSONEncoder().encode(full)), full)
+
+        var withRoom = WorkbenchTopEntryPreferences()
+        let temporarilyMissing = oldSources[1]
+        withRoom.cardOrder.append(temporarilyMissing)
+        withRoom.visibleCards.append(temporarilyMissing)
+        withRoom.materializeLayout(available: WorkbenchMiniCardID.builtIn + [newProvider])
+        XCTAssertTrue(withRoom.cardOrder.contains(temporarilyMissing), "Available capacity retains absent sources' saved positions.")
+        XCTAssertFalse(withRoom.visibleCards.contains(temporarilyMissing))
+        XCTAssertTrue(withRoom.visibleCards.contains(newProvider))
+        try withRoom.validate()
     }
     func testCorruptPreferencesAreNeverOverwritten() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

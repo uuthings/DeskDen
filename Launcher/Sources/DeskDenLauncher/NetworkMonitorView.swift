@@ -9,6 +9,7 @@ struct NetworkMonitorView: View {
     @Environment(\.workbenchPalette) private var palette
     @Environment(\.workbenchModals) private var modals
     @Environment(\.workbenchDeviceExpanded) private var expanded
+    @Environment(\.timeZone) private var timeZone
     @StateObject private var drafts = DeviceMonitoringDrafts()
     @State private var budgetOpen = false
     @State private var recordsOpen = false
@@ -147,7 +148,12 @@ struct NetworkMonitorView: View {
             HStack(alignment: .top, spacing: 14) {
                 Label(coverageText, systemImage: "clock").fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
-                Text(resetText)
+                if !model.budget.enabled { Text("预算未开启") }
+                else if model.budget.period == .custom { Text("单次周期 · 不重复") }
+                else {
+                    UsageResetLabel(reset: .init(resetsAt: summary.periodEnd, sourceTimeZoneIdentifier: summary.timeZoneIdentifier),
+                                    timeZone: timeZone)
+                }
             }.font(.system(size: 11)).foregroundStyle(palette.muted).padding(.top, 10)
                 .overlay(alignment: .top) { palette.line.frame(height: 1) }
         }.padding(14).background(DeviceCardSurface()).foregroundStyle(palette.text)
@@ -158,7 +164,7 @@ struct NetworkMonitorView: View {
             HStack(alignment: .firstTextBaseline) {
                 DeviceReading(value: known ? DeviceTrafficDisplay.adaptive(summary.totalBytes) : "—", size: expanded ? 40 : compact ? 32 : 34)
                 Spacer(minLength: 4)
-                if let percentage { Text("\(percentage.formatted(.number.precision(.fractionLength(1))))% 已用").font(.system(size: 11)).foregroundStyle(tone) }
+                if let percentage { Text(UsagePercentage.text(percentage) + " 已用").font(.system(size: 11)).foregroundStyle(tone) }
             }.padding(.vertical, expanded ? 12 : 2)
             if model.budget.enabled && known { DeviceUsageBar(value: percentage, tone: tone).frame(height: 6) }
             else { Text(summary.hasStarted ? "未采集的时段不会填为 0" : "新账期开始后记录").font(.system(size: 11)).foregroundStyle(palette.muted) }
@@ -193,7 +199,6 @@ struct NetworkMonitorView: View {
         let note = summary.omitsPartialArchivedMonth ? " · 部分旧记录已按月汇总，无法拆分到所选日期" : summary.isPartialPeriod ? " · 部分时段未采集" : ""
         return "有效采集 \(DeviceFormat.duration(summary.coveredSeconds))\(summary.includesMonthlyHistory ? " · 含较早月度汇总" : "")\(note)"
     }
-    private var resetText: String { !model.budget.enabled ? "预算未开启" : model.budget.period == .custom ? "单次周期 · 不重复" : "下次重置：\(NetworkLedgerDate.resetLabel(summary.periodEnd, timeZone: summary.timeZoneIdentifier))" }
     private var interfaceBinding: Binding<String> {
         Binding(get: { guard let ids = model.selectedInterfaceIDs else { return "automatic" }; return ids.count == 1 ? ids[0] : "custom" }, set: { if $0 == "custom" { interfaceSheet = .networkOptions } else { model.setSelectedInterfaces($0 == "automatic" ? nil : [$0]) } })
     }
@@ -555,7 +560,6 @@ struct DeviceTemperatureDialog: View {
     @State private var discard = false
     var body: some View {
         DeviceDialog(title: "温度提醒", dismiss: close) {
-            Toggle("启用温度提醒", isOn: $drafts.temperature.enabled).toggleStyle(.switch).clickableCursor().disabled(drafts.savingTemperature)
             Group {
             HStack(spacing: 12) {
                 DeviceRuleNumberField(title: "CPU 阈值", value: $drafts.temperature.cpu, unit: "°C", error: drafts.temperatureErrors["cpu"])
@@ -565,14 +569,17 @@ struct DeviceTemperatureDialog: View {
                 DeviceRuleNumberField(title: "连续超温", value: $drafts.temperature.duration, unit: "秒", error: drafts.temperatureErrors["duration"])
                 DeviceRuleNumberField(title: "提醒冷却", value: $drafts.temperature.cooldown, unit: "分钟", error: drafts.temperatureErrors["cooldown"])
             }
-            Label("CPU 与 GPU 分别判断。缺失读数会中断计时，恢复正常后才允许再次触发。温度提醒不控制风扇。", systemImage: "info.circle")
+            Label("CPU 85°C、GPU 80°C 为方寸默认提醒值，可按需调整，并非 Apple 安全上限。颜色状态始终显示，macOS 系统高温独立标红。", systemImage: "info.circle")
                 .font(.system(size: 11)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
                 .padding(10).background(palette.soft, in: RoundedRectangle(cornerRadius: 8))
-            Toggle("系统通知", isOn: $drafts.temperature.notifications).clickableCursor().font(.system(size: 12))
-            }.disabled(!drafts.temperature.enabled || drafts.savingTemperature)
+            Toggle("发送温度通知", isOn: $drafts.temperature.notifications).clickableCursor().font(.system(size: 12))
+            Text("连续超温达到设定时长才通知；缺失读数中断计时。恢复正常后重新计时，冷却期内不重复提醒。")
+                .font(.system(size: 11)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
+            }.disabled(drafts.savingTemperature)
             if drafts.temperatureStatus != "已保存" { Text(drafts.temperatureStatus).font(.system(size: 11)).foregroundStyle(palette.warning) }
         } actions: {
-            Button("取消", action: close).buttonStyle(WBButtonStyle()).keyboardShortcut(.cancelAction)
+            Button("恢复默认") { drafts.resetTemperatureDefaults() }.buttonStyle(WBButtonStyle()).disabled(drafts.savingTemperature)
+            Button("取消") { drafts.restoreTemperature(model); dismiss() }.buttonStyle(WBButtonStyle()).disabled(drafts.savingTemperature).keyboardShortcut(.cancelAction)
             Button("保存提醒") { Task { await drafts.saveTemperature(model); if !drafts.temperatureDirty && drafts.temperatureErrors.isEmpty { dismiss() } } }
                 .buttonStyle(WBButtonStyle(primary: true)).disabled(drafts.savingTemperature).keyboardShortcut(.defaultAction)
         }.onAppear { drafts.load(model) }

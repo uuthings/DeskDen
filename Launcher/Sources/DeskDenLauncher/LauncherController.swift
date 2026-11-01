@@ -434,7 +434,8 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
     func makeStatusMenu() -> NSMenu {
         let result = NSMenu()
         result.identifier = NSUserInterfaceItemIdentifier("fc.status.menu")
-        result.minimumWidth = 226
+        result.minimumWidth = 180
+        result.font = .menuFont(ofSize: 13)
         result.delegate = self
         result.addItem(withTitle:"打开工作台",action:#selector(workbenchFromMenu),keyEquivalent:"").target=self
         result.addItem(withTitle:"打开启动器",action:#selector(showFromMenu),keyEquivalent:"").target=self
@@ -451,19 +452,29 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
         for (action,baseTitle,shortcut) in [(#selector(workbenchFromMenu),"打开工作台",configuration.settings.workbenchHotKey),
                                             (#selector(showFromMenu),"打开启动器",Optional(configuration.settings.effectiveLauncherHotKey))] {
             guard let item=menu.items.first(where:{$0.action == action}) else {continue}
-            // AppKit also writes attributedTitle.string into title. Always
-            // rebuild from the action's stable name, including when disabled.
+            // Let AppKit own the shortcut column, including the Quit row. A
+            // tab embedded in a title is measured as label content and widens
+            // the entire menu instead of aligning native shortcut hints.
             item.attributedTitle=nil
             item.title=baseTitle
-            guard let shortcut else {continue}
-            let paragraph=NSMutableParagraphStyle()
-            paragraph.tabStops=[NSTextTab(textAlignment:.right,location:188,options:[:])]
-            let title=NSMutableAttributedString(string:baseTitle+"\t"+shortcut.title,attributes:[.font:NSFont.menuFont(ofSize:13),.paragraphStyle:paragraph])
-            title.addAttribute(.foregroundColor,value:NSColor.secondaryLabelColor,range:NSRange(location:(baseTitle as NSString).length+1,length:(shortcut.title as NSString).length))
-            // This is a hint for the already registered physical shortcut. It
-            // must not become a second menu key equivalent with different routing.
-            item.attributedTitle=title
+            item.keyEquivalent=shortcut.map(statusMenuKeyEquivalent) ?? ""
+            var modifiers:NSEvent.ModifierFlags=[]
+            if shortcut?.control == true {modifiers.insert(.control)}
+            if shortcut?.option == true {modifiers.insert(.option)}
+            if shortcut?.shift == true {modifiers.insert(.shift)}
+            if shortcut?.command == true {modifiers.insert(.command)}
+            item.keyEquivalentModifierMask=modifiers
+
         }
+    }
+    private func statusMenuKeyEquivalent(_ shortcut:BindingHotKey)->String {
+        if let key=KeyboardLayout.keyCodes[shortcut.keyCode] {return key.lowercased()}
+        let characters:[UInt16:UInt32]=[49:0x20,48:0x09,36:0x0D,76:0x03,53:0x1B,51:0x08,117:0x7F,
+            123:0xF702,124:0xF703,125:0xF701,126:0xF700,115:0xF729,119:0xF72B,116:0xF72C,121:0xF72D]
+        if let code=characters[shortcut.keyCode],let scalar=UnicodeScalar(code) {return String(scalar)}
+        let functions:[UInt16]=[122,120,99,118,96,97,98,100,101,109,103,111,105,107,113,106,64,79,80,90]
+        if let index=functions.firstIndex(of:shortcut.keyCode),let scalar=UnicodeScalar(0xF704+index) {return String(scalar)}
+        return ""
     }
     func menuWillOpen(_ menu:NSMenu) {
         guard menu.identifier?.rawValue == "fc.status.menu" else {return}

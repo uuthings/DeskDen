@@ -108,7 +108,7 @@ import LauncherCore
                     let ispText = text("fc.usage.source." + isp.id.uuidString, objects: objects)
                     let vpsText = text("fc.usage.source." + vps.id.uuidString, objects: objects)
                     check(ispText.contains("45%") && ispText.contains("45 GB / 100 GB")
-                          && vpsText.contains("12.8%") && vpsText.contains("128 GB / 1,000 GB"),
+                          && vpsText.contains("12%") && vpsText.contains("128 GB / 1,000 GB"),
                           "usage \(width)/\(light): traffic cards expose used percentages beside their actual decimal and binary amounts")
                     check(apiText.contains("CNY") && apiText.contains("23.75") && !apiText.contains("GB") && !apiText.contains("%"),
                           "usage \(width)/\(light): the API card exposes its exact currency amount without traffic units or quota percentages")
@@ -413,8 +413,8 @@ import LauncherCore
                           "home readings \(width)/\(light): the whole device button exposes its actual identity and temperatures")
                     let storageText = text("home-open-cleaning", objects: homeObjects)
                     check(storageText.contains("磁盘已用比例") && thermalText.contains("运行内存")
-                          && storageText.contains(snapshot.disk.map { String(format: "%.0f%%", $0.percent) } ?? "读数不可用")
-                          && thermalText.contains(snapshot.memory.map { String(format: "%.0f%%", $0.percent) } ?? "读数不可用"),
+                          && storageText.contains(snapshot.disk.map { UsagePercentage.text($0.percent) } ?? "读数不可用")
+                          && thermalText.contains(snapshot.memory.map { UsagePercentage.text($0.percent) } ?? "读数不可用"),
                           "home readings \(width)/\(light): disk and memory progress remain labeled inside their whole-card actions")
                     check(thermalText.contains(batteryText)
                           && networkText.contains("下载") && networkText.contains("上传")
@@ -561,6 +561,7 @@ import LauncherCore
         let shanghai = WeatherCity(id: "usage:shanghai", name: "上海", latitude: 31.23, longitude: 121.47, timeZoneIdentifier: "Asia/Shanghai")
         let losAngeles = WeatherCity(id: "usage:los-angeles", name: "洛杉矶", latitude: 34.05, longitude: -118.24, timeZoneIdentifier: "America/Los_Angeles")
         check(context.saveCity(shanghai), "reset fixture selects a workbench city using an offline weather provider")
+        check(UsageDatePresentation.zone(TimeZone(identifier: "Asia/Shanghai")!, location: "北京", at: Date()) == "北京 · GMT+8 · Asia/Shanghai", "usage dates retain the selected city rather than substituting the IANA representative city")
         var page = UsageStatisticsView(app: app)
         page.context = context
         let probe = NSHostingView(rootView: ScrollView { page.padding(20) }.environment(\.accessibilityEnabled, true))
@@ -575,7 +576,7 @@ import LauncherCore
         let original = labels(objects(probe))
         check(frame("fc.ai.reset-details", objects: objects(probe)) != nil
               && original.contains("工作台时间") && original.contains("来源时间")
-              && original.contains("Asia/Shanghai") && original.contains("America/Los_Angeles")
+              && original.contains("上海 · GMT+8") && original.contains("Asia/Shanghai") && original.contains("America/Los_Angeles")
               && original.contains(UsageResetTime.timestamp(weeklyReset, timeZone: TimeZone(identifier: "Asia/Shanghai")!)),
               "subscription detail initially presents the weekly reset in both workbench and known source timezones")
         check(press("fc.ai.reset-window.0", in: probe), "subscription detail exposes its short-window reset selector")

@@ -127,23 +127,12 @@ extension WorkbenchMiniAIData {
         let rows=snapshot?.comparisonRows ?? []
         windows=(0..<2).map {index in
             guard index < rows.count,let window=rows[index] else {
-                return WorkbenchMiniQuotaData(label:index == 0 ? "短时":"每周",value:"—",fraction:nil)
+                return WorkbenchMiniQuotaData(label:index == 0 ? "5小时":"每周",value:"—",fraction:nil)
             }
             let label=window.durationMinutes == 10_080 ? "每周":window.durationMinutes % 60 == 0 ? "\(window.durationMinutes / 60)小时":"\(window.durationMinutes)分钟"
             let resetTime = UsageResetTime(window: window)
-            let reset: String
-            switch resetTime.state(at: now, timeZone: displayCalendar.timeZone) {
-            case .relative:
-                reset = resetTime.summary(at: now, timeZone: displayCalendar.timeZone)
-                    .replacingOccurrences(of: "小时", with: "时").replacingOccurrences(of: "分钟", with: "分")
-                    .replacingOccurrences(of: "后重置", with: "后")
-            case .absolute:
-                reset = window.resetsAt.map { WorkbenchMiniFormat.date($0, calendar: displayCalendar, pattern: "M/d HH:mm") } ?? "未提供"
-            case .waiting: reset = "等待更新"
-            case .imminent: reset = "即将重置"
-            case .unavailable, .dateOnly: reset = "未提供"
-            }
-            return WorkbenchMiniQuotaData(label:label,value:String(format:"%.0f%%",window.usedPercent),fraction:window.usedPercent/100,reset:reset)
+            let reset = resetTime.summary(at: now, timeZone: displayCalendar.timeZone)
+            return WorkbenchMiniQuotaData(label:label,value:UsagePercentage.text(window.usedPercent),fraction:window.usedPercent/100,reset:reset)
         }
         var lines=[summary?.detail ?? "正在读取已配置的本机额度来源。"]
         if isStale {lines.append("上次读数已过期，等待来源更新；不代表当前已用比例。")}
@@ -255,7 +244,7 @@ extension WorkbenchMiniDeviceData {
     }
 }
 
-/// Provider snapshots enter the same small-card renderer without introducing
+/// Provider snapshots enter the same compact renderer without introducing
 /// credential handling or another refresh loop inside the transient panel.
 struct WorkbenchMiniExternalProviderData: Identifiable {
     let id: UUID
@@ -265,6 +254,13 @@ struct WorkbenchMiniExternalProviderData: Identifiable {
     let fraction: Double?
     let detail: String
     let isStale: Bool
+    var remaining: String = "—"
+    var unit: String = "GB"
+    var reset: String = "未提供重置时间"
+    var statusDetail: String = ""
+    /// Preserve the source percentage for text and severity; converting a bar
+    /// fraction back to percent can turn an exact 58 into 57.999999… .
+    var usedPercent: Double? = nil
 }
 
 extension WorkbenchMiniExternalProviderData {
@@ -274,18 +270,51 @@ extension WorkbenchMiniExternalProviderData {
         let snapshot = state.snapshot.flatMap { $0.sourceID == configuration.id && (try? $0.validate(now: now)) != nil ? $0 : nil }
         stateText = configuration.enabled ? (snapshot == nil && status == .ready ? "尚无有效读数" : status.title) : "已停用"
         isStale = !configuration.enabled || status != .ready || snapshot == nil
+        statusDetail = stateText
         if let snapshot {
-            let divisor = snapshot.displayUnit.divisor
-            amount = String(format: "%.1f / %.1f %@", Double(snapshot.usedBytes) / divisor,
-                            Double(snapshot.limitBytes) / divisor, snapshot.displayUnit.title)
+            amount = ProviderUsageFormatting.amount(snapshot.usedBytes, unit: snapshot.displayUnit) + " / "
+                + ProviderUsageFormatting.amount(snapshot.limitBytes, unit: snapshot.displayUnit) + " " + snapshot.displayUnit.title
+            remaining = ProviderUsageFormatting.amount(snapshot.remaining, unit: snapshot.displayUnit)
+            unit = snapshot.displayUnit.title
+            reset = UsageResetTime(snapshot: snapshot).summary(at: now, timeZone: calendar.timeZone)
+            usedPercent = snapshot.usedPercent
             fraction = snapshot.usedPercent / 100
             let observed = WorkbenchMiniFormat.date(snapshot.observedAt, calendar: calendar, pattern: "M/d HH:mm")
-            let reset = UsageResetTime(snapshot: snapshot).help(at: now, timeZone: calendar.timeZone)
+            let resetHelp = UsageResetTime(snapshot: snapshot).help(at: now, timeZone: calendar.timeZone)
             detail = [snapshot.sourceDescription, snapshot.displayUnit.explanation, "采集：" + observed,
-                      "重置：" + reset, isStale ? "上次有效读数；不代表当前余额。" : nil, state.message].compactMap { $0 }.joined(separator: "\n")
+                      "重置：" + resetHelp, isStale ? "上次有效读数；不代表当前余额。" : nil, state.message].compactMap { $0 }.joined(separator: "\n")
         } else {
             amount = "尚无读数"; fraction = nil
             detail = state.message ?? "请在用量页面连接此来源；小窗不自行查询或推算服务商用量。"
+        }
+    }
+}
+
+/// Currency balances retain each original currency; no conversion, combined
+/// total or quota percentage is inferred for balance-only connections.
+struct WorkbenchMiniAPIBalanceData: Identifiable {
+    let id: UUID
+    let title: String
+    var amount: String = "—"
+    var stateText: String = "尚未查询"
+    var detail: String = ""
+    var isStale: Bool = true
+}
+
+extension WorkbenchMiniAPIBalanceData {
+    init(configuration: APIBalanceConfiguration, state: APIBalanceSourceState, now: Date, calendar: Calendar) {
+        id = configuration.id; title = configuration.name
+        let snapshot = state.snapshot.flatMap { $0.sourceID == configuration.id && (try? $0.validate(now: now)) != nil ? $0 : nil }
+        stateText = !configuration.enabled ? "已暂停" : state.authenticationFailed ? "需要重新连接" : snapshot == nil ? "尚无有效读数" : state.statusTitle(now: now)
+        isStale = !configuration.enabled || snapshot == nil || state.isStale(at: now) || state.message != nil || state.authenticationFailed
+        if let snapshot {
+            amount = snapshot.balances.map(\.formattedTotal).joined(separator: "\n")
+            detail = [configuration.provider.title + " · " + stateText,
+                      "采集：" + WorkbenchMiniFormat.date(snapshot.observedAt, calendar: calendar, pattern: "M/d HH:mm"),
+                      "不同币种分别展示，不合计、不换算。",
+                      isStale ? "保留上次余额，不代表当前余额。" : nil, state.message].compactMap { $0 }.joined(separator: "\n")
+        } else {
+            detail = state.message ?? "请在用量与额度中连接此来源；小窗不自行查询或推算余额。"
         }
     }
 }

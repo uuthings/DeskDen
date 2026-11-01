@@ -236,11 +236,16 @@ struct DeviceModuleView: View {
         }
     }
     private var thermalDetail: some View {
-        VStack(spacing: 12) {
+        let status = DeviceThermalPresentation(snapshot: s, rule: model.temperatureRule)
+        return VStack(spacing: 12) {
             DeviceDetailColumns(minimumCardHeight: 128.25) {
-                DeviceDetailCard(title: "CPU 温度", symbol: "thermometer.medium") { DeviceReading(value: DeviceFormat.temperature(s.cpuTemperature), size: 36); Text(s.cpuTemperature == nil ? "暂无有效读数" : "当前传感器读数").font(.system(size: 11)).foregroundStyle(palette.muted) }
-                DeviceDetailCard(title: "GPU 温度", symbol: "thermometer.medium") { DeviceReading(value: DeviceFormat.temperature(s.gpuTemperature), size: 36); Text(s.gpuTemperature == nil ? "暂无有效读数" : "当前传感器读数").font(.system(size: 11)).foregroundStyle(palette.muted) }
-                DeviceDetailCard(title: "温度提醒", symbol: "bell") { Text(model.temperatureRule.enabled ? "已开启" : "未开启").font(.system(size: 22)); Text("CPU \(Int(model.temperatureRule.cpuThreshold))°C · GPU \(Int(model.temperatureRule.gpuThreshold))°C").font(.system(size: 11)).foregroundStyle(palette.muted) }
+                DeviceDetailCard(title: "CPU 温度", symbol: "thermometer.medium") { DeviceReading(value: DeviceFormat.temperature(s.cpuTemperature), size: 36).foregroundStyle(status.cpuLevel == .normal ? palette.text : status.cpuLevel.color(palette: palette)); Text(s.cpuTemperature == nil ? "暂无有效读数" : "提醒阈值 \(model.temperatureRule.cpuThreshold.formatted())°C").font(.system(size: 11)).foregroundStyle(palette.muted) }
+                DeviceDetailCard(title: "GPU 温度", symbol: "thermometer.medium") { DeviceReading(value: DeviceFormat.temperature(s.gpuTemperature), size: 36).foregroundStyle(status.gpuLevel == .normal ? palette.text : status.gpuLevel.color(palette: palette)); Text(s.gpuTemperature == nil ? "暂无有效读数" : "提醒阈值 \(model.temperatureRule.gpuThreshold.formatted())°C").font(.system(size: 11)).foregroundStyle(palette.muted) }
+                DeviceDetailCard(title: "散热状态", symbol: status.symbol) {
+                    DeviceThermalStatusBadge(status: status)
+                    Text("macOS：\(DeviceFormat.thermal(s.thermalState))").font(.system(size: 11)).foregroundStyle(palette.secondary)
+                    Button("调整温度提醒") { temperatureOpen = true }.buttonStyle(WBButtonStyle(compact: true))
+                }
             }
             WBCard {
                 HStack { Label("温度趋势", systemImage: "waveform.path.ecg").font(.system(size: 12, weight: .medium)); Spacer(); rangePicker }
@@ -260,6 +265,9 @@ struct DeviceModuleView: View {
                     DeviceFact(label: "循环计数", value: (s.battery?.cycleCount).map { String($0) } ?? "系统未提供").accessibilityIdentifier("device-battery-cycle-count")
                     DeviceFact(label: "低电量模式", value: ProcessInfo.processInfo.isLowPowerModeEnabled ? "开启" : "关闭")
                 }
+            }
+            if model.temperatureRule.notificationsEnabled && model.notificationPermission != .authorized {
+                DeviceNotificationStatusView(model: model)
             }
         }
     }
@@ -609,7 +617,7 @@ enum DeviceFormat {
         if value >= 1024 { return String(format: "%.1f KB/s", value / 1024) }
         return String(format: "%.0f B/s", value)
     }
-    static func percent(_ value: Double?) -> String { guard let value, value.isFinite else { return "—" }; return String(format: "%.1f%%", value) }
+    static func percent(_ value: Double?) -> String { UsagePercentage.text(value) }
     static func duration(_ seconds: TimeInterval) -> String {
         let total = max(0, Int(seconds)), days = total / 86400, hours = total / 3600 % 24, minutes = total / 60 % 60
         if days > 0 { return "\(days) 天 \(hours) 小时" }
@@ -618,7 +626,14 @@ enum DeviceFormat {
         return "\(total) 秒"
     }
     static func pressure(_ pressure: DevicePressure) -> String { switch pressure { case .normal: "压力低"; case .warning: "压力中等"; case .critical: "压力高"; case .unknown: "等待压力通知" } }
-    static func load(_ value: Double?) -> String { guard let value else { return "等待采样" }; return value >= 90 ? "高负载" : value >= 75 ? "较高负载" : "正常" }
+    static func load(_ value: Double?) -> String {
+        switch UsageConsumptionLevel.classify(percent: value) {
+        case .unknown: "等待采样"
+        case .normal: "正常"
+        case .warning: "较高负载"
+        case .critical: "高负载"
+        }
+    }
     static func thermal(_ state: DeviceThermalState) -> String { switch state { case .nominal: "正常"; case .fair: "轻度升温"; case .serious: "热状态较高"; case .critical: "热状态严重"; case .unknown: "不可用" } }
     static func batteryHealth(_ value: String?) -> String { switch value { case "Good": "正常"; case "Fair": "一般"; case "Poor": "建议维修"; default: value ?? "来源未提供" } }
 }

@@ -12,6 +12,8 @@ struct WorkbenchMiniView: View {
     @ObservedObject var device: DeviceStatusModel
     @ObservedObject var ai: AIUsageModel
     @ObservedObject var providerUsage: ProviderUsageModel
+    @ObservedObject var balances: APIBalanceModel
+    @ObservedObject var appearance: UsagePresentationModel
     let openedAt: Date
     let safeTop: CGFloat
     let notchWidth: CGFloat
@@ -25,6 +27,7 @@ struct WorkbenchMiniView: View {
          finishConfiguration: @escaping () -> Void) {
         self.model = model; self.controller = controller
         context = model.context; device = model.device; ai = model.ai; providerUsage = model.providerUsage
+        balances = model.apiBalance; appearance = model.usageAppearance
         _agendaProjection = StateObject(wrappedValue: WorkbenchMiniAgendaProjection(calendar: model.calendar, context: model.context))
         self.openedAt = openedAt; self.safeTop = safeTop; self.notchWidth = notchWidth
         self.open = open; self.openContext = openContext; self.finishConfiguration = finishConfiguration
@@ -44,10 +47,12 @@ struct WorkbenchMiniView: View {
                 externalProviders: providerUsage.sources.map {
                     WorkbenchMiniExternalProviderData(configuration: $0, state: providerUsage.state(for: $0.id),
                                                       now: timeline.date, calendar: context.dateContext.calendar)
-                }, preferences: controller.preferences, safeTop: safeTop, notchWidth: notchWidth,
+                }, balances: balances.sources.map {
+                    WorkbenchMiniAPIBalanceData(configuration: $0, state: balances.state(for: $0.id), now: timeline.date, calendar: context.dateContext.calendar)
+                }, appearance: appearance, sourceKinds: Dictionary(uniqueKeysWithValues: providerUsage.sources.map { ($0.id, $0.kind) }), thermalStatus: .init(snapshot: device.snapshot, rule: device.temperatureRule), preferences: controller.preferences, safeTop: safeTop, notchWidth: notchWidth,
                 error: controller.error, open: open, openContext: openContext, setVisible: controller.setMiniCard,
                 setHeaderVisible: controller.setMiniHeader, setSeconds: controller.setMiniSeconds, reorder: controller.moveMiniCard,
-                restore: controller.restoreMiniSections, finishConfiguration: finishConfiguration
+                restore: controller.restoreMiniSections, finishConfiguration: finishConfiguration, saveLayout: controller.saveMiniLayout
             )
             .onChange(of: timeline.date) { _, date in agendaProjection.update(now: date) }
         }
@@ -64,6 +69,10 @@ struct WorkbenchMiniPanelView: View {
     var device: WorkbenchMiniDeviceData
     var providers: [WorkbenchMiniAIData]
     var externalProviders: [WorkbenchMiniExternalProviderData] = []
+    var balances: [WorkbenchMiniAPIBalanceData] = []
+    var appearance: UsagePresentationModel? = nil
+    var sourceKinds: [UUID: ProviderUsageKind] = [:]
+    var thermalStatus: DeviceThermalPresentation = .init(cpu: nil, gpu: nil, state: .unknown, rule: .init())
     var preferences: WorkbenchTopEntryPreferences
     var safeTop: CGFloat
     var notchWidth: CGFloat
@@ -76,26 +85,36 @@ struct WorkbenchMiniPanelView: View {
     var reorder: (WorkbenchMiniCardID, WorkbenchMiniCardID, Bool) -> Void
     var restore: () -> Void
     var finishConfiguration: () -> Void
+    var saveLayout: ((WorkbenchTopEntryPreferences) -> Bool)? = nil
     @State var configuring = false
+    @State private var draft: WorkbenchTopEntryPreferences?
+    @State private var dragOriginal: WorkbenchTopEntryPreferences?
+    @State private var dragPoint = CGPoint.zero
+    @State private var dragGrab = CGSize.zero
+    @State private var dragPageDirection = 0
+    @State private var dragCapacity = 1
+    @GestureState private var gestureActive = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var editing = false
     @State private var page = 0
     @State private var dragged: WorkbenchMiniCardID?
     @FocusState private var focusedCard: WorkbenchMiniCardID?
     @Environment(\.workbenchPalette) private var palette
 
-    private var available: [WorkbenchMiniCardID] { WorkbenchMiniCardID.builtIn + externalProviders.map { .provider($0.id) } }
-    private var active: [WorkbenchMiniCardID] { preferences.activeCards(available: available) }
+    private var available: [WorkbenchMiniCardID] { WorkbenchMiniCardID.builtIn + externalProviders.map { .provider($0.id) } + balances.map { .apiBalance($0.id) } }
+    private var current: WorkbenchTopEntryPreferences { draft ?? preferences }
+    private var active: [WorkbenchMiniCardID] { current.activeCards(available: available) }
     private var placements: [WorkbenchMiniPlacement] { WorkbenchMiniPacking.pack(active) }
     private var columns: Int { (placements.map(\.column).max() ?? -1) + 1 }
 
     var body: some View {
         GeometryReader { geometry in
             let bodyWidth = max(220, geometry.size.width - WorkbenchMiniLayout.horizontalInset * 2)
-            let capacity = max(1, Int((bodyWidth + 10) / 230))
+            let capacity = min(4, max(1, Int((bodyWidth + 10) / 230)))
             let pages = max(1, (columns + capacity - 1) / capacity)
             let currentPage = min(page, pages - 1)
             let shown = placements.filter { $0.column / capacity == currentPage }
-            let shownColumns = max(1, min(capacity, columns - currentPage * capacity))
+            let shownColumns = editing ? capacity : max(1, min(capacity, columns - currentPage * capacity))
             let boardWidth = CGFloat(shownColumns) * 230 - 10
             ZStack(alignment: .topLeading) {
                 header(width: geometry.size.width, pages: pages, currentPage: currentPage)
@@ -106,21 +125,64 @@ struct WorkbenchMiniPanelView: View {
                     else {
                         ZStack(alignment: .topLeading) {
                             ForEach(shown, id: \.card) { placement in
-                                card(placement.card, capacity: capacity)
-                                    .frame(width: 220, height: placement.span == 3 ? 113 : 72)
-                                    .offset(x: CGFloat(placement.column % capacity) * 230, y: CGFloat(placement.row) * 41)
+                                ZStack {
+                                    if dragged == placement.card {
+                                        RoundedRectangle(cornerRadius: 12).fill(palette.accent.opacity(0.08))
+                                            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(palette.accent.opacity(0.45), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+                                            .accessibilityLabel("放置位置").accessibilityIdentifier("mini-drag-placeholder")
+                                    }
+                                    card(placement.card, capacity: capacity)
+                                        .opacity(dragged == placement.card ? 0 : 1)
+                                }
+                                .frame(width: 220, height: placement.span == 3 ? 113 : 72)
+                                .offset(x: CGFloat(placement.column % capacity) * 230, y: CGFloat(placement.row) * 41)
+                            }
+                            if let dragged {
+                                cardSurface(dragged).frame(width: 220, height: dragged.span == 3 ? 113 : 72)
+                                    .shadow(color: .black.opacity(0.18), radius: 12, y: 5)
+                                    .offset(x: dragPoint.x - dragGrab.width, y: dragPoint.y - dragGrab.height)
+                                    .allowsHitTesting(false).accessibilityHidden(true).zIndex(10)
                             }
                         }.frame(width: boardWidth, height: WorkbenchMiniLayout.sectionHeight, alignment: .topLeading)
+                            .coordinateSpace(name: "mini-board")
+                            .contentShape(Rectangle())
+                            .highPriorityGesture(DragGesture(minimumDistance: 7, coordinateSpace: .named("mini-board"))
+                                .updating($gestureActive) { _, state, _ in if editing { state = true } }
+                                .onChanged { value in
+                                    guard editing else { return }
+                                    let source = dragged ?? shown.first { placement in
+                                        let origin = CGPoint(x: CGFloat(placement.column % capacity) * 230, y: CGFloat(placement.row) * 41)
+                                        let rect = CGRect(origin: origin, size: CGSize(width: 220, height: placement.span == 3 ? 113 : 72))
+                                        let hideControl = CGRect(x: origin.x + 198, y: origin.y - 4, width: 26, height: 26)
+                                        return rect.contains(value.startLocation) && !hideControl.contains(value.startLocation)
+                                    }?.card
+                                    if let source { updateDrag(source, value: value, capacity: capacity) }
+                                }
+                                .onEnded { value in
+                                    let width = CGFloat(capacity) * 230 - 10
+                                    if value.location.x < -24 || value.location.x > width + 24 || value.location.y < -44 || value.location.y > 260 { cancelDrag() }
+                                    else { dragged = nil; dragOriginal = nil; dragPageDirection = 0 }
+                                }, including: editing ? .all : .none)
+                            .animation(reduceMotion ? nil : .easeInOut(duration: 0.16), value: current.cardOrder)
+
                     }
                 }
                 .frame(width: bodyWidth, height: WorkbenchMiniLayout.sectionHeight, alignment: .top)
                 .offset(x: (geometry.size.width - bodyWidth) / 2, y: WorkbenchMiniLayout.contentTopInset(safeTop: safeTop))
             }
-            .onChange(of: active) { _, _ in
-                if editing, let focusedCard, let placement = placements.first(where: { $0.card == focusedCard }) { page = placement.column / capacity }
-                else { page = 0 }
-            }
+            .onChange(of: active) { _, _ in page = min(page, max(0, (columns + capacity - 1) / capacity - 1)) }
+            .onChange(of: capacity) { _, _ in page = min(page, max(0, (columns + capacity - 1) / capacity - 1)) }
         }
+        .onAppear { if configuring { beginEditing() } }
+        .onChange(of: gestureActive) { _, running in if !running, dragged != nil { cancelDrag() } }
+        .task(id: dragPageDirection) {
+            guard dragPageDirection != 0 else { return }
+            do { try await Task.sleep(for: .milliseconds(550)) } catch { return }
+            guard dragged != nil else { return }
+            page = max(0, min(max(0, (columns - 1) / dragCapacity), page + dragPageDirection))
+            dragPageDirection = 0
+        }
+
         .foregroundStyle(palette.text)
         .onChange(of: externalProviders.map(\.id)) { _, _ in page = 0 }
         .accessibilityElement(children: .contain).accessibilityIdentifier("mini-panel-content")
@@ -129,26 +191,24 @@ struct WorkbenchMiniPanelView: View {
     private func header(width: CGFloat, pages: Int, currentPage: Int) -> some View {
         let innerWidth = width - WorkbenchMiniLayout.horizontalInset * 2
         let wing = max(28, (width - notchWidth) / 2 - WorkbenchMiniLayout.horizontalInset - (notchWidth > 0 ? 8 : 4))
-        let compactPaging = wing < 160 && preferences.showDate && !editing && !configuring
+        let compactPaging = wing < 180
         return HStack(spacing: 0) {
             HStack(spacing: compactPaging ? 4 : 6) {
                 if pages > 1 && !configuring {
                     HStack(spacing: 0) {
                         Button { page = max(0, currentPage - 1) } label: { Image(systemName: "chevron.left").frame(width: compactPaging ? 12 : 15, height: 28) }
                             .disabled(currentPage == 0).accessibilityLabel("上一页卡片").accessibilityIdentifier("mini-previous-page")
-                            .onDrop(of: [UTType.plainText], delegate: MiniPageDropDelegate(enabled: editing && dragged != nil && currentPage > 0, turn: { page = currentPage - 1 }))
                         if !compactPaging { Text(wing < 120 && pages > 9 ? "\(currentPage + 1)" : "\(currentPage + 1)/\(pages)")
                             .font(.system(size: 11)).monospacedDigit().fixedSize().accessibilityLabel("第 \(currentPage + 1) 页，共 \(pages) 页")
                         }
                         Button { page = min(pages - 1, currentPage + 1) } label: { Image(systemName: "chevron.right").frame(width: compactPaging ? 12 : 15, height: 28) }
                             .disabled(currentPage == pages - 1).accessibilityLabel("下一页卡片").accessibilityIdentifier("mini-next-page")
-                            .onDrop(of: [UTType.plainText], delegate: MiniPageDropDelegate(enabled: editing && dragged != nil && currentPage < pages - 1, turn: { page = currentPage + 1 }))
                     }.fixedSize().help("第 \(currentPage + 1) 页，共 \(pages) 页")
                 }
                 if editing || configuring {
-                    Button(configuring ? "返回布局" : "显示内容") { configuring.toggle(); editing = true }
+                    Button(configuring ? "返回布局" : "添加卡片") { beginEditing(); configuring.toggle() }
                         .font(.system(size: 11)).frame(height: 28).accessibilityIdentifier("mini-show-configuration")
-                } else if preferences.showDate {
+                } else if current.showDate {
                     Button(action: openContext) {
                         ViewThatFits(in: .horizontal) {
                             dateHeader(detail: 2)
@@ -164,7 +224,7 @@ struct WorkbenchMiniPanelView: View {
                 .accessibilityElement(children: .contain).accessibilityIdentifier("mini-header-date")
             Spacer(minLength: 0)
             HStack(spacing: 8) {
-                if preferences.showWeather && !editing && !configuring {
+                if current.showWeather && !editing && !configuring {
                     Button(action: openContext) {
                         ViewThatFits(in: .horizontal) {
                             weatherHeader(detail: 2)
@@ -176,15 +236,12 @@ struct WorkbenchMiniPanelView: View {
                         .accessibilityLabel("城市、天气与时间设置，" + context.city + "，" + context.temperature + "，" + context.condition)
                         .accessibilityIdentifier("mini-open-context-weather")
                 }
-                Button {
-                    if editing || configuring { editing = false; configuring = false; dragged = nil; finishConfiguration() }
-                    else { editing = true }
-                } label: {
-                    Image(systemName: editing || configuring ? "checkmark" : "gearshape").font(.system(size: 14)).frame(width: 28, height: 28)
+                if editing || configuring {
+                    compactAction("取消编辑", symbol: "xmark", identifier: "mini-cancel") { cancelEditing() }
+                    compactAction("保存布局", symbol: "checkmark", identifier: "mini-configure") { commitEditing() }
+                } else {
+                    compactAction("编辑布局", symbol: "gearshape", identifier: "mini-configure") { beginEditing() }
                 }
-                .help(editing || configuring ? "完成布局编辑" : "编辑布局：拖动或使用方向键排序")
-                .accessibilityLabel(editing || configuring ? "完成布局编辑" : "编辑布局")
-                .accessibilityIdentifier("mini-configure")
             }.frame(width: wing, height: 28, alignment: .trailing).clipped()
                 .accessibilityElement(children: .contain).accessibilityIdentifier("mini-header-actions")
         }.buttonStyle(.plain).clickableCursor().frame(width: innerWidth, height: 28)
@@ -205,135 +262,201 @@ struct WorkbenchMiniPanelView: View {
         }.font(.system(size: 12)).fixedSize().accessibilityIdentifier("mini-header-weather")
     }
 
+    private func compactAction(_ title: String, symbol: String, identifier: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) { Image(systemName: symbol).font(.system(size: 13)).frame(width: 26, height: 26).contentShape(RoundedRectangle(cornerRadius: 6)) }
+            .buttonStyle(WBTextActionButtonStyle()).help(title).accessibilityLabel(title).accessibilityIdentifier(identifier)
+    }
+    private func beginEditing() {
+        if draft == nil { var value = preferences; value.materializeLayout(available: available); draft = value }
+        editing = true
+    }
+    private func cancelEditing() {
+        cancelDrag(); draft = nil; editing = false; configuring = false; page = 0
+        finishConfiguration()
+    }
+    private func commitEditing() {
+        cancelDrag()
+        guard let value = draft else { return }
+        if let saveLayout { guard saveLayout(value) else { configuring = true; return } }
+        else {
+            for id in available { setVisible(id, value.visibleCards.contains(id)) }
+            for pair in zip(value.cardOrder, value.cardOrder.dropFirst()) { reorder(pair.1, pair.0, true) }
+            setHeaderVisible(value.showDate, value.showWeather); setSeconds(value.showSeconds)
+        }
+        draft = nil; editing = false; configuring = false; finishConfiguration()
+    }
+    private func editVisibility(_ id: WorkbenchMiniCardID, _ visible: Bool) { beginEditing(); draft?.setCard(id, visible: visible) }
+    private func restoreDraft() {
+        beginEditing(); var value = WorkbenchTopEntryPreferences(); value.enabled = preferences.enabled; value.mode = preferences.mode
+        value.materializeLayout(available: available); value.usesDefaultLayout = true; draft = value; page = 0
+    }
+    private func cardSurface(_ id: WorkbenchMiniCardID) -> some View {
+        cardContent(id).padding(.horizontal, 12).padding(.vertical, 8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(palette.soft, in: RoundedRectangle(cornerRadius: 12))
+            .contentShape(RoundedRectangle(cornerRadius: 12))
+    }
     private func card(_ id: WorkbenchMiniCardID, capacity: Int) -> some View {
-        let button = Button {
+        let content = Button {
             if editing { focusedCard = id } else { open(id) }
-        } label: {
-            cardContent(id).padding(.horizontal, 12).padding(.vertical, 9)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .contentShape(RoundedRectangle(cornerRadius: 12))
-        }
-        .buttonStyle(WBSelectableButtonStyle(cornerRadius: 12, drawsSelection: false, showsBorder: false))
-        .background(palette.soft, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(alignment: .topTrailing) {
-            if editing { Image(systemName: "line.3.horizontal").font(.system(size: 9)).foregroundStyle(palette.muted).padding(5).allowsHitTesting(false) }
-        }
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(editing && focusedCard == id ? palette.accent : .clear, lineWidth: 1))
-        // Editing needs a real key responder even when system-wide keyboard
-        // navigation for ordinary buttons is disabled.
-        .focusable(interactions: editing ? .edit : .activate)
-        .focused($focusedCard, equals: id)
-        .onMoveCommand { direction in
-            guard editing else { return }
-            move(id, forward: direction == .right || direction == .down, capacity: capacity)
-        }
-        .accessibilityLabel((editing ? "调整" : "打开") + title(id)).accessibilityIdentifier("mini-card-" + id.rawValue)
-        .accessibilityValue(accessibilityReading(id))
-        .accessibilityActions {
-            if editing {
-                Button("前移") { move(id, forward: false, capacity: capacity) }
-                Button("后移") { move(id, forward: true, capacity: capacity) }
-                Button("隐藏卡片") { setVisible(id, false) }
-            }
-        }
-        .onDrop(of: [UTType.plainText], delegate: MiniCardDropDelegate(target: id, enabled: editing, dragged: $dragged) { moving, target, after in
-            reorder(moving, target, after); focusedCard = moving
-        })
+        } label: { cardSurface(id) }
+            .buttonStyle(WBSelectableButtonStyle(cornerRadius: 12, drawsSelection: false, showsBorder: false))
+            .focusable(interactions: editing ? .edit : .activate).focusEffectDisabled()
+            .focused($focusedCard, equals: id)
+            .onMoveCommand { direction in guard editing else { return }; move(id, forward: direction == .right || direction == .down, capacity: capacity) }
+            .accessibilityLabel((editing ? "调整" : "打开") + title(id)).accessibilityIdentifier("mini-card-" + id.rawValue)
+            .accessibilityValue(accessibilityReading(id))
         return Group {
-            if editing { button.onDrag { dragged = id; return NSItemProvider(object: id.rawValue as NSString) } }
-            else { button }
+            if editing {
+                content
+                    .accessibilityAction(named: Text("前移")) { move(id, forward: false, capacity: capacity) }
+                    .accessibilityAction(named: Text("后移")) { move(id, forward: true, capacity: capacity) }
+                    .accessibilityAction(named: Text("隐藏卡片")) { editVisibility(id, false) }
+            } else { content }
         }
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(editing && focusedCard == id ? palette.accent.opacity(0.5) : .clear, lineWidth: 1).allowsHitTesting(false))
         .overlay(alignment: .topTrailing) {
-            if id == .network && !editing {
-                Menu {
-                    Text("当前：全部本机网络")
-                    Text("直连 / VPN：尚未接入分流识别")
-                } label: { Text("全部").font(.system(size: 11)).foregroundStyle(palette.accent).padding(.horizontal, 8).frame(height: 24) }
-                .menuStyle(.borderlessButton).fixedSize().padding(.top, 4).padding(.trailing, 7)
-                .help("本机接口采样包含全部网络；尚无可靠的直连和 VPN 归属，不生成分流数字。")
-                .accessibilityIdentifier("mini-network-scope")
+            if editing && dragged == nil {
+                Button { editVisibility(id, false) } label: { Image(systemName: "eye.slash").font(.system(size: 11)).frame(width: 22, height: 22).background(palette.raised, in: Circle()) }
+                    .buttonStyle(.plain).clickableCursor().help("隐藏" + title(id)).accessibilityLabel("隐藏" + title(id))
+                    .accessibilityIdentifier("mini-hide-" + id.rawValue).offset(x: 4, y: -4)
             }
         }
     }
     private func move(_ id: WorkbenchMiniCardID, forward: Bool, capacity: Int) {
         guard let index = active.firstIndex(of: id) else { return }
-        let targetIndex = index + (forward ? 1 : -1)
-        guard active.indices.contains(targetIndex) else { return }
-        let target = active[targetIndex]
-        var next = preferences; next.moveCard(id, relativeTo: target, after: forward)
-        reorder(id, target, forward)
-        if let placement = WorkbenchMiniPacking.pack(next.activeCards(available: available)).first(where: { $0.card == id }) { page = placement.column / capacity }
+        let next = index + (forward ? 1 : -1); guard active.indices.contains(next) else { return }
+        draft?.moveCard(id, relativeTo: active[next], after: forward)
+        if let placement = placements.first(where: { $0.card == id }) { page = placement.column / capacity }
         focusedCard = id
+    }
+    private func cancelDrag() {
+        if let original = dragOriginal { draft = original }
+        dragged = nil; dragOriginal = nil; dragPageDirection = 0
+    }
+    private func updateDrag(_ id: WorkbenchMiniCardID, value: DragGesture.Value, capacity: Int) {
+        if dragged == nil, let placement = placements.first(where: { $0.card == id }) {
+            dragOriginal = draft; dragged = id; dragCapacity = capacity
+            dragGrab = CGSize(width: value.startLocation.x - CGFloat(placement.column % capacity) * 230,
+                              height: value.startLocation.y - CGFloat(placement.row) * 41)
+        }
+        guard dragged == id else { return }; dragPoint = value.location
+        let width = CGFloat(capacity) * 230 - 10
+        dragPageDirection = value.location.x < 4 && page > 0 ? -1 : value.location.x > width - 4 && (page + 1) * capacity < columns ? 1 : 0
+        guard value.location.x >= 0, value.location.x <= width, value.location.y >= 0, value.location.y <= 236 else { return }
+        let column = min(capacity - 1, max(0, Int((value.location.x + 5) / 230))) + page * capacity
+        if let placeholder = placements.first(where: { $0.card == id }), placeholder.column == column,
+           (CGFloat(placeholder.row) * 41...CGFloat(placeholder.row) * 41 + (id.span == 3 ? 113 : 72)).contains(value.location.y) { return }
+        let candidates = placements.filter { $0.column == column && $0.card != id }
+        let target = candidates.first { value.location.y < CGFloat($0.row) * 41 + ($0.span == 3 ? 56.5 : 36) }
+        if let target { draft?.moveCard(id, relativeTo: target.card, after: false) }
+        else if let last = candidates.last { draft?.moveCard(id, relativeTo: last.card, after: true) }
     }
 
     @ViewBuilder private func cardContent(_ id: WorkbenchMiniCardID) -> some View {
         switch id {
         case .codex, .claude:
-            quota(providers.first { $0.provider == (id == .codex ? .codex : .claude) }, title: title(id), providerID: id == .codex ? .codex : .claude)
+            quota(providers.first { $0.provider == (id == .codex ? .codex : .claude) }, id: id)
         case .traffic:
-            VStack(spacing: 5) { heading("本机流量", "今日 " + device.todayTraffic); valueRow("本周期", device.periodTraffic); meter(device.trafficFraction) }.help(device.trafficNote)
+            VStack(spacing: 4) { heading(id, ""); valueRow(device.periodTraffic, percent(device.trafficFraction)); meter(device.trafficFraction) }.help(device.trafficNote)
         case .disk:
-            VStack(spacing: 5) { heading("磁盘空间", percent(device.diskFraction)); valueRow(device.disk, "已用"); meter(device.diskFraction) }.help(device.diskNote)
+            VStack(spacing: 4) { heading(id, ""); valueRow(device.disk, percent(device.diskFraction)); meter(device.diskFraction) }.help(device.diskNote)
         case .memory:
-            VStack(spacing: 5) { heading("运行内存", device.memoryPressure); valueRow(device.memory, percent(device.memoryFraction)); meter(device.memoryFraction, color: DeviceAppearance.pressure(device.memoryPressureState, palette: palette)) }
-                .help("内存为已用 / 总量；压力由系统独立指标提供。" + (device.note ?? ""))
+            VStack(spacing: 4) { heading(id, ""); valueRow(device.memory, percent(device.memoryFraction)); meter(device.memoryFraction, color: DeviceAppearance.pressure(device.memoryPressureState, palette: palette)) }
+                .help("内存为已用 / 总量；压力由系统独立指标提供。" + device.memoryPressure + (device.note ?? ""))
         case .todo:
-            VStack(alignment: .leading, spacing: 4) {
-                heading("最近待办", agenda.reminder?.note ?? "")
-                Text(agenda.reminder?.title ?? agenda.reminderStatus).font(.system(size: 13)).lineLimit(1)
+            VStack(alignment: .leading, spacing: 3) {
+                heading(id, agenda.reminder?.note ?? "")
+                Text(agenda.reminder?.title ?? agenda.reminderStatus).font(.system(size: 12)).lineLimit(1)
                 Text(agenda.reminder?.dateText ?? "").font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(1)
             }.help([agenda.reminder?.title, agenda.reminder?.dateText, agenda.reminder?.note].compactMap { $0 }.joined(separator: " · "))
         case .network:
             VStack(alignment: .leading, spacing: 4) {
-                heading("实时网络", "")
-                HStack(spacing: 12) { networkReading("arrow.down", "下载", device.download); networkReading("arrow.up", "上传", device.upload) }
-                networkTrend.frame(height: 32)
-            }.help("最近 60 秒本机采样；下载实线、上传虚线，使用相同刻度。采样中断处不连线。")
+                heading(id, "")
+                HStack(spacing: 8) {
+                    Label(device.download, systemImage: "arrow.down"); Spacer(minLength: 0)
+                    Label(device.upload, systemImage: "arrow.up")
+                }.font(.system(size: 12)).monospacedDigit().lineLimit(1).frame(height: 18)
+                networkTrend.frame(height: 28)
+                valueRow("近60秒", "今日已记录 " + device.todayTraffic)
+            }.help("最近 60 秒本机全部流量采样；下载实线、上传虚线，使用相同刻度。采样中断处不连线。" + device.trafficNote)
         case .thermal:
-            VStack(alignment: .leading, spacing: 7) {
-                heading("散热状态", device.thermalState)
-                HStack(spacing: 12) { sensor("CPU 温度", device.temperature); sensor("GPU 温度", device.gpuTemperature) }
-                HStack(spacing: 12) { sensor("左风扇", device.leftFan); sensor("右风扇", device.rightFan) }
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 4) { titleLabel(id); Spacer(minLength: 0); DeviceThermalStatusBadge(status: thermalStatus) }.frame(height: 18)
+                HStack(spacing: 12) {
+                    temperature("CPU", device.temperature, level: thermalStatus.cpuLevel, trailing: false)
+                    temperature("GPU", device.gpuTemperature, level: thermalStatus.gpuLevel, trailing: true)
+                }
+                valueRow("左 " + device.leftFan, "右 " + device.rightFan)
             }.help(device.sensorNote)
         default:
             if let value = externalProviders.first(where: { $0.id == id.providerID }) {
-                VStack(spacing: 5) { heading(value.title, value.stateText); valueRow(value.amount, value.isStale ? "上次" : "已用"); meter(value.fraction, stale: value.isStale) }.help(value.detail)
+                VStack(alignment: .leading, spacing: 4) {
+                    heading(id, value.isStale ? value.stateText : "")
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text(value.remaining).font(.system(size: 21)).monospacedDigit()
+                        Text(value.unit + " 剩余").font(.system(size: 11)).foregroundStyle(palette.secondary)
+                    }.lineLimit(1).frame(height: 24)
+                    valueRow(value.amount, value.usedPercent.map { UsagePercentage.text($0) } ?? percent(value.fraction)); meter(value.fraction, stale: value.isStale)
+                    Text(value.reset).font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(1)
+                }.help(value.detail)
+            } else if let value = balances.first(where: { $0.id == id.apiBalanceID }) {
+                VStack(alignment: .leading, spacing: 6) {
+                    heading(id, value.isStale ? value.stateText : "")
+                    Text(value.amount).font(.system(size: 18)).monospacedDigit().lineLimit(2)
+                    Text(value.isStale ? "上次余额" : value.stateText).font(.system(size: 11)).foregroundStyle(palette.secondary)
+                }.help(value.detail)
             } else { Text("来源已移除").font(.system(size: 12)) }
         }
     }
-    private func quota(_ provider: WorkbenchMiniAIData?, title: String, providerID: AIProvider) -> some View {
-        VStack(spacing: 3) {
-            HStack(spacing: 5) {
-                AIProviderLogo(provider: providerID, size: 14).accessibilityHidden(true)
-                Text(title).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                Spacer(minLength: 0)
-                Text(provider?.stateText == "已用" ? "" : provider?.stateText ?? "未接入")
-                    .font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
-            }.frame(height: 16)
+    private func quota(_ provider: WorkbenchMiniAIData?, id: WorkbenchMiniCardID) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            heading(id, provider?.stateText == "已用" ? "" : provider?.stateText ?? "未接入")
             if let provider {
                 ForEach(Array(provider.windows.prefix(2).enumerated()), id: \.offset) { _, window in
-                    HStack(spacing: 5) {
-                        Text(window.label).foregroundStyle(palette.secondary).frame(width: 32, alignment: .leading)
-                        meter(window.fraction, stale: provider.isStale).frame(minWidth: 16)
-                        Text(window.value).monospacedDigit().frame(width: 28, alignment: .trailing)
-                        Text(window.reset).foregroundStyle(palette.muted).monospacedDigit().frame(width: 72, alignment: .trailing)
-                    }.font(.system(size: 11)).frame(height: 14).lineLimit(1)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(window.label).foregroundStyle(palette.secondary).frame(width: 38, alignment: .leading)
+                            meter(window.fraction, stale: provider.isStale).frame(minWidth: 16)
+                            Text(window.value).monospacedDigit().frame(minWidth: 29, alignment: .trailing)
+                        }.font(.system(size: 11)).frame(height: 14).lineLimit(1)
+                        Text(window.reset).font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(1).frame(height: 14)
+                    }
                 }
             } else { Text("等待已配置来源的读数").font(.system(size: 11)).foregroundStyle(palette.muted) }
         }.help(provider?.detail ?? "尚未取得真实额度读数")
     }
-    private func heading(_ title: String, _ status: String) -> some View {
+    private func sourceKey(_ id: WorkbenchMiniCardID) -> String? {
+        if id == .codex || id == .claude { return UsagePresentationSourceID.ai(id == .codex ? .codex : .claude) }
+        if let uuid = id.providerID { return UsagePresentationSourceID.service(uuid) }
+        if let uuid = id.apiBalanceID { return UsagePresentationSourceID.api(uuid) }
+        return nil
+    }
+    @ViewBuilder private func sourceIcon(_ id: WorkbenchMiniCardID) -> some View {
+        if let key = sourceKey(id), let appearance {
+            UsageSourceIcon(appearance: appearance, icon: appearance.appearance(for: key).icon,
+                aiProvider: id == .codex ? .codex : id == .claude ? .claude : nil,
+                serviceKind: id.providerID.flatMap { sourceKinds[$0] }, defaultBrand: id.apiBalanceID != nil ? .deepseek : nil, size: 16)
+        } else if id == .codex || id == .claude { AIProviderLogo(provider: id == .codex ? .codex : .claude, size: 16) }
+        else { Image(systemName: symbol(id)).font(.system(size: 14)).frame(width: 16, height: 16).foregroundStyle(palette.secondary) }
+    }
+    private func symbol(_ id: WorkbenchMiniCardID) -> String {
+        switch id { case .network: "arrow.up.arrow.down"; case .thermal: "thermometer.medium"; case .disk: "internaldrive"; case .memory: "memorychip"; case .todo: "calendar"; case .traffic: "chart.bar"; default: "server.rack" }
+    }
+    private func titleLabel(_ id: WorkbenchMiniCardID) -> some View {
+        HStack(spacing: 6) { sourceIcon(id); Text(title(id)).font(.system(size: 12, weight: .medium)).lineLimit(1) }
+    }
+    private func heading(_ id: WorkbenchMiniCardID, _ status: String) -> some View {
         HStack(spacing: 4) {
-            Text(title).font(.system(size: 12, weight: .medium)).lineLimit(1)
-            Spacer(minLength: 0)
-            Text(status).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
-        }.frame(height: 16)
+            titleLabel(id); Spacer(minLength: 0)
+            if !status.isEmpty { Text(status).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1) }
+        }.frame(height: 18)
     }
     private func valueRow(_ left: String, _ right: String) -> some View {
         HStack(spacing: 4) { Text(left).lineLimit(1).monospacedDigit(); Spacer(minLength: 0); Text(right).foregroundStyle(palette.secondary).lineLimit(1).monospacedDigit() }
-            .font(.system(size: 11)).frame(height: 16)
+            .font(.system(size: 11)).frame(height: 14)
     }
-    private func percent(_ value: Double?) -> String { value.map { String(format: "%.1f%%", $0 * 100) } ?? "—" }
+    private func percent(_ value: Double?) -> String { UsagePercentage.text(value.map { $0 * 100 }) }
     private func meter(_ fraction: Double?, stale: Bool = false, color: Color? = nil) -> some View {
         GeometryReader { geometry in
             if let fraction, fraction.isFinite {
@@ -342,18 +465,16 @@ struct WorkbenchMiniPanelView: View {
             }
         }.frame(height: 3).accessibilityHidden(true)
     }
-    private func sensor(_ title: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 1) { Text(title).font(.system(size: 11)).foregroundStyle(palette.secondary); Text(value).font(.system(size: 13)).lineLimit(1).monospacedDigit() }
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
-    private func networkReading(_ symbol: String, _ title: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 1) { Label(title, systemImage: symbol).font(.system(size: 11)).foregroundStyle(palette.secondary); Text(value).font(.system(size: 15, weight: .medium)).monospacedDigit().lineLimit(1) }
-            .frame(maxWidth: .infinity, alignment: .leading)
+    private func temperature(_ title: String, _ value: String, level: DeviceThermalLevel, trailing: Bool) -> some View {
+        VStack(alignment: trailing ? .trailing : .leading, spacing: 2) {
+            Text(title).font(.system(size: 11)).foregroundStyle(palette.secondary)
+            Text(value).font(.system(size: 21)).foregroundStyle(level.color(palette: palette)).lineLimit(1).monospacedDigit()
+        }.frame(maxWidth: .infinity, alignment: trailing ? .trailing : .leading)
     }
     private var networkTrend: some View {
         Group {
             if device.networkPoints.count < 2 {
-                Text("等待连续采样").font(.system(size: 11)).foregroundStyle(palette.muted).frame(maxWidth: .infinity, maxHeight: .infinity)
+                Text("暂无趋势").font(.system(size: 11)).foregroundStyle(palette.muted).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Canvas { drawing, size in
                     let points = device.networkPoints
@@ -380,33 +501,37 @@ struct WorkbenchMiniPanelView: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Text("显示内容").font(.system(size: 12, weight: .medium)); Spacer()
-                    Button("恢复默认", action: restore).font(.system(size: 11)).buttonStyle(.plain).clickableCursor().accessibilityIdentifier("mini-restore")
+                    Button("恢复默认", action: restoreDraft).font(.system(size: 11)).buttonStyle(.plain).clickableCursor().accessibilityIdentifier("mini-restore")
                 }
+                if let error { Text(error).font(.system(size: 11)).foregroundStyle(palette.warning).accessibilityIdentifier("mini-save-error") }
                 LazyVGrid(columns: [.init(.adaptive(minimum: 100), alignment: .leading)], alignment: .leading, spacing: 8) {
-                    Toggle("日期时间", isOn: Binding(get: { preferences.showDate }, set: { setHeaderVisible($0, preferences.showWeather) }))
-                    Toggle("城市天气", isOn: Binding(get: { preferences.showWeather }, set: { setHeaderVisible(preferences.showDate, $0) }))
-                    Toggle("显示秒数", isOn: Binding(get: { preferences.showSeconds }, set: setSeconds))
-                        .disabled(!preferences.showDate).accessibilityIdentifier("mini-show-seconds")
+                    Toggle("日期时间", isOn: Binding(get: { current.showDate }, set: { draft?.showDate = $0 }))
+                    Toggle("城市天气", isOn: Binding(get: { current.showWeather }, set: { draft?.showWeather = $0 }))
+                    Toggle("显示秒数", isOn: Binding(get: { current.showSeconds }, set: { draft?.showSeconds = $0 }))
+                        .disabled(!current.showDate).accessibilityIdentifier("mini-show-seconds")
                 }.font(.system(size: 11)).toggleStyle(.checkbox).clickableCursor()
                 LazyVGrid(columns: [.init(.adaptive(minimum: 145), spacing: 12)], alignment: .leading, spacing: 8) {
                     ForEach(available) { id in
-                        Toggle(title(id), isOn: Binding(get: { preferences.visibleCards.contains(id) }, set: { setVisible(id, $0) }))
+                        Toggle(title(id), isOn: Binding(get: { current.visibleCards.contains(id) }, set: { editVisibility(id, $0) }))
                             .font(.system(size: 11)).toggleStyle(.checkbox).clickableCursor().frame(maxWidth: .infinity, alignment: .leading)
                             .accessibilityIdentifier("mini-toggle-" + id.rawValue)
                     }
                 }
-                Text(error ?? "布局编辑时拖动卡片，或聚焦卡片后用方向键排序。即时保存。")
-                    .font(.system(size: 11)).foregroundStyle(error == nil ? palette.muted : palette.warning)
+                Text("拖动整张卡片调整顺序，确认后保存。")
+                    .font(.system(size: 11)).foregroundStyle(palette.muted)
             }.padding(12)
         }.background(palette.soft, in: RoundedRectangle(cornerRadius: 12))
     }
     private var empty: some View {
         VStack(spacing: 10) {
             Text("已隐藏全部卡片").font(.system(size: 13))
-            Button("配置显示内容") { configuring = true; editing = true }.font(.system(size: 12)).buttonStyle(.plain).clickableCursor()
+            Button("配置显示内容") { beginEditing(); configuring = true }.font(.system(size: 12)).buttonStyle(.plain).clickableCursor()
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-    private func title(_ id: WorkbenchMiniCardID) -> String { externalProviders.first { $0.id == id.providerID }?.title ?? id.title }
+    private func title(_ id: WorkbenchMiniCardID) -> String {
+        if let key = sourceKey(id), let name = appearance?.appearance(for: key).displayName, !name.isEmpty { return name }
+        return externalProviders.first { $0.id == id.providerID }?.title ?? balances.first { $0.id == id.apiBalanceID }?.title ?? id.title
+    }
     private func accessibilityReading(_ id: WorkbenchMiniCardID) -> String {
         switch id {
         case .codex, .claude:
@@ -417,40 +542,19 @@ struct WorkbenchMiniPanelView: View {
         case .memory: return "已用／总量\(device.memory)；\(device.memoryPressure)"
         case .todo: return [agenda.reminder?.title ?? agenda.reminderStatus, agenda.reminder?.dateText, agenda.reminder?.note].compactMap { $0 }.joined(separator: "；")
         case .network: return "下载\(device.download)；上传\(device.upload)；全部本机网络"
-        case .thermal: return "CPU \(device.temperature)；GPU \(device.gpuTemperature)；左风扇\(device.leftFan)；右风扇\(device.rightFan)"
+        case .thermal: return "\(thermalStatus.title)；CPU \(device.temperature)；GPU \(device.gpuTemperature)；左风扇\(device.leftFan)；右风扇\(device.rightFan)"
         default:
+            if let value = balances.first(where: { $0.id == id.apiBalanceID }) { return "\(value.stateText)；\(value.amount)" }
             guard let value = externalProviders.first(where: { $0.id == id.providerID }) else { return "来源已移除" }
             return "\(value.stateText)；\(value.amount)"
         }
     }
 }
 
-private struct MiniCardDropDelegate: DropDelegate {
-    let target: WorkbenchMiniCardID
-    let enabled: Bool
-    @Binding var dragged: WorkbenchMiniCardID?
-    let move: (WorkbenchMiniCardID, WorkbenchMiniCardID, Bool) -> Void
-    func validateDrop(info: DropInfo) -> Bool { enabled && dragged != nil && dragged != target }
-    func dropUpdated(info: DropInfo) -> DropProposal? { validateDrop(info: info) ? .init(operation: .move) : .init(operation: .forbidden) }
-    func performDrop(info: DropInfo) -> Bool {
-        guard validateDrop(info: info), let source = dragged else { return false }
-        move(source, target, info.location.y > (target.span == 3 ? 56.5 : 36)); dragged = nil
-        return true
-    }
-}
-private struct MiniPageDropDelegate: DropDelegate {
-    let enabled: Bool
-    let turn: () -> Void
-    func validateDrop(info: DropInfo) -> Bool { enabled }
-    func dropEntered(info: DropInfo) { if enabled { turn() } }
-    func dropUpdated(info: DropInfo) -> DropProposal? { .init(operation: enabled ? .move : .forbidden) }
-    func performDrop(info: DropInfo) -> Bool { false }
-}
-
 extension WorkbenchMiniCardID {
     var title: String {
         switch self {
-        case .codex: "Codex 用量"; case .claude: "Claude 用量"; case .traffic: "本机流量"
+        case .codex: "Codex"; case .claude: "Claude Code"; case .traffic: "本机流量"
         case .disk: "磁盘空间"; case .memory: "运行内存"; case .todo: "最近待办"
         case .network: "实时网络"; case .thermal: "散热状态"; default: "外部用量"
         }

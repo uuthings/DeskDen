@@ -58,7 +58,16 @@ public struct ProviderUsageSnapshot: Codable, Equatable, Sendable {
         self.displayUnit = displayUnit; self.sourceDescription = sourceDescription
         self.resetTimeZoneIdentifier = resetTimeZoneIdentifier
     }
-    public var usedPercent: Double { limitBytes == 0 ? 0 : Double(usedBytes) / Double(limitBytes) * 100 }
+    public var usedPercent: Double {
+        guard limitBytes > 0 else { return 0 }
+        // Valid snapshots fit this multiplication. Divide in integer space
+        // first so exact ratios such as 29/100 do not become 28.999999… and
+        // lose a whole percentage point when the presentation truncates them.
+        let scaled = usedBytes.multipliedReportingOverflow(by: 100)
+        guard !scaled.overflow else { return Double(usedBytes) / Double(limitBytes) * 100 }
+        return Double(scaled.partialValue / limitBytes)
+            + Double(scaled.partialValue % limitBytes) / Double(limitBytes)
+    }
     public var remaining: UInt64 { remainingBytes ?? (limitBytes > usedBytes ? limitBytes - usedBytes : 0) }
     public func validate(now: Date = Date()) throws {
         guard limitBytes > 0, limitBytes <= Self.maximumBytes, usedBytes <= Self.maximumBytes,
