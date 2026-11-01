@@ -2,7 +2,7 @@ import AppKit
 import LauncherCore
 
 @MainActor
-final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
     let store: ConfigurationStore
     var configuration = LauncherConfiguration() {
         didSet { ButtonCursorPolicy.shared.apply(configuration.settings.buttonHoverCursor) }
@@ -26,6 +26,8 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
     let horizontalNavigationGesture = HorizontalNavigationGesture()
     var statusItem: NSStatusItem!
     private var statusIconObserver: NSObjectProtocol?
+    private var statusMenuTracking = false
+    private var pendingStatusMenuAction: (@MainActor @Sendable () -> Void)?
     var previousApp: NSRunningApplication?
     var eventMonitor: Any?
     /// An optional observer of the installed AppKit monitor, used by isolated
@@ -391,7 +393,7 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
         let main = NSMenu()
         let application = NSMenuItem(); let submenu = NSMenu()
         submenu.addItem(withTitle:"关于方寸",action:#selector(showAbout),keyEquivalent:"").target = self
-        submenu.addItem(withTitle:"方寸设置…",action:#selector(allSettingsFromMenu),keyEquivalent:",").target = self
+        submenu.addItem(withTitle:"设置",action:#selector(allSettingsFromMenu),keyEquivalent:",").target = self
         submenu.addItem(withTitle:"检查更新",action:#selector(checkForUpdatesFromMenu),keyEquivalent:"").target = self
         submenu.addItem(.separator())
         submenu.addItem(withTitle:"退出方寸",action:#selector(requestQuitFromMenu),keyEquivalent:"q").target=self
@@ -417,7 +419,7 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
 #endif
         window.submenu = windowMenu; main.addItem(window); NSApp.windowsMenu = windowMenu; NSApp.mainMenu = main
         statusItem = NSStatusBar.system.statusItem(withLength:NSStatusItem.variableLength)
-        statusItem.button?.title = ""; statusItem.button?.toolTip = "方寸 · 启动器"
+        statusItem.button?.title = ""; statusItem.button?.toolTip = "方寸"
         statusItem.button?.image = ApplicationIconController.shared.menuBarImage()
         statusItem.button?.setAccessibilityLabel("方寸菜单")
         statusIconObserver = NotificationCenter.default.addObserver(forName: ApplicationIconController.changedNotification, object: nil, queue: .main) { [weak self] _ in
@@ -425,17 +427,68 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
                 self?.statusItem?.button?.image = ApplicationIconController.shared.menuBarImage()
             }
         }
-        let statusMenu = NSMenu()
-        for (title,action) in [("打开工作台",#selector(workbenchFromMenu)),("打开启动器",#selector(showFromMenu)),("方寸设置…",#selector(allSettingsFromMenu)),("启动器设置…",#selector(settingsFromMenu)),("刷新应用列表",#selector(refreshFromMenu))] { statusMenu.addItem(withTitle:title,action:action,keyEquivalent:"").target = self }
-        statusMenu.addItem(withTitle:"检查更新",action:#selector(checkForUpdatesFromMenu),keyEquivalent:"").target=self
-        statusMenu.addItem(.separator()); statusMenu.addItem(withTitle:"退出方寸",action:#selector(requestQuitFromMenu),keyEquivalent:"q").target=self
-        statusItem.menu = statusMenu
+        statusItem.menu = makeStatusMenu()
+    }
+    /// Native menu construction is also used by isolated interaction checks;
+    /// making a menu does not install a second status item or global shortcut.
+    func makeStatusMenu() -> NSMenu {
+        let result = NSMenu()
+        result.identifier = NSUserInterfaceItemIdentifier("fc.status.menu")
+        result.minimumWidth = 226
+        result.delegate = self
+        result.addItem(withTitle:"打开工作台",action:#selector(workbenchFromMenu),keyEquivalent:"").target=self
+        result.addItem(withTitle:"打开启动器",action:#selector(showFromMenu),keyEquivalent:"").target=self
+        result.addItem(.separator())
+        result.addItem(withTitle:"设置",action:#selector(allSettingsFromMenu),keyEquivalent:"").target=self
+        result.addItem(withTitle:"检查更新",action:#selector(checkForUpdatesFromMenu),keyEquivalent:"").target=self
+        result.addItem(.separator())
+        result.addItem(withTitle:"退出方寸",action:#selector(requestQuitFromMenu),keyEquivalent:"q").target=self
+        menuNeedsUpdate(result)
+        return result
+    }
+    func menuNeedsUpdate(_ menu:NSMenu) {
+        guard menu.identifier?.rawValue == "fc.status.menu" else {return}
+        for (action,baseTitle,shortcut) in [(#selector(workbenchFromMenu),"打开工作台",configuration.settings.workbenchHotKey),
+                                            (#selector(showFromMenu),"打开启动器",Optional(configuration.settings.effectiveLauncherHotKey))] {
+            guard let item=menu.items.first(where:{$0.action == action}) else {continue}
+            // AppKit also writes attributedTitle.string into title. Always
+            // rebuild from the action's stable name, including when disabled.
+            item.attributedTitle=nil
+            item.title=baseTitle
+            guard let shortcut else {continue}
+            let paragraph=NSMutableParagraphStyle()
+            paragraph.tabStops=[NSTextTab(textAlignment:.right,location:188,options:[:])]
+            let title=NSMutableAttributedString(string:baseTitle+"\t"+shortcut.title,attributes:[.font:NSFont.menuFont(ofSize:13),.paragraphStyle:paragraph])
+            title.addAttribute(.foregroundColor,value:NSColor.secondaryLabelColor,range:NSRange(location:(baseTitle as NSString).length+1,length:(shortcut.title as NSString).length))
+            // This is a hint for the already registered physical shortcut. It
+            // must not become a second menu key equivalent with different routing.
+            item.attributedTitle=title
+        }
+    }
+    func menuWillOpen(_ menu:NSMenu) {
+        guard menu.identifier?.rawValue == "fc.status.menu" else {return}
+        statusMenuTracking=true
+        pendingStatusMenuAction=nil
+        menuNeedsUpdate(menu)
+    }
+    func menuDidClose(_ menu:NSMenu) {
+        guard menu.identifier?.rawValue == "fc.status.menu" else {return}
+        statusMenuTracking=false
+        guard let action=pendingStatusMenuAction else {return}
+        pendingStatusMenuAction=nil
+        DispatchQueue.main.async {action()}
+    }
+    func afterStatusMenuCloses(_ action:@escaping @MainActor @Sendable ()->Void) {
+        if statusMenuTracking {pendingStatusMenuAction=action}
+        else {DispatchQueue.main.async {action()}}
     }
     @objc func requestQuitFromMenu() {
-        showWorkbench()
-        workbenchController?.model.requestQuit()
+        afterStatusMenuCloses { [weak self] in
+            self?.showWorkbench()
+            self?.workbenchController?.model.requestQuit()
+        }
     }
-    @objc func checkForUpdatesFromMenu() { updates.checkForUpdates() }
+    @objc func checkForUpdatesFromMenu() {afterStatusMenuCloses { [weak self] in self?.updates.checkForUpdates() }}
     @objc func toggleWorkbenchFullScreenFromMenu() {workbenchController?.requestToggleFullScreen()}
     func finishConfirmedQuit() {
         // Safety and the user's save/discard choice were already resolved exactly
@@ -455,8 +508,8 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
         systemTerminationPending=false
         replyToSystemTermination(false)
     }
-    @objc func showFromMenu() { show() }
-    @objc func settingsFromMenu() { show(); showSettings() }
+    @objc func showFromMenu() {afterStatusMenuCloses { [weak self] in self?.show() }}
+    @objc func settingsFromMenu() {afterStatusMenuCloses { [weak self] in self?.showWorkbench(route:.settings,settingsTab:.launcher) }}
     @objc func refreshFromMenu() { refreshApplications(force:true) }
     @objc func showAbout() { show(); showHelp() }
     func configurePanel() {
@@ -484,6 +537,7 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
     func toggle() { guard !isPreparingToQuit else { return }; if panel.isVisible { hide(restore:true) } else { show() } }
     func show() {
         guard !isPreparingToQuit else { return }
+        workbenchController?.cancelPendingPresentationActivation()
         topEntryController?.handleContextChange()
         if !panel.isVisible {
             previousApp = NSWorkspace.shared.frontmostApplication

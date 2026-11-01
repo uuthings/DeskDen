@@ -12,6 +12,7 @@ import LauncherCore
     @Published var status:String?
     @Published var editorCloseRequest=0
     @Published private(set) var pickerBusy=false
+    @Published private(set) var rescanningApplications=false
     private var observation:AnyCancellable?
     private var picker:NSOpenPanel?
     init(owner:LauncherController){
@@ -45,6 +46,15 @@ import LauncherCore
         guard let owner else{return};if force{owner.refreshApplications(force:true)}
         for _ in 0..<150 where owner.scanning {if Task.isCancelled{return};try? await Task.sleep(for:.milliseconds(200))}
         guard !Task.isCancelled else{return};sync()
+    }
+    func rescanApplications() async {
+        guard !rescanningApplications,let owner else {return}
+        rescanningApplications=true;error=nil;status=nil
+        defer {rescanningApplications=false}
+        await refreshApplications(force:true)
+        guard !Task.isCancelled else {return}
+        if owner.scanning {status="应用列表仍在扫描，完成后会自动更新。"}
+        else {status="已重新扫描应用列表，共 \(applications.count) 个应用。"}
     }
     func shortcuts() async -> [LaunchTarget]{
         do {let result=try await CommandRunner.run(executable:"/usr/bin/shortcuts",arguments:["list"],timeout:15);guard !result.timedOut,result.status == 0 else{throw LauncherError.unavailable("未能读取快捷指令，可直接填写已有快捷指令名称。")};return result.output.split(whereSeparator:\.isNewline).map{LaunchTarget(kind:.shortcut,name:String($0),location:String($0))}}
@@ -89,9 +99,15 @@ struct WorkbenchLauncherSettings:View {
             }}
             WBCard(title:"绑定与搜索",symbol:"keyboard",spacing:10){VStack(spacing:0){
                 row("按键绑定","管理应用、网址、文件及快捷动作"){Button("管理绑定"){model.error=nil;bindingsOpen=true}.buttonStyle(WBButtonStyle(compact:true)).accessibilityIdentifier("fc.settings.launcher.bindings")}
+                row("应用列表","未找到新安装的应用时，重新扫描"){
+                    Button {Task {await model.rescanApplications()}} label: {
+                        HStack(spacing:6){if model.rescanningApplications {ProgressView().controlSize(.small)};Text(model.rescanningApplications ? "正在扫描":"重新扫描应用")}
+                    }.buttonStyle(WBButtonStyle(compact:true)).disabled(model.rescanningApplications)
+                        .accessibilityIdentifier("fc.settings.launcher.rescan")
+                }
                 row("隐藏未绑定按键","仅影响启动器按键视图",last:true){Toggle("隐藏未绑定按键",isOn:setting(\.hideUnboundKeys)).labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.small).tint(palette.accent)}
             }}
-            HStack(spacing:12){Button("更多启动器选项…",action:model.moreSettings).buttonStyle(WBQuietButtonStyle()).help("应用扫描、面板开关、独立快捷键、直达前缀与配置恢复");Spacer();Button("打开启动器"){owner.show()}.buttonStyle(WBQuietButtonStyle())}.font(.system(size:11))
+            HStack(spacing:12){Button("更多启动器选项",action:model.moreSettings).buttonStyle(WBQuietButtonStyle()).help("应用扫描、面板开关、独立快捷键、直达前缀与配置恢复");Spacer();Button("打开启动器"){owner.show()}.buttonStyle(WBQuietButtonStyle())}.font(.system(size:11))
             if let error=model.error{Text(error).font(.system(size:11)).foregroundStyle(palette.critical)}
             if let status=model.status{HStack{Text(status);Spacer();if owner.lastRemoved != nil{Button("撤销移除",action:model.undoRemoval).buttonStyle(WBQuietButtonStyle())}}.font(.system(size:11)).foregroundStyle(palette.muted)}
         }.workbenchModal(isPresented:$bindingsOpen){WorkbenchBindingManager(model:model){bindingsOpen=false}}

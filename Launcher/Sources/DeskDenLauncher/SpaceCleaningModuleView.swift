@@ -234,7 +234,7 @@ struct SpaceCleaningModuleView: View {
             ZStack {
                 Circle().stroke(palette.progressTrack, lineWidth: 8)
                 if let fraction = diskUsedFraction {
-                    Circle().trim(from: 0, to: CGFloat(fraction)).stroke(palette.accent, style: StrokeStyle(lineWidth: 8, lineCap: .round))
+                    Circle().trim(from: 0, to: CGFloat(fraction)).stroke(palette.usageColor(forPercent: fraction * 100), style: StrokeStyle(lineWidth: 8, lineCap: .round))
                         .rotationEffect(.degrees(-90))
                 }
                 VStack(spacing: 5) {

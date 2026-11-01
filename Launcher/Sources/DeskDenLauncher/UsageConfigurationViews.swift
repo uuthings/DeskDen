@@ -478,17 +478,17 @@ struct UsageAPIBalanceCard: View {
     var categoryTitle: String = "API"
     @Environment(\.workbenchPalette) private var palette
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            UsageCategoryTag(title: categoryTitle)
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
                 UsageSourceIcon(appearance: appearance, icon: display.icon, defaultBrand: .deepseek)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(display.displayName ?? source.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                    UsageCardTitle(name: display.displayName ?? source.name, categoryTitle: categoryTitle,
+                                   categoryID: appearance.categoryID(for: UsagePresentationSourceID.api(source.id), defaultID: "api-balance"))
                     Text("DeepSeek API").font(.system(size: 11)).foregroundStyle(palette.muted)
                 }
                 Spacer(minLength: 3)
                 Circle().fill(state.message != nil ? palette.warning : state.snapshot != nil && !state.isStale() ? palette.accent : palette.muted).frame(width: 5, height: 5)
-            }
+            }.frame(height: 36)
             if let snapshot = state.snapshot {
                 ForEach(snapshot.balances) { balance in
                     VStack(alignment: .leading, spacing: 3) {
@@ -505,7 +505,7 @@ struct UsageAPIBalanceCard: View {
             HStack(spacing: 4) {
                 Text(refreshing ? "正在更新" : state.message != nil ? "更新失败 · 保留读数" : state.snapshot.map { "更新于 " + ProviderUsageFormatting.time($0.observedAt, timeZone: timeZone) } ?? "尚无有效读数").lineLimit(1)
                 Spacer(minLength: 0); Image(systemName: "arrow.up.right").font(.system(size: 11)).accessibilityHidden(true)
-            }.font(.system(size: 11)).foregroundStyle(palette.muted).padding(.top, 8).overlay(alignment: .top) { Rectangle().fill(palette.line).frame(height: 1) }
+            }.font(.system(size: 11)).foregroundStyle(palette.muted).padding(.top, 8)
         }.foregroundStyle(palette.text).padding(14).frame(maxWidth: .infinity).frame(height: UsageCardGrid.cardSize.height, alignment: .topLeading)
             .background(WorkbenchMaterialSurface(radius: 15)).contentShape(RoundedRectangle(cornerRadius: 15))
     }

@@ -240,8 +240,8 @@ final class AIUsageCoreTests: XCTestCase {
         XCTAssertEqual(AIUsageAggregation.buckets([],period:.month,now:now,calendar:calendar).count,30)
     }
     func testSeverityBoundaries() throws {
-        XCTAssertEqual(try AIQuotaWindow(usedPercent:74.9,durationMinutes:300,resetsAt:nil).severity,0)
-        XCTAssertEqual(try AIQuotaWindow(usedPercent:75,durationMinutes:300,resetsAt:nil).severity,1)
+        XCTAssertEqual(try AIQuotaWindow(usedPercent:69.9,durationMinutes:300,resetsAt:nil).severity,0)
+        XCTAssertEqual(try AIQuotaWindow(usedPercent:70,durationMinutes:300,resetsAt:nil).severity,1)
         XCTAssertEqual(try AIQuotaWindow(usedPercent:90,durationMinutes:300,resetsAt:nil).severity,2)
     }
     func testPriceUsesFourDisjointTokenCategories() throws {

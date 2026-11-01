@@ -249,6 +249,7 @@ struct UsageStatisticsView: View {
     }
     private var aiContent: some View {
         AIUsageModuleView(model: ai, openDesktopCards: { app.navigate(.cards) }, returnToSettingsPrivacy: { app.navigate(.settings); app.settingsTab = .privacy }, overviewTitle: "用量与额度")
+            .environment(\.timeZone, context.dateContext.timeZone)
     }
     private var allKeys: [String] {
         AIProvider.allCases.map(UsagePresentationSourceID.ai) + model.sources.map { UsagePresentationSourceID.service($0.id) } + api.sources.map { UsagePresentationSourceID.api($0.id) }
@@ -388,6 +389,11 @@ struct UsageStatisticsView: View {
                 }
             }
             serviceDetailSummary(state)
+            if let snapshot = state.snapshot {
+                WBCard(title: "重置时间", spacing: 14) {
+                    UsageResetDetailsView(reset: .init(snapshot: snapshot), timeZone: context.dateContext.timeZone)
+                }.accessibilityIdentifier("fc.usage.reset-details")
+            }
             if state.refresh.authenticationRequired {
                 WBCard(title: "恢复连接", symbol: "person.crop.circle.badge.exclamationmark") {
                     Text(source.kind == .iproyal ? "在 Chrome 中恢复 IPRoyal 登录，再点击重新连接。登录会话由浏览器保留。" : "请核对实例编号与 API Key，在配置中重新验证。原有效读数会保留。")
@@ -397,7 +403,6 @@ struct UsageStatisticsView: View {
             }
             WBCard(title: "周期与来源", spacing: 12) {
                 if let snapshot = state.snapshot {
-                    detailRow("下次重置", ProviderUsageFormatting.resetDetail(snapshot, timeZone: context.dateContext.timeZone))
                     if source.kind == .bandwagon, let reset = snapshot.resetsAt {
                         Text("重置时刻来自平台时间戳，按 " + ProviderUsageFormatting.resetTimeZoneDescription(reset, timeZone: context.dateContext.timeZone) + " 显示；以每次查询结果为准。")
                             .font(.system(size: 11)).foregroundStyle(palette.muted)
@@ -450,7 +455,7 @@ struct UsageStatisticsView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack { Text("本周期消耗"); Spacer(); Text(snapshot.usedPercent.formatted(.number.precision(.fractionLength(0...1))) + "%") }
                             .font(.system(size: 11)).foregroundStyle(palette.secondary)
-                        WBProgress(value: min(1, max(0, snapshot.usedPercent / 100)), height: 4)
+                        WBProgress(value: snapshot.usedPercent / 100, color: palette.usageColor(forPercent: snapshot.usedPercent), height: 5)
                         HStack {
                             Text(ProviderUsageFormatting.amount(snapshot.usedBytes, unit: snapshot.displayUnit) + " / " + ProviderUsageFormatting.amount(snapshot.limitBytes, unit: snapshot.displayUnit) + " GB")
                             Spacer()

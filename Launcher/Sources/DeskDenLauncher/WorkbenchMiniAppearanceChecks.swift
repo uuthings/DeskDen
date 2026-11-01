@@ -163,7 +163,7 @@ import SwiftUI
             let agenda=WorkbenchMiniAgendaData(event:nil,reminder:missing ? nil:.init(title:"整理下周计划",dateText:"10/26 · 09:00",note:nil),eventStatus:"日历未连接",reminderStatus:"暂无未完成待办")
             var device=WorkbenchMiniDeviceData()
             if !missing {
-                device.memory="12.4 / 24 GB";device.memoryFraction=0.517;device.memoryPressure="压力低"
+                device.memory="12.4 / 24 GB";device.memoryFraction=0.517;device.memoryPressure="压力低";device.memoryPressureState = .normal
                 device.disk="672 / 1,000 GB";device.diskFraction=0.672
                 device.temperature="48°C";device.gpuTemperature="44°C";device.leftFan="1920 RPM";device.rightFan="1860 RPM";device.thermalState="正常"
                 device.download="3.2 MB/s";device.upload="240 KB/s";device.todayTraffic="8.6 GB";device.periodTraffic="128 / 200 GB";device.trafficFraction=0.64
@@ -175,7 +175,7 @@ import SwiftUI
                 }
             }
             let providers=AIProvider.allCases.enumerated().map { index,provider in
-                WorkbenchMiniAIData(provider:provider,title:provider.title,stateText:missing ? "不可用":"已用",detail:"Synthetic quota fixture",isStale:false,windows:[.init(label:"5小时",value:missing ? "—":"32%",fraction:missing ? nil:0.32,reset:"13:00"),.init(label:"每周",value:missing ? "—":"18%",fraction:missing ? nil:0.18,reset:"10/29 09:00")])
+                WorkbenchMiniAIData(provider:provider,title:provider.title,stateText:missing ? "不可用":"已用",detail:"Synthetic quota fixture",isStale:false,windows:[.init(label:"5小时",value:missing ? "—":"70%",fraction:missing ? nil:0.70,reset:"23时59分后"),.init(label:"每周",value:missing ? "—":"90%",fraction:missing ? nil:0.90,reset:"等待更新")])
             }
             let content=FixtureContent(state:state,context:context,agenda:agenda,device:device,providers:providers,safeTop:safeTop,notchWidth:notchWidth,configuring:scenario == .settings)
             let size=CGSize(width:width,height:WorkbenchMiniLayout.height(safeTop:safeTop))

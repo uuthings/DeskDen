@@ -41,13 +41,23 @@ public struct AIQuotaWindow: Codable, Equatable, Sendable {
     public var usedPercent: Double
     public var durationMinutes: Int
     public var resetsAt: Date?
-    public init(usedPercent: Double, durationMinutes: Int, resetsAt: Date?) throws {
+    /// Only a verified source calendar timezone, never inferred from an instant's UTC encoding.
+    public var resetTimeZoneIdentifier: String?
+    public init(usedPercent: Double, durationMinutes: Int, resetsAt: Date?, resetTimeZoneIdentifier: String? = nil) throws {
         guard usedPercent.isFinite, (0...100).contains(usedPercent), (1...525_600).contains(durationMinutes) else { throw AIUsageError.invalid("额度比例应在 0–100 之间，窗口时长必须大于 0。") }
+        guard resetTimeZoneIdentifier == nil || UsageResetTime.sourceTimeZone(identifier: resetTimeZoneIdentifier) != nil else { throw AIUsageError.invalid("来源时区必须是有效的命名时区。") }
         self.usedPercent = usedPercent; self.durationMinutes = durationMinutes; self.resetsAt = resetsAt
+        self.resetTimeZoneIdentifier = resetTimeZoneIdentifier
     }
     public var remainingPercent: Double { max(0, 100 - usedPercent) }
     public var title: String { durationMinutes == 10_080 ? "每周额度" : durationMinutes % 60 == 0 ? "\(durationMinutes / 60) 小时窗口" : "\(durationMinutes) 分钟窗口" }
-    public var severity: Int { usedPercent >= 90 ? 2 : usedPercent >= 75 ? 1 : 0 }
+    public var severity: Int {
+        switch UsageConsumptionLevel.classify(percent: usedPercent) {
+        case .critical: 2
+        case .warning: 1
+        case .normal, .unknown: 0
+        }
+    }
 }
 public struct AIQuotaSnapshot: Codable, Equatable, Identifiable, Sendable {
     public var provider: AIProvider
@@ -82,7 +92,8 @@ public struct AIQuotaSnapshot: Codable, Equatable, Identifiable, Sendable {
     public func validate(now: Date = Date()) throws {
         guard observedAt <= now.addingTimeInterval(300), observedAt.timeIntervalSince1970 > 0, shortWindow != nil || weeklyWindow != nil else { throw AIUsageError.invalid("读数需要有效采集时间和至少一个额度窗口。") }
         for window in [shortWindow, weeklyWindow].compactMap({ $0 }) {
-            _ = try AIQuotaWindow(usedPercent: window.usedPercent, durationMinutes: window.durationMinutes, resetsAt: window.resetsAt)
+            _ = try AIQuotaWindow(usedPercent: window.usedPercent, durationMinutes: window.durationMinutes, resetsAt: window.resetsAt,
+                                  resetTimeZoneIdentifier: window.resetTimeZoneIdentifier)
             if let reset = window.resetsAt, reset < observedAt { throw AIUsageError.invalid("重置时间不能早于读数采集时间。") }
         }
     }

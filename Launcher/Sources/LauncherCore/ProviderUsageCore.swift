@@ -44,16 +44,19 @@ public struct ProviderUsageSnapshot: Codable, Equatable, Sendable {
     public var limitBytes: UInt64
     public var remainingBytes: UInt64?
     public var resetsAt: Date?
+    /// A named source calendar timezone, only when explicitly supplied by the source.
+    public var resetTimeZoneIdentifier: String?
     /// A provider date without a verified timezone must stay a date, not an invented UTC instant.
     public var resetDateText: String?
     public var displayUnit: ProviderUsageDisplayUnit
     public var sourceDescription: String
     public init(sourceID: UUID, observedAt: Date, usedBytes: UInt64, limitBytes: UInt64,
                 remainingBytes: UInt64? = nil, resetsAt: Date? = nil, resetDateText: String? = nil,
-                displayUnit: ProviderUsageDisplayUnit, sourceDescription: String) {
+                displayUnit: ProviderUsageDisplayUnit, sourceDescription: String, resetTimeZoneIdentifier: String? = nil) {
         self.sourceID = sourceID; self.observedAt = observedAt; self.usedBytes = usedBytes; self.limitBytes = limitBytes
         self.remainingBytes = remainingBytes; self.resetsAt = resetsAt; self.resetDateText = resetDateText
         self.displayUnit = displayUnit; self.sourceDescription = sourceDescription
+        self.resetTimeZoneIdentifier = resetTimeZoneIdentifier
     }
     public var usedPercent: Double { limitBytes == 0 ? 0 : Double(usedBytes) / Double(limitBytes) * 100 }
     public var remaining: UInt64 { remainingBytes ?? (limitBytes > usedBytes ? limitBytes - usedBytes : 0) }
@@ -62,6 +65,7 @@ public struct ProviderUsageSnapshot: Codable, Equatable, Sendable {
               remainingBytes.map({ $0 <= Self.maximumBytes }) ?? true,
               Self.validDate(observedAt), observedAt <= now.addingTimeInterval(300),
               resetsAt.map(Self.validDate) ?? true,
+              resetTimeZoneIdentifier == nil || UsageResetTime.sourceTimeZone(identifier: resetTimeZoneIdentifier) != nil,
               sourceDescription.count <= 160, !sourceDescription.isEmpty,
               !sourceDescription.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else { throw ProviderUsageFailure.invalidResponse }
         if let resetDateText {

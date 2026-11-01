@@ -130,8 +130,19 @@ extension WorkbenchMiniAIData {
                 return WorkbenchMiniQuotaData(label:index == 0 ? "短时":"每周",value:"—",fraction:nil)
             }
             let label=window.durationMinutes == 10_080 ? "每周":window.durationMinutes % 60 == 0 ? "\(window.durationMinutes / 60)小时":"\(window.durationMinutes)分钟"
-            let reset=window.resetsAt.map {WorkbenchMiniFormat.date($0,calendar:displayCalendar,
-                pattern:displayCalendar.isDate($0,inSameDayAs:now) ? "HH:mm":"M/d HH:mm")} ?? "未提供"
+            let resetTime = UsageResetTime(window: window)
+            let reset: String
+            switch resetTime.state(at: now, timeZone: displayCalendar.timeZone) {
+            case .relative:
+                reset = resetTime.summary(at: now, timeZone: displayCalendar.timeZone)
+                    .replacingOccurrences(of: "小时", with: "时").replacingOccurrences(of: "分钟", with: "分")
+                    .replacingOccurrences(of: "后重置", with: "后")
+            case .absolute:
+                reset = window.resetsAt.map { WorkbenchMiniFormat.date($0, calendar: displayCalendar, pattern: "M/d HH:mm") } ?? "未提供"
+            case .waiting: reset = "等待更新"
+            case .imminent: reset = "即将重置"
+            case .unavailable, .dateOnly: reset = "未提供"
+            }
             return WorkbenchMiniQuotaData(label:label,value:String(format:"%.0f%%",window.usedPercent),fraction:window.usedPercent/100,reset:reset)
         }
         var lines=[summary?.detail ?? "正在读取已配置的本机额度来源。"]
@@ -140,8 +151,7 @@ extension WorkbenchMiniAIData {
             lines.append("来源："+snapshot.source.title)
             lines.append("采集："+WorkbenchMiniFormat.date(snapshot.observedAt,calendar:displayCalendar,pattern:"MM/dd · HH:mm"))
             for window in snapshot.availableWindows {
-                let reset=window.resetsAt.map {WorkbenchMiniFormat.date($0,calendar:displayCalendar,pattern:"MM/dd · HH:mm")} ?? "来源未提供"
-                lines.append(window.title+"重置："+reset)
+                lines.append(window.title + "：" + UsageResetTime(window: window).help(at: now, timeZone: displayCalendar.timeZone))
             }
         }
         detail=lines.joined(separator:"\n")
@@ -173,6 +183,7 @@ struct WorkbenchMiniDeviceData {
     var note: String?
     var memoryFraction: Double?
     var memoryPressure = "压力不可用"
+    var memoryPressureState: DevicePressure = .unknown
     var disk = "—"
     var diskFraction: Double?
     var diskNote = "正在读取启动卷容量"
@@ -198,6 +209,7 @@ extension WorkbenchMiniDeviceData {
             self.memory = DeviceFormat.capacity(memory.used) + " / " + DeviceFormat.capacity(memory.total)
             memoryFraction = memory.total > 0 ? Double(memory.used) / Double(memory.total) : nil
             memoryPressure = DeviceFormat.pressure(memory.pressure)
+            memoryPressureState = memory.pressure
         }
         if fresh, let disk = snapshot.disk {
             self.disk = DeviceFormat.storage(disk.used) + " / " + DeviceFormat.storage(disk.total)
@@ -268,8 +280,7 @@ extension WorkbenchMiniExternalProviderData {
                             Double(snapshot.limitBytes) / divisor, snapshot.displayUnit.title)
             fraction = snapshot.usedPercent / 100
             let observed = WorkbenchMiniFormat.date(snapshot.observedAt, calendar: calendar, pattern: "M/d HH:mm")
-            let reset = snapshot.resetsAt.map { WorkbenchMiniFormat.date($0, calendar: calendar, pattern: "M/d HH:mm") }
-                ?? snapshot.resetDateText.map { $0 + "（服务商日期）" } ?? "来源未提供"
+            let reset = UsageResetTime(snapshot: snapshot).help(at: now, timeZone: calendar.timeZone)
             detail = [snapshot.sourceDescription, snapshot.displayUnit.explanation, "采集：" + observed,
                       "重置：" + reset, isStale ? "上次有效读数；不代表当前余额。" : nil, state.message].compactMap { $0 }.joined(separator: "\n")
         } else {

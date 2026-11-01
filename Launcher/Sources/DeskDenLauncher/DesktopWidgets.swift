@@ -239,7 +239,7 @@ private struct DesktopCardContent: View {
                 line("今日已记录", DeviceFormat.bytes(s.network.todayDownload + s.network.todayUpload))
                 if let battery = s.battery {
                     Text("电量 \(Int(battery.percent))% · \(battery.isPluggedIn ? "电源适配器" : "电池供电")")
-                        .font(.system(size: 10)).foregroundStyle(!battery.isPluggedIn && battery.percent <= 10 ? palette.critical : !battery.isPluggedIn && battery.percent <= 20 ? palette.warning : palette.muted)
+                        .font(.system(size: 10)).foregroundStyle(DeviceAppearance.battery(battery.percent, pluggedIn: battery.isPluggedIn, palette: palette))
                 } else { Text("\(DeviceFormat.thermal(s.thermalState)) · 无内置电池").font(.system(size: 10)).foregroundStyle(palette.muted) }
             }
         }
@@ -282,13 +282,13 @@ private struct DesktopCardContent: View {
         HStack(spacing: 6) {
             Text(title).font(.system(size: 10)).foregroundStyle(palette.secondary).frame(width: 40, alignment: .leading)
             if let window {
-                WBProgress(value: window.usedPercent / 100, color: current ? metricColor(window.usedPercent) : palette.muted, height: 4)
+                WBProgress(value: window.usedPercent / 100, color: current ? palette.usageColor(forPercent: window.usedPercent) : palette.muted, height: 4)
             } else {
                 Capsule().fill(palette.progressTrack).frame(height: 4)
             }
             Text(window.map { String(format: "%.0f%%", $0.usedPercent) } ?? "—")
                 .font(.system(size: 10)).monospacedDigit().frame(width: 30, alignment: .trailing)
-                .foregroundStyle(current ? metricColor(window?.usedPercent) : palette.muted)
+                .foregroundStyle(current ? palette.usageColor(forPercent: window?.usedPercent) : palette.muted)
         }.frame(height: 14)
     }
     private func caption(_ summary: AIProviderSummary?) -> String {

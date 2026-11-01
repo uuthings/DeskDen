@@ -35,7 +35,7 @@ import LauncherCore
                     sessionsPath: folder.appendingPathComponent("disabled-" + provider.rawValue).path,
                     manualSnapshot: AIQuotaSnapshot(provider: provider, observedAt: now, source: .manual,
                         shortWindow: provider == .codex ? try AIQuotaWindow(usedPercent: 32, durationMinutes: 300, resetsAt: now.addingTimeInterval(7200)) : nil,
-                        weeklyWindow: try AIQuotaWindow(usedPercent: provider == .codex ? 16 : 28, durationMinutes: 10_080, resetsAt: now.addingTimeInterval(86_400)),
+                        weeklyWindow: try AIQuotaWindow(usedPercent: provider == .codex ? 16 : 28, durationMinutes: 10_080, resetsAt: now.addingTimeInterval(86_400), resetTimeZoneIdentifier: "America/Los_Angeles"),
                         accountPlan: provider == .codex ? .plus : .pro))
             }
             try JSONEncoder().encode(disabled).write(to: aiSources.appendingPathComponent("sources.json"))
@@ -51,7 +51,7 @@ import LauncherCore
             document.states[isp.id] = .init(snapshot: .init(sourceID: isp.id, observedAt: now, usedBytes: 45_000_000_000, limitBytes: 100_000_000_000,
                 remainingBytes: 55_000_000_000, resetDateText: "2026-11-25", displayUnit: .decimalGB, sourceDescription: "隔离测试数据"))
             document.states[vps.id] = .init(snapshot: .init(sourceID: vps.id, observedAt: now, usedBytes: 128 * 1_073_741_824, limitBytes: 1000 * 1_073_741_824,
-                resetsAt: now.addingTimeInterval(86_400), displayUnit: .binaryGB, sourceDescription: "隔离测试数据"))
+                resetsAt: now.addingTimeInterval(172_800), displayUnit: .binaryGB, sourceDescription: "隔离测试数据", resetTimeZoneIdentifier: "America/Los_Angeles"))
             var failedFirstRead = ProviderUsageSourceState()
             failedFirstRead.refresh.failed(.transport, at: now)
             failedFirstRead.message = ProviderUsageFailure.transport.localizedDescription
@@ -73,6 +73,9 @@ import LauncherCore
             let host = NSHostingView(rootView: WorkbenchRootView(model: app).environment(\.accessibilityEnabled, true))
             window.contentView = host; app.hostWindow = window; app.modals.hostWindow = window
             defer { app.modals.clear(); window.contentView = nil; window.close(); app.shutdown() }
+            let headerChecks = await sourceHeaderChecks(appearance: app.usageAppearance, window: window)
+            count += headerChecks.count; failures += headerChecks.failures
+            window.contentView = host
             var observedCardWidths = Set<Int>()
             for light in [false, true] {
                 app.changeAppearance(light ? .light : .dark)
@@ -102,6 +105,11 @@ import LauncherCore
                           && frame("fc.usage.group.service", objects: objects) == nil && frame("fc.usage.group.ai", objects: objects) == nil,
                           "usage \(width)/\(light): category filtering and sorting replace collapsible group headers")
                     let apiText = text("fc.usage.api." + apiSource.id.uuidString, objects: objects)
+                    let ispText = text("fc.usage.source." + isp.id.uuidString, objects: objects)
+                    let vpsText = text("fc.usage.source." + vps.id.uuidString, objects: objects)
+                    check(ispText.contains("45%") && ispText.contains("45 GB / 100 GB")
+                          && vpsText.contains("12.8%") && vpsText.contains("128 GB / 1,000 GB"),
+                          "usage \(width)/\(light): traffic cards expose used percentages beside their actual decimal and binary amounts")
                     check(apiText.contains("CNY") && apiText.contains("23.75") && !apiText.contains("GB") && !apiText.contains("%"),
                           "usage \(width)/\(light): the API card exposes its exact currency amount without traffic units or quota percentages")
                     check(provider.refreshing.isEmpty && api.refreshing.isEmpty && !app.device.isSampling, "usage fixture performs no live collection")
@@ -284,6 +292,11 @@ import LauncherCore
                   && frame("fc.usage.order-link", objects: objects(host)) != nil,
                   "service detail replaces the AI overview and mounts its native order action")
             check(frame("fc.usage.order-link", objects: objects(host)) != nil, "service detail exposes the official order link without opening a browser during checks")
+            let dateOnlyDetail = labels(objects(host))
+            check(frame("fc.usage.reset-details", objects: objects(host)) != nil
+                  && dateOnlyDetail.contains("2026-11-25") && dateOnlyDetail.contains("暂无法换算")
+                  && dateOnlyDetail.contains("具体时间与来源时区未提供"),
+                  "a date-only service detail preserves the source date and explains why no timezone conversion or countdown is available")
             if let output { check(save(host, to: output.appendingPathComponent("usage-detail.png")), "service detail renders offscreen") }
             app.usagePresentation.edit(isp); await settle(host)
             check(app.modals.isPresented && window.attachedSheet == nil, "connection editing uses the shared modal host")
@@ -327,6 +340,14 @@ import LauncherCore
             check(frame("fc.usage.bandwagon.reset-explanation", objects: objects(host)) != nil
                   && frame("fc.usage.bandwagon.accounting-explanation", objects: objects(host)) != nil,
                   "Bandwagon detail explains provider accounting and the timezone conversion")
+            let preciseResetText = labels(objects(host))
+            let vpsReset = document.states[vps.id]!.snapshot!.resetsAt!
+            check(preciseResetText.contains("工作台时间") && preciseResetText.contains("来源时间")
+                  && preciseResetText.contains(app.context.dateContext.timeZone.identifier)
+                  && preciseResetText.contains("America/Los_Angeles")
+                  && preciseResetText.contains(UsageResetTime.timestamp(vpsReset, timeZone: app.context.dateContext.timeZone))
+                  && preciseResetText.contains(UsageResetTime.timestamp(vpsReset, timeZone: TimeZone(identifier: "America/Los_Angeles")!)),
+                  "a precise provider reset detail displays both the selected workbench zone and the explicitly known source zone")
             if let output { check(save(host, to: output.appendingPathComponent("usage-bandwagon-detail.png")), "Bandwagon detail renders offscreen") }
             app.usagePresentation.add(.bandwagon); await settle(host)
             let connectionDraft = app.usagePresentation.editor!
@@ -357,6 +378,9 @@ import LauncherCore
             check(app.route == .ai && app.ai.destination == .overview && app.usagePresentation.selectedSourceID == nil, "unified overview returns without changing the legacy route identity")
             let pending = provider.state(for: missing.id)
             check(pending.snapshot == nil && pending.status() == .failed, "a failed first query retains unknown usage instead of a fabricated old reading")
+            let resetChecks = await resetPageChecks(app: app, window: window, folder: folder, output: output)
+            count += resetChecks.count; failures += resetChecks.failures
+            window.contentView = host
             // Exercise the actual production settings and Home in this same
             // hidden host. An invalid channel plus allowsStarting=false prevents
             // even an accidental action from creating a real update engine.
@@ -497,6 +521,83 @@ import LauncherCore
         print("Usage UI checks: \(count) checks, \(failures) failures")
         return (count, failures)
     }
+    /// Measure production content in a hidden host: whole-card accessibility
+    /// intentionally combines its children, and decorative icons stay hidden.
+    private static func sourceHeaderChecks(appearance: UsagePresentationModel, window: NSWindow) async -> (count: Int, failures: Int) {
+        var count = 0, failures = 0
+        func check(_ value: Bool, _ label: String) {
+            count += 1; if !value { failures += 1 }; print("\(value ? "PASS" : "FAIL") \(label)")
+        }
+        for width in [CGFloat(170), 300] {
+            for (name, category) in [("Codex", "订阅"), ("较长的服务连接名称", "自定义流量分类")] {
+                let probe = NSHostingView(rootView: UsageCardTitle(name: name, categoryTitle: category, categoryID: "traffic-services")
+                    .frame(width: width, height: 36).environment(\.accessibilityEnabled, true))
+                window.contentView = probe; await settle(probe)
+                let controls = objects(probe)
+                let nameFrame = labelFrame(name, objects: controls), categoryFrame = labelFrame(category, objects: controls)
+                check(nameFrame.flatMap { title in categoryFrame.map { tag in
+                    abs(title.midY - tag.midY) <= 3 && tag.minX >= title.maxX - 1
+                        && title.width > 0 && tag.width > 0 && title.union(tag).width <= width + 1
+                } } == true, "usage header \(Int(width)): title and category share one row and remain inside the available width")
+            }
+        }
+        for icon in [UsageCardIcon.automatic, .brand(.claude), .symbol("server.rack")] {
+            let probe = NSHostingView(rootView: UsageSourceIcon(appearance: appearance, icon: icon, aiProvider: .codex).fixedSize())
+            window.contentView = probe; await settle(probe)
+            let size = probe.fittingSize
+            check(abs(size.width - 32) < 1 && abs(size.height - 32) < 1,
+                  "usage source icon keeps its 32-point footprint for automatic, brand and symbol artwork")
+        }
+        return (count, failures)
+    }
+    private static func resetPageChecks(app: WorkbenchAppModel, window: NSWindow, folder: URL, output: URL?) async -> (count: Int, failures: Int) {
+        var count = 0, failures = 0
+        func check(_ value: Bool, _ label: String) {
+            count += 1; if !value { failures += 1 }; print("\(value ? "PASS" : "FAIL") \(label)")
+        }
+        let context = WorkbenchContextModel(dataDirectory: folder.appendingPathComponent("ResetContext"), provider: UsageCheckWeather())
+        let previousSize = window.contentView?.frame.size ?? .init(width: 1120, height: 758)
+        defer { context.stop(); app.openUsageOverview(); window.setContentSize(previousSize) }
+        let shanghai = WeatherCity(id: "usage:shanghai", name: "上海", latitude: 31.23, longitude: 121.47, timeZoneIdentifier: "Asia/Shanghai")
+        let losAngeles = WeatherCity(id: "usage:los-angeles", name: "洛杉矶", latitude: 34.05, longitude: -118.24, timeZoneIdentifier: "America/Los_Angeles")
+        check(context.saveCity(shanghai), "reset fixture selects a workbench city using an offline weather provider")
+        var page = UsageStatisticsView(app: app)
+        page.context = context
+        let probe = NSHostingView(rootView: ScrollView { page.padding(20) }.environment(\.accessibilityEnabled, true))
+        window.setContentSize(.init(width: 1120, height: 1500)); window.contentView = probe
+        app.openUsageOverview(); await settle(probe)
+        check(press("fc.ai.provider.codex", in: probe), "subscription card opens its actual provider detail")
+        await settle(probe)
+        guard let snapshot = app.ai.providerSummaries.first(where: { $0.provider == .codex })?.snapshot,
+              let weeklyReset = snapshot.weeklyWindow?.resetsAt, let shortReset = snapshot.shortWindow?.resetsAt else {
+            check(false, "isolated subscription retains both reset windows"); return (count, failures)
+        }
+        let original = labels(objects(probe))
+        check(frame("fc.ai.reset-details", objects: objects(probe)) != nil
+              && original.contains("工作台时间") && original.contains("来源时间")
+              && original.contains("Asia/Shanghai") && original.contains("America/Los_Angeles")
+              && original.contains(UsageResetTime.timestamp(weeklyReset, timeZone: TimeZone(identifier: "Asia/Shanghai")!)),
+              "subscription detail initially presents the weekly reset in both workbench and known source timezones")
+        check(press("fc.ai.reset-window.0", in: probe), "subscription detail exposes its short-window reset selector")
+        await settle(probe)
+        let shortText = labels(objects(probe))
+        check(shortText.contains("来源时区未提供")
+              && shortText.contains(UsageResetTime.timestamp(shortReset, timeZone: TimeZone(identifier: "Asia/Shanghai")!)),
+              "selecting the short window displays its own reset and honestly labels its unknown source timezone")
+        check(context.saveCity(losAngeles), "reset fixture changes the workbench city without accessing a live weather service")
+        await settle(probe)
+        let changed = labels(objects(probe))
+        check(changed.contains(UsageResetTime.timestamp(shortReset, timeZone: TimeZone(identifier: "America/Los_Angeles")!))
+              && changed.contains("按工作台时区统计 · America/Los_Angeles")
+              && !changed.contains("Asia/Shanghai") && app.ai.providerSummaries.first(where: { $0.provider == .codex })?.snapshot == snapshot,
+              "changing the workbench timezone updates reset and history presentation without altering the source readings")
+        check(changed.contains("最后一次实际读数") && changed.contains("并非当日消耗") && changed.contains("无读数不代表 0"),
+              "subscription history explains that daily observations are not daily consumption and missing readings are unknown")
+        check(!window.isVisible && !window.isKeyWindow && !app.ai.isRefreshing && app.providerUsage.refreshing.isEmpty,
+              "reset detail interactions remain hidden and do not refresh live sources")
+        if let output { check(save(probe, to: output.appendingPathComponent("usage-ai-reset-detail.png")), "subscription reset and history explanation render offscreen") }
+        return (count, failures)
+    }
     private static func nativeViews(_ root: NSView) -> [NSView] { root.subviews.flatMap { [$0] + nativeViews($0) } }
     private static func settle(_ host: NSView) async { try? await Task.sleep(for: .milliseconds(120)); host.layoutSubtreeIfNeeded() }
     private static func save(_ host: NSView, to url: URL) -> Bool {
@@ -532,6 +633,14 @@ import LauncherCore
             }
         }.joined(separator: " ")
     }
+    private static func labelFrame(_ label: String, objects: [NSObject]) -> CGRect? {
+        objects.first { object in
+            object.responds(to: NSSelectorFromString("accessibilityFrame"))
+                && ["accessibilityLabel", "accessibilityValue"].contains { key in
+                    object.responds(to: NSSelectorFromString(key)) && object.value(forKey: key) as? String == label
+                }
+        }.flatMap { ($0.value(forKey: "accessibilityFrame") as? NSValue)?.rectValue }
+    }
     private static func comesBefore(_ first: String, _ second: String, in host: NSView) -> Bool {
         let controls = objects(host)
         guard let a = frame(first, objects: controls), let b = frame(second, objects: controls) else { return false }
@@ -556,6 +665,14 @@ import LauncherCore
         }) else { return false }
         typealias Press = @convention(c) (AnyObject, Selector) -> Bool
         return unsafeBitCast(object.method(for: selector), to: Press.self)(object, selector)
+    }
+}
+
+private struct UsageCheckWeather: WeatherProviding {
+    let providerID = "usage-ui-fixture"
+    func searchCities(query: String, language: String) async throws -> [WeatherCity] { [] }
+    func currentWeather(for city: WeatherCity, receivedAt: Date) async throws -> WeatherSnapshot {
+        throw URLError(.notConnectedToInternet)
     }
 }
 

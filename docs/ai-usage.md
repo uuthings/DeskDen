@@ -24,6 +24,14 @@ Claude Code exposes these fields only for supported subscription or gateway acco
 
 Selecting a quota JSON remains available for an existing status-line setup. The advanced exported Python adapter is an alternative for manual integration; exporting it alone does not configure Claude Code. Disabling automatic reading or removing the JSON connection stops DeskDen from reading that source and retains existing local history.
 
+## Quota colors and reset times
+
+Subscription cards place the category tag beside the title, with a 32-point source icon and a smaller subtitle. Quota meters use the shared consumed-percentage colors: the normal theme color below 70%, yellow from 70% and red from 90%. The same thresholds apply to quota history, Mini and desktop widgets. Notification thresholds remain independently configurable; changing a notification rule does not change these colors. Local Token activity is a separate measurement and does not use quota danger thresholds.
+
+A known reset within 24 hours, or later on the same calendar day in the selected workbench timezone, shows remaining hours and minutes. Less than one minute is **即将重置**; after the instant passes, **已到重置时间，等待更新** preserves the previous reading. More distant resets show their date and time. The countdown updates every minute and on return or wake without making extra source requests or assuming that an allowance has reset.
+
+Reset details show the full workbench date and time, timezone identifier and UTC offset at the reset instant. If the source explicitly supplies a named timezone, a second row shows that same instant in the source timezone. Otherwise it states that the source timezone was not provided: a Unix timestamp or an ISO timestamp's offset alone does not establish the provider's billing timezone. Switching the workbench timezone changes calendar labels, not the elapsed time until reset. Missing reset times remain unavailable; a date without a time is preserved without conversion or a countdown.
+
 ## State and freshness
 
 - The green state dot means a fresh, valid quota reading is available.

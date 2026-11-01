@@ -6,7 +6,11 @@ enum DeviceAppearance {
     static let cool = Color(red: 0.56, green: 0.68, blue: 0.74)
     static let charging = Color(red: 0.43, green: 0.85, blue: 0.65)
     static func pressure(_ value: DevicePressure?, palette: ThemePalette = .init()) -> Color { value == .critical ? palette.critical : value == .warning ? palette.warning : value == nil || value == .unknown ? palette.muted : palette.accent }
-    static func storage(_ value: Double?, palette: ThemePalette = .init()) -> Color { (value ?? 0) >= 90 ? palette.critical : (value ?? 0) >= 80 ? palette.warning : value == nil ? palette.muted : palette.accent }
+    static func storage(_ value: Double?, palette: ThemePalette = .init()) -> Color { palette.usageColor(forPercent: value) }
+    static func battery(_ percent: Double, pluggedIn: Bool, palette: ThemePalette = .init()) -> Color {
+        guard percent.isFinite, percent >= 0 else { return palette.muted }
+        return !pluggedIn && percent <= 10 ? palette.critical : !pluggedIn && percent <= 20 ? palette.warning : palette.text
+    }
 }
 struct DeviceCardSurface: View {
     var editing = false
@@ -307,7 +311,7 @@ struct DeviceUsageBar: View {
     var body: some View {
         GeometryReader { g in
             Capsule().fill(palette.progressTrack).overlay(alignment: .leading) {
-                if let value { Capsule().fill((tone ?? palette.accent).opacity(0.85)).frame(width: g.size.width * min(1, max(0, value / 100))) }
+                if let value { Capsule().fill((tone ?? palette.usageColor(forPercent: value)).opacity(0.85)).frame(width: g.size.width * min(1, max(0, value / 100))) }
             }
         }.frame(height: 5).accessibilityLabel(value.map { "已用 \(Int($0))%" } ?? "暂无读数")
     }
@@ -319,7 +323,7 @@ struct DeviceUsageRing: View {
     var body: some View {
         ZStack {
             Circle().stroke(palette.progressTrack, lineWidth: 5)
-            if let value { Circle().trim(from: 0, to: min(1, max(0, value / 100))).stroke(tone ?? palette.accent, style: StrokeStyle(lineWidth: 5, lineCap: .round)).rotationEffect(.degrees(-90)) }
+            if let value { Circle().trim(from: 0, to: min(1, max(0, value / 100))).stroke(tone ?? palette.usageColor(forPercent: value), style: StrokeStyle(lineWidth: 5, lineCap: .round)).rotationEffect(.degrees(-90)) }
             Text(value.map { "\(Int($0.rounded()))%" } ?? "—").font(.system(size: 13)).monospacedDigit()
         }.padding(3)
     }
@@ -386,8 +390,9 @@ struct DevicePowerLine: View {
     var body: some View {
         HStack(spacing: 8) {
             if let battery = snapshot.battery {
-                DeviceBatteryGlyph(fraction: battery.percent / 100).frame(width: 24, height: 13)
-                Text("\(Int(battery.percent.rounded()))%").font(.system(size: 12)).monospacedDigit()
+                let tone = DeviceAppearance.battery(battery.percent, pluggedIn: battery.isPluggedIn, palette: palette)
+                DeviceBatteryGlyph(fraction: battery.percent / 100, tone: tone).frame(width: 24, height: 13)
+                Text("\(Int(battery.percent.rounded()))%").font(.system(size: 12)).monospacedDigit().foregroundStyle(tone)
                 Spacer(minLength: 4)
                 HStack(spacing: 4) {
                     if battery.isCharging { Image(systemName: "bolt.fill").font(.system(size: 10)) }
@@ -405,11 +410,12 @@ struct DevicePowerLine: View {
 struct DeviceBatteryGlyph: View {
     @Environment(\.workbenchPalette) private var palette
     let fraction: Double
+    var tone: Color? = nil
     var body: some View {
         GeometryReader { g in
             let w = g.size.width - 3
             RoundedRectangle(cornerRadius: 2.5).stroke(palette.secondary, lineWidth: 1).frame(width: w)
-            RoundedRectangle(cornerRadius: 1).fill(palette.text).frame(width: max(0, w - 4) * min(1, max(0, fraction)), height: max(0, g.size.height - 4)).offset(x: 2, y: 2)
+            RoundedRectangle(cornerRadius: 1).fill(tone ?? palette.text).frame(width: max(0, w - 4) * min(1, max(0, fraction)), height: max(0, g.size.height - 4)).offset(x: 2, y: 2)
             Capsule().fill(palette.secondary).frame(width: 1.5, height: g.size.height * 0.38).offset(x: w + 1.5, y: g.size.height * 0.31)
         }
     }

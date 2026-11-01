@@ -335,6 +335,9 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     private weak var launcher:LauncherController?
     private var systemObservers:[NSObjectProtocol]=[]
     private var presentationGeneration = 0
+    private var pendingActivationGeneration:Int?
+    private var activationObserver:NSObjectProtocol?
+    private var activationExpiryTask:Task<Void,Never>?
     private var finishingClose = false
     private var pendingMinimizeGeneration:Int?
     private var fullScreenTransition=false
@@ -415,6 +418,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         return model.cancelPresentedInteraction()
     }
     func present(route:WorkbenchRoute?=nil,settingsTab:WorkbenchSettingsTab?=nil) {
+        cancelPendingPresentationActivation()
         pendingMinimizeGeneration=nil
         launcher?.topEntryController?.cancelPendingEntry()
         guard let window else { return }
@@ -430,6 +434,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         present(window, route: route, settingsTab: settingsTab, fromTop: false)
     }
     func presentFromTopEntry(originFrame: NSRect? = nil) {
+        cancelPendingPresentationActivation()
         guard let window else { return }
         if let originFrame, originFrame.width.isFinite, originFrame.height.isFinite,
            originFrame.midX.isFinite, originFrame.midY.isFinite { topEntryOriginFrame = originFrame }
@@ -491,13 +496,57 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         } else {
             ordinaryWindowSessionActive = true
             updateDockParticipation()
-            showWindow(nil);NSApp.activate();target.makeKeyAndOrderFront(nil)
+            showWindow(nil)
+            activateOrdinaryPresentation(target)
         }
         guard shouldAnimate else { return }
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let duration = reduceMotion ? 0.12 : fromTop ? 0.28 : 0.24
         animateSurface(target, entering: true, fromTop: fromTop, duration: duration, newlyVisible: !wasVisible)
         transitionOpacity(target, to: 1, duration: duration, curve: .easeOut)
+    }
+    /// Activation-policy changes and the status menu's dismissal can complete
+    /// after a first presentation. Finish keyboard focus after activation, not
+    /// merely after ordering a visible but inactive ordinary window.
+    private func activateOrdinaryPresentation(_ target:NSWindow) {
+        cancelPendingPresentationActivation()
+        let generation=presentationGeneration
+        pendingActivationGeneration=generation
+        activationObserver=NotificationCenter.default.addObserver(forName:NSApplication.didBecomeActiveNotification,object:NSApp,queue:.main) { [weak self,weak target] _ in
+            MainActor.assumeIsolated {
+                guard let self,let target else {return}
+                self.finishOrdinaryPresentationActivation(target,generation:generation)
+            }
+        }
+        activationExpiryTask=Task { @MainActor [weak self] in
+            do {try await Task.sleep(for:.seconds(1))} catch {return}
+            guard let self,self.pendingActivationGeneration == generation else {return}
+            self.cancelPendingPresentationActivation()
+        }
+        DispatchQueue.main.async { [weak self,weak target] in
+            guard let self,let target,self.canCompletePresentationActivation(target,generation:generation) else {return}
+            NSApp.activate()
+            if NSApp.isActive {self.finishOrdinaryPresentationActivation(target,generation:generation)}
+        }
+    }
+    private func canCompletePresentationActivation(_ target:NSWindow,generation:Int)->Bool {
+        pendingActivationGeneration == generation && presentationGeneration == generation
+            && ordinaryWindowSessionActive && !isTopEntryPresented && target === window
+            && target.isVisible && !target.isMiniaturized && ordinaryDismissalGeneration == nil
+    }
+    private func finishOrdinaryPresentationActivation(_ target:NSWindow,generation:Int) {
+        guard NSApp.isActive,canCompletePresentationActivation(target,generation:generation) else {return}
+        cancelPendingPresentationActivation()
+        target.makeKeyAndOrderFront(nil)
+        // Native system sheets keep their original parent and draft, and remain
+        // the keyboard target after the parent has become the foreground window.
+        target.attachedSheet?.makeKeyAndOrderFront(nil)
+    }
+    func cancelPendingPresentationActivation() {
+        pendingActivationGeneration=nil
+        activationExpiryTask?.cancel();activationExpiryTask=nil
+        if let activationObserver {NotificationCenter.default.removeObserver(activationObserver)}
+        activationObserver=nil
     }
     private enum OpacityCurve {
         case easeIn, easeOut, easeInOut
@@ -766,6 +815,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         modal.makeKeyAndOrderFront(nil)
     }
     private func revealAttachedSheet(_ sheet: NSWindow) {
+        cancelPendingPresentationActivation()
         ordinaryDismissalGeneration=nil
         presentationGeneration += 1
         finishingClose = false
@@ -785,7 +835,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         else {
             ordinaryWindowSessionActive = true
             updateDockParticipation()
-            NSApp.activate(); parent?.makeKeyAndOrderFront(nil)
+            if let parent {parent.orderFront(nil);activateOrdinaryPresentation(parent)}
         }
         restoreSuspendedTopChildren()
         sheet.alphaValue = 1
@@ -793,6 +843,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     }
     func requestToggleFullScreen() {
         guard !model.quitting else {return}
+        cancelPendingPresentationActivation()
         if isTopEntryPresented {promoteTopEntryToOrdinary(fullScreen:true);return}
         guard let window else {return}
         cancelOrdinaryDismissalForWindowControl(window)
@@ -801,6 +852,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     }
     func requestMinimize() {
         guard !model.quitting else {return}
+        cancelPendingPresentationActivation()
         model.vault.lock(reason:"最小化方寸")
         if isTopEntryPresented {promoteTopEntryToOrdinary(fullScreen:false,minimize:true);return}
         guard let window else {return}
@@ -828,6 +880,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     }
     private func dismiss(_ target: NSWindow? = nil, close: Bool = false) {
         guard !model.quitting,let target = target ?? presentationWindow else { return }
+        cancelPendingPresentationActivation()
         pendingMinimizeGeneration=nil
         model.vault.lock(reason:close ? "关闭方寸窗口":"收起方寸窗口")
         model.confirmingQuit=false
@@ -863,6 +916,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     func windowWillClose(_ notification:Notification) {
         if let window = notification.object as? NSWindow { cancelOpacityTransition(window) }
         guard notification.object as? NSWindow === presentationWindow else { return }
+        cancelPendingPresentationActivation()
         ordinaryDismissalGeneration=nil
         ordinaryWindowSessionActive=false;updateDockParticipation()
         model.vault.lock(reason:"关闭工作台");model.setWindowVisible(false);launcher?.settingsWindowController?.stopEmbedding()
@@ -914,7 +968,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         pendingMinimizeGeneration=nil
         if shouldMinimize {window?.performMiniaturize(nil)}
     }
-    func windowDidMiniaturize(_ notification:Notification) {if notification.object as? NSWindow === presentationWindow {model.vault.lock(reason:"最小化方寸");model.setWindowVisible(false);updateDockParticipation()}}
+    func windowDidMiniaturize(_ notification:Notification) {if notification.object as? NSWindow === presentationWindow {cancelPendingPresentationActivation();model.vault.lock(reason:"最小化方寸");model.setWindowVisible(false);updateDockParticipation()}}
     func windowDidDeminiaturize(_ notification:Notification) {if notification.object as? NSWindow === presentationWindow {ordinaryWindowSessionActive=true;updateDockParticipation();model.setWindowVisible(true)}}
 }
 

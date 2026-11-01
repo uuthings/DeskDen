@@ -19,9 +19,18 @@ struct NetworkMonitorView: View {
     private var today: DeviceTrafficSummary { model.trafficSummary(period: .day, scope: .all) }
     private var known: Bool { summary.coveredSeconds > 0 }
     private var percentage: Double? { known ? model.budgetProgressPercent : nil }
-    private var tone: Color { (percentage ?? 0) >= 100 ? palette.critical : (percentage ?? 0) >= Double(model.budget.warningPercent) ? palette.warning : palette.success }
+    private var tone: Color { palette.usageColor(forPercent: percentage) }
     private var budgetStatus: String {
-        !summary.hasStarted ? "账期尚未开始" : !known ? "等待有效记录" : !model.budget.enabled ? "预算未启用" : (percentage ?? 0) >= 100 ? "已超出预算" : (percentage ?? 0) >= Double(model.budget.warningPercent) ? "接近预算" : "预算充足"
+        if !summary.hasStarted { return "账期尚未开始" }
+        if !known { return "等待有效记录" }
+        if !model.budget.enabled { return "预算未启用" }
+        if let percentage, percentage >= 100 { return percentage > 100 ? "已超出预算" : "已用尽预算" }
+        switch UsageConsumptionLevel.classify(percent: percentage) {
+        case .unknown: return "等待有效记录"
+        case .normal: return "预算充足"
+        case .warning: return "留意用量"
+        case .critical: return "接近预算上限"
+        }
     }
 
     var body: some View {
@@ -474,7 +483,7 @@ struct DeviceBudgetDialog: View {
                     }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                         .background(palette.soft, in: RoundedRectangle(cornerRadius: 8))
                 }.disabled(!drafts.budget.enabled || drafts.savingBudget)
-                Text("预算仅提醒，不会限速或断网。保存后再申请通知权限，未采集的时段不补记流量。")
+                Text("用量颜色统一在 70% 转黄、90% 转红；通知按上方设置的比例触发。预算仅提醒，不会限速或断网；未采集的时段不补记流量。")
                     .font(.system(size: 11)).foregroundStyle(palette.muted).fixedSize(horizontal: false, vertical: true)
                 if drafts.budgetStatus != "已保存" { Text(drafts.budgetStatus).font(.system(size: 11)).foregroundStyle(palette.warning) }
             }

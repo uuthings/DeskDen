@@ -275,7 +275,7 @@ struct WorkbenchMiniPanelView: View {
         case .disk:
             VStack(spacing: 5) { heading("磁盘空间", percent(device.diskFraction)); valueRow(device.disk, "已用"); meter(device.diskFraction) }.help(device.diskNote)
         case .memory:
-            VStack(spacing: 5) { heading("运行内存", device.memoryPressure); valueRow(device.memory, percent(device.memoryFraction)); meter(device.memoryFraction) }
+            VStack(spacing: 5) { heading("运行内存", device.memoryPressure); valueRow(device.memory, percent(device.memoryFraction)); meter(device.memoryFraction, color: DeviceAppearance.pressure(device.memoryPressureState, palette: palette)) }
                 .help("内存为已用 / 总量；压力由系统独立指标提供。" + (device.note ?? ""))
         case .todo:
             VStack(alignment: .leading, spacing: 4) {
@@ -334,11 +334,11 @@ struct WorkbenchMiniPanelView: View {
             .font(.system(size: 11)).frame(height: 16)
     }
     private func percent(_ value: Double?) -> String { value.map { String(format: "%.1f%%", $0 * 100) } ?? "—" }
-    private func meter(_ fraction: Double?, stale: Bool = false) -> some View {
+    private func meter(_ fraction: Double?, stale: Bool = false, color: Color? = nil) -> some View {
         GeometryReader { geometry in
             if let fraction, fraction.isFinite {
                 Capsule().fill(palette.progressTrack)
-                Capsule().fill(stale ? palette.muted : palette.accent).frame(width: geometry.size.width * max(0, min(1, fraction)))
+                Capsule().fill(stale ? palette.muted : color ?? palette.usageColor(forPercent: fraction * 100)).frame(width: geometry.size.width * max(0, min(1, fraction)))
             }
         }.frame(height: 3).accessibilityHidden(true)
     }

@@ -240,13 +240,13 @@ struct WorkbenchOverview:View {
 private struct WorkbenchStorageGauge: View {
     let percent: Double?
     @Environment(\.workbenchPalette) private var palette
-    private var validPercent: Double? { percent.flatMap { $0.isFinite ? min(100, max(0, $0)) : nil } }
+    private var validPercent: Double? { percent.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil } }
     var body: some View {
         ZStack(alignment: .bottom) {
             WorkbenchStorageArc().stroke(palette.accent.opacity(0.20), style: StrokeStyle(lineWidth: 7, lineCap: .round))
             if let value = validPercent, value > 0 {
-                WorkbenchStorageArc().trim(from: 0, to: value / 100)
-                    .stroke(value >= 80 ? palette.warning : palette.accent, style: StrokeStyle(lineWidth: 7, lineCap: .round))
+                WorkbenchStorageArc().trim(from: 0, to: min(1, value / 100))
+                    .stroke(palette.usageColor(forPercent: value), style: StrokeStyle(lineWidth: 7, lineCap: .round))
             }
             VStack(spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 2) {

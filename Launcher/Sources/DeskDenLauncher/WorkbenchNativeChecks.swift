@@ -134,6 +134,7 @@ enum WorkbenchNativeChecks {
             } else {check(false,"the real launcher shortcut trigger is present in the native settings hierarchy")}
 
             owner.allSettingsFromMenu()
+            await settle()
             check(model.route == .settings && model.settingsTab == .general && owner.workbenchController === workbench,
                   "general settings and launcher settings share the existing workbench")
 
@@ -171,6 +172,7 @@ enum WorkbenchNativeChecks {
                 window.beginSheet(sheet,completionHandler:nil)
                 defer { if window.attachedSheet === sheet { window.endSheet(sheet) }; sheet.close() }
                 owner.allSettingsFromMenu()
+                await settle()
                 check(window.attachedSheet === sheet && model.route == .calendar && model.settingsTab == .launcher,
                       "external settings navigation preserves the route and tab while a real workbench sheet is attached")
                 model.navigate(.overview)
@@ -189,6 +191,7 @@ enum WorkbenchNativeChecks {
                 model.navigate(.overview)
                 let resumed = model.route == .overview
                 owner.allSettingsFromMenu()
+                await settle()
                 check(resumed && model.route == .settings && model.settingsTab == .general,
                       "ending the workbench sheet restores model and external settings navigation")
             } else { check(false, "workbench window exists for sheet navigation protection") }

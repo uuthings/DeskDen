@@ -19,8 +19,8 @@ extension LauncherController {
         // Only the small hover summary remains a temporary accessory surface.
         showWorkbench()
     }
-    @objc func workbenchFromMenu() {showWorkbench()}
-    @objc func allSettingsFromMenu() {showWorkbench(route:.settings,settingsTab:.general)}
+    @objc func workbenchFromMenu() {afterStatusMenuCloses { [weak self] in self?.showWorkbench() }}
+    @objc func allSettingsFromMenu() {afterStatusMenuCloses { [weak self] in self?.showWorkbench(route:.settings,settingsTab:.general) }}
     @discardableResult func setGlobalGlassOpacity(_ value:Double)->Bool {
         guard value.isFinite,(0.50...0.90).contains(value) else {return false}
         let valid=value

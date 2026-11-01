@@ -31,15 +31,48 @@ struct UsageCardGrid: Layout {
 
 struct UsageCategoryTag: View {
     let title: String
+    var categoryID: String = "uncategorized"
     @Environment(\.workbenchPalette) private var palette
+    private var constrainedTextWidth: CGFloat? {
+        let width = (title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium)]).width
+        return width > 76 ? 76 : nil
+    }
+    private var color: Color {
+        let colors = [palette.cool,
+                      palette.light ? Color(red: 0.17, green: 0.38, blue: 0.61) : Color(red: 0.62, green: 0.80, blue: 0.98),
+                      palette.light ? Color(red: 0.13, green: 0.44, blue: 0.46) : Color(red: 0.61, green: 0.87, blue: 0.85)]
+        switch categoryID {
+        case "ai-subscription": return colors[0]
+        case "traffic-services", "static-isp", "vps-traffic": return colors[1]
+        case "api-balance": return colors[2]
+        case "uncategorized": return palette.muted
+        default:
+            // Stable across launches and renames; Swift's randomized Hasher is unsuitable.
+            let hash = categoryID.utf8.reduce(UInt64(14695981039346656037)) { ($0 ^ UInt64($1)) &* 1099511628211 }
+            return colors[Int(hash % UInt64(colors.count))]
+        }
+    }
     var body: some View {
-        HStack {
-            Text(title).font(.system(size: 11)).foregroundStyle(palette.secondary)
-                .lineLimit(1).help(title)
-                .padding(.horizontal, 8).padding(.vertical, 3)
-                .background(palette.soft, in: Capsule())
+        Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(color)
+            .lineLimit(1).help(title).frame(width: constrainedTextWidth, alignment: .leading)
+            .padding(.horizontal, 5).frame(height: 20)
+            .background(color.opacity(0.13), in: RoundedRectangle(cornerRadius: 5))
+            .overlay { RoundedRectangle(cornerRadius: 5).stroke(color.opacity(0.30), lineWidth: 1) }
+    }
+}
+
+struct UsageCardTitle: View {
+    let name: String
+    let categoryTitle: String
+    let categoryID: String
+    var body: some View {
+        HStack(spacing: 7) {
+            Text(name).font(.system(size: 13, weight: .medium)).lineLimit(1).help(name)
+                .layoutPriority(1)
+            UsageCategoryTag(title: categoryTitle, categoryID: categoryID)
+                .fixedSize(horizontal: true, vertical: false)
             Spacer(minLength: 0)
-        }.frame(height: 20)
+        }
     }
 }
 
@@ -80,7 +113,7 @@ struct UsageSourceIcon: View {
     var aiProvider: AIProvider?
     var serviceKind: ProviderUsageKind?
     var defaultBrand: UsageBrandIcon?
-    var size: CGFloat = 25
+    var size: CGFloat = 32
     @Environment(\.workbenchPalette) private var palette
     var body: some View {
         Group {
@@ -96,7 +129,7 @@ struct UsageSourceIcon: View {
                 AIProviderLogo(provider: aiProvider, size: size)
             } else {
                 Image(systemName: serviceKind == .bandwagon ? "server.rack" : "globe")
-                    .font(.system(size: size * 0.66)).foregroundStyle(palette.secondary)
+                    .font(.system(size: size * 0.75)).foregroundStyle(palette.secondary)
             }
         }.frame(width: size, height: size).accessibilityHidden(true)
     }
@@ -152,22 +185,22 @@ struct UsageAIQuotaCard: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            UsageCategoryTag(title: categoryTitle).padding(.bottom, 8)
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 UsageSourceIcon(appearance: appearance, icon: display.icon, aiProvider: summary.provider)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(name).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                    UsageCardTitle(name: name, categoryTitle: categoryTitle,
+                                   categoryID: appearance.categoryID(for: UsagePresentationSourceID.ai(summary.provider), defaultID: "ai-subscription"))
                     Text(subtitle).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1).help(summary.accountPlanDescription)
                 }
                 Spacer(minLength: 4)
                 Circle().fill(summary.state == .ready ? palette.accent : summary.state == .error ? palette.warning : palette.muted)
                     .frame(width: 5, height: 5).help(enabled ? summary.state.title : "自动读取关闭")
-            }.frame(height: 32).padding(.bottom, 7)
+            }.frame(height: 36).padding(.bottom, 14)
             if let snapshot = summary.snapshot, !snapshot.availableWindows.isEmpty {
                 let windows = snapshot.availableWindows
                 ForEach(Array(windows.prefix(2).enumerated()), id: \.offset) { _, window in
                     UsageAIWindowRow(window: window, timeZone: timeZone)
-                        .frame(height: 51, alignment: .top)
+                        .frame(height: 58, alignment: .top)
                 }
                 if windows.count == 1 {
                     HStack(alignment: .top, spacing: 6) {
@@ -193,7 +226,7 @@ struct UsageAIQuotaCard: View {
                 Spacer(minLength: 0)
                 Image(systemName: "arrow.up.right").font(.system(size: 11)).accessibilityHidden(true)
             }.font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
-                .padding(.top, 8).overlay(alignment: .top) { Rectangle().fill(palette.line).frame(height: 1) }
+                .padding(.top, 8)
         }
         .foregroundStyle(palette.text).padding(14).frame(maxWidth: .infinity).frame(height: UsageCardGrid.cardSize.height, alignment: .topLeading)
         .background(WorkbenchMaterialSurface(kind: .card, radius: 15))
@@ -210,21 +243,13 @@ private struct UsageAIWindowRow: View {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text(window.title).font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(1)
                     Spacer(minLength: 3)
-                    Text(window.usedPercent.formatted(.number.precision(.fractionLength(0...1))) + "%")
-                        .font(.system(size: 18)).monospacedDigit()
+                    Text("已用 " + window.usedPercent.formatted(.number.precision(.fractionLength(0...1))) + "%")
+                        .font(.system(size: 12, weight: .medium)).monospacedDigit()
                 }.frame(height: 20)
-                WBProgress(value: window.usedPercent / 100, color: window.severity == 2 ? palette.critical : window.severity == 1 ? palette.warning : palette.accent, height: 4)
-                Text(reset(window)).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
+                WBProgress(value: window.usedPercent / 100, color: palette.usageColor(forPercent: window.usedPercent), height: 5)
+                UsageResetLabel(reset: .init(window: window), timeZone: timeZone)
+                    .font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
         }
-    }
-    private func reset(_ window: AIQuotaWindow) -> String {
-        guard let date = window.resetsAt else { return "来源未提供重置时间" }
-        let remaining = date.timeIntervalSinceNow
-        if window.durationMinutes < 1440, remaining > 0, remaining < 86_400 {
-            let minutes = max(1, Int(remaining / 60))
-            return (minutes >= 60 ? "\(minutes / 60) 小时 \(minutes % 60) 分钟" : "\(minutes) 分钟") + "后重置"
-        }
-        return ProviderUsageFormatting.resetDate(date, timeZone: timeZone) + " 重置"
     }
 }
 
@@ -239,11 +264,11 @@ struct ProviderQuotaCard: View {
     @Environment(\.workbenchPalette) private var palette
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            UsageCategoryTag(title: categoryTitle).padding(.bottom, 8)
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 UsageSourceIcon(appearance: appearance, icon: display.icon, serviceKind: source.kind)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(display.displayName ?? source.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                    UsageCardTitle(name: display.displayName ?? source.name, categoryTitle: categoryTitle,
+                                   categoryID: appearance.categoryID(for: UsagePresentationSourceID.service(source.id), defaultID: "traffic-services"))
                     Text(source.kind.title + " · " + (source.kind == .iproyal ? "订单 " : "实例 ") + source.resourceID)
                         .font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1).truncationMode(.middle)
                 }
@@ -252,26 +277,25 @@ struct ProviderQuotaCard: View {
                     Circle().fill(statusColor(at: tick.date)).frame(width: 5, height: 5)
                         .help(refreshing ? "更新中" : !source.enabled ? "已暂停" : state.status(at: tick.date, maximumAge: source.refreshPolicy.maximumInterval).title)
                 }
-            }.frame(height: 32).padding(.bottom, 10)
+            }.frame(height: 36).padding(.bottom, 14)
             if let snapshot = state.snapshot {
+                HStack {
+                    Text("本周期已用").foregroundStyle(palette.secondary)
+                    Spacer(minLength: 3)
+                    Text(snapshot.usedPercent.formatted(.number.precision(.fractionLength(0...1))) + "%")
+                        .fontWeight(.medium).monospacedDigit()
+                }.font(.system(size: 12)).lineLimit(1)
+                Text(ProviderUsageFormatting.amount(snapshot.usedBytes, unit: snapshot.displayUnit) + " GB / " + ProviderUsageFormatting.amount(snapshot.limitBytes, unit: snapshot.displayUnit) + " GB")
+                    .font(.system(size: 11)).foregroundStyle(palette.muted).monospacedDigit().lineLimit(1).padding(.top, 4)
+                WBProgress(value: snapshot.usedPercent / 100, color: palette.usageColor(forPercent: snapshot.usedPercent), height: 5)
+                    .padding(.top, 6).padding(.bottom, 9)
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    Text(ProviderUsageFormatting.amount(snapshot.remaining, unit: snapshot.displayUnit)).font(.system(size: 27)).monospacedDigit()
+                    Text(ProviderUsageFormatting.amount(snapshot.remaining, unit: snapshot.displayUnit)).font(.system(size: 22)).monospacedDigit()
                     Text("GB 剩余").font(.system(size: 11)).foregroundStyle(palette.muted)
                     Spacer(minLength: 0)
-                }.frame(height: 33).padding(.bottom, 8)
-                HStack(spacing: 3) {
-                    Text("本周期消耗")
-                    Spacer(minLength: 2)
-                    Text(ProviderUsageFormatting.amount(snapshot.usedBytes, unit: snapshot.displayUnit) + " / " + ProviderUsageFormatting.amount(snapshot.limitBytes, unit: snapshot.displayUnit) + " GB").monospacedDigit()
-                }.font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(1)
-                WBProgress(value: min(1, max(0, snapshot.usedPercent / 100)), color: snapshot.usedPercent >= 90 ? palette.warning : palette.accent, height: 4).padding(.top, 5).padding(.bottom, 9)
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text("下次重置")
-                    Spacer(minLength: 2)
-                    Text(ProviderUsageFormatting.resetValue(snapshot, timeZone: timeZone)).monospacedDigit()
-                }.font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(1)
-                Text(snapshot.resetDateText != nil ? "服务商日期 · 时区未提供" : snapshot.resetsAt != nil ? "跟随工作台 · " + ProviderUsageFormatting.zone(timeZone) : "平台未提供重置时间")
-                    .font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1).padding(.top, 4)
+                }.frame(height: 31).padding(.bottom, 8)
+                UsageResetLabel(reset: .init(snapshot: snapshot), timeZone: timeZone)
+                    .font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(2)
             } else {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("—").font(.system(size: 27))
@@ -287,7 +311,7 @@ struct ProviderQuotaCard: View {
                 Spacer(minLength: 0)
                 Image(systemName: "arrow.up.right").font(.system(size: 11)).accessibilityHidden(true)
             }.font(.system(size: 11)).foregroundStyle(state.refresh.authenticationRequired || state.refresh.failureCount > 0 ? palette.warning : palette.muted)
-                .padding(.top, 8).overlay(alignment: .top) { Rectangle().fill(palette.line).frame(height: 1) }
+                .padding(.top, 8)
         }
         .foregroundStyle(palette.text).padding(14).frame(maxWidth: .infinity).frame(height: UsageCardGrid.cardSize.height, alignment: .topLeading)
         .background(WorkbenchMaterialSurface(kind: .card, radius: 15))

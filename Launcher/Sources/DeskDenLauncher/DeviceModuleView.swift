@@ -520,11 +520,11 @@ struct DeviceSheetView: View {
             explanation("温度取已识别 CPU / GPU 传感器的有效读数平均值；AppleSMC 是未公开、依赖硬件的只读接口，不修改风扇或功耗，不需要管理员权限。无效值不参与平均，缺失时不补零。首个 CPU 和网络样本只建立基准。")
         case .thresholds:
             DeviceFact(label: "CPU 使用率", value: "75% 留意 · 90% 高负载")
-            DeviceFact(label: "磁盘已使用", value: "80% 留意 · 90% 接近上限")
+            DeviceFact(label: "磁盘已使用", value: "70% 留意 · 90% 接近上限")
             DeviceFact(label: "内存", value: "只使用系统压力通知")
             DeviceFact(label: "使用电池", value: "≤20% 低电量 · ≤10% 电量不足")
             DeviceFact(label: "接通电源", value: "不触发低电量颜色")
-            DeviceFact(label: "流量预算", value: "达到 \(model.budget.warningPercent)% 留意 · 达到 100% 超额")
+            DeviceFact(label: "流量预算提醒", value: "达到 \(model.budget.warningPercent)% 通知 · 达到 100% 额度上限")
             DeviceFact(label: "不可用数据", value: "显示 —，不视为 0")
             explanation("颜色只提示状态，并配合文字与数值。系统热状态独立展示，不把它换算成未经测量的温度。")
         case .networkOptions:
