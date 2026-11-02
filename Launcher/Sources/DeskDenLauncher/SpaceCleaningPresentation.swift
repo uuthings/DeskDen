@@ -2,17 +2,17 @@ import Foundation
 import LauncherCore
 
 enum CleaningScreen: Equatable { case start, scope, scanning, results, processing, completed, history }
-enum CleaningResultGroup: String, CaseIterable { case rebuildable, review, protected }
-enum CleaningSortKey: String, CaseIterable { case name, directory, type, modified, size }
+enum CleaningResultGroup: String, CaseIterable, Sendable { case rebuildable, review, protected }
+enum CleaningSortKey: String, CaseIterable, Sendable { case name, directory, type, modified, size }
 
 enum CleaningScopeChoice: String, CaseIterable, Codable { case global, custom }
-enum CleaningResultTab { case recommended, reviewable, protected }
+enum CleaningResultTab: Sendable { case recommended, reviewable, protected }
 enum CleaningFileSizeUnit: String, Codable, CaseIterable {
     case mb = "MB", gb = "GB"
     var bytes: Double { self == .mb ? 1_000_000 : 1_000_000_000 }
 }
 
-struct CleaningItemDisplay: Identifiable {
+struct CleaningItemDisplay: Identifiable, Sendable {
     let id: UUID
     let name: String
     let url: URL
@@ -29,18 +29,8 @@ struct CleaningItemDisplay: Identifiable {
     let isDirectory: Bool
     let modifiedDate: Date
 
-    var typeTitle: String {
-        switch url.pathExtension.lowercased() {
-        case "app": return "应用程序"
-        case "xcarchive": return "Xcode 归档"
-        case "dmg": return "DMG 磁盘映像"
-        case "pkg": return "PKG 安装包"
-        case "zip", "tar", "gz", "7z", "rar": return url.pathExtension.uppercased() + " 压缩包"
-        default:
-            if isDirectory { return "文件夹" }
-            return url.pathExtension.isEmpty ? "文件" : url.pathExtension.uppercased() + " 文件"
-        }
-    }
+    var fileCategory: CleaningFileCategory { .init(url: url, isDirectory: isDirectory) }
+    var typeTitle: String { fileCategory.title(forExtension: url.pathExtension) }
     /// Personal-file rows already carry their useful facts. Only show an
     /// explanation when a scan rule actually changes the available action.
     var handlingNote: String? {
@@ -76,6 +66,65 @@ struct CleaningItemDisplay: Identifiable {
         case .installedApplication: return "这是已安装应用，不能通过空间清理解除保护；如需移除，应使用应用卸载流程。"
         case .unknownApplication, .unknownArchive: return "包内容未通过测试副本核验，当前不能解除保护。"
         default: return "这类内容不提供直接解除保护；具体原因以上方说明为准。"
+        }
+    }
+}
+
+/// Classify scanned metadata only. Scrolling never asks Finder for a file icon
+/// or opens a file to determine its type.
+enum CleaningFileCategory: String, Sendable, CaseIterable {
+    case folder, application, xcodeArchive, diskImage, installer, archive, pdf, document, image, video, audio, code, file
+
+    init(url: URL, isDirectory: Bool) {
+        let ext = url.pathExtension.lowercased()
+        if isDirectory {
+            self = ext == "app" ? .application : ext == "xcarchive" ? .xcodeArchive : .folder
+            return
+        }
+        switch ext {
+        case "dmg", "iso": self = .diskImage
+        case "pkg", "mpkg": self = .installer
+        case "zip", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar": self = .archive
+        case "pdf": self = .pdf
+        case "txt", "md", "rtf", "doc", "docx", "pages", "xls", "xlsx", "csv", "numbers", "ppt", "pptx", "key": self = .document
+        case "jpg", "jpeg", "png", "heic", "heif", "gif", "webp", "tif", "tiff", "svg", "raw": self = .image
+        case "mov", "mp4", "m4v", "mkv", "avi", "webm": self = .video
+        case "mp3", "m4a", "aac", "wav", "aiff", "flac", "ogg": self = .audio
+        case "swift", "m", "mm", "h", "c", "cpp", "rs", "go", "py", "js", "jsx", "ts", "tsx", "html", "css", "json", "yaml", "yml", "toml", "sh": self = .code
+        default: self = .file
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .folder: "folder"
+        case .application: "app.dashed"
+        case .xcodeArchive: "archivebox"
+        case .diskImage: "externaldrive"
+        case .installer: "shippingbox"
+        case .archive: "doc.zipper"
+        case .pdf, .document: "doc.text"
+        case .image: "photo"
+        case .video: "film"
+        case .audio: "waveform"
+        case .code: "chevron.left.forwardslash.chevron.right"
+        case .file: "doc"
+        }
+    }
+    func title(forExtension ext: String) -> String {
+        let prefix = ext.isEmpty ? "" : ext.uppercased() + " "
+        switch self {
+        case .folder: return "文件夹"
+        case .application: return "应用程序"
+        case .xcodeArchive: return "Xcode 归档"
+        case .diskImage: return prefix + "磁盘映像"
+        case .installer: return prefix + "安装包"
+        case .archive: return prefix + "压缩包"
+        case .pdf, .document: return prefix + "文档"
+        case .image: return prefix + "图片"
+        case .video: return prefix + "视频"
+        case .audio: return prefix + "音频"
+        case .code: return prefix + "代码"
+        case .file: return prefix + "文件"
         }
     }
 }

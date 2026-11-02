@@ -223,6 +223,16 @@ public struct DeviceLayoutStore: Sendable {
 
 /// SMC scalar decoding is kept separate from the read-only IOKit transport for deterministic testing.
 public enum DeviceSensorValue {
+    /// A successful metadata reply can establish an unsupported encoding;
+    /// transport failures and non-finite sample values cannot.
+    public static func payloadSize(type: String) -> Int? {
+        switch type {
+        case "flt ", "ui32": return 4
+        case "sp78", "fpe2", "ui16": return 2
+        case "ui8 ": return 1
+        default: return nil
+        }
+    }
     public static func decode(type: String, bytes: [UInt8]) -> Double? {
         let result: Double
         switch type {
@@ -241,6 +251,29 @@ public enum DeviceSensorValue {
         default: return nil
         }
         return result.isFinite ? result : nil
+    }
+}
+
+/// A sensor failure is retried only by a subsequent scheduled sample. There is
+/// no timer or inner retry loop, and repeated failures settle at five minutes.
+/// Use monotonic uptime so changes to the wall clock cannot delay recovery.
+public struct DeviceSensorRetryState: Equatable, Sendable {
+    public private(set) var failureCount = 0
+    public private(set) var retryAt: TimeInterval?
+    private var failedAt: TimeInterval?
+    public init() {}
+    public func canAttempt(at uptime: TimeInterval) -> Bool {
+        guard let retryAt else { return true }
+        if let failedAt, uptime < failedAt { return true }
+        return uptime >= retryAt
+    }
+    public mutating func failed(at uptime: TimeInterval) {
+        let intervals: [TimeInterval] = [5, 15, 30, 60, 300]
+        failureCount = min(intervals.count, failureCount + 1)
+        failedAt = uptime; retryAt = uptime + intervals[failureCount - 1]
+    }
+    public mutating func succeeded() {
+        failureCount = 0; retryAt = nil; failedAt = nil
     }
 }
 

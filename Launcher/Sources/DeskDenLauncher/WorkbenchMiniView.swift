@@ -34,8 +34,7 @@ struct WorkbenchMiniView: View {
     }
 
     private var currentThermalStatus: DeviceThermalPresentation {
-        guard let sampledAt = device.snapshot.thermalSampledAt, sampledAt >= openedAt,
-              Date().timeIntervalSince(sampledAt) < 90 else {
+        guard WorkbenchMiniDeviceData.sampleIsCurrent(device.snapshot.thermalSampledAt, now: Date(), maximumAge: 90) else {
             return .init(cpu: nil, gpu: nil, state: .unknown, isLoading: true)
         }
         return .init(snapshot: device.snapshot, rule: device.temperatureRule)
@@ -369,9 +368,9 @@ struct WorkbenchMiniPanelView: View {
         case .traffic:
             VStack(spacing: 4) { heading(id, ""); valueRow(device.periodTraffic, percent(device.trafficFraction)); meter(device.trafficFraction) }.help(device.trafficNote)
         case .disk:
-            VStack(spacing: 4) { heading(id, ""); valueRow(device.disk, percent(device.diskFraction)); meter(device.diskFraction) }.help(device.diskNote)
+            VStack(spacing: 4) { heading(id, device.diskStatus); valueRow(device.disk, percent(device.diskFraction)); meter(device.diskFraction) }.help(device.diskNote + (device.diskStatus.isEmpty ? "" : "\n" + device.diskStatus))
         case .memory:
-            VStack(spacing: 4) { heading(id, ""); valueRow(device.memory, percent(device.memoryFraction)); meter(device.memoryFraction, color: DeviceAppearance.pressure(device.memoryPressureState, palette: palette)) }
+            VStack(spacing: 4) { heading(id, device.memoryStatus); valueRow(device.memory, percent(device.memoryFraction)); meter(device.memoryFraction, color: DeviceAppearance.pressure(device.memoryPressureState, palette: palette)) }
                 .help("内存为已用 / 总量；压力由系统独立指标提供。" + device.memoryPressure + (device.note ?? ""))
         case .todo:
             VStack(alignment: .leading, spacing: 3) {
@@ -381,7 +380,7 @@ struct WorkbenchMiniPanelView: View {
             }.help([agenda.reminder?.title, agenda.reminder?.dateText, agenda.reminder?.note].compactMap { $0 }.joined(separator: " · "))
         case .network:
             VStack(alignment: .leading, spacing: 4) {
-                heading(id, "")
+                heading(id, device.networkStatus)
                 HStack(spacing: 8) {
                     Label(device.download, systemImage: "arrow.down"); Spacer(minLength: 0)
                     Label(device.upload, systemImage: "arrow.up")
@@ -391,7 +390,12 @@ struct WorkbenchMiniPanelView: View {
             }.help("最近 60 秒本机全部流量采样；下载实线、上传虚线，使用相同刻度。采样中断处不连线。" + device.trafficNote)
         case .thermal:
             VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 4) { titleLabel(id); Spacer(minLength: 0); DeviceThermalStatusBadge(status: thermalStatus) }.frame(height: 18)
+                HStack(spacing: 4) {
+                    titleLabel(id)
+                    if device.thermalUpdating { Text("更新中").font(.system(size: 10)).foregroundStyle(palette.muted) }
+                    Spacer(minLength: 0)
+                    DeviceThermalStatusBadge(status: thermalStatus)
+                }.frame(height: 18)
                 HStack(spacing: 12) {
                     temperature("CPU", device.temperature, level: thermalStatus.cpuLevel, trailing: false)
                     temperature("GPU", device.gpuTemperature, level: thermalStatus.gpuLevel, trailing: true)
@@ -436,7 +440,13 @@ struct WorkbenchMiniPanelView: View {
                         Text(window.reset).font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(1).frame(height: 14)
                     }
                 }
-            } else { Text("等待已配置来源的读数").font(.system(size: 11)).foregroundStyle(palette.muted) }
+                if provider.windows.isEmpty {
+                    Text(provider.emptyMessage).font(.system(size: 12)).foregroundStyle(palette.secondary).lineLimit(2)
+                    Text("取得真实额度后自动显示").font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
+                } else if let note = provider.availabilityNote {
+                    Text(note).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
+                }
+            } else { Text("连接本机订阅后显示额度").font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(2) }
         }.help(provider?.detail ?? "尚未取得真实额度读数")
     }
     private func sourceKey(_ id: WorkbenchMiniCardID) -> String? {
@@ -485,7 +495,7 @@ struct WorkbenchMiniPanelView: View {
         let downloads = device.networkSegments(upload: false), uploads = device.networkSegments(upload: true)
         return Group {
             if downloads.isEmpty && uploads.isEmpty {
-                Text(device.download == "—" && device.upload == "—" ? "正在采集网络读数" : "正在采集趋势")
+                Text(device.networkStatus == "无活动接口" ? "当前无活动网络接口" : device.download == "—" && device.upload == "—" ? "正在建立网络采样" : "正在采集趋势")
                     .font(.system(size: 11)).foregroundStyle(palette.muted).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Canvas { drawing, size in
@@ -555,13 +565,13 @@ struct WorkbenchMiniPanelView: View {
         switch id {
         case .codex, .claude:
             guard let value = providers.first(where: { $0.provider == (id == .codex ? .codex : .claude) }) else { return "未接入" }
-            return ([value.stateText] + value.windows.map { "\($0.label)已用\($0.value)，重置\($0.reset)" }).joined(separator: "；")
+            return ([value.stateText] + value.windows.map { "\($0.label)已用\($0.value)，重置\($0.reset)" } + [value.windows.isEmpty ? value.emptyMessage : value.availabilityNote].compactMap { $0 }).joined(separator: "；")
         case .traffic: return "今日\(device.todayTraffic)；本周期\(device.periodTraffic)"
-        case .disk: return "已用／总量\(device.disk)"
-        case .memory: return "已用／总量\(device.memory)；\(device.memoryPressure)"
+        case .disk: return "已用／总量\(device.disk)；\(device.diskStatus)"
+        case .memory: return "已用／总量\(device.memory)；\(device.memoryPressure)；\(device.memoryStatus)"
         case .todo: return [agenda.reminder?.title ?? agenda.reminderStatus, agenda.reminder?.dateText, agenda.reminder?.note].compactMap { $0 }.joined(separator: "；")
-        case .network: return "下载\(device.download)；上传\(device.upload)；全部本机网络"
-        case .thermal: return "\(thermalStatus.title)；CPU \(device.temperature)；GPU \(device.gpuTemperature)；左风扇\(device.leftFan)；右风扇\(device.rightFan)"
+        case .network: return "下载\(device.download)；上传\(device.upload)；全部本机网络；\(device.networkStatus)"
+        case .thermal: return "\(thermalStatus.title)；CPU \(device.temperature)；GPU \(device.gpuTemperature)；左风扇\(device.leftFan)；右风扇\(device.rightFan)" + (device.thermalUpdating ? "；更新中" : "")
         default:
             if let value = balances.first(where: { $0.id == id.apiBalanceID }) { return "\(value.stateText)；\(value.amount)" }
             guard let value = externalProviders.first(where: { $0.id == id.providerID }) else { return "来源已移除" }

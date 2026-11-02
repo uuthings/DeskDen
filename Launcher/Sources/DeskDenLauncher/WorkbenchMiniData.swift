@@ -111,6 +111,8 @@ struct WorkbenchMiniAIData {
     let detail:String
     let isStale:Bool
     let windows:[WorkbenchMiniQuotaData]
+    var availabilityNote: String? = nil
+    var emptyMessage = "等待首次额度同步"
 
 }
 
@@ -119,23 +121,33 @@ extension WorkbenchMiniAIData {
         self.provider=provider;title=provider.title
         let summary=summary?.provider == provider ? summary:nil
         let snapshot=summary?.snapshot
-        isStale=summary?.state == .stale || snapshot?.isStale(at:now) == true
+        isStale=summary?.state == .stale || summary?.state == .error || snapshot?.isStale(at:now) == true
         if summary?.state == .error {stateText="读取失败"}
+        else if snapshot == nil {
+            switch summary?.state {
+            case .disconnected: stateText="未连接"; emptyMessage="连接本机订阅后显示额度"
+            case .none: stateText="正在读取"; emptyMessage="正在检查本机额度来源"
+            default: stateText="等待同步"; emptyMessage="等待首次额度同步"
+            }
+        }
         else if isStale {stateText="已过期"}
         else if let source=snapshot?.source,source == .manual || source == .imported {stateText=source == .manual ? "手动记录":"导入读数"}
         else {stateText=summary?.state == .ready ? "已用":summary?.state.title ?? "正在读取"}
-        let rows=snapshot?.comparisonRows ?? []
-        windows=(0..<2).map {index in
-            guard index < rows.count,let window=rows[index] else {
-                return WorkbenchMiniQuotaData(label:index == 0 ? "5小时":"每周",value:"—",fraction:nil)
-            }
+        let rows=snapshot?.availableWindows ?? []
+        windows=rows.prefix(2).map {window in
             let label=window.durationMinutes == 10_080 ? "每周":window.durationMinutes % 60 == 0 ? "\(window.durationMinutes / 60)小时":"\(window.durationMinutes)分钟"
             let resetTime = UsageResetTime(window: window)
             let reset = resetTime.summary(at: now, timeZone: displayCalendar.timeZone)
             return WorkbenchMiniQuotaData(label:label,value:UsagePercentage.text(window.usedPercent),fraction:window.usedPercent/100,reset:reset)
         }
+        if rows.count == 1 {
+            availabilityNote = rows[0].durationMinutes == 10_080 ? "5小时窗口：来源未提供" : "其他周期：来源未提供"
+        }
+        if summary?.state == .error, snapshot == nil { emptyMessage = "暂未取得有效额度" }
         var lines=[summary?.detail ?? "正在读取已配置的本机额度来源。"]
-        if isStale {lines.append("上次读数已过期，等待来源更新；不代表当前已用比例。")}
+        if summary?.state == .error, snapshot != nil {lines.append("保留上次有效读数，等待来源恢复；不代表当前已用比例。")}
+        else if isStale, snapshot != nil {lines.append("上次读数已过期，等待来源更新；不代表当前已用比例。")}
+        if let availabilityNote {lines.append(availabilityNote + "；不能据此判断是否存在限制。")}
         if let snapshot {
             lines.append("来源："+snapshot.source.title)
             lines.append("采集："+WorkbenchMiniFormat.date(snapshot.observedAt,calendar:displayCalendar,pattern:"MM/dd · HH:mm"))
@@ -170,6 +182,10 @@ struct WorkbenchMiniDeviceData {
     var download = "—"
     var upload = "—"
     var note: String?
+    var memoryStatus = "读取中"
+    var diskStatus = "读取中"
+    var networkStatus = "建立采样"
+    var thermalUpdating = false
     var memoryFraction: Double?
     var memoryPressure = "压力不可用"
     var memoryPressureState: DevicePressure = .unknown
@@ -189,6 +205,14 @@ struct WorkbenchMiniDeviceData {
 }
 
 extension WorkbenchMiniDeviceData {
+    /// Reopening Mini does not invalidate an otherwise current observation.
+    /// Future timestamps after a clock adjustment are not current observations.
+    static func sampleIsCurrent(_ date: Date?, now: Date, maximumAge: TimeInterval) -> Bool {
+        guard let date else { return false }
+        let age = now.timeIntervalSince(date)
+        return age >= 0 && age < maximumAge
+    }
+
     /// Never interpolate across unavailable samples, recording restarts or gaps.
     func networkSegments(upload: Bool) -> [[WorkbenchMiniNetworkPoint]] {
         var result: [[WorkbenchMiniNetworkPoint]] = [], current: [WorkbenchMiniNetworkPoint] = []
@@ -210,32 +234,47 @@ extension WorkbenchMiniDeviceData {
     init(snapshot: DeviceSnapshot, openedAt: Date, history: [DeviceHistoryPoint] = [],
          summary: DeviceTrafficSummary? = nil, budget: DeviceTrafficBudget? = nil,
          unit: WeatherTemperatureUnit = .celsius, now: Date = Date()) {
-        let fresh = snapshot.performanceSampledAt.map { $0 >= openedAt && now.timeIntervalSince($0) < 90 } ?? false
-        cpu = DeviceFormat.percent(fresh ? snapshot.cpuPercent : nil)
-        if fresh, let memory = snapshot.memory {
+        let performanceFresh = Self.sampleIsCurrent(snapshot.performanceSampledAt, now: now, maximumAge: 90)
+        let diskFresh = Self.sampleIsCurrent(snapshot.performanceSampledAt, now: now, maximumAge: 300)
+        let thermalFresh = Self.sampleIsCurrent(snapshot.thermalSampledAt, now: now, maximumAge: 90)
+        let networkFresh = Self.sampleIsCurrent(snapshot.sampledAt, now: now, maximumAge: 10)
+        func status(_ fresh: Bool, _ date: Date?) -> String {
+            guard let date else { return "读取中" }
+            return !fresh || date < openedAt ? "更新中" : ""
+        }
+        memoryStatus = status(performanceFresh, snapshot.performanceSampledAt)
+        diskStatus = status(diskFresh, snapshot.performanceSampledAt)
+        if performanceFresh && snapshot.memory == nil { memoryStatus = "读数不可用" }
+        if diskFresh && snapshot.disk == nil { diskStatus = "读数不可用" }
+        thermalUpdating = thermalFresh && snapshot.thermalSampledAt.map { $0 < openedAt } == true
+        cpu = DeviceFormat.percent(performanceFresh ? snapshot.cpuPercent : nil)
+        if performanceFresh, let memory = snapshot.memory {
             self.memory = DeviceFormat.capacity(memory.used) + " / " + DeviceFormat.capacity(memory.total)
             memoryFraction = memory.total > 0 ? Double(memory.used) / Double(memory.total) : nil
             memoryPressure = DeviceFormat.pressure(memory.pressure)
             memoryPressureState = memory.pressure
         }
-        if fresh, let disk = snapshot.disk {
+        if diskFresh, let disk = snapshot.disk {
             self.disk = DeviceFormat.storage(disk.used) + " / " + DeviceFormat.storage(disk.total)
             diskFraction = disk.total > 0 ? Double(disk.used) / Double(disk.total) : nil
             diskNote = "启动卷：\(disk.name)\n已用／总量采用十进制；可用 \(DeviceFormat.storage(disk.available))。"
         }
-        temperature = unit.formatted(fresh ? snapshot.cpuTemperature : nil)
-        gpuTemperature = unit.formatted(fresh ? snapshot.gpuTemperature : nil)
+        temperature = unit.formatted(thermalFresh ? snapshot.cpuTemperature : nil)
+        gpuTemperature = unit.formatted(thermalFresh ? snapshot.gpuTemperature : nil)
         func fan(_ index: Int) -> String {
-            guard fresh, let fans = snapshot.fanRPM, index < fans.count,
+            guard thermalFresh, let fans = snapshot.fanRPM, index < fans.count,
                   let value = fans[index], value.isFinite, value >= 0 else { return "—" }
             return String(format: "%.0f RPM", value)
         }
         leftFan = fan(0); rightFan = fan(1)
-        thermalState = fresh ? DeviceFormat.thermal(snapshot.thermalState) : "读取中"
+        thermalState = thermalFresh ? DeviceFormat.thermal(snapshot.thermalState) : "读取中"
         sensorNote = ([snapshot.sensorSource] + [snapshot.unavailableReasons["temperature"], snapshot.unavailableReasons["fan"]].compactMap { $0 }).joined(separator: "\n")
-        download = DeviceFormat.rate(fresh ? snapshot.allNetwork.downloadBytesPerSecond : nil)
-        upload = DeviceFormat.rate(fresh ? snapshot.allNetwork.uploadBytesPerSecond : nil)
-        note = fresh ? nil : "正在读取本机数据"
+        download = DeviceFormat.rate(networkFresh ? snapshot.allNetwork.downloadBytesPerSecond : nil)
+        upload = DeviceFormat.rate(networkFresh ? snapshot.allNetwork.uploadBytesPerSecond : nil)
+        if networkFresh, snapshot.allNetwork.downloadBytesPerSecond == nil, snapshot.allNetwork.uploadBytesPerSecond == nil {
+            networkStatus = snapshot.allNetwork.interfaceNames.isEmpty ? "无活动接口" : "建立采样"
+        } else { networkStatus = status(networkFresh, snapshot.sampledAt) }
+        note = performanceFresh ? (memoryStatus.isEmpty ? nil : "正在更新，暂显示最近有效的本机读数。") : "正在读取最新本机数据。"
         if snapshot.allNetwork.todayCoverageSeconds > 0 {
             let total = snapshot.allNetwork.todayDownload.addingReportingOverflow(snapshot.allNetwork.todayUpload)
             todayTraffic = DeviceFormat.storage(total.overflow ? UInt64.max : total.partialValue)
@@ -253,12 +292,10 @@ extension WorkbenchMiniDeviceData {
             trafficNote = "\(start)–\(end) · \(summary.scope.title)\n本机已采集流量；\(summary.isPartialPeriod ? "仅覆盖部分时间" : "覆盖当前周期")。"
             trafficNote += budget?.enabled == true ? "预算为本机自设额度。" : "尚未启用流量预算。"
         }
-        if fresh {
-            let cutoff = now.addingTimeInterval(-60)
-            networkPoints = history.suffix(64).filter { $0.date >= cutoff && $0.date <= now.addingTimeInterval(1) }.map {
-                .init(date: $0.date, segment: $0.allNetworkSegment ?? $0.segment,
-                      download: $0.allDownloadBytesPerSecond, upload: $0.allUploadBytesPerSecond)
-            }
+        let cutoff = now.addingTimeInterval(-60)
+        networkPoints = history.suffix(64).filter { $0.date >= cutoff && $0.date <= now }.map {
+            .init(date: $0.date, segment: $0.allNetworkSegment ?? $0.segment,
+                  download: $0.allDownloadBytesPerSecond, upload: $0.allUploadBytesPerSecond)
         }
     }
 }

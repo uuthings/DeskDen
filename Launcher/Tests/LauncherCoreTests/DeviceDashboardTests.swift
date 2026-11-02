@@ -231,5 +231,31 @@ final class DeviceDashboardTests: XCTestCase {
         XCTAssertNil(DeviceSensorValue.decode(type: "flt ", bytes: [0,0,0x80,0x7f]))
         XCTAssertNil(DeviceSensorValue.decode(type: "fpe2", bytes: [0]))
         XCTAssertNil(DeviceSensorValue.decode(type: "invalid", bytes: [0,1,2,3]))
+        XCTAssertEqual(DeviceSensorValue.payloadSize(type: "flt "), 4)
+        XCTAssertNil(DeviceSensorValue.payloadSize(type: "invalid"))
+    }
+    func testSensorRetryBackoffRecoversWithoutAddingAnInnerPollingLoop() {
+        var retry = DeviceSensorRetryState()
+        XCTAssertTrue(retry.canAttempt(at: 100))
+        for interval: TimeInterval in [5,15,30,60,300,300] {
+            let now = retry.retryAt ?? 100
+            retry.failed(at: now)
+            XCTAssertFalse(retry.canAttempt(at: now))
+            XCTAssertFalse(retry.canAttempt(at: now + interval - 0.01))
+            XCTAssertTrue(retry.canAttempt(at: now + interval))
+            XCTAssertEqual(retry.retryAt, now + interval)
+        }
+        retry.succeeded()
+        XCTAssertEqual(retry.failureCount, 0)
+        XCTAssertNil(retry.retryAt)
+        XCTAssertTrue(retry.canAttempt(at: 101))
+        retry.failed(at: 101)
+        XCTAssertEqual(retry.retryAt, 106)
+    }
+    func testSensorRetryDoesNotRemainBlockedWhenMonotonicClockRestarts() {
+        var retry = DeviceSensorRetryState()
+        retry.failed(at: 1000)
+        XCTAssertFalse(retry.canAttempt(at: 1001))
+        XCTAssertTrue(retry.canAttempt(at: 1))
     }
 }

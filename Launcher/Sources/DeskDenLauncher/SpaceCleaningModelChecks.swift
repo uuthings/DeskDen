@@ -18,6 +18,83 @@ import LauncherCore
         do {
             try FileManager.default.createDirectory(at: rawRoot, withIntermediateDirectories: true)
             guard let root = SpaceCleaningScanner.canonicalURL(rawRoot) else { throw CheckError.missing }
+            // Eighty thousand immutable metadata rows exercise the same result
+            // index as production without scanning or creating eighty thousand
+            // files. Candidate transactions remain a separate empty index.
+            let largeIndex = await Task.detached(priority: .utility) {
+                let rows = (0..<80_000).map { index in
+                    let protected = index % 10 == 9
+                    let name = String(format: "item-%06d.data", index)
+                    let parent = root.appendingPathComponent("uncreated-results/group-\(index % 17)")
+                    return CleaningItemDisplay(id: UUID(), name: name, url: parent.appendingPathComponent(name),
+                        bytes: UInt64(index + 1) * 100, allocatedBytes: UInt64(index + 1) * 128, sizeIsComplete: true,
+                        group: protected ? .protected : .review, subtitle: parent.path, reason: "Synthetic metadata",
+                        impact: "No file exists", isSelectable: !protected, needsPurposeConfirmation: false,
+                        kind: protected ? .developmentEnvironment : .downloadedFile, isDirectory: false,
+                        modifiedDate: Date(timeIntervalSince1970: Double(index)))
+                }
+                let recommendations = Set(rows.prefix(42).filter(\.isSelectable).map(\.id))
+                return CleaningResultsIndex(items: rows, recommendedIDs: recommendations)
+            }.value
+            let bulk = SpaceCleaningModel(dataDirectory: root.appendingPathComponent("bulk-metadata-state"), homeDirectory: root)
+            models.append(bulk); await bulk.waitUntilIdle()
+            bulk.installResultIndex(largeIndex)
+            check(bulk.items.count == 80_000 && bulk.recommendedItems.count == 38 && bulk.protectedItems.count == 8_000 &&
+                  bulk.otherItems.count == 71_962 && bulk.reviewableItems.count == 72_000,
+                  "eighty-thousand-row classification is prepared once with exact cached category counts")
+            check(bulk.recommendedAllocatedBytes == bulk.recommendedItems.reduce(0, { $0 &+ $1.allocatedBytes }) &&
+                  bulk.reviewableAllocatedBytes == bulk.reviewableItems.reduce(0, { $0 &+ $1.allocatedBytes }),
+                  "cached result totals preserve exact scanned disk allocation")
+            let buildsBeforeReads = bulk.resultProjectionBuildCount
+            for _ in 0..<1_000 {
+                _ = bulk.visibleItems.count; _ = bulk.visibleSelectableCount
+                _ = bulk.recommendedItems.count; _ = bulk.otherItems.count; _ = bulk.protectedItems.count
+                _ = bulk.selectedCount; _ = bulk.selectedBytes; _ = bulk.selectedAllocatedBytes
+            }
+            check(bulk.resultProjectionBuildCount == buildsBeforeReads,
+                  "repeated view and scrolling readouts never rebuild or sort the full result set")
+            bulk.showResults(.reviewable)
+            check(!bulk.isUpdatingResults && bulk.visibleItems.count == 71_962 && bulk.resultProjectionBuildCount == buildsBeforeReads,
+                  "switching a large default tab uses its ready projection without waiting for a scan or sort")
+            let selectedBulk = bulk.otherItems[12], protectedBulk = bulk.protectedItems[3]
+            bulk.toggleItem(selectedBulk.id); bulk.toggleItem(protectedBulk.id)
+            check(bulk.selectedItems.map(\.id) == [selectedBulk.id] && bulk.selectedAllocatedBytes == selectedBulk.allocatedBytes &&
+                  bulk.someVisibleSelected && !bulk.allVisibleSelected,
+                  "ID-indexed selection keeps cached totals and excludes protected rows")
+            let queryStarted = ProcessInfo.processInfo.systemUptime
+            bulk.sortResults(by: .name)
+            bulk.searchText = "item-0000"
+            bulk.searchText = "item-079998"
+            let schedulingSeconds = ProcessInfo.processInfo.systemUptime - queryStarted
+            check(bulk.isUpdatingResults && bulk.visibleItems.isEmpty && bulk.visibleSelectableIDs.isEmpty,
+                  "large filtering runs asynchronously and never leaves the previous category actionable")
+            await bulk.waitForResultProjection()
+            check(bulk.visibleItems.map(\.name) == ["item-079998.data"] && !bulk.isUpdatingResults &&
+                  bulk.selectedIDs == [selectedBulk.id],
+                  "the newest rapid search wins while obsolete large sorts cannot overwrite it or clear hidden selection")
+            print("DETAIL large-result query scheduling seconds=\(schedulingSeconds); immutable rows=80000; no filesystem enumeration")
+            bulk.searchText = "item-079997"; await bulk.waitForResultProjection()
+            let buildsBeforeCacheHit = bulk.resultProjectionBuildCount
+            bulk.searchText = "item-079998"; await bulk.waitForResultProjection()
+            check(bulk.resultProjectionBuildCount == buildsBeforeCacheHit && bulk.visibleItems.first?.name == "item-079998.data",
+                  "revisiting an unchanged completed query reuses its bounded cache")
+            bulk.toggleSelectedFilter(); await bulk.waitForResultProjection()
+            check(bulk.visibleItems.map(\.id) == [selectedBulk.id] && bulk.searchText.isEmpty,
+                  "selected-only projection uses real selected identities and clears an unrelated search")
+            let replacementBulk = bulk.otherItems[24]
+            bulk.selectedIDs = [replacementBulk.id]
+            await bulk.waitForResultProjection()
+            check(bulk.visibleItems.map(\.id) == [replacementBulk.id] && bulk.selectedCount == 1 &&
+                  bulk.selectedBytes == replacementBulk.bytes && bulk.allVisibleSelected,
+                  "selection revisions invalidate selected-only caches without reviving removed selections")
+            let cancelledQuery = CleaningResultsQuery(tab: 1, sort: "name", ascending: true, search: "", selectedRevision: nil)
+            let cancelledWork = Task.detached(priority: .utility) {
+                CleaningResultsProjection.make(largeIndex.entries(for: 1, selectedIDs: nil), query: cancelledQuery)
+            }
+            cancelledWork.cancel()
+            check(await cancelledWork.value == nil, "an obsolete eighty-thousand-row query cooperatively cancels before publishing a projection")
+            check(!FileManager.default.fileExists(atPath: root.appendingPathComponent("uncreated-results").path),
+                  "large-result classification, filtering, sorting and selection never read or create source files")
             let largeFixture = try fixture(root.appendingPathComponent("large-file-policy"), names: ["large.data", "small.data"])
             try Data(repeating: 1, count: 200).write(to: largeFixture.home.appendingPathComponent("Downloads/large.data"))
             let largeCache = largeFixture.home.appendingPathComponent(".npm/_cacache/large.cache")

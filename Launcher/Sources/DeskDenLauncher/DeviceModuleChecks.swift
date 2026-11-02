@@ -6,6 +6,8 @@ import LauncherCore
     static func run() async -> Int {
         let topEntry = await WorkbenchTopEntryChecks.run()
         var count = topEntry.count, failures = await DeviceMonitoringFormChecks.run() + topEntry.failures
+        let sensorRecovery = DeviceSensorRecoveryChecks.run()
+        count += sensorRecovery.count; failures += sensorRecovery.failures
         func check(_ condition: Bool, _ message: String) { count += 1; if !condition { failures += 1 }; print("\(condition ? "PASS" : "FAIL") \(message)") }
         check(DeviceTrafficDisplay.budget(100) == "100 GB" && DeviceTrafficDisplay.budget(0.01) == "0.01 GB", "traffic budget card keeps the exact decimal GB allowance")
         check(DeviceTrafficDisplay.adaptive(100_000_000_000) == "100 GB" && DeviceTrafficDisplay.adaptive(1_048_576) == "1.05 MB", "traffic card adaptive units use decimal bytes consistently with budget thresholds")

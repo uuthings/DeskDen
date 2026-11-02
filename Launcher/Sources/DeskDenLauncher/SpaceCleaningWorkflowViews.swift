@@ -5,6 +5,7 @@ import LauncherCore
 struct SpaceCleaningHistoryView: View {
     @ObservedObject var model: SpaceCleaningModel
     @Environment(\.workbenchPalette) private var palette
+    @Environment(\.timeZone) private var timeZone
     @State private var expandedBatch: UUID?
 
     var body: some View {
@@ -48,7 +49,7 @@ struct SpaceCleaningHistoryView: View {
                         .frame(width: 32, height: 32)
                         .background(RoundedRectangle(cornerRadius: 8).fill(palette.soft))
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(SpaceCleaningFormat.date(batch.date)).font(.system(size: 12, weight: .medium))
+                        Text(SpaceCleaningFormat.date(batch.date, timeZone: timeZone)).font(.system(size: 12, weight: .medium))
                         Text("\(batch.method == .trash ? "移入废纸篓" : "永久删除") · \(batch.items.count) 项 · 扫描时占用 \(SpaceCleaningFormat.bytes(batch.allocatedBytes))")
                             .font(.system(size: 11)).foregroundStyle(palette.muted)
                             .fixedSize(horizontal: false, vertical: true)
@@ -61,7 +62,7 @@ struct SpaceCleaningHistoryView: View {
                 }.frame(maxWidth: .infinity, minHeight: 40, alignment: .leading).padding(12)
                     .contentShape(RoundedRectangle(cornerRadius: 10))
             }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 10, drawsSelection: false, showsBorder: false))
-                .accessibilityLabel((expanded ? "收起" : "展开") + "清理记录 " + SpaceCleaningFormat.date(batch.date))
+                .accessibilityLabel((expanded ? "收起" : "展开") + "清理记录 " + SpaceCleaningFormat.date(batch.date, timeZone: timeZone))
                 .accessibilityValue(expanded ? "已展开" : "已收起")
                 .accessibilityIdentifier("space-cleaning-history-expand-" + batch.id.uuidString)
             if expanded {

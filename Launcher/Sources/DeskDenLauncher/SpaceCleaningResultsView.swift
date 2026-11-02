@@ -4,6 +4,7 @@ import LauncherCore
 struct SpaceCleaningResultsView: View {
     @ObservedObject var model: SpaceCleaningModel
     @Environment(\.workbenchPalette) private var palette
+    @Environment(\.timeZone) private var timeZone
     private let columnGap: CGFloat = 12
     private let typeWidth: CGFloat = 86
     private let dateWidth: CGFloat = 110
@@ -28,12 +29,18 @@ struct SpaceCleaningResultsView: View {
                 summary
                 controls
                 tableHeader
-                WorkbenchScrollView {
+                SpaceCleaningResultScrollView(resetID: model.resultScrollResetID, requestedID: model.resultScrollID, updating: model.isUpdatingResults) {
                     LazyVStack(spacing: 0) {
                         ForEach(model.visibleItems) { item in row(item).id(item.id) }
-                        if model.visibleItems.isEmpty { emptyResults }
-                    }.scrollTargetLayout()
-                }.scrollPosition(id: $model.resultScrollID, anchor: .top).scrollBounceBehavior(.basedOnSize)
+                        if model.isUpdatingResults {
+                            HStack(spacing: 8) {
+                                ProgressView().controlSize(.small)
+                                Text("正在整理结果…").font(.system(size: 12)).foregroundStyle(palette.secondary)
+                            }.frame(maxWidth: .infinity).padding(.vertical, 40)
+                                .accessibilityIdentifier("space-cleaning-results-updating")
+                        } else if model.visibleItems.isEmpty { emptyResults }
+                    }
+                }.scrollBounceBehavior(.basedOnSize)
                     .accessibilityIdentifier("space-cleaning-result-list")
                 HStack {
                     Text(model.onlySelected ? "显示全部已选项目，可直接在下方清理" : model.resultTab == .protected ? "这些项目保持保留，展开可查看具体原因" : "点击文件名查看详情，或在 Finder 中定位")
@@ -60,7 +67,7 @@ struct SpaceCleaningResultsView: View {
                 Text(model.reportSummary).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(2)
             }.frame(maxWidth: .infinity, alignment: .leading)
             VStack(alignment: .trailing, spacing: 5) {
-                Text(SpaceCleaningFormat.bytes((model.scanMode == .largeFiles ? model.reviewableItems : model.recommendedItems).reduce(0) { $0 &+ $1.allocatedBytes }))
+                Text(SpaceCleaningFormat.bytes(model.scanMode == .largeFiles ? model.reviewableAllocatedBytes : model.recommendedAllocatedBytes))
                     .font(.system(size: 24, weight: .medium)).monospacedDigit()
                 Text(model.scanMode == .largeFiles ? "这些文件的磁盘占用" : "建议项目磁盘占用").font(.system(size: 11)).foregroundStyle(palette.muted)
             }
@@ -97,11 +104,10 @@ struct SpaceCleaningResultsView: View {
     }
     private var tableHeader: some View {
         HStack(spacing: columnGap) {
-            let ids = model.visibleSelectableIDs
-            let all = !ids.isEmpty && ids.isSubset(of: model.selectedIDs)
-            let mixed = !all && !ids.isDisjoint(with: model.selectedIDs)
+            let all = model.allVisibleSelected
+            let mixed = model.someVisibleSelected && !all
             SpaceCleaningSelectionControl(selected: all, mixed: mixed, label: "选择当前显示的可处理项目", action: model.toggleVisibleSelection)
-                .disabled(ids.isEmpty || model.isBusy || model.requiresRescan || confirming)
+                .disabled(model.visibleSelectableCount == 0 || model.isUpdatingResults || model.isBusy || model.requiresRescan || confirming)
                 .accessibilityIdentifier("space-cleaning-select-visible")
             HStack(spacing: 14) {
                 sortHeader("名称", key: .name)
@@ -134,6 +140,7 @@ struct SpaceCleaningResultsView: View {
     private func row(_ item: CleaningItemDisplay) -> some View {
         let measured = model.directorySizes[item.id]
         return VStack(spacing: 0) {
+            SpaceCleaningResultRowSurface(expanded: model.detailID == item.id, enabled: !model.isBusy && !confirming) {
             HStack(spacing: columnGap) {
                 if item.group == .protected {
                     if item.needsPurposeConfirmation {
@@ -156,7 +163,7 @@ struct SpaceCleaningResultsView: View {
                 Button { model.showDetail(item.id) } label: {
                     VStack(alignment: .leading, spacing: 7) {
                         HStack(spacing: 7) {
-                            Image(systemName: item.isDirectory ? "folder" : "doc").foregroundStyle(palette.muted)
+                            SpaceCleaningFileGlyph(category: item.fileCategory)
                             Text(item.name).fontWeight(.medium).lineLimit(1).truncationMode(.middle)
                             if item.needsSuggestionReview {
                                 Text("手动选择").font(.system(size: 10)).foregroundStyle(palette.warning)
@@ -172,13 +179,16 @@ struct SpaceCleaningResultsView: View {
                         Text(model.shortPath(item.url.deletingLastPathComponent()))
                             .font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1).truncationMode(.middle)
                     }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-                }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 4, drawsSelection: false, showsBorder: false)).disabled(model.isBusy || confirming)
-                Text(item.typeTitle).font(.system(size: 11)).foregroundStyle(palette.secondary)
+                }.buttonStyle(ClickablePlainButtonStyle()).disabled(model.isBusy || confirming)
+                    .accessibilityIdentifier("space-cleaning-file-" + item.id.uuidString)
+                Text(item.typeTitle).font(.system(size: 11)).foregroundStyle(item.fileCategory.tint(palette: palette))
                     .lineLimit(2).frame(width: typeWidth, alignment: .leading)
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(item.modifiedDate, format: .dateTime.year().month(.twoDigits).day(.twoDigits))
-                    Text(item.modifiedDate, format: .dateTime.hour().minute()).foregroundStyle(palette.muted)
+                    Text(SpaceCleaningFormat.day(item.modifiedDate, timeZone: timeZone))
+                    Text(SpaceCleaningFormat.time(item.modifiedDate, timeZone: timeZone)).foregroundStyle(palette.muted)
                 }.font(.system(size: 11)).monospacedDigit().frame(width: dateWidth, alignment: .leading)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("space-cleaning-file-date-" + item.id.uuidString)
                 VStack(alignment: .trailing, spacing: 5) {
                     Text(measured.map { $0.checkedEntries == 0 && !$0.complete ? "大小未知" : ($0.complete ? "" : "部分 ") + SpaceCleaningFormat.bytes($0.logicalBytes) } ??
                          (!item.sizeIsComplete && item.bytes == 0 ? "未统计" : (item.sizeIsComplete ? "" : "至少 ") + SpaceCleaningFormat.bytes(item.bytes)))
@@ -187,7 +197,9 @@ struct SpaceCleaningResultsView: View {
                         Text("占用 " + SpaceCleaningFormat.bytes(measured?.allocatedBytes ?? item.allocatedBytes)).font(.system(size: 10)).foregroundStyle(palette.muted)
                     }
                 }.monospacedDigit().lineLimit(1).frame(width: sizeWidth, alignment: .trailing)
-            }.padding(.horizontal, 14).frame(height: 68).background(model.detailID == item.id ? palette.soft : .clear)
+            }.padding(.horizontal, 14).frame(height: 68)
+            }.accessibilityElement(children: .contain)
+                .accessibilityIdentifier("space-cleaning-file-row-" + item.id.uuidString)
             if model.detailID == item.id { detail(item) }
             Rectangle().fill(palette.line).frame(height: 1)
         }
@@ -388,6 +400,74 @@ struct SpaceCleaningResultsView: View {
             }
         }.padding(14)
             .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-confirmation")
+    }
+}
+
+/// The scroll anchor is local to the scrolling surface. Tracking a visible row
+/// must not publish a change to the cleaning model or rebuild the whole page.
+private struct SpaceCleaningResultScrollView<Content: View>: View {
+    let resetID: UUID
+    let requestedID: UUID?
+    let updating: Bool
+    @ViewBuilder let content: Content
+    @State private var scrollID: UUID?
+    @State private var pendingID: UUID?
+    var body: some View {
+        WorkbenchScrollView { content.scrollTargetLayout() }
+            .scrollPosition(id: $scrollID, anchor: .top)
+            .onAppear { applyScrollRequest() }
+            .onChange(of: resetID) { _, _ in applyScrollRequest() }
+            .onChange(of: updating) { _, active in
+                if !active, let pendingID { scrollID = pendingID; self.pendingID = nil }
+            }
+    }
+    private func applyScrollRequest() {
+        if updating, let requestedID { pendingID = requestedID }
+        else { pendingID = nil; scrollID = requestedID }
+    }
+}
+
+/// One faint row surface replaces the name column's truncated selection fill.
+/// Its hover state is isolated from the result collection and model.
+private struct SpaceCleaningResultRowSurface<Content: View>: View {
+    let expanded: Bool
+    let enabled: Bool
+    @ViewBuilder let content: Content
+    @Environment(\.workbenchPalette) private var palette
+    @State private var hovering = false
+    var body: some View {
+        content.background(expanded ? palette.soft : hovering && enabled ? palette.text.opacity(0.035) : .clear)
+            .onHover { hovering = $0 }
+    }
+}
+
+struct SpaceCleaningFileGlyph: View {
+    let category: CleaningFileCategory
+    @Environment(\.workbenchPalette) private var palette
+    var body: some View {
+        Image(systemName: category.symbol).font(.system(size: 15, weight: .regular))
+            .foregroundStyle(category.tint(palette: palette))
+            .frame(width: 24, height: 28)
+            .background(category.tint(palette: palette).opacity(0.09), in: RoundedRectangle(cornerRadius: 5))
+            .accessibilityHidden(true)
+    }
+}
+
+private extension CleaningFileCategory {
+    func tint(palette: ThemePalette) -> Color {
+        switch self {
+        case .folder: palette.accent
+        case .diskImage: Color(nsColor: .systemBlue)
+        case .application, .xcodeArchive: Color(nsColor: .systemIndigo)
+        case .installer, .archive: Color(nsColor: .systemOrange)
+        case .pdf: Color(nsColor: .systemRed)
+        case .document: Color(nsColor: .systemBlue)
+        case .image: Color(nsColor: .systemPurple)
+        case .video: Color(nsColor: .systemPink)
+        case .audio: Color(nsColor: .systemTeal)
+        case .code: Color(nsColor: .systemGreen)
+        case .file: palette.secondary
+        }
     }
 }
 

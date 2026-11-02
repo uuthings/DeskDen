@@ -12,7 +12,9 @@ import Quartz
     @Published var maximumFileSize = ""
     @Published var fileSizeUnit: CleaningFileSizeUnit = .mb
     @Published var detailID: UUID?
-    @Published var selectedIDs = Set<UUID>()
+    @Published var selectedIDs = Set<UUID>() {
+        didSet { if selectedIDs != oldValue { selectionChanged() } }
+    }
     @Published var dialog: CleaningDialog?
     @Published var method: SpaceCleaningMethod = .trash
     @Published var rememberMethod = false
@@ -45,14 +47,39 @@ import Quartz
     @Published private(set) var customDirectories: [URL] = []
     @Published var draftScope: CleaningScopeChoice = .global
     @Published private(set) var draftDirectories: [URL] = []
-    @Published var resultTab: CleaningResultTab = .recommended
+    @Published var resultTab: CleaningResultTab = .recommended {
+        didSet { if resultTab != oldValue { refreshResultProjection() } }
+    }
     @Published private(set) var recommendedIDs = Set<UUID>()
     @Published private(set) var automaticallySelectedIDs = Set<UUID>()
-    @Published var sortKey: CleaningSortKey = .size
-    @Published var sortAscending = false
-    @Published var searchText = ""
-    @Published var onlySelected = false
-    @Published var resultScrollID: UUID?
+    @Published var sortKey: CleaningSortKey = .size {
+        didSet { if sortKey != oldValue { refreshResultProjection() } }
+    }
+    @Published var sortAscending = false {
+        didSet { if sortAscending != oldValue { refreshResultProjection() } }
+    }
+    @Published var searchText = "" {
+        didSet {
+            if searchText != oldValue {
+                resultScrollID = nil
+                refreshResultProjection()
+            }
+        }
+    }
+    @Published var onlySelected = false {
+        didSet { if onlySelected != oldValue { refreshResultProjection() } }
+    }
+    /// A programmatic scroll request only. Interactive scroll position belongs
+    /// to the result view and must never invalidate the complete result model.
+    var resultScrollID: UUID? { didSet { resultScrollResetID = UUID() } }
+    @Published private(set) var resultScrollResetID = UUID()
+    @Published private(set) var visibleItems: [CleaningItemDisplay] = []
+    @Published private(set) var isUpdatingResults = false
+    private(set) var visibleSelectableIDs = Set<UUID>()
+    private(set) var allVisibleSelected = false
+    private(set) var someVisibleSelected = false
+    var visibleSelectableCount: Int { visibleSelectableIDs.count }
+    private(set) var resultProjectionBuildCount = 0
     @Published private(set) var scanPhase: SpaceCleaningScanPhase = .discovering
     @Published private(set) var scanCompletedItems = 0
     @Published private(set) var scanTotalItems: Int?
@@ -85,6 +112,17 @@ import Quartz
     private let mover: any SpaceCleaningFileOperating
     private let runtime = SpaceCleaningRuntimeContext()
     private var runtimeObservers: [NSObjectProtocol] = []
+    private var resultIndex = CleaningResultsIndex()
+    private var resultProjectionCache: [CleaningResultsQuery: CleaningResultsProjection] = [:]
+    private var resultProjectionOrder: [CleaningResultsQuery] = []
+    private var resultProjectionTask: Task<Void, Never>?
+    private var resultProjectionWork: Task<CleaningResultsProjection?, Never>?
+    private var resultProjectionGeneration: UInt64 = 0
+    private var selectionRevision: UInt64 = 0
+    private var selectedItemCache: [CleaningItemDisplay] = []
+    private var selectedByteCache: UInt64 = 0
+    private var selectedAllocatedByteCache: UInt64 = 0
+    private var suspendsResultProjection = false
 
     init(dataDirectory: URL, homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
          mover: any SpaceCleaningFileOperating = SpaceCleaningAppFileOperations()) {
@@ -106,12 +144,12 @@ import Quartz
         refreshDisk()
     }
 
-    var detail: CleaningItemDisplay? { items.first { $0.id == detailID } }
+    var detail: CleaningItemDisplay? { detailID.flatMap { resultIndex.item($0) } }
     var pendingHistoryItems: [CleaningHistoryItemDisplay] { batches.flatMap(\.items).filter { pendingHistoryIDs.contains($0.id) } }
-    var selectedItems: [CleaningItemDisplay] { items.filter { selectedIDs.contains($0.id) && $0.isSelectable } }
-    var selectedBytes: UInt64 { selectedItems.reduce(0) { $0 &+ $1.bytes } }
-    var selectedAllocatedBytes: UInt64 { selectedItems.reduce(0) { $0 &+ $1.allocatedBytes } }
-    var selectedCount: Int { selectedItems.count }
+    var selectedItems: [CleaningItemDisplay] { selectedItemCache }
+    var selectedBytes: UInt64 { selectedByteCache }
+    var selectedAllocatedBytes: UInt64 { selectedAllocatedByteCache }
+    var selectedCount: Int { selectedItemCache.count }
     var isBusy: Bool { task != nil }
     var canProcess: Bool { !isBusy && !frozenForQuit && !requiresRescan && historyError == nil && selectedCount > 0 }
     var animationActive: Bool { windowVisible && [.start, .scope, .scanning].contains(screen) && !reduceMotion && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion && dialog == nil }
@@ -148,47 +186,115 @@ import Quartz
         if screen != .scope { invalidateResults() }
         saveScanPreference()
     }
-    var reviewableItems: [CleaningItemDisplay] { items.filter { $0.group != .protected } }
-    var recommendedItems: [CleaningItemDisplay] { items.filter { recommendedIDs.contains($0.id) } }
-    var otherItems: [CleaningItemDisplay] { reviewableItems.filter { !recommendedIDs.contains($0.id) } }
-    var protectedItems: [CleaningItemDisplay] { items.filter { $0.group == .protected } }
-    var visibleItems: [CleaningItemDisplay] {
-        let source: [CleaningItemDisplay]
-        if onlySelected { source = selectedItems }
-        else {
-            switch resultTab {
-            case .recommended: source = recommendedItems
-            case .reviewable: source = otherItems
-            case .protected: source = protectedItems
+    var reviewableItems: [CleaningItemDisplay] { resultIndex.reviewableItems }
+    var recommendedItems: [CleaningItemDisplay] { resultIndex.recommendedItems }
+    var otherItems: [CleaningItemDisplay] { resultIndex.otherItems }
+    var protectedItems: [CleaningItemDisplay] { resultIndex.protectedItems }
+    var recommendedAllocatedBytes: UInt64 { resultIndex.recommendedAllocatedBytes }
+    var reviewableAllocatedBytes: UInt64 { resultIndex.reviewableAllocatedBytes }
+    var protectedAllocatedBytes: UInt64 { resultIndex.protectedAllocatedBytes }
+
+    private func selectionChanged() {
+        guard !suspendsResultProjection else { return }
+        selectionRevision &+= 1
+        rebuildSelectionCache()
+        if onlySelected { refreshResultProjection() }
+        else { updateVisibleSelection() }
+    }
+    private func rebuildSelectionCache() {
+        selectedItemCache = resultIndex.selectedItems(selectedIDs)
+        selectedByteCache = selectedItemCache.reduce(0) { $0 &+ $1.bytes }
+        selectedAllocatedByteCache = selectedItemCache.reduce(0) { $0 &+ $1.allocatedBytes }
+    }
+    private func updateVisibleSelection() {
+        let selected = selectedItemCache.reduce(0) { $0 + (visibleSelectableIDs.contains($1.id) ? 1 : 0) }
+        allVisibleSelected = !visibleSelectableIDs.isEmpty && selected == visibleSelectableIDs.count
+        someVisibleSelected = selected > 0 && !allVisibleSelected
+    }
+    private func cancelResultProjection() {
+        resultProjectionGeneration &+= 1
+        resultProjectionWork?.cancel(); resultProjectionTask?.cancel()
+        resultProjectionWork = nil; resultProjectionTask = nil
+    }
+    /// Installs immutable presentation metadata; transaction candidates remain
+    /// separately indexed and are always revalidated before file operations.
+    func installResultIndex(_ index: CleaningResultsIndex) {
+        cancelResultProjection()
+        resultIndex = index
+        resultProjectionCache.removeAll(); resultProjectionOrder.removeAll()
+        items = index.items
+        rebuildSelectionCache()
+        refreshResultProjection()
+    }
+    private var resultQuery: CleaningResultsQuery {
+        .init(tab: resultTab == .recommended ? 0 : resultTab == .reviewable ? 1 : 2,
+              sort: sortKey.rawValue, ascending: sortAscending,
+              search: searchText, selectedRevision: onlySelected ? selectionRevision : nil)
+    }
+    private func refreshResultProjection() {
+        guard !suspendsResultProjection else { return }
+        cancelResultProjection()
+        let query = resultQuery
+        if let cached = resultProjectionCache[query] {
+            applyResultProjection(cached); return
+        }
+        if query.isDefault, let cached = resultIndex.defaultProjections[query.tab] {
+            applyResultProjection(cached); return
+        }
+        let index = resultIndex, selection = onlySelected ? selectedIDs : nil
+        let count = selection?.count ?? index.count(for: query.tab)
+        resultProjectionBuildCount += 1
+        if count <= 1_000 {
+            if let projection = CleaningResultsProjection.make(index.entries(for: query.tab, selectedIDs: selection), query: query) {
+                acceptResultProjection(projection, query: query)
+            }
+            return
+        }
+        // A query change cannot leave old-category rows selectable while its
+        // replacement is being prepared. This task never touches file contents.
+        applyResultProjection(.init())
+        isUpdatingResults = true
+        let run = resultProjectionGeneration
+        let work = Task.detached(priority: .userInitiated) {
+            CleaningResultsProjection.make(index.entries(for: query.tab, selectedIDs: selection), query: query)
+        }
+        resultProjectionWork = work
+        resultProjectionTask = Task { [weak self] in
+            let projection = await work.value
+            guard let self, self.resultProjectionGeneration == run,
+                  !Task.isCancelled, let projection else { return }
+            self.resultProjectionTask = nil; self.resultProjectionWork = nil
+            self.acceptResultProjection(projection, query: query)
+        }
+    }
+    private func acceptResultProjection(_ projection: CleaningResultsProjection, query: CleaningResultsQuery) {
+        if resultProjectionCache[query] == nil {
+            resultProjectionOrder.append(query)
+            if resultProjectionOrder.count > 6 {
+                resultProjectionCache.removeValue(forKey: resultProjectionOrder.removeFirst())
             }
         }
-        return source.filter {
-            searchText.isEmpty || $0.name.localizedStandardContains(searchText) || $0.url.path.localizedStandardContains(searchText)
-        }.sorted(by: resultPrecedes)
+        resultProjectionCache[query] = projection
+        applyResultProjection(projection)
+    }
+    private func applyResultProjection(_ projection: CleaningResultsProjection) {
+        visibleSelectableIDs = projection.selectableIDs
+        visibleItems = projection.items
+        isUpdatingResults = false
+        updateVisibleSelection()
+    }
+    func waitForResultProjection() async {
+        while let task = resultProjectionTask {
+            let run = resultProjectionGeneration
+            await task.value
+            if resultProjectionGeneration == run { return }
+        }
     }
     func sortResults(by key: CleaningSortKey) {
         guard !isBusy, dialog != .confirm else { return }
         if sortKey == key { sortAscending.toggle() }
         else { sortKey = key; sortAscending = ![.modified, .size].contains(key) }
         resultScrollID = nil
-    }
-    private func resultPrecedes(_ lhs: CleaningItemDisplay, _ rhs: CleaningItemDisplay) -> Bool {
-        let comparison: ComparisonResult
-        switch sortKey {
-        case .name: comparison = lhs.name.localizedStandardCompare(rhs.name)
-        case .directory: comparison = lhs.url.deletingLastPathComponent().path.localizedStandardCompare(rhs.url.deletingLastPathComponent().path)
-        case .type: comparison = lhs.typeTitle.localizedStandardCompare(rhs.typeTitle)
-        case .modified: comparison = lhs.modifiedDate == rhs.modifiedDate ? .orderedSame : lhs.modifiedDate < rhs.modifiedDate ? .orderedAscending : .orderedDescending
-        case .size: comparison = lhs.bytes == rhs.bytes ? .orderedSame : lhs.bytes < rhs.bytes ? .orderedAscending : .orderedDescending
-        }
-        if comparison != .orderedSame { return comparison == (sortAscending ? .orderedAscending : .orderedDescending) }
-        // Equal primary values retain an ascending identity order even when
-        // reversing the column, preventing selection and review rows jumping.
-        let leftPath = lhs.url.standardizedFileURL.path, rightPath = rhs.url.standardizedFileURL.path
-        let pathComparison = leftPath.localizedStandardCompare(rightPath)
-        if pathComparison != .orderedSame { return pathComparison == .orderedAscending }
-        if leftPath != rightPath { return leftPath < rightPath }
-        return lhs.id.uuidString < rhs.id.uuidString
     }
     func showResults(_ tab: CleaningResultTab) {
         resultTab = tab; onlySelected = false; detailID = nil; resultScrollID = nil
@@ -203,12 +309,11 @@ import Quartz
         if requiresRescan { return "本次扫描未完成，请重新扫描后再清理。" }
         if scanMode == .largeFiles { return scanReachedLimit ? "本次覆盖范围有限；已检查位置中未发现符合大小范围的可复核文件。" : "已检查位置中未发现符合大小范围的可复核文件。开发环境及受保护位置保持保留。" }
         if scanReachedLimit { return "本次扫描达到覆盖边界；已完整核验的内容中暂未发现建议整理的项目。" }
-        let inUse = items.filter { $0.kind == .runningApplication }.count
+        let inUse = resultIndex.runningApplicationCount
         if inUse > 0 { return "有 \(inUse) 项关联应用或工具正在使用，已保留。其他文件由你选择。" }
         if !coverageIssues.isEmpty { return "部分位置未能完整检查；已检查内容中暂未发现符合整理规则的项目。" }
         return "暂未发现可重建缓存、待整理安装介质或过期诊断记录；其他文件可自行选择。"
     }
-    var visibleSelectableIDs: Set<UUID> { Set(visibleItems.filter(\.isSelectable).map(\.id)) }
     var scanFraction: Double? { scanTotalItems.flatMap { $0 > 0 ? min(1, Double(scanCompletedItems) / Double($0)) : nil } }
     func shortPath(_ url: URL) -> String {
         let path = url.standardizedFileURL.path, home = homeDirectory.standardizedFileURL.path
@@ -233,7 +338,7 @@ import Quartz
         return "找到 \(recommendedIDs.count) 项建议整理内容 · " + selection + (scanReachedLimit ? " · 覆盖范围有限" : "")
     }
     func toggleItem(_ id: UUID) {
-        guard !isBusy, !requiresRescan, items.contains(where: { $0.id == id && $0.isSelectable }) else { return }
+        guard !isBusy, !requiresRescan, resultIndex.item(id)?.isSelectable == true else { return }
         if !selectedIDs.insert(id).inserted { selectedIDs.remove(id) }
     }
     func selectRecommended() {
@@ -308,6 +413,7 @@ import Quartz
         if let hostWindow { panel.beginSheetModal(for: hostWindow, completionHandler: finish) } else { panel.begin(completionHandler: finish) }
     }
     private func invalidateResults() {
+        installResultIndex(.init())
         selectedIDs = []; recommendedIDs = []; automaticallySelectedIDs = []; detailID = nil; resultScrollID = nil; candidates = [:]; items = []
         directorySizes = [:]; measuringDirectoryID = nil
         requiresRescan = false; screen = .start; message = historyError
@@ -335,7 +441,7 @@ import Quartz
         confirmedIDs = Set(selectedItems.map(\.id)); acknowledgement = false; dialog = .confirm
     }
     func requestTestPurpose(_ id: UUID) {
-        guard !isBusy, !requiresRescan, items.contains(where: { $0.id == id && $0.needsPurposeConfirmation }) else { return }
+        guard !isBusy, !requiresRescan, resultIndex.item(id)?.needsPurposeConfirmation == true else { return }
         detailID = id; acknowledgement = false; dialog = .purpose(id); resultScrollID = id
     }
     func requestRestore(_ id: UUID) {
@@ -376,13 +482,14 @@ import Quartz
     func cancelHistoryVerification() { cancellation.cancel(); message = "正在停止历史核验，原记录保持不变。" }
     func cancelProcessing() { cancellation.cancel(); message = "正在完成当前文件的安全收尾，其余项目将取消。" }
     func cancelAll() { cancellation.cancel(); closeDialog() }
-    func waitUntilIdle() async { if let task { await task.value } }
+    func waitUntilIdle() async { if let task { await task.value }; await waitForResultProjection() }
     func prepareForQuit() async {
         frozenForQuit = true; cancelAll()
+        cancelResultProjection()
         if let task { await task.value }
         securityScopedDirectories.forEach { $0.stopAccessingSecurityScopedResource() }; securityScopedDirectories = []
     }
-    func resumeAfterCancelledQuit() { frozenForQuit = false }
+    func resumeAfterCancelledQuit() { frozenForQuit = false; refreshResultProjection() }
     func refreshDisk() {
         let root = homeDirectory
         Task { [weak self] in
@@ -393,11 +500,11 @@ import Quartz
         }
     }
     func reveal(_ id: UUID) {
-        guard let item = items.first(where: { $0.id == id }) else { return }
+        guard let item = resultIndex.item(id) else { return }
         NSWorkspace.shared.activateFileViewerSelecting([item.url])
     }
     func preview(_ id: UUID) {
-        guard let item = items.first(where: { $0.id == id }), FileManager.default.fileExists(atPath: item.url.path) else { message = "文件已不在原位置，请重新扫描。"; return }
+        guard let item = resultIndex.item(id), FileManager.default.fileExists(atPath: item.url.path) else { message = "文件已不在原位置，请重新扫描。"; return }
         previewURL = item.url as NSURL
         guard let panel = QLPreviewPanel.shared() else { return }
         panel.dataSource = self; panel.reloadData(); panel.makeKeyAndOrderFront(nil)
@@ -415,6 +522,7 @@ import Quartz
         guard !scopes.isEmpty else { message = "请先选择要扫描的目录。"; return }
         generation = UUID(); let run = generation
         cancellation = SpaceCleaningCancellation(); let token = cancellation
+        installResultIndex(.init())
         selectedIDs = []; confirmedIDs = []; detailID = nil; resultScrollID = nil; searchText = ""; onlySelected = false; resultTab = .recommended; items = []; recommendedIDs = []; automaticallySelectedIDs = []; candidates = [:]
         directorySizes = [:]; measuringDirectoryID = nil
         if scanMode == .largeFiles { resultTab = .reviewable; sortKey = .size; sortAscending = false }
@@ -434,6 +542,11 @@ import Quartz
                 return report
             }.value
             guard let self, self.generation == run else { return }
+            let selectionContext = self.makeContext()
+            let prepared = await Task.detached(priority: .userInitiated) {
+                Self.prepareResults(report, context: selectionContext, mode: options.mode)
+            }.value
+            guard self.generation == run else { return }
             self.checkedCount = report.checkedEntries
             self.coverageIssues = report.issues.filter { ![.missing, .duplicate].contains($0.kind) }.map { $0.url.path.replacingOccurrences(of: self.homeDirectory.path, with: "~") + " · " + $0.reason }
             self.coverageNotes = report.scopes.map { $0.title + " · " + $0.directory.path.replacingOccurrences(of: self.homeDirectory.path, with: "~") }
@@ -443,15 +556,17 @@ import Quartz
                     (options.maximumFileBytes.map { "，且 ≤ " + SpaceCleaningFormat.bytes($0) } ?? "；无上限") + "。包与受保护目录不展开。")
             }
             self.coverageNotes += report.issues.filter { [.missing, .duplicate].contains($0.kind) }.map { $0.url.path.replacingOccurrences(of: self.homeDirectory.path, with: "~") + " · " + $0.reason }
-            self.candidates = Dictionary(uniqueKeysWithValues: report.candidates.map { ($0.id, $0) })
-            self.items = report.candidates.map(Self.display).sorted {
-                if $0.group != $1.group { return CleaningResultGroup.allCases.firstIndex(of: $0.group)! < CleaningResultGroup.allCases.firstIndex(of: $1.group)! }
-                return $0.bytes == $1.bytes ? $0.url.path < $1.url.path : $0.bytes > $1.bytes
-            }
+            self.suspendsResultProjection = true
+            self.candidates = prepared.candidates
+            self.recommendedIDs = prepared.recommendedIDs
+            self.automaticallySelectedIDs = prepared.automaticallySelectedIDs
+            self.selectedIDs = prepared.automaticallySelectedIDs
+            self.selectionRevision &+= 1
+            self.suspendsResultProjection = false
+            self.installResultIndex(prepared.index)
             self.requiresRescan = [.cancelled, .failed].contains(report.stage)
             self.scanReachedLimit = report.reachedLimit
             self.lastScanDate = report.finishedAt
-            if report.stage == .complete { self.selectRecommendedAfterScan(context: self.makeContext()) }
             if self.requiresRescan { self.message = report.stage == .cancelled ? "扫描已停止。当前结果仅供查看，请完成一次扫描后再清理。" : "扫描未完整结束，已保留检查结果。请调整范围后重新扫描。" }
             else if report.reachedLimit { self.message = "本次覆盖范围受限。仅完整核验且可处理的项目能够选择；缩小范围可继续查看其余内容。" }
             self.task = nil; self.screen = .results; self.refreshDisk()
@@ -468,7 +583,13 @@ import Quartz
             }.value
             guard let self else { return }
             if let fresh, let index = self.items.firstIndex(where: { $0.id == id }) {
-                self.candidates[id] = fresh; self.items[index] = Self.display(fresh)
+                self.candidates[id] = fresh
+                var updated = self.items; updated[index] = Self.display(fresh)
+                let updatedItems = updated, recommended = self.recommendedIDs
+                let resultIndex = await Task.detached(priority: .userInitiated) {
+                    CleaningResultsIndex(items: updatedItems, recommendedIDs: recommended)
+                }.value
+                self.installResultIndex(resultIndex)
                 self.resultTab = .reviewable; self.onlySelected = false; self.searchText = ""; self.resultScrollID = id
             } else {
                 self.declarations.removeAll { $0.url == candidate.url }
@@ -477,13 +598,19 @@ import Quartz
             self.task = nil; self.purposeReviewID = nil; self.closeDialog()
         }
     }
-    private func selectRecommendedAfterScan(context: SpaceCleaningContext) {
-        guard scanMode == .cleanup else { recommendedIDs = []; automaticallySelectedIDs = []; selectedIDs = []; return }
-        recommendedIDs = Set(candidates.values.filter {
+    private nonisolated static func prepareResults(_ report: SpaceCleaningReport, context: SpaceCleaningContext,
+                                                   mode: SpaceCleaningScanMode) -> PreparedCleaningResults {
+        let candidates = Dictionary(uniqueKeysWithValues: report.candidates.map { ($0.id, $0) })
+        let recommended: Set<UUID> = mode == .cleanup && report.stage == .complete ? Set(report.candidates.filter {
             $0.isCleanupSuggestion && SpaceCleaningScanner.validatePolicy(candidate: $0, context: context) == .unchanged
-        }.map(\.id))
-        automaticallySelectedIDs = Set(candidates.values.filter { recommendedIDs.contains($0.id) && $0.isRecommendedForSelection }.map(\.id))
-        selectedIDs = automaticallySelectedIDs
+        }.map(\.id)) : []
+        let automatic = Set(report.candidates.filter { recommended.contains($0.id) && $0.isRecommendedForSelection }.map(\.id))
+        let items = report.candidates.map(Self.display).sorted {
+            if $0.group != $1.group { return CleaningResultGroup.allCases.firstIndex(of: $0.group)! < CleaningResultGroup.allCases.firstIndex(of: $1.group)! }
+            return $0.bytes == $1.bytes ? $0.url.path < $1.url.path : $0.bytes > $1.bytes
+        }
+        return .init(candidates: candidates, recommendedIDs: recommended, automaticallySelectedIDs: automatic,
+                     index: .init(items: items, recommendedIDs: recommended))
     }
     func executeConfirmed(permanent: Bool, remember: Bool) {
         guard dialog == .confirm, canProcess, confirmedIDs == Set(selectedItems.map(\.id)),
@@ -780,6 +907,156 @@ import Quartz
     }
     private func updateRunningApplications() {
         runtime.setRunning(NSWorkspace.shared.runningApplications.compactMap(\.bundleURL))
+    }
+}
+
+private struct PreparedCleaningResults: Sendable {
+    let candidates: [UUID: SpaceCleaningCandidate]
+    let recommendedIDs: Set<UUID>
+    let automaticallySelectedIDs: Set<UUID>
+    let index: CleaningResultsIndex
+}
+
+struct CleaningResultsQuery: Hashable, Sendable {
+    let tab: Int
+    let sort: String
+    let ascending: Bool
+    let search: String
+    let selectedRevision: UInt64?
+    var isDefault: Bool { sort == "size" && !ascending && search.isEmpty && selectedRevision == nil }
+}
+
+/// Metadata is prepared once when the scan completes, not while a row scrolls.
+/// Parent path and type strings are cached before sorting; no file I/O or system
+/// icon lookup is part of this index or any result query.
+struct CleaningResultsEntry: Sendable {
+    let item: CleaningItemDisplay
+    let position: Int
+    let path: String
+    let directory: String
+    let type: String
+    let identity: String
+    init(_ item: CleaningItemDisplay, position: Int) {
+        self.item = item; self.position = position
+        path = item.url.standardizedFileURL.path
+        directory = item.subtitle; type = item.typeTitle; identity = item.id.uuidString
+    }
+    static func precedes(_ lhs: Self, _ rhs: Self, query: CleaningResultsQuery) -> Bool {
+        let comparison: ComparisonResult
+        switch query.sort {
+        case "name": comparison = lhs.item.name.localizedStandardCompare(rhs.item.name)
+        case "directory": comparison = lhs.directory.localizedStandardCompare(rhs.directory)
+        case "type": comparison = lhs.type.localizedStandardCompare(rhs.type)
+        case "modified": comparison = lhs.item.modifiedDate == rhs.item.modifiedDate ? .orderedSame : lhs.item.modifiedDate < rhs.item.modifiedDate ? .orderedAscending : .orderedDescending
+        default: comparison = lhs.item.bytes == rhs.item.bytes ? .orderedSame : lhs.item.bytes < rhs.item.bytes ? .orderedAscending : .orderedDescending
+        }
+        if comparison != .orderedSame { return comparison == (query.ascending ? .orderedAscending : .orderedDescending) }
+        // Reverse only the requested column. Equal values keep an ascending
+        // identity order, preserving stable row identity in either direction.
+        let pathComparison = lhs.path.localizedStandardCompare(rhs.path)
+        if pathComparison != .orderedSame { return pathComparison == .orderedAscending }
+        if lhs.path != rhs.path { return lhs.path < rhs.path }
+        return lhs.identity < rhs.identity
+    }
+}
+
+struct CleaningResultsProjection: Sendable {
+    var items: [CleaningItemDisplay] = []
+    var selectableIDs = Set<UUID>()
+
+    static func make(_ input: [CleaningResultsEntry], query: CleaningResultsQuery) -> Self? {
+        var source: [CleaningResultsEntry] = []
+        source.reserveCapacity(input.count)
+        for (index, entry) in input.enumerated() {
+            if index.isMultiple(of: 256), Task.isCancelled { return nil }
+            if query.search.isEmpty || entry.item.name.localizedStandardContains(query.search) || entry.path.localizedStandardContains(query.search) {
+                source.append(entry)
+            }
+        }
+        // Bottom-up merge sort has cancellation points within a long pass, so
+        // obsolete searches release their large arrays promptly when typing.
+        if source.count > 1 {
+            var destination = source, width = 1
+            while width < source.count {
+                if Task.isCancelled { return nil }
+                for start in stride(from: 0, to: source.count, by: width * 2) {
+                    let middle = min(start + width, source.count), end = min(start + width * 2, source.count)
+                    var left = start, right = middle
+                    for output in start..<end {
+                        if output.isMultiple(of: 256), Task.isCancelled { return nil }
+                        if left < middle && (right == end || !CleaningResultsEntry.precedes(source[right], source[left], query: query)) {
+                            destination[output] = source[left]; left += 1
+                        } else {
+                            destination[output] = source[right]; right += 1
+                        }
+                    }
+                }
+                swap(&source, &destination); width *= 2
+            }
+        }
+        if Task.isCancelled { return nil }
+        return .init(items: source.map(\.item), selectableIDs: Set(source.lazy.filter { $0.item.isSelectable }.map { $0.item.id }))
+    }
+}
+
+struct CleaningResultsIndex: Sendable {
+    let items: [CleaningItemDisplay]
+    let reviewableItems: [CleaningItemDisplay]
+    let recommendedItems: [CleaningItemDisplay]
+    let otherItems: [CleaningItemDisplay]
+    let protectedItems: [CleaningItemDisplay]
+    let recommendedAllocatedBytes: UInt64
+    let reviewableAllocatedBytes: UInt64
+    let protectedAllocatedBytes: UInt64
+    let runningApplicationCount: Int
+    let defaultProjections: [Int: CleaningResultsProjection]
+    private let allEntries: [CleaningResultsEntry]
+    private let positions: [UUID: Int]
+    private let categories: [[CleaningResultsEntry]]
+
+    init(items: [CleaningItemDisplay] = [], recommendedIDs: Set<UUID> = []) {
+        self.items = items
+        let entries = items.enumerated().map { CleaningResultsEntry($0.element, position: $0.offset) }
+        var recommended: [CleaningResultsEntry] = [], other: [CleaningResultsEntry] = [], protected: [CleaningResultsEntry] = []
+        var reviewable: [CleaningItemDisplay] = []
+        var recommendedBytes: UInt64 = 0, reviewableBytes: UInt64 = 0, protectedBytes: UInt64 = 0, running = 0
+        for entry in entries {
+            let item = entry.item
+            if item.kind == .runningApplication { running += 1 }
+            if item.group == .protected { protected.append(entry); protectedBytes &+= item.allocatedBytes }
+            else {
+                reviewable.append(item); reviewableBytes &+= item.allocatedBytes
+                if recommendedIDs.contains(item.id) { recommended.append(entry); recommendedBytes &+= item.allocatedBytes }
+                else { other.append(entry) }
+            }
+        }
+        allEntries = entries
+        positions = Dictionary(uniqueKeysWithValues: entries.map { ($0.item.id, $0.position) })
+        let grouped = [recommended, other, protected]
+        categories = grouped
+        reviewableItems = reviewable; recommendedItems = recommended.map(\.item)
+        otherItems = other.map(\.item); protectedItems = protected.map(\.item)
+        recommendedAllocatedBytes = recommendedBytes; reviewableAllocatedBytes = reviewableBytes
+        protectedAllocatedBytes = protectedBytes; runningApplicationCount = running
+        defaultProjections = Dictionary(uniqueKeysWithValues: grouped.enumerated().map { tab, entries in
+            let query = CleaningResultsQuery(tab: tab, sort: "size", ascending: false, search: "", selectedRevision: nil)
+            return (tab, CleaningResultsProjection.make(entries, query: query) ?? .init())
+        })
+    }
+    func item(_ id: UUID) -> CleaningItemDisplay? { positions[id].map { items[$0] } }
+    func count(for tab: Int) -> Int { categories[tab].count }
+    func entries(for tab: Int, selectedIDs: Set<UUID>?) -> [CleaningResultsEntry] {
+        guard let selectedIDs else { return categories[tab] }
+        return selectedEntries(selectedIDs)
+    }
+    func selectedItems(_ ids: Set<UUID>) -> [CleaningItemDisplay] { selectedEntries(ids).map(\.item) }
+    private func selectedEntries(_ ids: Set<UUID>) -> [CleaningResultsEntry] {
+        if ids.count > items.count / 4 {
+            return allEntries.filter { ids.contains($0.item.id) && $0.item.isSelectable }
+        }
+        return ids.compactMap { positions[$0] }.sorted().compactMap {
+            let entry = allEntries[$0]; return entry.item.isSelectable ? entry : nil
+        }
     }
 }
 

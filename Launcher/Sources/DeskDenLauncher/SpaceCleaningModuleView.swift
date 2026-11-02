@@ -5,6 +5,7 @@ import LauncherCore
 struct SpaceCleaningModuleView: View {
     @ObservedObject var model: SpaceCleaningModel
     @Environment(\.workbenchPalette) private var palette
+    @Environment(\.timeZone) private var timeZone
     @State private var measuredHeights: [SpaceCleaningMeasuredRegion: CGFloat] = [:]
 
     private var isPreparing: Bool { [.start, .scope].contains(model.screen) && model.dialog == nil }
@@ -38,7 +39,7 @@ struct SpaceCleaningModuleView: View {
                         Text(model.scopeSummary).lineLimit(1).truncationMode(.middle)
                         if model.screen == .results { Text(model.requiresRescan ? "· 需重新扫描" : "· 已检查") }
                     } else if let date = model.lastScanDate {
-                        Text("上次扫描 · " + SpaceCleaningFormat.date(date))
+                        Text("上次扫描 · " + SpaceCleaningFormat.date(date, timeZone: timeZone))
                     } else {
                         Label("开发依赖与发布归档保持保护", systemImage: "checkmark.shield")
                     }
@@ -531,7 +532,31 @@ struct SpaceCleaningProgressTrack: View {
 }
 enum SpaceCleaningFormat {
     static func bytes(_ bytes: UInt64) -> String { ByteCountFormatter.string(fromByteCount: Int64(min(bytes, UInt64(Int64.max))), countStyle: .file) }
-    static func date(_ date: Date) -> String { date.formatted(.dateTime.year().month().day().hour().minute()) }
+    @MainActor private static var dateFormatters: [String: DateFormatter] = [:]
+    @MainActor static func date(_ date: Date, timeZone: TimeZone = .current) -> String {
+        formatted(date, pattern: "yyyy年MM月dd日 HH:mm", timeZone: timeZone)
+    }
+    @MainActor static func day(_ date: Date, timeZone: TimeZone) -> String {
+        formatted(date, pattern: "yyyy年MM月dd日", timeZone: timeZone)
+    }
+    @MainActor static func time(_ date: Date, timeZone: TimeZone) -> String {
+        formatted(date, pattern: "HH:mm", timeZone: timeZone)
+    }
+    @MainActor private static func formatted(_ date: Date, pattern: String, timeZone: TimeZone) -> String {
+        let key = timeZone.identifier + ":" + pattern
+        let formatter: DateFormatter
+        if let cached = dateFormatters[key] { formatter = cached }
+        else {
+            formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "zh_CN")
+            formatter.calendar = Calendar(identifier: .gregorian)
+            formatter.timeZone = timeZone
+            formatter.dateFormat = pattern
+            if dateFormatters.count >= 24 { dateFormatters.removeAll(keepingCapacity: true) }
+            dateFormatters[key] = formatter
+        }
+        return formatter.string(from: date)
+    }
 }
 
 

@@ -206,13 +206,13 @@ struct WorkbenchRootView: View {
         }.padding(.horizontal,12).padding(.top,22).padding(.bottom,15)
     }
     private var sidebarBrand: some View {
-        HStack(alignment: .bottom, spacing: 8) {
+        HStack(alignment: .center, spacing: 8) {
             WorkbenchBrandMark(pointSize: 30)
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Text("方寸").font(.system(size: 13, weight: .medium)).foregroundStyle(palette.text)
                 Text("v" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"))
                     .font(.system(size: 11)).foregroundStyle(palette.muted)
-            }.padding(.bottom, 2).lineLimit(1)
+            }.lineLimit(1)
             Spacer(minLength: 0)
         }.padding(.horizontal, 12).padding(.vertical, 8)
             .accessibilityElement(children: .combine).accessibilityIdentifier("window-brand")

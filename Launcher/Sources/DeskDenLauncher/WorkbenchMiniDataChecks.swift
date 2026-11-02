@@ -53,11 +53,18 @@ import LauncherCore
             check(stale.isStale && stale.stateText == "已过期" && stale.detail.contains("不代表当前"),"quota expires between provider refreshes without being shown as current")
             let onlyWeekly=AIQuotaSnapshot(provider:.codex,observedAt:now,source:.manual,shortWindow:weekly,weeklyWindow:nil)
             let partial=WorkbenchMiniAIData(summary:.init(provider:.codex,state:.ready,snapshot:onlyWeekly,detail:"夹具"),provider:.codex,now:now)
-            check(partial.windows[0].fraction == nil && partial.windows[1].label == "每周" && partial.stateText == "手动记录","weekly-only manual data leaves the short window unavailable and marks its provenance")
+            check(partial.windows.count == 1 && partial.windows[0].label == "每周" && partial.windows[0].fraction == 0.27 && partial.stateText == "手动记录"
+                  && partial.availabilityNote == "5小时窗口：来源未提供", "weekly-only data shows its real window once and explains an unprovided cycle without a placeholder meter")
             let wrong=WorkbenchMiniAIData(summary:summary,provider:.claude,now:now)
-            check(wrong.windows.allSatisfy {$0.fraction == nil && $0.value == "—"},"a provider mismatch cannot display another provider's quota")
+            check(wrong.windows.isEmpty && wrong.stateText == "正在读取", "a provider mismatch cannot display another provider's quota or invented cycle")
+            let awaiting=WorkbenchMiniAIData(summary:.init(provider:.claude,state:.unavailable,snapshot:nil,detail:"已连接，等待真实额度"),provider:.claude,now:now)
+            check(awaiting.windows.isEmpty && awaiting.stateText == "等待同步" && awaiting.emptyMessage == "等待首次额度同步", "a connected source without its first observation has an explicit synchronization state")
+            let disconnectedAI=WorkbenchMiniAIData(summary:.init(provider:.claude,state:.disconnected,snapshot:nil,detail:"尚未连接"),provider:.claude,now:now)
+            check(disconnectedAI.windows.isEmpty && disconnectedAI.stateText == "未连接", "an unconnected quota source is distinct from waiting for its first observation")
             let error=WorkbenchMiniAIData(summary:.init(provider:.codex,state:.error,snapshot:reversed,detail:"夹具失败"),provider:.codex,now:now)
-            check(error.stateText == "读取失败" && error.detail.contains("夹具失败"),"retained quota does not conceal its source failure")
+            check(error.stateText == "读取失败" && error.isStale && error.detail.contains("夹具失败") && error.detail.contains("保留上次有效读数") && error.windows == ai.windows, "retained quota does not conceal its source failure or discard its last valid numbers")
+            let firstFailure=WorkbenchMiniAIData(summary:.init(provider:.claude,state:.error,snapshot:nil,detail:"来源读取失败"),provider:.claude,now:now)
+            check(firstFailure.windows.isEmpty && firstFailure.emptyMessage == "暂未取得有效额度" && !firstFailure.detail.contains("上次读数"), "a first-read failure never claims a retained or expired observation exists")
             check(ai.windows[0].reset == "20分钟后重置" && ai.windows[1].reset == "1天后重置", "quota reset labels use the shared full relative countdown on either side of 24 hours")
 
             var snapshot = DeviceSnapshot()
@@ -70,6 +77,7 @@ import LauncherCore
             let unavailable = WorkbenchMiniDeviceData(snapshot: snapshot, openedAt: now, now: now)
             check(unavailable.memory == "—" && unavailable.disk == "—" && unavailable.download == "—" && unavailable.periodTraffic == "—" && unavailable.memoryFraction == nil, "missing device readings never become zero usage")
             snapshot.performanceSampledAt = now
+            snapshot.sampledAt = now
             snapshot.cpuTemperature = 50; snapshot.gpuTemperature = 40; snapshot.fanRPM = [0, nil]
             snapshot.memory = .init(total: 16_000, used: 8_000, available: 8_000, application: 5_000, wired: 2_000, compressed: 1_000, cached: 0, swapUsed: nil, pageIns: 0, pageOuts: 0, pressure: .normal)
             snapshot.disk = .init(name: "Fixture", fileSystem: "APFS", total: 1_000_000_000_000, used: 700_000_000_000, available: 300_000_000_000, readBytesPerSecond: nil, writeBytesPerSecond: nil)
@@ -80,6 +88,28 @@ import LauncherCore
             check(live.memoryFraction == 0.5 && live.memoryPressureState == .normal && live.diskFraction == 0.7 && live.disk.contains("1 TB"), "device fractions and decimal storage use the actual capacity snapshot")
             check(live.temperature == "122°F" && live.gpuTemperature == "104°F" && live.leftFan == "0 RPM" && live.rightFan == "—", "sensor units and genuine zero RPM remain distinct from unavailable readings")
             check(live.download == DeviceFormat.rate(0) && live.todayTraffic == DeviceFormat.storage(0), "Mini uses all-interface rates even when the workbench selects a different interface; covered zero remains valid")
+            let cachedReopened=WorkbenchMiniDeviceData(snapshot:snapshot,openedAt:now.addingTimeInterval(2),unit:.fahrenheit,now:now.addingTimeInterval(3))
+            check(cachedReopened.memory == live.memory && cachedReopened.disk == live.disk && cachedReopened.temperature == live.temperature && cachedReopened.download == live.download,
+                  "reopening Mini preserves all recent valid hardware readings instead of clearing them")
+            check(cachedReopened.memoryStatus == "更新中" && cachedReopened.diskStatus == "更新中" && cachedReopened.networkStatus == "更新中" && cachedReopened.thermalUpdating,
+                  "recent pre-open observations explicitly remain updating until the next sample")
+            var independentlyUpdated=snapshot
+            independentlyUpdated.performanceSampledAt=now.addingTimeInterval(-120)
+            let independent=WorkbenchMiniDeviceData(snapshot:independentlyUpdated,openedAt:now,now:now)
+            check(independent.memory == "—" && independent.disk == live.disk && independent.temperature == "50°C" && independent.download == live.download,
+                  "fresh thermal/network observations and a still-valid disk capacity do not depend on the expired performance group")
+            let oldRate=WorkbenchMiniDeviceData(snapshot:snapshot,openedAt:now.addingTimeInterval(11),now:now.addingTimeInterval(11))
+            check(oldRate.download == "—" && oldRate.upload == "—" && oldRate.memory == live.memory && oldRate.temperature == "50°C",
+                  "real-time network rates expire sooner than memory and thermal observations")
+            var future=snapshot
+            future.sampledAt=now.addingTimeInterval(5);future.performanceSampledAt=now.addingTimeInterval(5);future.thermalSampledAt=now.addingTimeInterval(5)
+            let futureRead=WorkbenchMiniDeviceData(snapshot:future,openedAt:now,now:now)
+            check(futureRead.download == "—" && futureRead.memory == "—" && futureRead.disk == "—" && futureRead.temperature == "—",
+                  "future timestamps after a clock adjustment cannot be presented as current hardware data")
+            var baseline=snapshot;baseline.allNetwork.downloadBytesPerSecond=nil;baseline.allNetwork.uploadBytesPerSecond=nil;baseline.allNetwork.interfaceNames=["Wi-Fi"]
+            check(WorkbenchMiniDeviceData(snapshot:baseline,openedAt:now,now:now).networkStatus == "建立采样", "an initial network delta is identified as sampling rather than zero traffic")
+            baseline.allNetwork.interfaceNames=[]
+            check(WorkbenchMiniDeviceData(snapshot:baseline,openedAt:now,now:now).networkStatus == "无活动接口", "a sampled network without an active interface is explicit")
             let segment = UUID()
             let history = (0..<1_000).map { index in
                 DeviceHistoryPoint(date: now.addingTimeInterval(Double(index - 999)), segment: segment,
@@ -87,6 +117,8 @@ import LauncherCore
             }
             let graph = WorkbenchMiniDeviceData(snapshot: snapshot, openedAt: now, history: history, now: now)
             check(graph.networkPoints.count == 61 && graph.networkPoints.first?.date == now.addingTimeInterval(-60) && graph.networkPoints.last?.download == nil, "Mini graph reads a bounded sixty-second tail and retains unavailable samples as gaps")
+            let historical=WorkbenchMiniDeviceData(snapshot:snapshot,openedAt:now.addingTimeInterval(11),history:history,now:now.addingTimeInterval(11))
+            check(historical.download == "—" && !historical.networkPoints.isEmpty, "recent historical network samples remain a trend without being substituted for a missing current speed")
             let allSegment = UUID()
             let filteredChange = [0, 1].map { index in
                 DeviceHistoryPoint(date: now.addingTimeInterval(Double(index - 1)), segment: UUID(), cpuPercent: nil,

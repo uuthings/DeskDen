@@ -153,11 +153,14 @@ import SwiftUI
             } else if scenario == .missing {
                 let text = accessibilityObjects(fixture.host).flatMap { [string("accessibilityLabel",$0),string("accessibilityValue",$0)] }.joined(separator:" ")
                 check(!text.contains("32%") && !text.contains("16°C"), "missing sources never reuse successful fixture readings")
+                check(text.contains("等待首次额度同步") && !text.contains("5小时已用—"), "a missing quota source displays synchronization text instead of placeholder percentage rows")
             } else if scenario == .fourColumns {
                 let values = accessibilityObjects(fixture.host)
                 let visible = defaults + fixture.availableCards.filter { $0.providerID != nil || $0.apiBalanceID != nil }
                 check(visible.count == 9 && visible.allSatisfy { frame("mini-card-" + $0.rawValue, objects: values, fixture: fixture) != nil }, "four-column Mini shows built-in cards and connected traffic/balance sources together")
                 check(frame("mini-next-page", objects: values, fixture: fixture) == nil, "four columns do not create unnecessary pagination")
+                let text = values.flatMap { [string("accessibilityLabel",$0),string("accessibilityValue",$0)] }.joined(separator:" ")
+                check(text.contains("5小时窗口：来源未提供") && text.contains("每周已用90%"), "a single-window quota keeps its real weekly reading with a compact source-availability explanation")
             } else if scenario == .thermalWarning || scenario == .thermalCritical {
                 let text = accessibilityObjects(fixture.host).flatMap { [string("accessibilityLabel", $0), string("accessibilityValue", $0)] }.joined(separator: " ")
                 check(text.contains(scenario == .thermalWarning ? "温度偏高" : "系统高温"), "\(scenario.rawValue): thermal status has an explicit accessible label in addition to color")
@@ -262,11 +265,13 @@ import SwiftUI
             Palette.workbenchTheme = .qingbiMist;Palette.isLight=light;Palette.glassOpacity=opacity
             let missing=scenario == .missing
             if scenario == .empty {state.preferences.visibleCards=[]}
+            if missing {state.preferences.visibleCards=[.network,.thermal,.codex,.claude]}
             state.preferences.showSeconds = scenario == .seconds
             let context=WorkbenchMiniContextData(time:scenario == .seconds ? "下午 10:24:56":"10:24",date:"10月25日 · 星期日",zone:"UTC−4",zoneHelp:"示例时区 · UTC−4",city:missing ? "未选择城市":"纽约",temperature:missing ? "—":"16°C",condition:missing ? "请先选择城市":"多云",symbol:missing ? "globe":"cloud.sun",weatherNote:nil,shortDate:"10月25日",weekday:"周日")
             let agenda=WorkbenchMiniAgendaData(event:nil,reminder:missing ? nil:.init(title:"整理下周计划",dateText:"10/26 · 09:00",note:nil),eventStatus:"日历未连接",reminderStatus:"暂无未完成待办")
             var device=WorkbenchMiniDeviceData()
             if !missing {
+                device.memoryStatus="";device.diskStatus="";device.networkStatus=""
                 device.memory="12.4 / 24 GB";device.memoryFraction=0.517;device.memoryPressure="压力低";device.memoryPressureState = .normal
                 device.disk="672 / 1,000 GB";device.diskFraction=0.672
                 device.temperature="48°C";device.gpuTemperature="44°C";device.leftFan="1920 RPM";device.rightFan="1860 RPM";device.thermalState="正常"
@@ -279,7 +284,9 @@ import SwiftUI
                 }
             }
             let providers=AIProvider.allCases.enumerated().map { index,provider in
-                WorkbenchMiniAIData(provider:provider,title:provider.title,stateText:missing ? "不可用":"已用",detail:"Synthetic quota fixture",isStale:false,windows:[.init(label:"5小时",value:missing ? "—":"70%",fraction:missing ? nil:0.70,reset:"23时59分后"),.init(label:"每周",value:missing ? "—":"90%",fraction:missing ? nil:0.90,reset:"等待更新")])
+                let weeklyOnly=scenario == .fourColumns && provider == .codex
+                let windows:[WorkbenchMiniQuotaData]=missing ? [] : weeklyOnly ? [.init(label:"每周",value:"90%",fraction:0.90,reset:"等待更新")] : [.init(label:"5小时",value:"70%",fraction:0.70,reset:"23时59分后"),.init(label:"每周",value:"90%",fraction:0.90,reset:"等待更新")]
+                return WorkbenchMiniAIData(provider:provider,title:provider.title,stateText:missing ? "等待同步":"已用",detail:"Synthetic quota fixture",isStale:false,windows:windows,availabilityNote:weeklyOnly ? "5小时窗口：来源未提供":nil)
             }
             let externalProviders:[WorkbenchMiniExternalProviderData] = scenario == .fourColumns ? [.init(id:UUID(),title:"示例流量服务",stateText:"已连接",amount:"899.95 / 1,000 GB",fraction:0.89995,detail:"Synthetic traffic fixture",isStale:false,remaining:"100.05",unit:"GB",reset:"1小时13分钟后重置",observedAt:Date().addingTimeInterval(-125))] : []
             let balances:[WorkbenchMiniAPIBalanceData] = scenario == .fourColumns ? [.init(id:UUID(),title:"示例余额服务",amount:"¥ 48.32",stateText:"已连接",detail:"Synthetic balance fixture",isStale:false)] : []

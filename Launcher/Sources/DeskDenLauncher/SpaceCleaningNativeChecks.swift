@@ -13,6 +13,19 @@ import LauncherCore
             if !value { failures += 1 }
             print("\(value ? "PASS" : "FAIL") \(message)")
         }
+        let date = ISO8601DateFormatter().date(from: "2026-11-01T16:04:00Z")!
+        let beijing = TimeZone(identifier: "Asia/Shanghai")!, losAngeles = TimeZone(identifier: "America/Los_Angeles")!
+        check(SpaceCleaningFormat.day(date, timeZone: beijing) == "2026年11月02日" && SpaceCleaningFormat.time(date, timeZone: beijing) == "00:04",
+              "cleaning dates keep explicit Chinese year/month/day and the selected workbench timezone")
+        check(SpaceCleaningFormat.date(date, timeZone: losAngeles) == "2026年11月01日 08:04"
+              && SpaceCleaningFormat.day(date, timeZone: beijing) == "2026年11月02日",
+              "changing timezone updates cleaning dates without inheriting system locale or a cached timezone")
+        check(CleaningFileCategory(url: URL(fileURLWithPath: "/fixture/archive.zip"), isDirectory: true) == .folder
+              && CleaningFileCategory(url: URL(fileURLWithPath: "/fixture/Photo.JPG"), isDirectory: false) == .image
+              && CleaningFileCategory(url: URL(fileURLWithPath: "/fixture/Sample.app"), isDirectory: true) == .application,
+              "file visuals respect scanned directory metadata, packages and case-insensitive file extensions")
+        check(CleaningFileCategory.allCases.allSatisfy { NSImage(systemSymbolName: $0.symbol, accessibilityDescription: nil) != nil },
+              "every cleaning file category has an available native symbol without loading file icons")
         let manager = FileManager.default
         let rawRoot = manager.temporaryDirectory.appendingPathComponent("deskden-space-native-\(UUID().uuidString)")
         let output = ProcessInfo.processInfo.environment["DESKDEN_SPACE_CLEANING_VISUAL_DIR"].map { URL(fileURLWithPath: $0) }
@@ -399,6 +412,13 @@ import LauncherCore
             cleaning.showResults(.recommended)
             cleaning.clearSelection(); cleaning.toggleItem(item.id)
             _ = await settle(window) { exists("space-cleaning-select-" + item.id.uuidString, in: host) }
+            check(exists("space-cleaning-file-date-" + item.id.uuidString, in: host)
+                  && exists("space-cleaning-file-" + item.id.uuidString, in: host),
+                  "result rows retain separate date content and the complete filename detail action")
+            check(try await hoverBackground("space-cleaning-file-row-" + item.id.uuidString, host: host, window: window, output: output,
+                  geometryIdentifiers: ["space-cleaning-file-" + item.id.uuidString, "space-cleaning-file-date-" + item.id.uuidString,
+                                        "space-cleaning-select-" + item.id.uuidString, "space-cleaning-results-surface"]),
+                  "result hover uses a faint complete row surface and preserves its geometry")
             guard let page = pageScroll(in: host) else { throw SpaceCleaningFixtureError.invalid("internal result scroll missing") }
             let sidebarBefore = frame("workbench-sidebar", in: host)
             let surfaceBefore = frame("space-cleaning-results-surface", in: host)
@@ -628,8 +648,25 @@ import LauncherCore
         return entered.map { $0 < 12 } == true && exited.map { $0 < 12 } == true && surface.map { $0 < 12 } == true && correctCursor && stable
     }
 
-    private static func hoverBackground(_ identifier: String, host: NSView, window: NSWindow, output: URL, expectedChange: Bool = true) async throws -> Bool {
+    private static func hoverBackground(_ identifier: String, host: NSView, window: NSWindow, output: URL, expectedChange: Bool = true, geometryIdentifiers: [String] = []) async throws -> Bool {
+        // A newly switched lazy list can still be applying its scroll reset.
+        // Measure the hover only after the mounted target has settled.
+        var previous: NSRect?, stableSamples = 0
+        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+        repeat {
+            host.layoutSubtreeIfNeeded(); window.displayIfNeeded()
+            let current = frame(identifier, in: host)
+            stableSamples = current != nil && current == previous ? stableSamples + 1 : 0
+            previous = current
+            if stableSamples >= 3 { break }
+            try? await Task.sleep(for: .milliseconds(35))
+        } while ContinuousClock.now < deadline
         guard let rect = frame(identifier, in: host), rect.width >= 16, rect.height >= 16 else { return false }
+        // SwiftUI's non-interactive AX group expands from the child union to
+        // its painted bounds when a clear background becomes visible. Measure
+        // the real controls and enclosing surface for a row's layout contract.
+        let measuredIDs = geometryIdentifiers.isEmpty ? [identifier] : geometryIdentifiers
+        let beforeGeometry = measuredIDs.map { frame($0, in: host) }
         let original = CGEvent(source: nil)?.location
         let ignored = window.ignoresMouseEvents
         window.ignoresMouseEvents = false; window.acceptsMouseMovedEvents = true
@@ -655,12 +692,20 @@ import LauncherCore
         post(NSPoint(x: rect.midX, y: rect.midY))
         try? await Task.sleep(for: .milliseconds(180))
         let after = paddingBytes(), afterFrame = frame(identifier, in: host)
+        let afterGeometry = measuredIDs.map { frame($0, in: host) }
         try capture(host: host, name: "hover-" + identifier, output: output)
         post(NSPoint(x: window.frame.minX + 4, y: window.frame.maxY - 4))
         try? await Task.sleep(for: .milliseconds(60))
         guard let before, let after, before.count == after.count else { return false }
         let changed = zip(before, after).filter { abs(Int($0) - Int($1)) > 2 }.count
-        print("DETAIL production hover \(identifier) changedBytes=\(changed) expectsSurface=\(expectedChange) stable=\(afterFrame == rect)")
+        let stable = zip(beforeGeometry, afterGeometry).allSatisfy { before, after in
+            guard let before, let after else { return false }
+            return abs(before.minX - after.minX) < 0.01 && abs(before.minY - after.minY) < 0.01
+                && abs(before.width - after.width) < 0.01 && abs(before.height - after.height) < 0.01
+        }
+        print("DETAIL production hover \(identifier) changedBytes=\(changed) expectsSurface=\(expectedChange) stable=\(stable)")
+        if !stable { print("DETAIL hover control geometry before=\(beforeGeometry) after=\(afterGeometry)") }
+        if afterFrame != rect { print("DETAIL hover AX group bounds before=\(rect) after=\(String(describing: afterFrame))") }
         if expectedChange && changed < 12 {
             let screenTop = NSScreen.screens.first?.frame.maxY ?? 0
             let point = CGPoint(x: rect.midX, y: screenTop - rect.midY)
@@ -672,7 +717,7 @@ import LauncherCore
             }
             print("DETAIL hover target=\(rect) visibleScreen=\(String(describing: window.screen?.visibleFrame)) active=\(NSApp.isActive) coveringWindows=\(covering.count)")
         }
-        return (expectedChange ? changed >= 12 : changed < 12) && afterFrame == rect
+        return (expectedChange ? changed >= 12 : changed < 12) && stable
     }
     /// Dispatch a real mouse press in the control's trailing padding. Never
     /// invoke the action closure or accessibility press as a hit-test substitute.
