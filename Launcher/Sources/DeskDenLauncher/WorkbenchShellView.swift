@@ -12,9 +12,9 @@ struct WorkbenchShellMetrics {
     init(viewport: CGSize, home: Bool = false) {
         chromeHeight = 58
         // Fixed reading margins are independent of scrollbar presence.
-        contentGutter = home ? 24 : 35
+        contentGutter = 24
         sidebarWidth = 0
-        pageWidth = min(home ? .infinity : 1360, max(0, viewport.width - 2 - 2 * contentGutter))
+        pageWidth = max(0, viewport.width - 2 - 2 * contentGutter)
     }
 }
 
@@ -28,7 +28,7 @@ private struct WorkbenchPageWidthKey: EnvironmentKey {
     static let defaultValue: CGFloat = 864
 }
 private struct WorkbenchPageMaximumWidthKey: EnvironmentKey {
-    static let defaultValue: CGFloat = 1360
+    static let defaultValue: CGFloat = .infinity
 }
 enum WorkbenchPageScrollSpace { static let name = "workbench-page-scroll" }
 extension EnvironmentValues {
@@ -69,23 +69,17 @@ private struct WorkbenchPageCanvas: ViewModifier {
 struct WorkbenchRootView: View {
     @ObservedObject var model: WorkbenchAppModel
     private var home: Bool { model.route == .overview }
-    private var palette: ThemePalette { ThemePalette(theme: home ? .qingbiMist : model.theme, opacity: home ? 0.87 : model.opacity, light: model.light) }
-    private var windowRadius: CGFloat { model.isFullScreen ? 0 : home ? 16 : WorkbenchViewport.windowRadius }
+    private var palette: ThemePalette { ThemePalette(light: model.light) }
+    private var windowRadius: CGFloat { model.isFullScreen ? 0 : 16 }
     var body: some View {
         GeometryReader { viewport in
             let metrics = WorkbenchShellMetrics(viewport: viewport.size, home: home)
             let chromeHeight = metrics.chromeHeight
             let settingsHeight: CGFloat = model.route == .settings ? 52 : 0
             let gutter = metrics.contentGutter
-            let pageInsets = EdgeInsets(top:home ? 24 : 22,leading:gutter,bottom:home ? 32 : 16,trailing:gutter)
+            let pageInsets = EdgeInsets(top:24,leading:gutter,bottom:32,trailing:gutter)
             ZStack(alignment: .topLeading) {
-                if model.light {
-                    WorkbenchFluidBackground()
-                } else {
-                    // Keep the saved dark background until a new artwork is approved.
-                    WorkbenchSceneBackground(theme: model.theme, motionEnabled: false, active: model.windowVisible)
-                    Color.black.opacity(0.26).allowsHitTesting(false)
-                }
+                WorkbenchFluidBackground()
                 VStack(spacing: 0) {
                     WorkbenchFluidNavigation(model: model).frame(height: chromeHeight)
                         .accessibilityElement(children: .contain)
@@ -100,9 +94,11 @@ struct WorkbenchRootView: View {
                     .blur(radius: model.modals.isPresented || model.confirmingQuit || model.quitting ? 8 : 0)
                     .disabled(model.modals.isPresented || model.confirmingQuit || model.quitting)
                     .accessibilityHidden(model.modals.isPresented || model.confirmingQuit)
-                if home {
+                if !model.modals.isPresented && !model.confirmingQuit {
                     Text("v" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"))
-                        .font(.system(size: 10)).foregroundStyle(.white.opacity(0.82))
+                        .font(.system(size: 10)).foregroundStyle(.white.opacity(0.92))
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Color.black.opacity(0.24), in: Capsule())
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                         .padding(.trailing, gutter).padding(.bottom, 9)
                         .allowsHitTesting(false).accessibilityIdentifier("fc.home.version")
@@ -117,13 +113,13 @@ struct WorkbenchRootView: View {
             .environment(\.workbenchScale, 1)
             .environment(\.workbenchDeviceExpanded, false)
             .environment(\.workbenchPageWidth, metrics.pageWidth)
-            .environment(\.workbenchPageMaximumWidth, home ? .infinity : 1360)
+            .environment(\.workbenchPageMaximumWidth, .infinity)
             .environment(\.workbenchContentHeight, max(0, viewport.size.height - chromeHeight - settingsHeight - 2 - pageInsets.top - pageInsets.bottom))
             .environment(\.workbenchPageScrollHeight, max(0, viewport.size.height - chromeHeight - settingsHeight - 2))
         }
         .clipShape(RoundedRectangle(cornerRadius: windowRadius))
         .overlay(RoundedRectangle(cornerRadius: windowRadius).strokeBorder(Color.white.opacity(model.isFullScreen ? 0 : 0.57), lineWidth: 1).allowsHitTesting(false))
-        .workbenchThemeEnvironment(theme: home ? .qingbiMist : model.theme, opacity: home ? 0.87 : model.opacity, backgroundMotion: !home && model.backgroundMotion && !model.reduceMotion, appearance: model.appearance)
+        .workbenchThemeEnvironment(theme: model.theme, opacity: model.opacity, backgroundMotion: false, appearance: model.appearance)
         .environment(\.workbenchModals,model.modals)
         .ignoresSafeArea(.container, edges: .top)
         .tint(palette.accent).controlSize(.regular)

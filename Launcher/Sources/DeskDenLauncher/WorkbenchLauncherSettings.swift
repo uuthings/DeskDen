@@ -95,7 +95,7 @@ struct WorkbenchLauncherSettings:View {
                 row("默认视图","Tab 键可切换按键与应用"){WBSelect("默认视图",selection:setting(\.defaultView),options:LauncherDefaultView.allCases.map{($0,$0.title)}).frame(width:174)}
                 row("卡片布局","绑定与未绑定项目使用一致尺寸"){WBSelect("卡片布局",selection:setting(\.display),options:displayOptions).frame(width:174)}
                 row("数字快速启动","搜索后用数字键打开候选应用"){Toggle("数字快速启动",isOn:Binding(get:{model.configuration.settings.defaultSearchInputMode == .quick},set:{value in model.change{$0.defaultSearchInputMode=value ? .quick:.text}})).labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.small).tint(palette.accent)}
-                row("背景材质","与全局外观同步",last:true){Button("调整材质",action:adjustMaterial).buttonStyle(WBButtonStyle(compact:true))}
+                row("背景材质","与全局外观同步",last:true){Button("外观设置",action:adjustMaterial).buttonStyle(WBButtonStyle(compact:true))}
             }}
             WBCard(title:"绑定与搜索",symbol:"keyboard",spacing:10){VStack(spacing:0){
                 row("按键绑定","管理应用、网址、文件及快捷动作"){Button("管理绑定"){model.error=nil;bindingsOpen=true}.buttonStyle(WBButtonStyle(compact:true)).accessibilityIdentifier("fc.settings.launcher.bindings")}
@@ -107,9 +107,9 @@ struct WorkbenchLauncherSettings:View {
                 }
                 row("隐藏未绑定按键","仅影响启动器按键视图",last:true){Toggle("隐藏未绑定按键",isOn:setting(\.hideUnboundKeys)).labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.small).tint(palette.accent)}
             }}
-            HStack(spacing:12){Button("更多启动器选项",action:model.moreSettings).buttonStyle(WBQuietButtonStyle()).help("应用扫描、面板开关、独立快捷键、直达前缀与配置恢复");Spacer();Button("打开启动器"){owner.show()}.buttonStyle(WBQuietButtonStyle())}.font(.system(size:11))
+            HStack(spacing:12){Button("更多启动器选项",action:model.moreSettings).buttonStyle(WBQuietButtonStyle()).help("应用扫描、面板开关、独立快捷键、直达前缀与配置恢复");Spacer();Button("打开启动器"){owner.show()}.buttonStyle(WBQuietButtonStyle())}.font(.system(size:11)).environment(\.workbenchOnBackdrop,true)
             if let error=model.error{Text(error).font(.system(size:11)).foregroundStyle(palette.critical)}
-            if let status=model.status{HStack{Text(status);Spacer();if owner.lastRemoved != nil{Button("撤销移除",action:model.undoRemoval).buttonStyle(WBQuietButtonStyle())}}.font(.system(size:11)).foregroundStyle(palette.muted)}
+            if let status=model.status{HStack{Text(status);Spacer();if owner.lastRemoved != nil{Button("撤销移除",action:model.undoRemoval).buttonStyle(WBQuietButtonStyle())}}.font(.system(size:11)).foregroundStyle(.white.opacity(0.92)).shadow(color:.black.opacity(0.45),radius:2,y:1).environment(\.workbenchOnBackdrop,true)}
         }.workbenchModal(isPresented:$bindingsOpen){WorkbenchBindingManager(model:model){bindingsOpen=false}}
             .onAppear{model.sync()}.accessibilityElement(children:.contain).accessibilityIdentifier("fc.settings.launcher")
     }

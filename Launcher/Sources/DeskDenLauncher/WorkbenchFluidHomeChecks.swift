@@ -98,10 +98,9 @@ import LauncherCore
 
             if let account = objects(in: host).compactMap({ $0 as? WorkbenchFluidAccountMenuButton }).first {
                 let menu = account.makeAccountMenu()
-                let minimize = menu.items.first { $0.identifier?.rawValue == "account-minimize" }
-                let quit = menu.items.first { $0.identifier?.rawValue == "account-quit" }
-                check(minimize?.isEnabled == true && minimize?.action != nil && quit?.isEnabled == true && quit?.action != nil,
-                      "the mounted account control provides actionable Minimize and Quit menu entries")
+                check(menu.items.allSatisfy { $0.action == nil && !$0.isEnabled }
+                      && menu.items.contains { $0.title == NSFullUserName() },
+                      "the account menu identifies the local account without unrelated window or app-exit commands")
                 check(menu.items.allSatisfy { $0.submenu == nil } && !model.confirmingQuit && !model.quitting,
                       "inspecting the compact native menu neither creates nested menus nor starts an exit")
             } else { check(false, "the mounted account control exposes its native arrowless menu") }
@@ -171,11 +170,97 @@ import LauncherCore
                 let mounted = await settle(window) { model.settingsTab == tab && element("fc.page.settings." + tab.rawValue, in: host) != nil }
                 check(pressed && mounted, "the \(tab.rawValue) settings category remains reachable through its actual control")
             }
+            if CommandLine.arguments.contains("--interface-fluid-check") {
+                let result = try await checkModules(model: model, window: window, host: host)
+                count += result.count; failures += result.failures
+            }
             _ = press("navigation-overview", in: host)
             _ = await settle(window) { model.route == .overview && frame("fc.home.reminders", in: host) != nil }
             try NativeUIFixtureAccessibility.saveView(host, name: "home-fluid-after-interaction.png")
         } catch {
             check(false, "fluid Home fixture error: \(error.localizedDescription)")
+        }
+        return (count, failures)
+    }
+
+    /// Exercise the production route tree in both appearances, including real
+    /// form presentation and title geometry. All data belongs to the fixture.
+    private static func checkModules(model: WorkbenchAppModel, window: NSWindow, host: NSView) async throws -> (count: Int, failures: Int) {
+        var count = 0, failures = 0
+        func check(_ condition: Bool, _ message: String) {
+            count += 1; if !condition { failures += 1 }
+            print("\(condition ? "PASS" : "FAIL") \(message)")
+        }
+        let routes: [(WorkbenchRoute, String)] = [(.device,"fc.page.device"),(.cleaning,"space-cleaning"),(.calendar,"fc.calendar.workspace"),(.ai,"fc.page.usage"),(.network,"fc.page.network"),(.vault,"fc.page.vault"),(.settings,"fc.page.settings.general")]
+        for light in [true, false] {
+            model.changeLight(light)
+            for size in [NSSize(width:1120,height:758), NSSize(width:960,height:720), NSSize(width:1728,height:993)] {
+                window.setContentSize(size)
+                for (route, identifier) in routes {
+                    model.settingsTab = .general
+                    let pressed = press("navigation-" + route.rawValue, in: host)
+                    let mounted = await settle(window) { model.route == route && element(identifier, in: host) != nil && frame("workbench-page-title", in: host) != nil }
+                    let name = "\(route.rawValue) \(light ? "light" : "dark") \(Int(size.width))"
+                    check(pressed && mounted, "\(name): real navigation mounts its existing content")
+                    let viewport = window.convertToScreen(host.convert(host.bounds, to: nil))
+                    let title = frame("workbench-page-title", in: host)
+                    let brand = frame("window-brand", in: host)
+                    check(title.map { visible($0, window: window, host: host) && abs($0.minX - viewport.minX - 25) < 2 && $0.height <= 28 } == true
+                          && brand.map { abs($0.minX - viewport.minX - 25) < 2 && $0.height <= 28 } == true,
+                          "\(name): title and compact brand align to the same 24-point content edge")
+                    let navFrames = WorkbenchRoute.allCases.filter { $0 != .cards }.compactMap { frame("navigation-" + $0.rawValue, in: host) }
+                    check(navFrames.count == 8 && navFrames.allSatisfy { visible($0, window:window, host:host) }, "\(name): every navigation control stays visible")
+                    try NativeUIFixtureAccessibility.saveView(host, name:"interface-\(name.replacingOccurrences(of:" ",with:"-")).png")
+                }
+            }
+            window.setContentSize(NSSize(width:1120,height:758))
+            model.navigate(.network)
+            _ = await settle(window) { element("fc.action.network.budget", in:host) != nil }
+            check(press("fc.action.network.budget", in:host), "\(light): network budget opens from its actual control")
+            check(await settle(window) { model.modals.isPresented }, "\(light): the existing budget form is hosted by the shared modal")
+            try NativeUIFixtureAccessibility.saveView(host, name:"interface-budget-\(light ? "light" : "dark").png")
+            model.cancelPresentedInteraction()
+            check(await settle(window) { !model.modals.isPresented }, "\(light): Escape dismisses the unchanged budget form")
+            model.navigate(.ai)
+            _ = await settle(window) { element("fc.usage.configure", in:host) != nil }
+            check(press("fc.usage.configure", in:host), "\(light): usage configuration opens from its actual control")
+            check(await settle(window) { model.usagePresentation.connectionManager != nil && model.modals.isPresented }, "\(light): connection management preserves its real form")
+            try NativeUIFixtureAccessibility.saveView(host, name:"interface-connections-\(light ? "light" : "dark").png")
+            model.cancelPresentedInteraction()
+            check(await settle(window) { !model.modals.isPresented }, "\(light): unchanged connection management dismisses cleanly")
+            model.navigate(.device); model.deviceDetail = .memory
+            check(await settle(window) { element("fc.page.device.memory", in:host) != nil }, "\(light): device details remain reachable with the shared surface")
+            try NativeUIFixtureAccessibility.saveView(host, name:"interface-memory-\(light ? "light" : "dark").png")
+            model.deviceDetail = nil
+            model.navigate(.settings); model.settingsTab = .material
+            check(await settle(window) { element("fc.page.settings.material", in:host) != nil }, "\(light): fixed paired appearance settings remain reachable")
+            check(!objects(in:host).contains { $0 is NSSlider }, "\(light): retired opacity slider is not exposed")
+            try NativeUIFixtureAccessibility.saveView(host, name:"interface-material-\(light ? "light" : "dark").png")
+            if let owner = model.owner {
+                if owner.panel == nil { owner.configurePanel() }
+                owner.focusTransitionUntil = .distantFuture
+                owner.show()
+                _ = await settle(owner.panel) { owner.panel.isVisible }
+                check(owner.panel.appearance?.bestMatch(from:[.aqua,.darkAqua]) == (light ? .aqua : .darkAqua), "\(light): launcher inherits the actual global appearance")
+                check(WorkbenchFluidAssets.image(light:light) != nil && objects(in:owner.content).allSatisfy { string("accessibilityLabel",of:$0) != "全局透明度" }, "\(light): approved background is bundled and retired launcher opacity control is absent")
+                try NativeUIFixtureAccessibility.saveView(owner.background, name:"interface-launcher-\(light ? "light" : "dark").png")
+                let toggle = objects(in:owner.content).compactMap { $0 as? ActionButton }.first { $0.accessibilityLabel() == (light ? "切换深色外观" : "切换浅色外观") }
+                toggle?.performClick(nil)
+                check(await settle(owner.panel) { model.light != light && owner.configuration.settings.workbenchAppearance == (light ? .dark : .light) }, "\(light): launcher toggle changes both workbench preference and actual appearance")
+                owner.hide(restore:false); window.makeKeyAndOrderFront(nil)
+                model.changeLight(light)
+                let advanced = LauncherSettingsWindowController(owner:owner, autosavesFrame:false)
+                advanced.present()
+                if let settingsWindow = advanced.window, let root = settingsWindow.contentView {
+                    let appearancePopup = objects(in:root).compactMap { $0 as? NSPopUpButton }.first { $0.itemTitles == LauncherAppearance.allCases.map(\.title) }
+                    check(appearancePopup?.titleOfSelectedItem == (light ? "浅色" : "深色"), "\(light): advanced launcher settings reflect the same appearance preference")
+                    try NativeUIFixtureAccessibility.saveView(root, name:"interface-advanced-launcher-\(light ? "light" : "dark").png")
+                    appearancePopup?.selectItem(withTitle:"跟随系统")
+                    if let popup=appearancePopup, let action=popup.action { NSApp.sendAction(action,to:popup.target,from:popup) }
+                    check(await settle(settingsWindow) { model.appearance == .system && owner.configuration.settings.workbenchAppearance == .system }, "\(light): the actual advanced settings control persists Follow System")
+                } else { check(false,"advanced launcher settings create a native window") }
+                advanced.close(); model.changeLight(light); window.makeKeyAndOrderFront(nil)
+            }
         }
         return (count, failures)
     }

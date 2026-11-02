@@ -79,9 +79,13 @@ import SwiftUI
                     await fixture.settle()
                     check(!fixture.window.isVisible && !fixture.window.isKeyWindow, "\(name): native fixture remains hidden and non-key")
                     check(fixture.surface.bounds.height == 292 && fixture.host.frame == fixture.surface.bounds, "\(name): modular panel has fixed 292 pt height")
-                    check(fixture.surface.materialOpacity == opacity && fixture.surface.usesLightAppearance == light, "\(name): shared material follows appearance and opacity")
+                    check(fixture.surface.materialOpacity == (light ? 0.87 : 0.72) && fixture.surface.usesLightAppearance == light, "\(name): approved material follows appearance regardless of legacy opacity")
                     let effects = descendants(fixture.surface).compactMap { $0 as? NSVisualEffectView }
-                    check(!effects.isEmpty && effects.allSatisfy { $0.blendingMode == .behindWindow }, "\(name): backdrop samples behind the panel")
+                    let outerEffects = effects.filter { !$0.isDescendant(of: fixture.host) }
+                    let innerEffects = effects.filter { $0.isDescendant(of: fixture.host) }
+                    check(!outerEffects.isEmpty && outerEffects.allSatisfy { $0.blendingMode == .behindWindow }
+                          && !innerEffects.isEmpty && innerEffects.allSatisfy { $0.blendingMode == .withinWindow },
+                          "\(name): outer glass samples the desktop while inner cards sample the panel")
                     check(fixture.surface.containsVisiblePoint(.init(x: 12, y: 2)) && !fixture.surface.containsVisiblePoint(.init(x: 2, y: 26)) && fixture.surface.containsVisiblePoint(.init(x: 23, y: 28)), "\(name): shoulder joins the top and straight side")
                     let objects = accessibilityObjects(fixture.host)
                     let actions = frame("mini-header-actions", objects: objects, fixture: fixture)

@@ -2,8 +2,8 @@ import AppKit
 import LauncherCore
 import SwiftUI
 
-/// Color tokens transcribed from the accepted V5 CSS after its final material
-/// overrides. Surface opacity never affects text, icons, or business readings.
+/// One approved material pair for every surface. Legacy theme/opacity values
+/// remain decodable, but no longer select a different product color system.
 struct ThemePalette: Sendable {
     let theme: LauncherTheme
     let opacity: Double
@@ -15,52 +15,47 @@ struct ThemePalette: Sendable {
         self.light = light
     }
 
-    private var ar: Bool { theme == .arWorld || theme == .qingbiMist || theme == .moonCloudSea }
-    private func themed(_ original: UInt32, _ jade: UInt32, _ moon: UInt32, _ warm: UInt32) -> UInt32 {
-        switch theme {
-        case .qingbiMist: jade
-        case .moonCloudSea: moon
-        case .warmSunset: warm
-        default: original
-        }
-    }
-    var nsText: NSColor { color(light ? (ar ? 0x0E3347 : 0x2C302F) : (ar ? 0xF3FCFF : 0xF3F0E9)) }
-    var nsSecondary: NSColor { color(light ? (ar ? 0x274F62 : 0x55534B) : (ar ? 0xE1F2FF : 0xE5DFD3)) }
-    var nsMuted: NSColor { color(light ? (ar ? 0x48697B : 0x6C685E) : (ar ? 0xC8E4F3 : 0xC7C2B7)) }
-    var nsAccent: NSColor { color(themed(light ? (ar ? 0x137A94 : 0x8B652C) : (ar ? 0x88EDFF : 0xE1BB7B), light ? 0x197460:0x8BEAD1, light ? 0x59629B:0xC5D1FF, light ? 0x985E35:0xFFD29A)) }
+    var nsText: NSColor { color(light ? 0x172D33 : 0xF3FCFF) }
+    var nsSecondary: NSColor { color(light ? 0x50676D : 0xD4E2E6) }
+    var nsMuted: NSColor { color(light ? 0x62757A : 0xB4C6CC) }
+    var nsAccent: NSColor { color(light ? 0x197460 : 0x8BEAD1) }
     var text: Color { Color(nsColor: nsText) }
     var secondary: Color { Color(nsColor: nsSecondary) }
     var muted: Color { Color(nsColor: nsMuted) }
     var accent: Color { Color(nsColor: nsAccent) }
-    var cool: Color { token(light ? (ar ? 0x655CA8 : 0x39718C) : (ar ? 0xC4BEFF : 0x89B8D2)) }
-    var success: Color { token(light ? (ar ? 0x117A60 : 0x347254) : (ar ? 0x91F4D3 : 0x9AD4B2)) }
-    var warning: Color { token(light ? (ar ? 0x9E6113 : 0xA56B11) : (ar ? 0xFFDA93 : 0xEFB75D)) }
-    var critical: Color { token(light ? (ar ? 0xB03851 : 0xAF443D) : (ar ? 0xFFBBC8 : 0xF4A59B)) }
-    var surface: Color { token(themed(light ? (ar ? 0xD8EFF8 : 0xECE8DF) : (ar ? 0x0F304A : 0x1E242A), light ? 0xDFEEE6:0x132F2D, light ? 0xE5E9F8:0x242A43, light ? 0xF3E7DC:0x3A2D32), opacity) }
-    var raised: Color { token(themed(light ? (ar ? 0xF5FDFF : 0xFFFBF2) : (ar ? 0x245470 : 0x3E4448), light ? 0xF4FFF8:0x2B514C, light ? 0xF8F9FF:0x3B4568, light ? 0xFFF7ED:0x5E4750), opacity) }
-    var border: Color { light ? token(0xFFFFFF, 0.85) : token(ar ? 0xB3EAFF : 0xE4D8BA, ar ? 112 / 255.0 : 89 / 255.0) }
-    var line: Color { light ? token(ar ? 0x1F5D7C : 0x706445, 0.18) : token(ar ? 0xC2EDFF : 0xDED5BF, ar ? 61 / 255.0 : 54 / 255.0) }
-    var primary: Color { theme.isMountain ? accent : token(light ? (ar ? 0x175F7B : 0x8A642C) : (ar ? 0x97EDFF : 0xDFBB80)) }
-    var primaryText: Color { light ? .white : token(themed(ar ? 0x06415A : 0x2B2923, 0x103B32, 0x252C51, 0x483127)) }
-    // Floating controls use the same surface and user-selected opacity as cards.
+    var cool: Color { token(light ? 0x655CA8 : 0xC4BEFF) }
+    var success: Color { accent }
+    var warning: Color { token(light ? 0x9E6113 : 0xFFDA93) }
+    var critical: Color { token(light ? 0xB03851 : 0xFFBBC8) }
+    var materialOpacity: Double { light ? 0.87 : 0.72 }
+    var surface: Color { token(light ? 0xFFFFFF : 0x091116, materialOpacity) }
+    var raised: Color { token(light ? 0xFFFFFF : 0x182127, light ? 0.95 : 0.78) }
+    var border: Color { token(0xFFFFFF, light ? 0.69 : 0.23) }
+    var line: Color { token(light ? 0x244D58 : 0xD4E2E6, light ? 0.12 : 0.16) }
+    var primary: Color { accent }
+    var primaryText: Color { light ? .white : token(0x103B32) }
     var overlay: Color { surface }
-    var sidebar: Color { token(themed(light ? (ar ? 0xDAEEF7 : 0xEBE6DB) : (ar ? 0x0C2D45 : 0x181F26), light ? 0xD9EBE0:0x102C28, light ? 0xDEE5F5:0x20273E, light ? 0xEFE1D5:0x30262C), opacity * 0.82) }
-    var chrome: Color { token(themed(light ? (ar ? 0xE6F6FC : 0xF2EDDF) : (ar ? 0x11344D : 0x1A2026), light ? 0xE6F4EB:0x17362F, light ? 0xEAF0FC:0x29334D, light ? 0xF9EEE0:0x3B2C31), opacity * 0.66) }
-    var shell: Color { token(themed(light ? (ar ? 0xD8EEF7 : 0xEEE6D5) : (ar ? 0x082C46 : 0x12181F), light ? 0xD5EADD:0x0B2821, light ? 0xDDE4F5:0x171F35, light ? 0xF3E1D0:0x2C2226), opacity * 0.34) }
-    var navSelected: Color { theme.isMountain ? accent.opacity(opacity * 0.42) : token(light ? (ar ? 0x3BA5C2 : 0xB28A4B) : (ar ? 0x8ADFF5 : 0xC19D5E), opacity * (ar ? 0.42 : 0.48)) }
-    var navBorder: Color { theme.isMountain ? accent.opacity(light ? 0.34:0.44) : light ? accent.opacity(0.34) : token(ar ? 0xC7F4FF : 0xEAD3A7, ar ? 112 / 255.0 : 103 / 255.0) }
-    var soft: Color { theme.isMountain ? accent.opacity(0.09) : token(ar ? 0x7BE5FF : 0xE2C28E, ar ? 20 / 255.0 : 22 / 255.0) }
-    var control: Color { theme.isMountain ? raised : light ? raised : ar ? token(0x89D8F1, 25 / 255.0) : raised }
-    var controlBorder: Color { theme.isMountain ? accent.opacity(0.30) : light ? accent.opacity(0.30) : ar ? token(0xD1F5FF, 80 / 255.0) : line }
-    var progressTrack: Color { theme.isMountain ? accent.opacity(light ? 0.14:0.20) : light ? accent.opacity(0.14) : token(ar ? 0xCFEDFF : 0xD2BE8F, ar ? 46 / 255.0 : 27 / 255.0) }
-    var shadow: Color { token(ar ? 0x002139 : 0x090D10, ar ? 33 / 255.0 : 56 / 255.0) }
-    var highlight: Color { token(ar ? 0xE1FBFF : 0xFFF4CE, ar ? 0.20 : 0.075) }
+    var sidebar: Color { surface }
+    var chrome: Color { token(light ? 0xFFFFFF : 0x091116, light ? 0.10 : 0.24) }
+    var shell: Color { .clear }
+    var navSelected: Color { accent.opacity(light ? 0.12 : 0.14) }
+    var navBorder: Color { accent.opacity(light ? 0.24 : 0.32) }
+    var soft: Color { accent.opacity(0.08) }
+    var control: Color { token(light ? 0xFFFFFF : 0xD4E2E6, light ? 0.66 : 0.07) }
+    var controlBorder: Color { token(light ? 0xFFFFFF : 0xD4E2E6, light ? 0.65 : 0.22) }
+    var progressTrack: Color { token(light ? 0x3D7882 : 0x9EC6C1, light ? 0.12 : 0.13) }
+    var shadow: Color { token(0x061014, light ? 0.04 : 0.12) }
+    var highlight: Color { token(0xFFFFFF, light ? 0.16 : 0.08) }
 
     var surfaceGradient: LinearGradient {
-        LinearGradient(colors: [raised, surface], startPoint: .topLeading, endPoint: .bottomTrailing)
+        LinearGradient(stops: [
+            .init(color: raised, location: 0),
+            .init(color: surface, location: 0.70),
+            .init(color: token(light ? 0xF4FCFD : 0x091116, light ? 0.83 : 0.72), location: 1)
+        ], startPoint: .topLeading, endPoint: .bottomTrailing)
     }
     var navSelectedGradient: LinearGradient {
-        LinearGradient(colors: [navSelected, theme.isMountain ? accent.opacity(opacity * 0.16) : token(ar ? 0x228EB2 : 0x625541, opacity * (ar ? 0.24 : 0.28))], startPoint: .leading, endPoint: .trailing)
+        LinearGradient(colors: [navSelected, accent.opacity(0.08)], startPoint: .leading, endPoint: .trailing)
     }
 
     private func token(_ hex: UInt32, _ alpha: Double = 1) -> Color { Color(nsColor: color(hex, alpha)) }
@@ -132,7 +127,7 @@ struct WorkbenchMaterialSurface: View {
                 // host softens the underlying page separately so translucent
                 // panels do not expose competing, readable text.
                 WorkbenchBackdropBlur(behindWindow: behindWindow)
-                    .opacity(0.14)
+                    .opacity(palette.light ? 0.35 : 0.14)
             }
             switch kind {
             case .card: shape.fill(palette.surfaceGradient)
@@ -156,7 +151,7 @@ struct WorkbenchMaterialSurface: View {
                 shape.strokeBorder(palette.navBorder, lineWidth: 1)
             }
         }
-        .shadow(color: kind == .card || kind == .panel ? palette.shadow : .clear, radius: kind == .panel ? 16 : 7, x: 0, y: kind == .panel ? 12 : 5)
+        .shadow(color: kind == .card || kind == .panel ? palette.shadow : .clear, radius: kind == .panel ? 16 : 4, x: 0, y: kind == .panel ? 8 : 2)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
@@ -184,47 +179,13 @@ private final class WorkbenchPassthroughVisualEffectView:NSVisualEffectView {
     override func hitTest(_ point:NSPoint)->NSView? {nil}
 }
 
-/// Both shipped scene images are static and cropped with CSS-equivalent cover.
-/// Only the separate decorative layer animates, so controls and text do not
-/// drift. Removing TimelineView while paused stops decoration work entirely.
+/// Compatibility entry for Mini and auxiliary windows; appearance chooses the
+/// same artwork as the main window. There is no separate legacy scene effect.
 struct WorkbenchSceneBackground: View {
     var theme: LauncherTheme = .qingbiMist
-    var motionEnabled = true
+    var motionEnabled = false
     var active = true
-    @Environment(\.workbenchOpacity) private var opacity
-    @Environment(\.workbenchBackgroundMotion) private var environmentMotion
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.colorScheme) private var scheme
-    @State private var applicationActive = NSApplication.shared.isActive
-
-    private var running: Bool { active && applicationActive && motionEnabled && environmentMotion && !reduceMotion }
-
-    var body: some View {
-        let palette = ThemePalette(theme: theme, opacity: opacity, light: scheme == .light)
-        GeometryReader { geometry in
-            ZStack {
-                if let image = WorkbenchSceneAssets.image(for: theme) {
-                    Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
-                        .frame(width: geometry.size.width, height: geometry.size.height)
-                        .clipped()
-                } else {
-                    // Packaging validation must catch this; avoid reading from
-                    // a developer's design directory in the installed app.
-                    Color(nsColor: NSColor(srgbRed: 8 / 255.0, green: 44 / 255.0, blue: 70 / 255.0, alpha: 1))
-                }
-                if running {
-                    TimelineView(.animation(minimumInterval: 1 / 20.0)) { timeline in
-                        WorkbenchAmbientDecoration(theme: theme, time: timeline.date.timeIntervalSinceReferenceDate)
-                    }
-                }
-                palette.shell
-            }
-        }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in applicationActive = true }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in applicationActive = false }
-    }
+    var body: some View { WorkbenchFluidBackground() }
 }
 
 @MainActor enum WorkbenchSceneAssets {
@@ -239,70 +200,4 @@ struct WorkbenchSceneBackground: View {
         images[theme] = image
         return image
     }
-}
-
-private struct WorkbenchAmbientDecoration: View {
-    let theme: LauncherTheme
-    let time: TimeInterval
-
-    var body: some View {
-        Canvas(rendersAsynchronously: true) { context, size in
-            let light = Color(red: 139 / 255.0, green: theme == .arWorld ? 241 / 255.0 : 200 / 255.0, blue: 1)
-            if theme == .arWorld {
-                screen(context: &context, size: size, fraction: CGRect(x: 0.015, y: 0.30, width: 0.12, height: 0.15), phase: time + 3, duration: 16, light: light)
-                screen(context: &context, size: size, fraction: CGRect(x: 0.792, y: 0.09, width: 0.19, height: 0.17), phase: time + 9, duration: 20, light: light)
-                screen(context: &context, size: size, fraction: CGRect(x: 0.865, y: 0.79, width: 0.10, height: 0.13), phase: time + 14, duration: 18, light: light)
-                ray(context: &context, size: size, x: 0.02, y: 0.16, width: 0.18, phase: time + 4, duration: 13, light: light)
-                ray(context: &context, size: size, x: 0.66, y: 0.87, width: 0.26, phase: time + 10, duration: 18, light: light)
-                let orbit = CGRect(x: size.width * 0.08, y: size.height * 0.94 - 72, width: 72, height: 72)
-                context.stroke(Path(ellipseIn: orbit), with: .color(light.opacity(0.068)), lineWidth: 1)
-                context.stroke(Path(ellipseIn: orbit.insetBy(dx: 8, dy: 8)), with: .color(light.opacity(0.052)), lineWidth: 1)
-                var arc = Path()
-                arc.addArc(center: CGPoint(x: orbit.midX, y: orbit.midY), radius: 37, startAngle: .degrees(time.truncatingRemainder(dividingBy: 36) * 10), endAngle: .degrees(time.truncatingRemainder(dividingBy: 36) * 10 + 80), clockwise: false)
-                context.stroke(arc, with: .color(light.opacity(0.20)), lineWidth: 2)
-            } else if theme == .thunderCabin {
-                instrument(context: &context, center: CGPoint(x: size.width * 0.075, y: size.height * 0.15), radius: 2.5, phase: time + 3, duration: 8, light: light)
-                instrument(context: &context, center: CGPoint(x: size.width * 0.92, y: size.height * 0.86), radius: 2, phase: time + 6, duration: 11, light: Color(red: 1, green: 206 / 255.0, blue: 146 / 255.0))
-                let pulse = wave(time, duration: 15)
-                let rect = CGRect(x: size.width * 0.95, y: size.height * 0.10 + pulse * 18, width: 1, height: size.height * 0.22)
-                context.fill(Path(rect), with: .linearGradient(Gradient(colors: [.clear, light.opacity(0.15 + 0.25 * pulse), .clear]), startPoint: CGPoint(x: rect.midX, y: rect.minY), endPoint: CGPoint(x: rect.midX, y: rect.maxY)))
-            } else {
-                for index in 0..<3 {
-                    let phase = time / Double(38 + index * 9) + Double(index) * 0.8
-                    let x = size.width * (0.12 + Double(index) * 0.35) + sin(phase) * 22
-                    let y = size.height * (0.36 + Double(index) * 0.18)
-                    let rect = CGRect(x:x-size.width*0.28, y:y, width:size.width*0.56, height:size.height*0.12)
-                    context.fill(Path(ellipseIn:rect),with:.radialGradient(Gradient(colors:[.white.opacity(0.035),.clear]),center:CGPoint(x:rect.midX,y:rect.midY),startRadius:0,endRadius:rect.width*0.5))
-                }
-            }
-        }
-        .allowsHitTesting(false)
-    }
-
-    private func screen(context: inout GraphicsContext, size: CGSize, fraction: CGRect, phase: Double, duration: Double, light: Color) {
-        let pulse = wave(phase, duration: duration)
-        let rect = CGRect(x: fraction.minX * size.width, y: fraction.minY * size.height - pulse * 7, width: fraction.width * size.width, height: fraction.height * size.height)
-        let strength = 0.36 + pulse * 0.20
-        context.stroke(Path(roundedRect: rect, cornerRadius: 3), with: .color(light.opacity(0.24 * strength)), lineWidth: 1)
-        var top = Path(); top.move(to: CGPoint(x: rect.minX, y: rect.minY)); top.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-        context.stroke(top, with: .color(light.opacity(0.55 * strength)), lineWidth: 1)
-        for (row, width) in [(0.27, 0.56), (0.46, 0.70), (0.65, 0.42)] {
-            var path = Path()
-            path.move(to: CGPoint(x: rect.minX + rect.width * 0.12, y: rect.minY + rect.height * row))
-            path.addLine(to: CGPoint(x: rect.minX + rect.width * (0.12 + width), y: rect.minY + rect.height * row))
-            context.stroke(path, with: .color(light.opacity(0.24 * strength)), lineWidth: 1)
-        }
-    }
-    private func ray(context: inout GraphicsContext, size: CGSize, x: Double, y: Double, width: Double, phase: Double, duration: Double, light: Color) {
-        let progress = phase.truncatingRemainder(dividingBy: duration) / duration
-        let rect = CGRect(x: size.width * x - 24 + 134 * progress, y: size.height * y, width: size.width * width, height: 1)
-        context.fill(Path(rect), with: .linearGradient(Gradient(colors: [.clear, light.opacity(0.25 * sin(progress * .pi)), .clear]), startPoint: CGPoint(x: rect.minX, y: rect.midY), endPoint: CGPoint(x: rect.maxX, y: rect.midY)))
-    }
-    private func instrument(context: inout GraphicsContext, center: CGPoint, radius: CGFloat, phase: Double, duration: Double, light: Color) {
-        let strength = 0.22 + 0.30 * wave(phase, duration: duration)
-        let rect = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
-        context.fill(Path(ellipseIn: rect.insetBy(dx: -4, dy: -4)), with: .color(light.opacity(strength * 0.12)))
-        context.fill(Path(ellipseIn: rect), with: .color(light.opacity(strength * 0.75)))
-    }
-    private func wave(_ time: Double, duration: Double) -> Double { (1 - cos(time / duration * 2 * .pi)) / 2 }
 }

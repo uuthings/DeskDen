@@ -92,12 +92,12 @@ enum WorkbenchMiniLayout {
         theme = Palette.workbenchTheme
         outline.strokeColor = NSColor(Palette.workbenchPalette.line).cgColor
         // A separate panel samples what is behind its window. An opaque scene
-        // image underneath the tint would defeat the shared opacity setting.
+        // image underneath the tint would obscure the desktop behind the Mini.
         glass.rootView = AnyView(WorkbenchMaterialSurface(kind: .panel, radius: 0, behindWindow: true)
             .workbenchThemeEnvironment(theme: theme, opacity: Palette.glassOpacity, backgroundMotion: false,
                                       appearance: Palette.isLight ? .light : .dark))
     }
-    var materialOpacity: Double { Palette.glassOpacity }
+    var materialOpacity: Double { Palette.workbenchPalette.materialOpacity }
     var usesLightAppearance: Bool { appearance?.name == .aqua }
 
     func setContent(_ view: NSView) {

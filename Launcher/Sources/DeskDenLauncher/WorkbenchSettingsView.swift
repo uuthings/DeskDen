@@ -5,8 +5,6 @@ import LauncherCore
 struct WorkbenchSettingsView: View {
     @ObservedObject var model: WorkbenchAppModel
     @Environment(\.workbenchPalette) private var palette
-    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
-    @State private var previewResponded = false
 
     private var subtitle: String {
         switch model.settingsTab {
@@ -86,79 +84,33 @@ struct WorkbenchSettingsView: View {
     }
 
     private var materialControls: some View {
-        WBCard(title: "共享外观", symbol: "circle.lefthalf.filled", spacing: 10) {
-            VStack(spacing: 0) {
-                settingsRow("外观", "工作台、启动器与浮层保持一致", first: true) {
-                    WBSelect("外观", selection: Binding(get: { model.appearance }, set: model.changeAppearance), options: LauncherAppearance.allCases.map { (value: $0, title: $0.title) }).frame(width: 174)
-                }
-                settingsRow("主题背景", "玻璃层、Mini 与浮层同步使用") {
-                    WBSelect("主题背景", selection: Binding(get: { model.theme }, set: model.changeTheme), options: LauncherTheme.allCases.map { (value: $0, title: $0.title) }).frame(width: 174)
-                }
-                settingsRow("界面不透明度", "卡片、导航、菜单与 Mini 同步调整") {
-                    VStack(spacing: 2) {
-                        HStack(spacing: 10) {
-                            WorkbenchOpacitySlider(value: Binding(get: { model.opacity }, set: model.changeOpacity))
-                                .frame(minWidth: 150, idealWidth: 170, maxWidth: 170, minHeight: 32, maxHeight: 32)
-                            Text("\(Int((model.opacity * 100).rounded()))%")
-                                .font(.system(size: 12)).monospacedDigit().frame(width: 36, alignment: .trailing)
-                                .accessibilityLabel("当前界面不透明度")
-                        }
-                        HStack {
-                            Text("50% · 更通透")
-                            Spacer(minLength: 8)
-                            Text("90% · 更清晰")
-                        }.font(.system(size: 11)).foregroundStyle(palette.muted)
-                    }.frame(width: 224)
-                }
-                materialPreview.padding(.vertical, 12)
-                settingsRow("恢复默认", "默认界面不透明度为 70%", first: true) {
-                    Button("恢复 70%") { model.changeOpacity(0.70) }.buttonStyle(WBButtonStyle(compact: true))
-                }
-                settingsRow("背景动态效果", motionStatus) {
-                    settingToggle("背景动态效果", get: { model.backgroundMotion }, set: model.changeBackgroundMotion)
-                }
-                settingsRow("减少动态效果", "背景保持静止，同时简化界面过渡；系统设置始终优先", last: true) {
-                    settingToggle("减少动态效果", get: { model.reduceMotion }, set: model.changeReduceMotion)
-                }
+        WBCard(title: "共享外观", symbol: "circle.lefthalf.filled", spacing: 14) {
+            settingsRow("外观", "工作台、启动器、Mini 与弹窗同步切换", first: true) {
+                WBSelect("外观", selection: Binding(get: { model.appearance }, set: model.changeAppearance), options: LauncherAppearance.allCases.map { (value: $0, title: $0.title) }).frame(width: 174)
+            }
+            HStack(spacing: 12) {
+                appearancePreview(light: true, title: "浅色 · 青蓝琥珀")
+                appearancePreview(light: false, title: "深色 · 墨金")
+            }
+            Text("使用统一的背景、卡片与文字材质，随外观自动配对。")
+                .font(.system(size: 11)).foregroundStyle(palette.muted)
+            settingsRow("减少动态效果", "停用欢迎文字动效并简化界面过渡；系统设置始终优先", last: true) {
+                settingToggle("减少动态效果", get: { model.reduceMotion }, set: model.changeReduceMotion)
             }
         }
     }
 
-    private var motionStatus: String {
-        if systemReduceMotion || model.reduceMotion { return "减少动态效果已开启，背景保持静止" }
-        return model.backgroundMotion ? "随主题变化的轻微环境动效，不影响内容阅读" : "背景保持静止"
-    }
-
-    private var materialPreview: some View {
-        HStack(spacing: 12) {
-            Label("同一套玻璃材质", systemImage: "square.3.layers.3d")
-                .font(.system(size: 12)).foregroundStyle(palette.secondary)
-            Spacer()
-            Text("\(Int((model.opacity * 100).rounded()))%")
-                .font(.system(size: 12)).monospacedDigit().foregroundStyle(palette.secondary)
-            Spacer()
-            Button(previewResponded ? "已响应" : "按钮预览") {
-                previewResponded = true
-                Task { @MainActor in
-                    try? await Task.sleep(for: .seconds(1.2))
-                    previewResponded = false
-                }
-            }.buttonStyle(WBButtonStyle(compact: true))
-        }
-        .padding(.horizontal, 22).frame(height: 90)
-        .background {
-            GeometryReader { geometry in
-                ZStack {
-                    if let image = WorkbenchSceneAssets.image(for: model.theme) {
-                        Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
-                            .frame(width: geometry.size.width, height: geometry.size.height).clipped()
-                    }
-                    palette.surfaceGradient
-                }
-            }.allowsHitTesting(false).accessibilityHidden(true)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 9))
-        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(palette.line, lineWidth: 1).allowsHitTesting(false))
+    private func appearancePreview(light: Bool, title: String) -> some View {
+        ZStack(alignment: .bottomLeading) {
+            WorkbenchFluidBackground().environment(\.colorScheme, light ? .light : .dark)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title).font(.system(size: 12, weight: .medium))
+                Text(light ? "奶白半透明表面" : "炭黑半透明表面").font(.system(size: 11))
+            }.foregroundStyle(.white).padding(14)
+        }.frame(maxWidth: .infinity).frame(height: 112)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(palette.border, lineWidth: 1))
+            .accessibilityElement(children: .combine)
     }
 
     private var launcher: some View {

@@ -122,7 +122,10 @@ class PublicGateTests(unittest.TestCase):
     def test_fluid_home_assets_have_an_exact_public_scope(self):
         for path in ["Launcher/Artwork/Workbench/cyan-amber.png",
                      "Launcher/Resources/Workbench/cyan-amber.jpg",
-                     "Launcher/Artwork/Workbench/provenance-fluid.json"]:
+                     "Launcher/Artwork/Workbench/provenance-fluid.json",
+                     "Launcher/Artwork/Workbench/ink-gold.png",
+                     "Launcher/Resources/Workbench/ink-gold.jpg",
+                     "Launcher/Artwork/Workbench/provenance-dark.json"]:
             target = self.repo / path
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / path, target)

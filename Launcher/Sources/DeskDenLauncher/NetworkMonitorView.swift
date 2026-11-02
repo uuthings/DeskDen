@@ -48,7 +48,7 @@ struct NetworkMonitorView: View {
                         Label("睡眠、退出和采集间断不补记流量；预算仅提醒，不限速。", systemImage: "info.circle")
                         Spacer(minLength: 8)
                         Text("记录时区 · \(summary.timeZoneIdentifier)")
-                    }.font(.system(size: 11)).foregroundStyle(palette.muted)
+                    }.font(.system(size: 11)).foregroundStyle(.white.opacity(0.92)).shadow(color:.black.opacity(0.45),radius:2,y:1)
                 }
                 if let error = model.lastError ?? model.monitoringError {
                     Text(error).font(.system(size: 11)).foregroundStyle(palette.warning).padding(.top, 12)

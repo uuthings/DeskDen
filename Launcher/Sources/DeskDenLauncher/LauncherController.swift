@@ -842,7 +842,7 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
         Palette.isLight = configuration.settings.workbenchAppearance == .light || (configuration.settings.workbenchAppearance == .system && NSApp.effectiveAppearance.bestMatch(from:[.aqua,.darkAqua]) == .aqua)
         Palette.glassOpacity = configuration.settings.glassOpacity
         Palette.workbenchTheme = configuration.settings.workbenchTheme
-        panel.appearance = NSAppearance(named:configuration.settings.lightAppearance ? .aqua : .darkAqua)
+        panel.appearance = NSAppearance(named:Palette.isLight ? .aqua : .darkAqua)
         background.fullScreen = expanded; background.refreshAppearance()
         if searchView { refreshSearchData() }
         // The native text view survives result updates so the IME retains its composition session.
@@ -885,14 +885,11 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
             let undo = button("撤销上一步",rect:NSRect(x:w-174,y:h-50,width:126,height:32)) { [weak self] in self?.undoDraft() }; undo.isEnabled = !(draft?.history.isEmpty ?? true)
         } else {
             if !expanded {
-                iconButton(configuration.settings.lightAppearance ? "sun.max" : "moon.fill",label:configuration.settings.lightAppearance ? "切换深色外观" : "切换浅色外观",x:32,y:footerY) { [weak self] in
-                    guard let self else { return }; if updateSettings({ $0.lightAppearance.toggle() }) { render(); focus() }
+                iconButton(Palette.isLight ? "sun.max" : "moon.fill",label:Palette.isLight ? "切换深色外观" : "切换浅色外观",x:32,y:footerY) { [weak self] in
+                    guard let self else { return }
+                    let light = !Palette.isLight
+                    if updateSettings({ $0.lightAppearance = light; $0.workbenchAppearance = light ? .light : .dark }) { render(); focus() }
                 }
-            }
-            if !expanded {
-                let opacity=button("",symbol:"circle.lefthalf.filled",rect:NSRect(x:108,y:footerY,width:32,height:32)) {}
-                opacity.setAccessibilityLabel("全局透明度");opacity.toolTip="调整所有方寸窗口的不透明度"
-                opacity.actionBlock={ [weak self,weak opacity] in if let self,let opacity {showOpacityMenu(anchor:opacity)} }
             }
             iconButton(expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",label:expanded ? "退出全屏" : "全屏启动器",x:expanded ? 48 : 70,y:footerY) { [weak self] in self?.toggleExpanded() }
             if searchView {

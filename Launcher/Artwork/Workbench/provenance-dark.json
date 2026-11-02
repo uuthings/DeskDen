@@ -1,0 +1,9 @@
+{
+  "asset": "ink-gold",
+  "origin": "AI-generated black lacquer and bronze folded-surface artwork",
+  "master": "ink-gold.png",
+  "masterSHA256": "5c7c3f014d1c1114e98ed32752855a5160e8bae7de36609394d203324bce4e7d",
+  "production": "../../Resources/Workbench/ink-gold.jpg",
+  "productionSHA256": "b4d5453b53a4366b42a0898c397d41f87d87b08ed19db2506ff69f8a88994cb9",
+  "productionNote": "Exact JPEG used by the approved dark appearance preview. No interface pixels, account data or screenshots are embedded."
+}

@@ -12,6 +12,7 @@ struct WorkbenchOutlinedText: NSViewRepresentable {
     var lineWidth: CGFloat = 0.8
     var repeats = false
     var reduceMotion = false
+    var leading = false
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
 
     func makeNSView(context: Context) -> WorkbenchOutlinedTextView {
@@ -20,7 +21,7 @@ struct WorkbenchOutlinedText: NSViewRepresentable {
 
     func updateNSView(_ view: WorkbenchOutlinedTextView, context: Context) {
         view.configure(text: text, fontSize: fontSize, letterSpacing: letterSpacing,
-                       lineWidth: lineWidth, animates: repeats && !reduceMotion && !systemReduceMotion)
+                       lineWidth: lineWidth, animates: repeats && !reduceMotion && !systemReduceMotion, leading: leading)
     }
 
     static func dismantleNSView(_ view: WorkbenchOutlinedTextView, coordinator: ()) {
@@ -34,6 +35,7 @@ final class WorkbenchOutlinedTextView: NSView {
     private var sourcePath: CGPath?
     private var signature = ""
     private var animationAllowed = false
+    private var leading = false
     // Only the main actor installs these tokens; deinit only unregisters them.
     nonisolated(unsafe) private var observers: [NSObjectProtocol] = []
 
@@ -80,7 +82,8 @@ final class WorkbenchOutlinedTextView: NSView {
     }
 
     func configure(text: String, fontSize: CGFloat, letterSpacing: CGFloat,
-                   lineWidth: CGFloat, animates: Bool) {
+                   lineWidth: CGFloat, animates: Bool, leading: Bool = false) {
+        if self.leading != leading { self.leading = leading; needsLayout = true }
         let newSignature = "\(text)|\(fontSize)|\(letterSpacing)"
         if signature != newSignature {
             signature = newSignature
@@ -116,9 +119,9 @@ final class WorkbenchOutlinedTextView: NSView {
         guard let sourcePath else { return }
         let sourceBounds = sourcePath.boundingBoxOfPath
         guard sourceBounds.width > 0, sourceBounds.height > 0 else { return }
-        let scale = min(1, bounds.width / sourceBounds.width, bounds.height / sourceBounds.height)
+        let scale = min(1, max(0, bounds.width - outline.lineWidth) / sourceBounds.width, max(0, bounds.height - outline.lineWidth) / sourceBounds.height)
         var transform = CGAffineTransform(a: scale, b: 0, c: 0, d: -scale,
-                                          tx: bounds.midX - sourceBounds.midX * scale,
+                                          tx: leading ? bounds.minX + outline.lineWidth / 2 - sourceBounds.minX * scale : bounds.midX - sourceBounds.midX * scale,
                                           ty: bounds.midY + sourceBounds.midY * scale)
         let path = sourcePath.copy(using: &transform)
         CATransaction.begin()

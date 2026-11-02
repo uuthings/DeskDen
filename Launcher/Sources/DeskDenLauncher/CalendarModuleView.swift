@@ -94,7 +94,7 @@ struct CalendarModuleView:View {
                 VStack(alignment:.leading,spacing:0) {
                     if let message=model.undoMessage {
                         HStack {Text(message);Spacer();Button("撤销"){Task {await model.undoLastChange()}}.buttonStyle(WBButtonStyle(compact:true)).disabled(model.isWorking)}
-                            .font(.system(size:11)).padding(.top,10).accessibilityElement(children:.contain).accessibilityIdentifier("fc.calendar.undo")
+                            .font(.system(size:11)).foregroundStyle(.white.opacity(0.92)).shadow(color:.black.opacity(0.45),radius:2,y:1).padding(.top,10).accessibilityElement(children:.contain).accessibilityIdentifier("fc.calendar.undo")
                     }
                     if let message=model.notificationMessage {Text(message).font(.system(size:11)).foregroundStyle(palette.warning).padding(.top,8)}
                 }
@@ -130,7 +130,7 @@ struct CalendarModuleView:View {
             Text(text).font(.system(size:11)).textSelection(.enabled)
             Spacer()
             if model.canRecoverBackup {Button("恢复上次备份"){model.recoverBackup()}.buttonStyle(WBButtonStyle(compact:true))}
-        }.padding(14).background(palette.soft,in:RoundedRectangle(cornerRadius:10))
+        }.padding(14).background(WorkbenchMaterialSurface(radius:10))
     }
     private var monthCard:some View {
         VStack(spacing:0) {
@@ -350,14 +350,19 @@ private struct CalendarAgendaRow:View {
     @Environment(\.workbenchPalette) private var palette
     @Environment(\.colorScheme) private var colorScheme
     private var event:Bool {if case .event = entry {return true};return false}
-    private var tint:Color {event ? Color(red:0.66,green:0.51,blue:0.91):Color(red:0.23,green:0.68,blue:0.48)}
+    private var tint:Color {
+        switch entry {
+        case .event: Color(red:0.20,green:0.52,blue:0.69)
+        case .reminder(let item): item.origin == .local ? Color(red:0.70,green:0.51,blue:0.25) : palette.accent
+        }
+    }
     var body:some View {
         HStack(alignment:.center,spacing:9) {
             if case .reminder(let item)=entry {
                 Button {Task {await model.toggle(item)}} label:{
                     ZStack {
-                        RoundedRectangle(cornerRadius:4).strokeBorder(item.isCompleted ? palette.success:palette.secondary,lineWidth:1)
-                        if item.isCompleted {RoundedRectangle(cornerRadius:4).fill(palette.success);Image(systemName:"checkmark").font(.system(size:9,weight:.semibold)).foregroundStyle(palette.primaryText)}
+                        Circle().strokeBorder(tint,lineWidth:1.5)
+                        if item.isCompleted {Circle().fill(tint);Image(systemName:"checkmark").font(.system(size:9,weight:.semibold)).foregroundStyle(palette.primaryText)}
                     }.frame(width:16,height:16).padding(3).contentShape(Rectangle())
                 }.buttonStyle(ClickablePlainButtonStyle()).disabled(!item.isWritable || model.isWorking)
                     .accessibilityLabel("\(item.isCompleted ? "恢复待办":"完成提醒")：\(item.title)")
@@ -550,7 +555,7 @@ private struct CalendarSourcesPage:View {
     private var accounts: [String] { Array(Set(filteredSources.map(accountName))).sorted { $0.localizedStandardCompare($1) == .orderedAscending } }
     var body:some View {
         VStack(alignment:.leading,spacing:0) {
-            Button {model.errorMessage=nil;onBack()} label:{Label(model.sourcesReturnToPrivacy ? "返回隐私与锁定":"返回日历与提醒",systemImage:"chevron.left")}.buttonStyle(WBQuietButtonStyle()).padding(.bottom,12)
+            Button {model.errorMessage=nil;onBack()} label:{Label(model.sourcesReturnToPrivacy ? "返回隐私与锁定":"返回日历与提醒",systemImage:"chevron.left")}.buttonStyle(WBQuietButtonStyle()).environment(\.workbenchOnBackdrop,true).padding(.bottom,12)
             WBPageHeader(title:"日历来源",subtitle:"按来源管理日程、提醒与授权状态")
             VStack(spacing:12) {
                 WBCard(title:"系统来源",symbol:"calendar") {

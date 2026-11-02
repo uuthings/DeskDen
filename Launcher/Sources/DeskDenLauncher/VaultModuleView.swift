@@ -11,7 +11,7 @@ struct VaultModuleView:View {
     var body:some View {
         VStack(alignment:.leading,spacing:0) {
             if model.showingProtection {
-                Button{model.showingProtection=false;if model.protectionFromSettings {returnToSettingsPrivacy?()}}label:{Label(model.protectionFromSettings ? "返回隐私与锁定":"返回私密空间",systemImage:"arrow.left")}.buttonStyle(WBQuietButtonStyle()).padding(.bottom,12)
+                Button{model.showingProtection=false;if model.protectionFromSettings {returnToSettingsPrivacy?()}}label:{Label(model.protectionFromSettings ? "返回隐私与锁定":"返回私密空间",systemImage:"arrow.left")}.buttonStyle(WBQuietButtonStyle()).environment(\.workbenchOnBackdrop,true).padding(.bottom,12)
                 VaultProtectionPage(model:model)
             } else {
                 WBPageHeader(title:"私密空间",subtitle:model.isUnlocked ? "\(model.documents.count) 条文本 · 仅保存在此设备":"独立密码保护，仅在需要时解锁") {
@@ -22,7 +22,7 @@ struct VaultModuleView:View {
                     }
                 }
                 if model.hasPendingSave && !model.isUnlocked {
-                    HStack(alignment:.top,spacing:10){Image(systemName:"exclamationmark.triangle").foregroundStyle(palette.warning);Text(model.hasPendingPasswordChange ? "密码更改尚未完成，加密资料已保留。请重试完成，之后使用新密码解锁。":"最新更改已加密保留，尚未写入磁盘。请重试保存后再退出。");Spacer();Button(model.hasPendingPasswordChange ? "重试完成":"重试保存"){model.flush()}.buttonStyle(WBButtonStyle(primary:true))}.font(.system(size:12)).padding(14).background(palette.warning.opacity(0.07),in:RoundedRectangle(cornerRadius:10)).padding(.bottom,12)
+                    HStack(alignment:.top,spacing:10){Image(systemName:"exclamationmark.triangle").foregroundStyle(palette.warning);Text(model.hasPendingPasswordChange ? "密码更改尚未完成，加密资料已保留。请重试完成，之后使用新密码解锁。":"最新更改已加密保留，尚未写入磁盘。请重试保存后再退出。");Spacer();Button(model.hasPendingPasswordChange ? "重试完成":"重试保存"){model.flush()}.buttonStyle(WBButtonStyle(primary:true))}.font(.system(size:12)).padding(14).background(WorkbenchMaterialSurface(radius:10)).padding(.bottom,12)
                 }
                 if model.isUnlocked {VaultUnlockedView(model:model,panelHeight:max(480,min(720,windowHeight-183))).id(model.sessionID)}
                 else {VaultLockedView(model:model).id(model.sessionID).frame(maxWidth:.infinity).frame(minHeight:max(420,min(640,windowHeight-214))).background(WorkbenchMaterialSurface(radius:15))}
@@ -69,7 +69,7 @@ private struct VaultProtectionPage:View {
                         row("恢复备份","先验证密码与格式，再确认替换",last:true){Button("选择备份"){model.errorMessage=nil;model.sheet = .restore}.buttonStyle(WBButtonStyle(compact:true)).disabled(model.busy)}
                     }
                 }
-                Label("没有密码找回功能。恢复会替换当前资料，确认前会保留原有加密副本。",systemImage:"info.circle").font(.system(size:11)).foregroundStyle(palette.muted).padding(.vertical,4)
+                Label("没有密码找回功能。恢复会替换当前资料，确认前会保留原有加密副本。",systemImage:"info.circle").font(.system(size:11)).foregroundStyle(.white.opacity(0.92)).shadow(color:.black.opacity(0.45),radius:2,y:1).padding(.vertical,4)
                 if let message=model.completionMessage {Label(message,systemImage:"checkmark.circle").font(.system(size:11)).foregroundStyle(palette.success)}
                 if let error=model.errorMessage {Text(error).font(.system(size:11)).foregroundStyle(palette.critical)}
             }

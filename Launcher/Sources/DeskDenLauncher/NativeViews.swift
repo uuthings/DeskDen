@@ -177,7 +177,7 @@ final class GlassTint: FlippedView {
         let palette = Palette.workbenchPalette
         if surfaceStyle == .launcher {
             NSGraphicsContext.saveGraphicsState(); path.addClip()
-            if let image = WorkbenchSceneAssets.image(for: Palette.workbenchTheme), image.size.width > 0, image.size.height > 0 {
+            if let image = WorkbenchFluidAssets.image(light: Palette.isLight), image.size.width > 0, image.size.height > 0 {
                 let scale = max(bounds.width / image.size.width, bounds.height / image.size.height)
                 let rect = NSRect(x: bounds.midX - image.size.width * scale / 2, y: bounds.midY - image.size.height * scale / 2, width: image.size.width * scale, height: image.size.height * scale)
                 image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)

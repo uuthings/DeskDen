@@ -300,8 +300,7 @@ struct WorkbenchMiniPanelView: View {
     private func cardSurface(_ id: WorkbenchMiniCardID) -> some View {
         cardContent(id).padding(.horizontal, 12).padding(.vertical, 8)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(palette.soft, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(palette.line, lineWidth: 1).allowsHitTesting(false))
+            .background(WorkbenchMaterialSurface(radius: 12))
             .contentShape(RoundedRectangle(cornerRadius: 12))
     }
     private func card(_ id: WorkbenchMiniCardID, capacity: Int) -> some View {

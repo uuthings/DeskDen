@@ -6,7 +6,12 @@ import SwiftUI
 private struct WorkbenchScaleKey: EnvironmentKey { static let defaultValue: CGFloat = 1 }
 private struct WorkbenchContentHeightKey: EnvironmentKey { static let defaultValue: CGFloat = 0 }
 private struct WorkbenchDeviceExpandedKey: EnvironmentKey { static let defaultValue = false }
+private struct WorkbenchOnBackdropKey: EnvironmentKey { static let defaultValue = false }
 extension EnvironmentValues {
+    var workbenchOnBackdrop: Bool {
+        get { self[WorkbenchOnBackdropKey.self] }
+        set { self[WorkbenchOnBackdropKey.self] = newValue }
+    }
     var workbenchScale: CGFloat {
         get { self[WorkbenchScaleKey.self] }
         set { self[WorkbenchScaleKey.self] = newValue }
@@ -243,11 +248,13 @@ struct WBPageHeader<Trailing:View>:View {
     var body: some View {
         HStack(alignment:.center,spacing:16) {
             VStack(alignment:.leading,spacing:6) {
-                Text(title).font(.system(size:20,weight:.medium)).foregroundStyle(palette.text).lineLimit(1).truncationMode(.tail).frame(height:26,alignment:.leading).help(title)
-                Text(subtitle).font(.system(size:12)).foregroundStyle(palette.secondary).lineLimit(1).truncationMode(.tail).frame(height:18,alignment:.leading).help(subtitle)
+                WorkbenchOutlinedText(text:title,fontSize:22,letterSpacing:2,lineWidth:0.5,leading:true)
+                    .frame(height:26).accessibilityElement(children:.ignore).accessibilityLabel(title)
+                    .accessibilityIdentifier("workbench-page-title").help(title)
+                Text(subtitle).font(.system(size:12)).foregroundStyle(.white.opacity(0.88)).lineLimit(1).truncationMode(.tail).frame(height:18,alignment:.leading).help(subtitle)
             }
             Spacer(minLength:12);trailing
-        }.frame(minHeight:54).padding(.bottom,18)
+        }.frame(height:54).padding(.bottom,18).environment(\.workbenchOnBackdrop,true)
     }
 }
 extension WBPageHeader where Trailing == EmptyView {
@@ -312,11 +319,12 @@ struct WBIconButtonStyle: ButtonStyle {
     @Environment(\.workbenchScale) private var displayScale
     @Environment(\.isEnabled) private var enabled
     @Environment(\.workbenchPalette) private var palette
+    @Environment(\.workbenchOnBackdrop) private var onBackdrop
     @State private var hovering = false
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.font(.system(size: 14 * displayScale, weight: .regular))
             .frame(width: size * displayScale, height: size * displayScale, alignment: .center)
-            .foregroundStyle(enabled && hovering ? palette.text : palette.secondary)
+            .foregroundStyle(onBackdrop ? Color.white.opacity(enabled && hovering ? 1 : 0.86) : enabled && hovering ? palette.text : palette.secondary)
             .overlay(WBIconFeedbackSurface(hovering: enabled && hovering, pressed: enabled && configuration.isPressed))
             .contentShape(RoundedRectangle(cornerRadius: 7)).opacity(enabled ? 1 : 0.4)
             .onHover { hovering = $0 }.clickableCursor()
@@ -328,10 +336,11 @@ struct WBQuietButtonStyle: ButtonStyle {
     @Environment(\.workbenchScale) private var displayScale
     @Environment(\.isEnabled) private var enabled
     @Environment(\.workbenchPalette) private var palette
+    @Environment(\.workbenchOnBackdrop) private var onBackdrop
     @State private var hovering = false
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.font(.system(size: 11 * displayScale))
-            .foregroundStyle(enabled && hovering ? palette.accent : palette.secondary)
+            .foregroundStyle(onBackdrop ? Color.white.opacity(enabled && hovering ? 1 : 0.86) : enabled && hovering ? palette.accent : palette.secondary)
             .padding(.vertical, 3 * displayScale)
             .overlay(alignment: .bottom) { Rectangle().fill(enabled && hovering ? palette.accent.opacity(0.55) : .clear).frame(height: 1).allowsHitTesting(false) }
             .contentShape(Rectangle()).opacity(enabled ? (configuration.isPressed ? 0.65 : 1) : 0.4)

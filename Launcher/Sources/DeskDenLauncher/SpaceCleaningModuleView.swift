@@ -46,7 +46,7 @@ struct SpaceCleaningModuleView: View {
                     Spacer(minLength: 4)
                     Button("覆盖范围与保留规则") { model.dialog = .rules }.buttonStyle(WBTextActionButtonStyle())
                         .disabled(model.isBusy).accessibilityIdentifier("space-cleaning-rules-link")
-                }.font(.system(size: 11)).foregroundStyle(palette.secondary).padding(.top, 12)
+                }.font(.system(size: 11)).foregroundStyle(.white.opacity(0.92)).shadow(color:.black.opacity(0.45),radius:2,y:1).padding(.top, 12)
                     .fixedSize(horizontal: false, vertical: true)
                 if let message = model.message {
                     HStack(alignment: .top, spacing: 8) {
@@ -54,11 +54,11 @@ struct SpaceCleaningModuleView: View {
                         Text(message).lineLimit(3).frame(maxWidth: .infinity, alignment: .leading)
                         Button { model.message = nil } label: { Image(systemName: "xmark") }
                             .buttonStyle(WBIconButtonStyle(size: 24)).accessibilityLabel("关闭提示")
-                    }.font(.system(size: 11)).foregroundStyle(palette.secondary).padding(.top, 10)
+                    }.font(.system(size: 11)).foregroundStyle(.white.opacity(0.92)).shadow(color:.black.opacity(0.45),radius:2,y:1).padding(.top, 10)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("space-cleaning-message")
                 }
-                }.measureCleaningHeight(.footer)
+                }.environment(\.workbenchOnBackdrop, true).measureCleaningHeight(.footer)
                 Spacer(minLength: 0)
             }.frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
         }.foregroundStyle(palette.text)

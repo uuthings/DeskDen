@@ -1,5 +1,6 @@
 import AppKit
 import LauncherCore
+import SwiftUI
 
 @MainActor
 final class LauncherSettingsWindowController: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
@@ -17,6 +18,7 @@ final class LauncherSettingsWindowController: NSWindowController, NSWindowDelega
     }
     private weak var launcher: LauncherController?
     private let root = FlippedView()
+    private let backdrop = NSHostingView(rootView: WorkbenchFluidBackground())
     private let embeddedRoot = LauncherSettingsEmbeddedRoot()
     private var embedding = false
     private let sidebar = NSVisualEffectView()
@@ -50,6 +52,7 @@ final class LauncherSettingsWindowController: NSWindowController, NSWindowDelega
         window.center(); if autosavesFrame { window.setFrameAutosaveName("DeskDenLauncherSettings") }
         root.frame = NSRect(origin: .zero, size: NSSize(width: 740, height: 698)); root.autoresizingMask = [.width, .height]
         window.contentView = root
+        backdrop.frame = root.bounds; backdrop.autoresizingMask = [.width, .height]; root.addSubview(backdrop)
         buildChrome(); applyAppearance(); renderPage()
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -71,7 +74,7 @@ final class LauncherSettingsWindowController: NSWindowController, NSWindowDelega
         embedding=true
         if needsRender {cancelRecording();page=target;renderPage()}
         applyAppearance()
-        embeddedRoot.appearance=NSAppearance(named:launcher?.configuration.settings.lightAppearance == true ? .aqua:.darkAqua)
+        embeddedRoot.appearance=NSAppearance(named:Palette.isLight ? .aqua:.darkAqua)
         if pageContent.superview !== embeddedRoot {
             scroll.documentView=nil;pageContent.removeFromSuperview();embeddedRoot.addSubview(pageContent)
             statusLabel.removeFromSuperview();embeddedRoot.addSubview(statusLabel)
@@ -133,9 +136,11 @@ final class LauncherSettingsWindowController: NSWindowController, NSWindowDelega
     }
     private func applyAppearance() {
         guard let launcher else { return }
-        let light = launcher.configuration.settings.lightAppearance
+        let appearance = launcher.configuration.settings.workbenchAppearance
+        let light = appearance == .light || (appearance == .system && NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .aqua)
         window?.appearance = NSAppearance(named: light ? .aqua : .darkAqua)
-        window?.backgroundColor = NSColor(calibratedWhite: light ? 0.94 : 0.118, alpha: 1)
+        window?.backgroundColor = .clear
+        titleLabel.textColor = .white; statusLabel.textColor = .white
     }
     private func select(_ selected: Page, addHistory: Bool = true) {
         guard selected != page else { return }
@@ -199,14 +204,17 @@ final class LauncherSettingsWindowController: NSWindowController, NSWindowDelega
         section("外观",top:!embedding)
         let appearance = group(height: 100)
         rowLabel("界面外观", y: 0, in: appearance)
-        let themes = popup(["深色", "浅色"], selected: launcher.configuration.settings.lightAppearance ? 1 : 0, x: 333, y: 13, width: 136, in: appearance)
+        let appearances = LauncherAppearance.allCases
+        let themes = popup(appearances.map(\.title), selected: appearances.firstIndex(of:launcher.configuration.settings.workbenchAppearance) ?? 2, x: 333, y: 13, width: 136, in: appearance)
         connect(themes) { [weak self, weak themes] in
             guard let self, let launcher = self.launcher, let themes else { return }
-            if self.update({ $0.lightAppearance = themes.indexOfSelectedItem == 1 }) { self.applyAppearance() }
-            else { themes.selectItem(at: launcher.configuration.settings.lightAppearance ? 1 : 0) }
+            guard appearances.indices.contains(themes.indexOfSelectedItem) else { return }
+            let choice = appearances[themes.indexOfSelectedItem]
+            if self.update({ $0.workbenchAppearance = choice; $0.lightAppearance = choice == .light || (choice == .system && NSApp.effectiveAppearance.bestMatch(from:[.aqua,.darkAqua]) == .aqua) }) { self.applyAppearance() }
+            else { themes.selectItem(at: appearances.firstIndex(of:launcher.configuration.settings.workbenchAppearance) ?? 2) }
         }
         separator(y: 50, in: appearance); rowLabel("面板材质", y: 50, in: appearance)
-        text("通透玻璃 · 自然", x: 277, y: 66, width: 192, size: 12, color: .secondaryLabelColor, alignment: .right, in: appearance)
+        text("随全局外观 · 统一材质", x: 277, y: 66, width: 192, size: 12, color: .secondaryLabelColor, alignment: .right, in: appearance)
         section("通用设置")
         let common = group(height: 100)
         toggle("启动成功后收起面板", y: 0, value: launcher.configuration.settings.hideOnLaunch, in: common) { [weak self] value in self?.update { $0.hideOnLaunch = value } ?? false }
@@ -452,7 +460,7 @@ final class LauncherSettingsWindowController: NSWindowController, NSWindowDelega
     private func rowLabel(_ title: String, y: CGFloat, in view: NSView) { text(title, x: 12, y: y + 16, width: 255, in: view) }
     private func section(_ title: String, top: Bool = true) {
         cursorY += top ? 28 : 0
-        text(title, x: embedding ? 4:24, y: cursorY, width: 477, size: 13, weight: embedding ? .medium:.semibold, color: .secondaryLabelColor, in: pageContent)
+        text(title, x: embedding ? 4:24, y: cursorY, width: 477, size: 13, weight: embedding ? .medium:.semibold, color: embedding ? .secondaryLabelColor : .white, in: pageContent)
         cursorY += 28
     }
     private func group(height: CGFloat) -> FlippedView {
@@ -527,13 +535,10 @@ private final class SettingsRowGroup: FlippedView {
     var embedded=false {didSet {needsDisplay=true}}
     override func draw(_ dirtyRect: NSRect) {
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        if embedded {
-            let path=NSBezierPath(roundedRect:bounds.insetBy(dx:0.5,dy:0.5),xRadius:15,yRadius:15)
-            NSGradient(colors:[NSColor.labelColor.withAlphaComponent(dark ? 0.055:0.035),NSColor.labelColor.withAlphaComponent(0.018)])?.draw(in:path,angle:35)
-            NSColor.labelColor.withAlphaComponent(0.10).setStroke();path.lineWidth=0.7;path.stroke();return
-        }
-        (dark ? NSColor(calibratedWhite: 0.155, alpha: 1) : NSColor(calibratedWhite: 0.97, alpha: 1)).setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: 12, yRadius: 12).fill()
+        let palette = ThemePalette(light: !dark)
+        let path=NSBezierPath(roundedRect:bounds.insetBy(dx:0.5,dy:0.5),xRadius:15,yRadius:15)
+        NSGradient(colors:[NSColor(palette.raised),NSColor(palette.surface)])?.draw(in:path,angle:45)
+        NSColor(palette.border).setStroke();path.lineWidth=1;path.stroke()
     }
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); needsDisplay = true }
 }

@@ -50,10 +50,10 @@ struct WorkbenchFluidNavigation: View {
 
     private var brand: some View {
         Button { model.brandMenuPresented.toggle() } label: {
-            HStack(spacing: 8) {
-                WorkbenchFluidDeskGlyph().stroke(style: StrokeStyle(lineWidth: 1.55, lineCap: .round, lineJoin: .round))
-                    .frame(width: 30, height: 30).accessibilityHidden(true)
-                Text("DeskDen").font(.system(size: 16, weight: .medium)).tracking(0.35)
+            HStack(spacing: 7) {
+                WorkbenchFluidDeskGlyph().stroke(style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
+                    .frame(width: 20, height: 20).accessibilityHidden(true)
+                Text("DeskDen").font(.system(size: 14, weight: .medium)).tracking(0.25)
             }.foregroundStyle(.white).padding(.vertical, 3)
                 .contentShape(RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.white.opacity(brandFocused ? 0.65 : 0), lineWidth: 1).padding(-3))
@@ -146,7 +146,7 @@ struct WorkbenchFluidSettingsNavigation: View {
                 WorkbenchFluidSettingsTab(tab: tab, selected: model.settingsTab == tab, suppressMotion: model.reduceMotion) { model.settingsTab = tab }
             }
             Spacer(minLength: 0)
-        }.padding(.horizontal, 35)
+        }.padding(.horizontal, 24)
             .accessibilityElement(children: .contain).accessibilityLabel("设置分类")
             .accessibilityIdentifier("workbench-settings-navigation")
     }
@@ -218,8 +218,11 @@ private struct WorkbenchFluidBrandMenu: View {
             Divider().padding(.vertical, 3)
             row("检查更新", symbol: "arrow.down.to.line", identifier: "window-check-updates") { model.owner?.updates.checkForUpdates() }
             row("设置", symbol: "gearshape", identifier: "window-open-settings") { model.navigate(.settings) }
-            Divider().padding(.vertical, 3)
-            row("退出方寸", symbol: "power", identifier: "window-quit") { _ = model.requestQuit() }
+            // Keep an escape hatch when the user hides the menu bar item.
+            if !model.preferences.menuBarVisible {
+                Divider().padding(.vertical, 3)
+                row("退出 DeskDen", symbol: "power", identifier: "window-quit") { _ = model.requestQuit() }
+            }
         }.padding(7).frame(width: 206).foregroundStyle(model.light ? FluidNavigationColors.ink : .white)
             .workbenchThemeEnvironment(theme: model.theme, opacity: model.opacity, backgroundMotion: false, appearance: model.light ? .light : .dark)
             .accessibilityElement(children: .contain).accessibilityIdentifier("workbench-brand-menu")
@@ -277,8 +280,10 @@ private struct WorkbenchFluidDeskGlyph: Shape {
         path.move(to: CGPoint(x: 2.3, y: 12.5)); path.addLine(to: CGPoint(x: 17.7, y: 12.5))
         path.move(to: CGPoint(x: 3.7, y: 12.5)); path.addLine(to: CGPoint(x: 3.7, y: 16.8))
         path.move(to: CGPoint(x: 16.3, y: 12.5)); path.addLine(to: CGPoint(x: 16.3, y: 16.8))
-        return path.applying(CGAffineTransform(scaleX: rect.width / 20, y: rect.height / 20)
-            .concatenating(CGAffineTransform(translationX: rect.minX, y: rect.minY)))
+        let ink = path.boundingRect
+        let scale = min((rect.width - 1.2) / ink.width, (rect.height - 1.2) / ink.height)
+        return path.applying(CGAffineTransform(a: scale, b: 0, c: 0, d: scale,
+            tx: rect.minX + 0.6 - ink.minX * scale, ty: rect.midY - ink.midY * scale))
     }
 }
 
@@ -312,9 +317,9 @@ private struct WorkbenchFluidAccountButton: NSViewRepresentable {
         userInterfaceLayoutDirection = .rightToLeft
         cell?.userInterfaceLayoutDirection = .rightToLeft
         setAccessibilityRole(.button)
-        setAccessibilityLabel("本机账户与窗口菜单")
+        setAccessibilityLabel("本机账户")
         setAccessibilityIdentifier("workbench-local-account")
-        toolTip = "本机账户与窗口菜单"
+        toolTip = "本机账户"
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func updateTrackingAreas() {
@@ -346,24 +351,15 @@ private struct WorkbenchFluidAccountButton: NSViewRepresentable {
     func makeAccountMenu() -> NSMenu {
         let menu = NSMenu(title: "本机账户")
         menu.autoenablesItems = false; menu.font = .systemFont(ofSize: 12)
-        menu.minimumWidth = 176
+        menu.minimumWidth = 156
         let fullName = NSFullUserName().isEmpty ? NSUserName() : NSFullUserName()
         let name = fullName.count > 22 ? String(fullName.prefix(21)) + "…" : fullName
         let account = NSMenuItem(title: name, action: nil, keyEquivalent: "")
         account.isEnabled = false; account.toolTip = fullName + " · 本机账户"
-        menu.addItem(account); menu.addItem(.separator())
-        func add(_ title: String, symbol: String, identifier: String, action: @escaping () -> Void) {
-            let handler = MenuAction { DispatchQueue.main.async { action() } }
-            let item = NSMenuItem(title: title, action: #selector(MenuAction.invoke(_:)), keyEquivalent: "")
-            item.target = handler; item.representedObject = handler
-            item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-            item.identifier = NSUserInterfaceItemIdentifier(identifier)
-            menu.addItem(item)
-        }
-        add("设置", symbol: "gearshape", identifier: "account-settings") { [weak model] in model?.navigate(.settings) }
-        add("最小化", symbol: "minus", identifier: "account-minimize") { [weak model] in model?.minimizeWindow?() }
-        menu.addItem(.separator())
-        add("退出 DeskDen", symbol: "power", identifier: "account-quit") { [weak model] in _ = model?.requestQuit() }
+        menu.addItem(account)
+        let description = NSMenuItem(title: "当前 macOS 账户", action: nil, keyEquivalent: "")
+        description.isEnabled = false
+        menu.addItem(description)
         return menu
     }
     @objc private func openAccountMenu() {

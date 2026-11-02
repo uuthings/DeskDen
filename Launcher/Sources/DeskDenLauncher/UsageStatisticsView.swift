@@ -291,13 +291,13 @@ struct UsageStatisticsView: View {
                 Button("管理分类") { presentation.categoryEditor = .init(appearance.preferences.categories) }
                     .buttonStyle(WBButtonStyle(compact: true)).accessibilityIdentifier("fc.usage.categories")
                 Spacer(minLength: 8)
-                Text("排序").font(.system(size: 11)).foregroundStyle(palette.muted)
+                Text("排序").font(.system(size: 11)).foregroundStyle(.white.opacity(0.92)).shadow(color:.black.opacity(0.45),radius:2,y:1)
                 WBSelect("卡片排序", selection: Binding(get: { appearance.preferences.sort }, set: { _ = appearance.setOrdering($0, ascending: appearance.preferences.ascending) }), options: UsageCardSort.allCases.map { ($0, $0.title) }).frame(width: 126)
                     .accessibilityIdentifier("fc.usage.sort")
                 Button { _ = appearance.setOrdering(appearance.preferences.sort, ascending: !appearance.preferences.ascending) } label: { Image(systemName: appearance.preferences.ascending ? "arrow.up" : "arrow.down") }
                     .buttonStyle(WBIconButtonStyle(size: 28)).accessibilityLabel(appearance.preferences.ascending ? "当前升序，切换降序" : "当前降序，切换升序")
                     .accessibilityIdentifier("fc.usage.sort-direction")
-            }.padding(.bottom, 14)
+            }.environment(\.workbenchOnBackdrop, true).padding(.bottom, 14)
             UsageCardGrid {
                 if displayedKeys.isEmpty {
                     Button { if appearance.preferences.filterCategoryID != nil { _ = appearance.setCategoryFilter(nil) } else { presentation.configure() } } label: {
@@ -306,7 +306,7 @@ struct UsageStatisticsView: View {
                 }
                 ForEach(displayedKeys, id: \.self) { key in sourceCell(key) }
             }
-            Text("余额、订阅百分比与流量额度分别展示，不相加或互相推算。").font(.system(size: 11)).foregroundStyle(palette.muted).padding(.top, 18)
+            Text("余额、订阅百分比与流量额度分别展示，不相加或互相推算。").font(.system(size: 11)).foregroundStyle(.white.opacity(0.92)).shadow(color:.black.opacity(0.45),radius:2,y:1).padding(.top, 18)
         }.frame(maxWidth: .infinity, alignment: .leading).foregroundStyle(palette.text)
             .onAppear { _ = appearance.registerSources(allKeys, defaultCategoryIDs: defaultCategories) }
             .onChange(of: allKeys) { _, keys in _ = appearance.registerSources(keys, defaultCategoryIDs: defaultCategories) }
@@ -358,7 +358,7 @@ struct UsageStatisticsView: View {
                 }
             }
             if let message = state.message { Text(message).font(.system(size: 12)).foregroundStyle(palette.warning) }
-            Text("不同币种独立展示。余额接口不提供本机 Token 活动，也不据此推算消费明细。").font(.system(size: 11)).foregroundStyle(palette.muted)
+            Text("不同币种独立展示。余额接口不提供本机 Token 活动，也不据此推算消费明细。").font(.system(size: 11)).foregroundStyle(.white.opacity(0.92)).shadow(color:.black.opacity(0.45),radius:2,y:1)
         }.accessibilityIdentifier("fc.usage.api.detail")
     }
     @ViewBuilder private var storageProtection: some View {
