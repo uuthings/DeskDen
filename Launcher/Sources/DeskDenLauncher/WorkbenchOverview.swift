@@ -10,18 +10,21 @@ struct WorkbenchOverview: View {
     @ObservedObject var cleaning: SpaceCleaningModel
     var navigate: (WorkbenchRoute) -> Void
     var openDevice: (DeviceCardID) -> Void
+    var reduceMotion = false
     @State private var selectedDay: Date?
     @Environment(\.workbenchPageWidth) private var availableWidth
+    @Environment(\.workbenchContentHeight) private var availableHeight
 
-    private var deviceWidth: CGFloat { min(300, 244 + max(0, availableWidth - 976) * 0.15) }
+    private var deviceWidth: CGFloat { min(320, 270 + max(0, availableWidth - 976) * 0.15) }
     private var calendarWidth: CGFloat { min(340, 296 + max(0, availableWidth - 976) * 0.12) }
 
     var body: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 0) {
             upperRow
+            Spacer(minLength: 24)
             lowerRow
         }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: availableHeight, alignment: .topLeading)
         .onChange(of: context.dateContext) { _, _ in selectedDay = nil }
         .onAppear { cleaning.refreshDisk() }
         .accessibilityElement(children: .contain)
@@ -32,15 +35,15 @@ struct WorkbenchOverview: View {
         if availableWidth >= 840 {
             HStack(alignment: .top, spacing: 20) {
                 deviceCard.frame(width: deviceWidth)
-                WorkbenchHomeWelcome(context: context).frame(maxWidth: .infinity).frame(height: 311)
+                WorkbenchHomeWelcome(context: context, reduceMotion: reduceMotion).frame(maxWidth: .infinity).frame(height: 311)
                 monthCard.frame(width: calendarWidth)
-            }.frame(height: 311, alignment: .top)
+            }.frame(minHeight: 311, alignment: .top)
         } else {
             VStack(spacing: 16) {
-                WorkbenchHomeWelcome(context: context).frame(height: 210)
+                WorkbenchHomeWelcome(context: context, reduceMotion: reduceMotion).frame(height: 210)
                 if availableWidth >= 580 {
                     HStack(alignment: .top, spacing: 16) {
-                        deviceCard.frame(maxWidth: 300)
+                        deviceCard.frame(maxWidth: 320)
                         Spacer(minLength: 0)
                         monthCard.frame(width: min(340, (availableWidth - 16) / 2))
                     }

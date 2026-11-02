@@ -69,7 +69,7 @@ private struct WorkbenchPageCanvas: ViewModifier {
 struct WorkbenchRootView: View {
     @ObservedObject var model: WorkbenchAppModel
     private var home: Bool { model.route == .overview }
-    private var palette: ThemePalette { home ? HomeFluidPalette.light : ThemePalette(theme: model.theme, opacity: model.opacity, light: model.light) }
+    private var palette: ThemePalette { ThemePalette(theme: home ? .qingbiMist : model.theme, opacity: home ? 0.87 : model.opacity, light: model.light) }
     private var windowRadius: CGFloat { model.isFullScreen ? 0 : home ? 16 : WorkbenchViewport.windowRadius }
     var body: some View {
         GeometryReader { viewport in
@@ -77,9 +77,15 @@ struct WorkbenchRootView: View {
             let chromeHeight = metrics.chromeHeight
             let settingsHeight: CGFloat = model.route == .settings ? 52 : 0
             let gutter = metrics.contentGutter
-            let pageInsets = EdgeInsets(top:home ? 24 : 22,leading:gutter,bottom:home ? 14 : 16,trailing:gutter)
+            let pageInsets = EdgeInsets(top:home ? 24 : 22,leading:gutter,bottom:home ? 32 : 16,trailing:gutter)
             ZStack(alignment: .topLeading) {
-                WorkbenchFluidBackground()
+                if model.light {
+                    WorkbenchFluidBackground()
+                } else {
+                    // Keep the saved dark background until a new artwork is approved.
+                    WorkbenchSceneBackground(theme: model.theme, motionEnabled: false, active: model.windowVisible)
+                    Color.black.opacity(0.26).allowsHitTesting(false)
+                }
                 VStack(spacing: 0) {
                     WorkbenchFluidNavigation(model: model).frame(height: chromeHeight)
                         .accessibilityElement(children: .contain)
@@ -94,6 +100,13 @@ struct WorkbenchRootView: View {
                     .blur(radius: model.modals.isPresented || model.confirmingQuit || model.quitting ? 8 : 0)
                     .disabled(model.modals.isPresented || model.confirmingQuit || model.quitting)
                     .accessibilityHidden(model.modals.isPresented || model.confirmingQuit)
+                if home {
+                    Text("v" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"))
+                        .font(.system(size: 10)).foregroundStyle(.white.opacity(0.82))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                        .padding(.trailing, gutter).padding(.bottom, 9)
+                        .allowsHitTesting(false).accessibilityIdentifier("fc.home.version")
+                }
                 WorkbenchModalHost(coordinator:model.modals)
                 WorkbenchContextDialogs(model:model.context)
                 CalendarDialogs(model:model.calendar,context:model.context)
@@ -110,7 +123,7 @@ struct WorkbenchRootView: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: windowRadius))
         .overlay(RoundedRectangle(cornerRadius: windowRadius).strokeBorder(Color.white.opacity(model.isFullScreen ? 0 : 0.57), lineWidth: 1).allowsHitTesting(false))
-        .workbenchThemeEnvironment(theme: home ? .qingbiMist : model.theme, opacity: home ? 0.87 : model.opacity, backgroundMotion: !home && model.backgroundMotion && !model.reduceMotion, appearance: home ? .light : model.appearance)
+        .workbenchThemeEnvironment(theme: home ? .qingbiMist : model.theme, opacity: home ? 0.87 : model.opacity, backgroundMotion: !home && model.backgroundMotion && !model.reduceMotion, appearance: model.appearance)
         .environment(\.workbenchModals,model.modals)
         .ignoresSafeArea(.container, edges: .top)
         .tint(palette.accent).controlSize(.regular)
@@ -142,7 +155,7 @@ struct WorkbenchRootView: View {
                     switch model.route {
                     case .overview: WorkbenchOverview(device: model.device, calendar: model.calendar,context:model.context,cleaning:model.cleaning,navigate:{ route in
                         if route == .ai { model.openUsageOverview() } else { model.navigate(route) }
-                    },openDevice:{model.openDeviceReading($0)})
+                    },openDevice:{model.openDeviceReading($0)},reduceMotion:model.reduceMotion)
                     case .device: EmptyView()
                     case .cleaning: EmptyView()
                     case .calendar: CalendarModuleView(model: model.calendar,context:model.context,returnToSettingsPrivacy:{model.navigate(.settings);model.settingsTab = .privacy})

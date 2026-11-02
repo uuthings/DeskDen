@@ -1,19 +1,18 @@
 import AppKit
-import CoreText
 import SwiftUI
 import LauncherCore
 
 struct WorkbenchHomeDeviceCard: View {
     @ObservedObject var model: DeviceStatusModel
     var navigate: (WorkbenchRoute) -> Void
-    private let palette = HomeFluidPalette.light
+    @Environment(\.workbenchPalette) private var palette
     private var snapshot: DeviceSnapshot { model.snapshot }
     private var thermal: DeviceThermalPresentation { snapshot.thermalPresentation(rule: model.temperatureRule) }
 
     var body: some View {
         VStack(spacing: 4) {
             Button { navigate(.device) } label: {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 11) {
                     HStack(spacing: 7) {
                         WorkbenchContentIcon(symbol: "laptopcomputer", size: 17)
                         Text("这台 Mac").font(.system(size: 13, weight: .medium))
@@ -24,7 +23,7 @@ struct WorkbenchHomeDeviceCard: View {
                         Text(snapshot.deviceName).font(.system(size: 17, weight: .medium)).lineLimit(1)
                         Text(snapshot.chipName).font(.system(size: 12)).foregroundStyle(HomeFluidPalette.secondary).lineLimit(1)
                     }
-                    VStack(alignment: .leading, spacing: 7) {
+                    VStack(alignment: .leading, spacing: 9) {
                         HStack(spacing: 6) {
                             Image(systemName: "thermometer.medium").font(.system(size: 14, weight: .light)).foregroundStyle(HomeFluidPalette.secondary)
                             temperature("CPU", snapshot.cpuTemperature, level: thermal.cpuLevel)
@@ -33,6 +32,7 @@ struct WorkbenchHomeDeviceCard: View {
                             Spacer(minLength: 0)
                         }.font(.system(size: 12)).help(thermal.detail)
                             .accessibilityElement(children: .combine).accessibilityIdentifier("home-temperature-readout")
+                        fanReadout
                         HStack(spacing: 5) {
                             Label(snapshot.battery.map { String(format: "%.0f%%", $0.percent) } ?? "—", systemImage: snapshot.battery?.isPluggedIn == true ? "battery.100.bolt" : "battery.100")
                                 .font(.system(size: 12, weight: .medium)).monospacedDigit()
@@ -42,11 +42,10 @@ struct WorkbenchHomeDeviceCard: View {
                             Text(batteryStatus).font(.system(size: 11)).foregroundStyle(HomeFluidPalette.muted)
                         }
                     }
-                    Spacer(minLength: 0)
-                    memory
+                    memory.padding(.top, 2)
                 }
                 .accessibilityElement(children: .contain).accessibilityIdentifier("home-device-content")
-                .padding(14).frame(maxWidth: .infinity).frame(height: 230)
+                .padding(14).frame(maxWidth: .infinity).frame(height: 238)
                 .foregroundStyle(HomeFluidPalette.ink)
                 .background(WorkbenchHomeSurface())
                 .contentShape(RoundedRectangle(cornerRadius: 15))
@@ -88,6 +87,26 @@ struct WorkbenchHomeDeviceCard: View {
                 .fontWeight(.medium).monospacedDigit()
                 .foregroundStyle(level == .normal ? HomeFluidPalette.ink : level.color(palette: palette))
         }
+    }
+    private var fanReadout: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "fan").font(.system(size: 12, weight: .light))
+            if let fans = snapshot.fanRPM, fans.isEmpty {
+                Text("无风扇设计")
+            } else {
+                Text("风扇")
+                let fans = snapshot.fanRPM ?? [nil]
+                Text(fans.map { value in
+                    value.map { String(format: "%.0f", $0) } ?? "—"
+                }.joined(separator: " / "))
+                    .fontWeight(.medium).monospacedDigit().foregroundStyle(HomeFluidPalette.ink)
+                Text("RPM").font(.system(size: 10))
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.system(size: 11)).foregroundStyle(HomeFluidPalette.secondary)
+        .accessibilityElement(children: .combine).accessibilityIdentifier("home-fan-readout")
+        .help("实际风扇转速；— 表示来源未提供，0 RPM 表示当前停转。")
     }
     private var memory: some View {
         let memory = snapshot.memory
@@ -139,7 +158,7 @@ struct WorkbenchHomeStorageCard: View {
     @ObservedObject var model: DeviceStatusModel
     @ObservedObject var cleaning: SpaceCleaningModel
     var action: () -> Void
-    private let palette = HomeFluidPalette.light
+    @Environment(\.workbenchPalette) private var palette
     private var disk: DeviceDiskSnapshot? { model.snapshot.disk }
     private var total: UInt64? { disk?.total ?? cleaning.diskTotal }
     private var available: UInt64? { disk?.available ?? cleaning.diskAvailable }
@@ -201,7 +220,7 @@ struct WorkbenchHomeStorageCard: View {
                 }
             }
             .accessibilityElement(children: .contain).accessibilityIdentifier("home-storage-content")
-            .padding(14).frame(maxWidth: .infinity).frame(height: 261)
+            .padding(14).frame(maxWidth: .infinity).frame(height: 232)
             .foregroundStyle(HomeFluidPalette.ink)
             .background(WorkbenchHomeSurface())
             .contentShape(RoundedRectangle(cornerRadius: 15))
@@ -285,7 +304,7 @@ struct WorkbenchHomeNetworkCard: View {
                 }.font(.system(size: 11)).foregroundStyle(HomeFluidPalette.muted)
             }
             .accessibilityElement(children: .contain).accessibilityIdentifier("home-network-content")
-            .padding(14).frame(maxWidth: .infinity).frame(height: 261)
+            .padding(14).frame(maxWidth: .infinity).frame(height: 232)
             .foregroundStyle(HomeFluidPalette.ink)
             .background(WorkbenchHomeSurface())
             .contentShape(RoundedRectangle(cornerRadius: 15))
@@ -310,6 +329,7 @@ private struct WorkbenchHomeNetworkTrend: View {
     let points: [DeviceHistoryPoint]
     @ObservedObject var context: WorkbenchContextModel
     @State private var hover: CGPoint?
+    @Environment(\.colorScheme) private var colorScheme
     private var end: Date { max(points.last?.date ?? .distantPast, Date()) }
     private var visible: [DeviceHistoryPoint] { points.filter { $0.date <= end && end.timeIntervalSince($0.date) <= 60 } }
     private func value(_ point: DeviceHistoryPoint) -> Double? {
@@ -372,7 +392,7 @@ private struct WorkbenchHomeNetworkTrend: View {
                     Text(context.time(nearest.date, seconds: true) + "  " + DeviceFormat.rate(value(nearest)))
                         .font(.system(size: 10)).monospacedDigit().padding(5)
                         .foregroundStyle(HomeFluidPalette.ink)
-                        .background(.white.opacity(0.95), in: RoundedRectangle(cornerRadius: 5))
+                        .background((colorScheme == .light ? Color.white : Color(red: 0.08, green: 0.14, blue: 0.17)).opacity(0.95), in: RoundedRectangle(cornerRadius: 5))
                         .allowsHitTesting(false)
                 }
             }
@@ -391,11 +411,13 @@ private struct WorkbenchHomeNetworkTrend: View {
 
 struct WorkbenchHomeWelcome: View {
     @ObservedObject var context: WorkbenchContextModel
+    var reduceMotion = false
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { timeline in
             VStack(spacing: 0) {
                 Spacer(minLength: 5)
-                WorkbenchHomeWelcomeOutline().stroke(.white.opacity(0.94), lineWidth: 0.8)
+                WorkbenchOutlinedText(text: "欢迎你", fontSize: 56, letterSpacing: 7,
+                                      repeats: true, reduceMotion: reduceMotion)
                     .frame(maxWidth: 230).frame(height: 63)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("欢迎你").accessibilityIdentifier("home-welcome")
@@ -459,37 +481,6 @@ struct WorkbenchHomeWelcome: View {
     }
 }
 
-private struct WorkbenchHomeWelcomeOutline: Shape {
-    nonisolated(unsafe) private static let outlines: CGPath = {
-        let font = NSFont(name: "Kaiti SC", size: 56) ?? NSFont(name: "STKaiti", size: 56) ?? NSFont.systemFont(ofSize: 56, weight: .light)
-        let text = NSAttributedString(string: "欢迎你", attributes: [.font: font, .kern: 7])
-        let line = CTLineCreateWithAttributedString(text as CFAttributedString)
-        let result = CGMutablePath()
-        for run in CTLineGetGlyphRuns(line) as! [CTRun] {
-            let count = CTRunGetGlyphCount(run)
-            var glyphs = Array(repeating: CGGlyph(), count: count)
-            var positions = Array(repeating: CGPoint.zero, count: count)
-            CTRunGetGlyphs(run, CFRange(location: 0, length: 0), &glyphs)
-            CTRunGetPositions(run, CFRange(location: 0, length: 0), &positions)
-            let attributes = CTRunGetAttributes(run) as NSDictionary
-            let runFont = attributes[kCTFontAttributeName] as! CTFont
-            for index in 0..<count {
-                guard let glyph = CTFontCreatePathForGlyph(runFont, glyphs[index], nil) else { continue }
-                result.addPath(glyph, transform: CGAffineTransform(translationX: positions[index].x, y: positions[index].y))
-            }
-        }
-        return result
-    }()
-    func path(in rect: CGRect) -> Path {
-        let source = Self.outlines, bounds = source.boundingBoxOfPath
-        guard bounds.width > 0, bounds.height > 0 else { return Path() }
-        let scale = min(1, rect.width / bounds.width, rect.height / bounds.height)
-        let x = rect.midX - bounds.midX * scale
-        let y = rect.midY + bounds.midY * scale
-        return Path(source).applying(CGAffineTransform(a: scale, b: 0, c: 0, d: -scale, tx: x, ty: y))
-    }
-}
-
 private struct WorkbenchHomeValue: View {
     let value: String
     var size: CGFloat
@@ -516,11 +507,12 @@ private struct WorkbenchHomeCardButtonStyle: ButtonStyle {
     var radius: CGFloat = 15
     var highlight: Color = .white.opacity(0.22)
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
     @State private var hovering = false
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .overlay(RoundedRectangle(cornerRadius: radius).fill(configuration.isPressed ? HomeFluidPalette.green.opacity(0.075) : hovering ? highlight : .clear).allowsHitTesting(false))
-            .overlay(RoundedRectangle(cornerRadius: radius).strokeBorder(.white.opacity(hovering ? 0.95 : 0), lineWidth: 1).allowsHitTesting(false))
+            .overlay(RoundedRectangle(cornerRadius: radius).fill(configuration.isPressed ? HomeFluidPalette.green.opacity(0.075) : hovering ? highlight.opacity(colorScheme == .dark ? 0.3 : 1) : .clear).allowsHitTesting(false))
+            .overlay(RoundedRectangle(cornerRadius: radius).strokeBorder(.white.opacity(hovering ? (colorScheme == .dark ? 0.30 : 0.95) : 0), lineWidth: 1).allowsHitTesting(false))
             .contentShape(RoundedRectangle(cornerRadius: radius))
             .onHover { hovering = $0 }.clickableCursor()
             .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: hovering)

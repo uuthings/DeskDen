@@ -10,6 +10,7 @@ struct WorkbenchHomeCalendar: View {
     var navigate: (WorkbenchRoute) -> Void
     @State private var displayedMonth = Date()
     @State private var showingDay = false
+    @Environment(\.colorScheme) private var scheme
 
     private var calendar: Calendar { context.dateContext.calendar }
     private var selection: Date { selectedDay ?? Date() }
@@ -26,7 +27,8 @@ struct WorkbenchHomeCalendar: View {
     var body: some View {
         let events = knownEvents
         let pending = model.reminders.filter { !$0.isCompleted }
-        VStack(spacing: 0) {
+        VStack(spacing: 5) {
+          VStack(spacing: 0) {
             monthHeader.padding(.bottom, 7)
             HStack(spacing: 3) {
                 ForEach(["一", "二", "三", "四", "五", "六", "日"], id: \.self) { text in
@@ -42,14 +44,14 @@ struct WorkbenchHomeCalendar: View {
         .frame(maxWidth: .infinity).frame(height: 301)
         .background {
             RoundedRectangle(cornerRadius: 14).fill(LinearGradient(
-                colors: [Color(red: 3/255, green: 80/255, blue: 106/255).opacity(0.35),
-                         Color(red: 3/255, green: 59/255, blue: 87/255).opacity(0.37)],
+                colors: [Color(red: 3/255, green: 80/255, blue: 106/255).opacity(scheme == .light ? 0.35 : 0.70),
+                         Color(red: 3/255, green: 59/255, blue: 87/255).opacity(scheme == .light ? 0.37 : 0.77)],
                 startPoint: .topLeading, endPoint: .bottomTrailing))
+        }
+          if showingDay { dayAgenda }
         }
         .padding(5)
         .overlay(RoundedRectangle(cornerRadius: 19).strokeBorder(.white.opacity(0.28), lineWidth: 1))
-        .frame(height: 311)
-        .popover(isPresented: $showingDay, arrowEdge: .leading) { dayPopover }
         .onAppear {
             displayedMonth = selection
             if !calendar.isDate(model.displayedMonth, equalTo: selection, toGranularity: .month) { model.selectDay(selection) }
@@ -68,7 +70,7 @@ struct WorkbenchHomeCalendar: View {
             Button { moveMonth(-1) } label: { Image(systemName: "chevron.left").frame(width: 25, height: 28) }
                 .accessibilityLabel("上个月").accessibilityIdentifier("fc.home.calendar.previous")
             Button("今天") {
-                displayedMonth = Date(); selectedDay = nil; model.goToToday()
+                displayedMonth = Date(); selectedDay = nil; showingDay = true; model.goToToday()
             }.frame(height: 28).accessibilityIdentifier("fc.home.calendar.today")
             Button { moveMonth(1) } label: { Image(systemName: "chevron.right").frame(width: 25, height: 28) }
                 .accessibilityLabel("下个月").accessibilityIdentifier("fc.home.calendar.next")
@@ -96,7 +98,7 @@ struct WorkbenchHomeCalendar: View {
                 .overlay(alignment: .topTrailing) {
                     if let badge = civil.badge {
                         Text(badge).font(.system(size: 8, weight: .medium))
-                            .foregroundStyle(badge == "班" ? Color(red: 0.65, green: 0.32, blue: 0.15) : HomeFluidPalette.green)
+                            .foregroundStyle(badge == "班" ? Color(red: 0.65, green: 0.32, blue: 0.15) : HomeFluidPalette.light.accent)
                             .frame(width: 11, height: 11)
                             .background(.white.opacity(0.88), in: RoundedRectangle(cornerRadius: 3))
                             .padding(.top, 1).padding(.trailing, 1).accessibilityHidden(true)
@@ -104,7 +106,7 @@ struct WorkbenchHomeCalendar: View {
                 }
                 .overlay(alignment: .bottom) {
                     if events + reminders > 0 {
-                        Circle().fill(selected ? HomeFluidPalette.green : .white.opacity(0.9))
+                        Circle().fill(selected ? HomeFluidPalette.light.accent : .white.opacity(0.9))
                             .frame(width: 3, height: 3).padding(.bottom, 4)
                     }
                 }
@@ -122,49 +124,50 @@ struct WorkbenchHomeCalendar: View {
         displayedMonth = first; selectedDay = first; showingDay = false; model.selectDay(first)
     }
 
-    private var dayPopover: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(HomeCalendarContent.format(selection, "M月d日 EEEE", calendar: calendar)).font(.system(size: 13, weight: .medium))
-                    Text(CalendarCivilDay(date: selection, calendar: calendar, showsHolidays: model.holidaysEnabled).label)
-                        .font(.system(size: 11)).foregroundStyle(HomeFluidPalette.secondary)
+    private var dayAgenda: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(calendar.isDateInToday(selection) ? "本日安排" : HomeCalendarContent.format(selection, "M月d日", calendar: calendar) + "安排")
+                    .font(.system(size: 11, weight: .medium)).lineLimit(1)
+                if !dayEntries.isEmpty {
+                    Text("\(dayEntries.count)").font(.system(size: 10)).foregroundStyle(HomeFluidPalette.muted)
                 }
-                Spacer(minLength: 8)
-                Button { showingDay = false } label: { Image(systemName: "xmark") }
-                    .buttonStyle(WBIconButtonStyle(size: 28)).accessibilityLabel("关闭当天安排")
-            }
-            if !dayEntries.isEmpty {
+                Spacer(minLength: 4)
+                Button("查看") { model.selectDay(selection); navigate(.calendar) }
+                    .font(.system(size: 11)).buttonStyle(WBQuietButtonStyle())
+                    .accessibilityLabel("查看当天全部安排")
+                Button { model.selectDay(selection); model.openNewReminder() } label: {
+                    Image(systemName: "plus").font(.system(size: 11))
+                }.buttonStyle(WBIconButtonStyle(size: 24)).disabled(model.storageError != nil)
+                    .accessibilityLabel("为选中日期新建待办")
+                    .accessibilityIdentifier("fc.home.calendar.day.add")
+            }.frame(height: 24)
+            if dayEntries.isEmpty {
+                Text(dayAgendaStatus).font(.system(size: 11)).foregroundStyle(HomeFluidPalette.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
                 WorkbenchScrollView {
-                    LazyVStack(spacing: 4) {
+                    LazyVStack(spacing: 2) {
                         ForEach(dayEntries) { entry in
-                            HomeCalendarEntryRow(entry: entry, model: model, context: context) { showingDay = false }
+                            HomeCalendarEntryRow(entry: entry, model: model, context: context)
                         }
                     }
-                }.frame(height: min(240, CGFloat(dayEntries.count) * 52))
-            } else {
-                Text(model.isLoading ? "正在读取这一天的安排…" : "这一天没有已读取的日程或待办")
-                    .font(.system(size: 12)).foregroundStyle(HomeFluidPalette.secondary).padding(.vertical, 14)
-            }
-            if !model.preferences.calendarConnected || model.calendarAccess != .granted {
-                Text("系统日历未连接，本机待办仍可使用。")
-                    .font(.system(size: 11)).foregroundStyle(HomeFluidPalette.muted)
-            } else if model.overviewReadError != nil || model.remindersReadError != nil {
-                Text("部分来源读取失败，可在日历中查看详情。")
-                    .font(.system(size: 11)).foregroundStyle(HomeFluidPalette.muted)
-            }
-            HStack {
-                Button("新建待办") { showingDay = false; model.selectDay(selection); model.openNewReminder() }
-                    .buttonStyle(WBButtonStyle(compact: true)).disabled(model.storageError != nil)
-                Spacer()
-                Button("查看日历") { showingDay = false; model.selectDay(selection); navigate(.calendar) }
-                    .buttonStyle(WBQuietButtonStyle())
+                }.frame(height: 40)
             }
         }
-        .padding(16).frame(width: 340).foregroundStyle(HomeFluidPalette.ink)
-        .workbenchThemeEnvironment(theme: .qingbiMist, opacity: 0.87, backgroundMotion: false, appearance: .light)
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .foregroundStyle(HomeFluidPalette.ink).background(WorkbenchHomeSurface(radius: 14))
         .accessibilityElement(children: .contain).accessibilityIdentifier("fc.home.calendar.dayDetails")
     }
+
+    private var dayAgendaStatus: String {
+        if model.isLoading { return "正在读取当天安排…" }
+        if model.overviewReadError != nil || model.remindersReadError != nil { return "部分来源读取失败，可进入日历查看。" }
+        if !model.preferences.calendarConnected || model.calendarAccess != .granted { return "这天暂无本机待办 · 系统日历未连接" }
+        return "这一天暂时没有安排"
+    }
+
 }
 
 struct WorkbenchHomeReminders: View {
@@ -215,7 +218,7 @@ struct WorkbenchHomeReminders: View {
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 WorkbenchScrollView {
-                    LazyVStack(spacing: 4) {
+                    LazyVStack(spacing: 3) {
                         ForEach(entries) { entry in HomeCalendarEntryRow(entry: entry, model: model, context: context) }
                     }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -224,7 +227,7 @@ struct WorkbenchHomeReminders: View {
             footer.frame(height: 20)
         }
         .accessibilityElement(children: .contain).accessibilityIdentifier("fc.home.reminders.content")
-        .padding(14).frame(maxWidth: .infinity).frame(height: 261)
+        .padding(14).frame(maxWidth: .infinity).frame(height: 232)
         .foregroundStyle(HomeFluidPalette.ink).background(WorkbenchHomeSurface())
         .accessibilityElement(children: .contain).accessibilityIdentifier("fc.home.reminders")
     }
@@ -286,12 +289,12 @@ private struct HomeCalendarEntryRow: View {
                         .foregroundStyle(entry.isCompleted ? HomeFluidPalette.muted : HomeFluidPalette.ink)
                     Text(HomeCalendarContent.subtitle(entry, context: context)).font(.system(size: 11))
                         .foregroundStyle(HomeFluidPalette.secondary).lineLimit(1)
-                }.frame(maxWidth: .infinity, alignment: .leading).frame(height: 48, alignment: .center)
+                }.frame(maxWidth: .infinity, alignment: .leading).frame(height: 40, alignment: .center)
                     .contentShape(Rectangle())
             }
             .buttonStyle(ClickablePlainButtonStyle())
             .help(entry.title + "\n" + HomeCalendarContent.subtitle(entry, context: context))
-        }.frame(height: 48).accessibilityElement(children: .contain)
+        }.frame(height: 40).accessibilityElement(children: .contain)
     }
 }
 
@@ -363,7 +366,7 @@ private struct HomeCalendarDateStyle: ButtonStyle {
     @State private var hovering = false
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .foregroundStyle(selected ? HomeFluidPalette.green : .white.opacity(outside ? 0.38 : 0.94))
+            .foregroundStyle(selected ? HomeFluidPalette.light.accent : .white.opacity(outside ? 0.38 : 0.94))
             .background(selected ? Color.white.opacity(configuration.isPressed ? 0.87 : 1) : .white.opacity(configuration.isPressed ? 0.22 : hovering ? 0.14 : 0), in: RoundedRectangle(cornerRadius: 6))
             .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.white.opacity(today && !selected ? 0.38 : 0), lineWidth: 1))
             .contentShape(RoundedRectangle(cornerRadius: 6)).onHover { hovering = $0 }.clickableCursor()
