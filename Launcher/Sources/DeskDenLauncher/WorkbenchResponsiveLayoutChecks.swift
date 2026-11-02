@@ -9,7 +9,7 @@ enum WorkbenchResponsiveLayoutChecks {
     /// Explicit foreground-only entry: mounts the production window with no
     /// real calendar, AI session paths, network services or shortcut setup.
     /// It runs only the persistent Home sequence, never the broad route suite.
-    static func runHomeResizeFixture() async -> (count:Int,failures:Int) {
+    static func runHomeResizeFixture(fluidHome:Bool = false) async -> (count:Int,failures:Int) {
         let directory=FileManager.default.temporaryDirectory.appendingPathComponent("deskden-home-resize-\(UUID().uuidString)")
         let priorApplication=NSWorkspace.shared.frontmostApplication
         let priorPolicy=NSApp.activationPolicy()
@@ -36,7 +36,9 @@ enum WorkbenchResponsiveLayoutChecks {
             }
             try JSONEncoder().encode(sources).write(to:sourcesDirectory.appendingPathComponent("sources.json"))
             let system=HomeResizeCalendar(),notifications=HomeResizeNotifications()
-            let calendar=CalendarModel(dataDirectory:directory.appendingPathComponent("Calendar"),system:system,notifier:notifications)
+            let calendarDirectory=directory.appendingPathComponent("Calendar")
+            if fluidHome {try WorkbenchFluidHomeChecks.seedReminders(in:calendarDirectory)}
+            let calendar=CalendarModel(dataDirectory:calendarDirectory,system:system,notifier:notifications)
             let ai=AIUsageModel(dataDirectory:aiDirectory,startServices:false,notifications:HomeResizeAINotifications(),claudeSettingsDirectory:directory.appendingPathComponent("DisabledClaude"))
             let model=WorkbenchAppModel(owner:owner,calendar:calendar,ai:ai,startServices:false)
             let controller=WorkbenchWindowController(owner:owner,model:model,autosavesFrame:false)
@@ -60,7 +62,9 @@ enum WorkbenchResponsiveLayoutChecks {
                 print("FAIL isolated Home resize fixture becomes foreground with its actual accessibility tree")
                 return (1,1)
             }
-            let result=await checkPersistentHomeResizing(model:model,window:window,host:host)
+            let result: (count:Int,failures:Int)
+            if fluidHome {result=await WorkbenchFluidHomeChecks.run(model:model,window:window,host:host)}
+            else {result=await checkPersistentHomeResizing(model:model,window:window,host:host)}
             let isolated = !model.device.isSampling && !ai.isRefreshing && model.providerUsage.refreshing.isEmpty && model.apiBalance.refreshing.isEmpty
                 && system.permissionRequests == 0 && system.writes == 0 && notifications.permissionRequests == 0
             print("\(isolated ? "PASS":"FAIL") isolated Home resize fixture keeps sampling, real sources and permission requests disabled")

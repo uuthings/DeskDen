@@ -9,12 +9,12 @@ struct WorkbenchShellMetrics {
     let sidebarWidth: CGFloat
     let pageWidth: CGFloat
 
-    init(viewport: CGSize) {
-        chromeHeight = 46
+    init(viewport: CGSize, home: Bool = false) {
+        chromeHeight = 58
         // Fixed reading margins are independent of scrollbar presence.
-        contentGutter = 35
-        sidebarWidth = 184
-        pageWidth = min(1360, max(0, viewport.width - sidebarWidth - 2 - 2 * contentGutter))
+        contentGutter = home ? 24 : 35
+        sidebarWidth = 0
+        pageWidth = min(home ? .infinity : 1360, max(0, viewport.width - 2 - 2 * contentGutter))
     }
 }
 
@@ -26,6 +26,9 @@ private struct WorkbenchPageScrollHeightKey: EnvironmentKey {
 }
 private struct WorkbenchPageWidthKey: EnvironmentKey {
     static let defaultValue: CGFloat = 864
+}
+private struct WorkbenchPageMaximumWidthKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 1360
 }
 enum WorkbenchPageScrollSpace { static let name = "workbench-page-scroll" }
 extension EnvironmentValues {
@@ -42,6 +45,10 @@ extension EnvironmentValues {
         get {self[WorkbenchPageWidthKey.self]}
         set {self[WorkbenchPageWidthKey.self] = newValue}
     }
+    var workbenchPageMaximumWidth: CGFloat {
+        get {self[WorkbenchPageMaximumWidthKey.self]}
+        set {self[WorkbenchPageMaximumWidthKey.self] = newValue}
+    }
 }
 extension View {
     /// The document gets reading margins; its enclosing scroll view occupies
@@ -50,8 +57,9 @@ extension View {
 }
 private struct WorkbenchPageCanvas: ViewModifier {
     @Environment(\.workbenchPageInsets) private var insets
+    @Environment(\.workbenchPageMaximumWidth) private var maximumWidth
     func body(content: Content) -> some View {
-        content.frame(maxWidth:1360,alignment:.topLeading).padding(insets)
+        content.frame(maxWidth:maximumWidth,alignment:.topLeading).padding(insets)
             .frame(maxWidth:.infinity,alignment:.top)
     }
 }
@@ -60,31 +68,28 @@ private struct WorkbenchPageCanvas: ViewModifier {
 /// the entire page when the window grows; useful content receives the extra space.
 struct WorkbenchRootView: View {
     @ObservedObject var model: WorkbenchAppModel
-    private var palette: ThemePalette { ThemePalette(theme: model.theme, opacity: model.opacity, light: model.light) }
+    private var home: Bool { model.route == .overview }
+    private var palette: ThemePalette { home ? HomeFluidPalette.light : ThemePalette(theme: model.theme, opacity: model.opacity, light: model.light) }
+    private var windowRadius: CGFloat { model.isFullScreen ? 0 : home ? 16 : WorkbenchViewport.windowRadius }
     var body: some View {
         GeometryReader { viewport in
-            let metrics = WorkbenchShellMetrics(viewport: viewport.size)
+            let metrics = WorkbenchShellMetrics(viewport: viewport.size, home: home)
             let chromeHeight = metrics.chromeHeight
+            let settingsHeight: CGFloat = model.route == .settings ? 52 : 0
             let gutter = metrics.contentGutter
-            let pageInsets = EdgeInsets(top:22,leading:gutter,bottom:16,trailing:gutter)
+            let pageInsets = EdgeInsets(top:home ? 24 : 22,leading:gutter,bottom:home ? 14 : 16,trailing:gutter)
             ZStack(alignment: .topLeading) {
-                WorkbenchSceneBackground(theme: model.theme, motionEnabled: model.backgroundMotion && !model.reduceMotion, active: model.windowVisible)
+                WorkbenchFluidBackground()
                 VStack(spacing: 0) {
-                    chrome.frame(height: chromeHeight)
+                    WorkbenchFluidNavigation(model: model).frame(height: chromeHeight)
                         .accessibilityElement(children: .contain)
                         .accessibilityIdentifier("workbench-chrome")
-                        .background(WorkbenchMaterialSurface(kind: .chrome, radius: 0))
-                        .overlay(alignment:.bottom) {Rectangle().fill(palette.line).frame(height:1)}
-                    HStack(spacing: 0) {
-                        sidebar.frame(width: metrics.sidebarWidth)
-                            .background(WorkbenchMaterialSurface(kind: .sidebar, radius: 0))
-                            .overlay(alignment:.trailing) {Rectangle().fill(palette.line).frame(width:1)}
-                            .accessibilityElement(children: .contain)
-                            .accessibilityIdentifier("workbench-sidebar")
-                        content
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                            .environment(\.workbenchPageInsets,pageInsets)
+                    if model.route == .settings {
+                        WorkbenchFluidSettingsNavigation(model: model).frame(height: settingsHeight)
                     }
+                    content
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .environment(\.workbenchPageInsets,pageInsets)
                 }.padding(1)
                     .blur(radius: model.modals.isPresented || model.confirmingQuit || model.quitting ? 8 : 0)
                     .disabled(model.modals.isPresented || model.confirmingQuit || model.quitting)
@@ -99,12 +104,13 @@ struct WorkbenchRootView: View {
             .environment(\.workbenchScale, 1)
             .environment(\.workbenchDeviceExpanded, false)
             .environment(\.workbenchPageWidth, metrics.pageWidth)
-            .environment(\.workbenchContentHeight, max(0, viewport.size.height - chromeHeight - 2 - 22 - 16))
-            .environment(\.workbenchPageScrollHeight, max(0, viewport.size.height - chromeHeight - 2))
+            .environment(\.workbenchPageMaximumWidth, home ? .infinity : 1360)
+            .environment(\.workbenchContentHeight, max(0, viewport.size.height - chromeHeight - settingsHeight - 2 - pageInsets.top - pageInsets.bottom))
+            .environment(\.workbenchPageScrollHeight, max(0, viewport.size.height - chromeHeight - settingsHeight - 2))
         }
-        .clipShape(RoundedRectangle(cornerRadius: model.isFullScreen ? 0 : WorkbenchViewport.windowRadius))
-        .overlay(RoundedRectangle(cornerRadius: model.isFullScreen ? 0 : WorkbenchViewport.windowRadius).strokeBorder(palette.border.opacity(model.isFullScreen ? 0 : 1), lineWidth: 1).allowsHitTesting(false))
-        .workbenchThemeEnvironment(theme: model.theme, opacity: model.opacity, backgroundMotion: model.backgroundMotion && !model.reduceMotion, appearance: model.appearance)
+        .clipShape(RoundedRectangle(cornerRadius: windowRadius))
+        .overlay(RoundedRectangle(cornerRadius: windowRadius).strokeBorder(Color.white.opacity(model.isFullScreen ? 0 : 0.57), lineWidth: 1).allowsHitTesting(false))
+        .workbenchThemeEnvironment(theme: home ? .qingbiMist : model.theme, opacity: home ? 0.87 : model.opacity, backgroundMotion: !home && model.backgroundMotion && !model.reduceMotion, appearance: home ? .light : model.appearance)
         .environment(\.workbenchModals,model.modals)
         .ignoresSafeArea(.container, edges: .top)
         .tint(palette.accent).controlSize(.regular)
@@ -114,19 +120,6 @@ struct WorkbenchRootView: View {
         }
         .onChange(of: model.route) { _, _ in model.brandMenuPresented = false }
         .onChange(of: model.windowVisible) { _, visible in if !visible { model.brandMenuPresented = false } }
-    }
-    private var chrome: some View {
-        HStack(spacing: 12) {
-            WorkbenchWindowControls(close: { model.closeWindow?() }, minimize: { model.minimizeWindow?() }, fullScreen: { model.toggleFullScreen?() })
-                .frame(width: 52, height: 16).padding(.leading, 4)
-            Spacer(minLength: 8)
-            WorkbenchTopBarContext(context:model.context).layoutPriority(1)
-            if model.isTopEntryPresentation {
-                Button { model.keepInOrdinaryWindow?() } label: { Label("留在窗口", systemImage: "macwindow") }
-                    .buttonStyle(WBQuietButtonStyle()).help("转为普通窗口，切换应用时按系统窗口顺序显示")
-            }
-            WorkbenchUptime(device: model.device)
-        }.padding(.horizontal, 14)
     }
     @ViewBuilder private var content: some View {
         if model.route == .device {
@@ -147,7 +140,9 @@ struct WorkbenchRootView: View {
               WorkbenchScrollView {
                 Group {
                     switch model.route {
-                    case .overview: WorkbenchOverview(device: model.device, calendar: model.calendar,context:model.context,navigate:model.navigate,openDevice:{model.openDeviceReading($0)})
+                    case .overview: WorkbenchOverview(device: model.device, calendar: model.calendar,context:model.context,cleaning:model.cleaning,navigate:{ route in
+                        if route == .ai { model.openUsageOverview() } else { model.navigate(route) }
+                    },openDevice:{model.openDeviceReading($0)})
                     case .device: EmptyView()
                     case .cleaning: EmptyView()
                     case .calendar: CalendarModuleView(model: model.calendar,context:model.context,returnToSettingsPrivacy:{model.navigate(.settings);model.settingsTab = .privacy})
@@ -172,68 +167,7 @@ struct WorkbenchRootView: View {
             }
         }
     }
-    private var sidebar: some View {
-        VStack(alignment:.leading,spacing:6) {
-            if model.route == .settings {
-                Button {model.returnFromSettings()} label:{
-                    HStack(spacing:10) {Image(systemName:"arrow.left").frame(width:18).accessibilityHidden(true);Text("返回" + model.settingsReturnRoute.title);Spacer(minLength:0)}
-                        .padding(.horizontal,12).frame(height:42)
-                        .contentShape(RoundedRectangle(cornerRadius:9))
-                }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 9)).foregroundStyle(palette.secondary)
-                ForEach(WorkbenchSettingsTab.allCases,id:\.self) {tab in
-                    Button {model.settingsTab=tab} label:{
-                        HStack(spacing:10) {
-                            WorkbenchNavigationIcon(symbol:tab.symbol)
-                                .foregroundStyle(model.settingsTab == tab ? palette.accent:palette.secondary)
-                                .accessibilityHidden(true)
-                            Text(tab.title).font(.system(size:12));Spacer(minLength:0)
-                        }.padding(.horizontal,12).frame(height:42)
-                            .foregroundStyle(model.settingsTab == tab ? palette.text:palette.secondary)
-                            .background {if model.settingsTab == tab {WorkbenchMaterialSurface(kind:.selected,radius:9)}}
-                            .contentShape(RoundedRectangle(cornerRadius:9))
-                    }.buttonStyle(WBSelectableButtonStyle(selected: model.settingsTab == tab, cornerRadius: 9, drawsSelection: false)).accessibilityElement(children:.ignore).accessibilityAddTraits(.isButton).accessibilityLabel(tab.title).accessibilityValue(model.settingsTab == tab ? "当前页面":"").accessibilityAddTraits(model.settingsTab == tab ? .isSelected:[]).accessibilityRemoveTraits(model.settingsTab == tab ? []:.isSelected)
-                        .accessibilityIdentifier("settings-navigation-"+tab.rawValue)
-                }
-                Spacer(minLength:24)
-                sidebarBrand
-            } else {
-                ForEach([WorkbenchRoute.overview,.device,.cleaning,.calendar,.ai,.network,.vault],id:\.self) {route in navigation(route)}
-                Spacer(minLength:0)
-                sidebarBrand
-                navigation(.settings)
-            }
-            if let owner = model.owner { WorkbenchUpdateEntry(updates: owner.updates) }
-        }.padding(.horizontal,12).padding(.top,22).padding(.bottom,15)
-    }
-    private var sidebarBrand: some View {
-        HStack(alignment: .center, spacing: 8) {
-            WorkbenchBrandMark(pointSize: 30)
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
-                Text("方寸").font(.system(size: 13, weight: .medium)).foregroundStyle(palette.text)
-                Text("v" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"))
-                    .font(.system(size: 11)).foregroundStyle(palette.muted)
-            }.lineLimit(1)
-            Spacer(minLength: 0)
-        }.padding(.horizontal, 12).padding(.vertical, 8)
-            .accessibilityElement(children: .combine).accessibilityIdentifier("window-brand")
-    }
-    private func navigation(_ route: WorkbenchRoute) -> some View {
-        Button { if route == .ai {model.openUsageOverview()} else {model.navigate(route)} } label: {
-            HStack(spacing: 10) {
-                WorkbenchNavigationIcon(route: route)
-                    .foregroundStyle(model.route == route ? palette.accent : palette.secondary)
-                    .accessibilityHidden(true)
-                Text(route == .overview ? "首页" : route == .vault ? "私密空间" : route.title).font(.system(size: 12))
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 12).frame(height: 42)
-            .foregroundStyle(model.route == route ? palette.text : palette.secondary)
-            .background {
-                if model.route == route { WorkbenchMaterialSurface(kind: .selected, radius: 9) }
-            }
-            .contentShape(RoundedRectangle(cornerRadius: 9))
-        }.buttonStyle(WBSelectableButtonStyle(selected: model.route == route, cornerRadius: 9, drawsSelection: false)).accessibilityElement(children:.ignore).accessibilityAddTraits(.isButton).accessibilityLabel(route == .overview ? "首页":route == .vault ? "私密空间":route.title).accessibilityValue(model.route == route ? "当前页面" : "").accessibilityAddTraits(model.route == route ? .isSelected:[]).accessibilityRemoveTraits(model.route == route ? []:.isSelected).accessibilityIdentifier("navigation-" + route.rawValue)
-    }
+
 }
 
 private struct WorkbenchStatusMessages:View {

@@ -1,0 +1,9 @@
+{
+  "asset": "cyan-amber",
+  "origin": "AI-generated abstract cyan and amber fluid artwork",
+  "master": "cyan-amber.png",
+  "masterSHA256": "f663ef73eae094e1e94db6ac86082f388455c51f1578bd9b2c188dd15fd438e7",
+  "production": "../../Resources/Workbench/cyan-amber.jpg",
+  "productionSHA256": "e48e82ab095a6bbf4f43c7ffdec877c11e818c7115003d4eeacff57edfbafc40",
+  "productionNote": "Exact JPEG used by the approved home design; no screenshot, account data, or UI pixels are embedded."
+}

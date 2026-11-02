@@ -119,6 +119,21 @@ class PublicGateTests(unittest.TestCase):
         self.git("add", extra)
         self.assertNotEqual(self.check("--staged").returncode, 0)
 
+    def test_fluid_home_assets_have_an_exact_public_scope(self):
+        for path in ["Launcher/Artwork/Workbench/cyan-amber.png",
+                     "Launcher/Resources/Workbench/cyan-amber.jpg",
+                     "Launcher/Artwork/Workbench/provenance-fluid.json"]:
+            target = self.repo / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / path, target)
+            self.git("add", path)
+        result = self.check("--staged")
+        self.assertEqual(result.returncode, 0, result.stdout.decode())
+        extra = "Launcher/Artwork/Workbench/home-preview.png"
+        shutil.copyfile(ROOT / "Launcher/Artwork/Workbench/cyan-amber.png", self.repo / extra)
+        self.git("add", extra)
+        self.assertNotEqual(self.check("--staged").returncode, 0)
+
     def test_minimal_brand_assets_have_an_exact_public_scope(self):
         for path in ["Launcher/Artwork/AppIcons/Minimal/minimal-ink.png",
                      "Launcher/Artwork/AppIcons/Minimal/minimal-frame.png",
