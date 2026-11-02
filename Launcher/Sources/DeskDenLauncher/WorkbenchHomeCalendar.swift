@@ -43,10 +43,14 @@ struct WorkbenchHomeCalendar: View {
         .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 12)
         .frame(maxWidth: .infinity).frame(height: 301)
         .background {
-            RoundedRectangle(cornerRadius: 14).fill(LinearGradient(
-                colors: [Color(red: 3/255, green: 80/255, blue: 106/255).opacity(scheme == .light ? 0.35 : 0.70),
-                         Color(red: 3/255, green: 59/255, blue: 87/255).opacity(scheme == .light ? 0.37 : 0.77)],
-                startPoint: .topLeading, endPoint: .bottomTrailing))
+            if scheme == .light {
+                RoundedRectangle(cornerRadius: 14).fill(LinearGradient(
+                    colors: [Color(red: 3/255, green: 80/255, blue: 106/255).opacity(0.35),
+                             Color(red: 3/255, green: 59/255, blue: 87/255).opacity(0.37)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing))
+            } else {
+                WorkbenchHomeSurface(radius: 14)
+            }
         }
           if showingDay { dayAgenda }
         }
