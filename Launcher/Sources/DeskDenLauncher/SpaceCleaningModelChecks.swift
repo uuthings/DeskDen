@@ -338,6 +338,15 @@ import LauncherCore
             model.startScan(); await model.waitUntilIdle()
             check(model.screen == .results && model.items.count == 2 && model.selectedIDs.isEmpty && mover.moveCount == 0,
                   "default production scan finds fixture downloads without selecting or moving any file")
+            let detailItem = model.items[0]
+            model.showDetail(detailItem.id); model.showDetail(detailItem.id)
+            check(model.detailID == detailItem.id && model.selectedIDs.isEmpty,
+                  "reselecting a detail keeps its sidebar open without selecting a cleanup target")
+            model.closeDetail()
+            check(model.detailID == nil && model.selectedIDs.isEmpty,
+                  "collapsing details preserves the independent cleanup selection")
+            check(model.scanRecordedCandidates > 0 && model.scanTotalScopes > 0 && model.scanRecentPaths.count <= 4,
+                  "scan presentation retains real candidate and scope counts with a bounded recent-path list")
             check(model.recommendedItems.isEmpty && model.recommendedIDs.isEmpty &&
                   !model.reportSummary.contains("已默认选中"),
                   "a scan containing only personal files does not claim that recommendations were automatically selected")
@@ -351,6 +360,8 @@ import LauncherCore
             let trashed = try read(first.data)
             check(trashed.count == 2 && trashed.allSatisfy { $0.state == .trashed && $0.canRestore } && mover.moveCount == 2,
                   "verified production moves persist exactly one recoverable receipt per selected item")
+            check(model.batches.first?.items.allSatisfy { $0.isDirectory == false && $0.bytes > 0 && $0.originalURL.path.hasPrefix(first.home.path) } == true,
+                  "history presentation retains each recorded file's identity, original path and size")
             check(model.screen == .completed && model.requiresRescan && model.selectedIDs.isEmpty && model.currentBatch?.items.count == 2,
                   "processing enters a dedicated completion state with actual receipts and consumes the stale scan selection")
             model.goHome()

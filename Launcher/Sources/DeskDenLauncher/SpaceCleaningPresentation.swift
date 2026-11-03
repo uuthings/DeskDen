@@ -129,7 +129,7 @@ enum CleaningFileCategory: String, Sendable, CaseIterable {
     }
 }
 
-struct CleaningHistoryItemDisplay: Identifiable {
+struct CleaningHistoryItemDisplay: Identifiable, Sendable {
     let id: UUID
     let name: String
     let bytes: UInt64
@@ -141,9 +141,10 @@ struct CleaningHistoryItemDisplay: Identifiable {
     let canPurge: Bool
     let originalURL: URL
     let resultURL: URL?
+    var isDirectory: Bool? = nil
 }
 
-struct CleaningHistoryBatchDisplay: Identifiable {
+struct CleaningHistoryBatchDisplay: Identifiable, Sendable {
     let id: UUID
     let date: Date
     let method: SpaceCleaningMethod

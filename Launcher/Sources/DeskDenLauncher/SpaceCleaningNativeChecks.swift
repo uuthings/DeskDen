@@ -78,10 +78,13 @@ import LauncherCore
             check(mounted, "space cleaning mounts inside the production workbench shell")
             check(cleaning.screen == .start && cleaning.items.isEmpty && cleaning.selectedCount == 0 && !cleaning.isBusy,
                   "opening cleaning does not scan, select or process files")
-            check(exists("navigation-cleaning", in: host) && exists("window-brand", in: host) && exists("workbench-sidebar", in: host),
+            check(exists("navigation-cleaning", in: host) && exists("window-brand", in: host) && exists("workbench-top-navigation", in: host) && !exists("workbench-sidebar", in: host),
                   "cleaning retains the real brand, navigation and window shell")
 
-            for id in ["navigation-device", "navigation-cleaning", "space-cleaning-scope-global", "space-cleaning-scope-custom"] {
+            check(["navigation-device", "navigation-cleaning"].allSatisfy { id in
+                frame(id, in: host).flatMap { button in frame("workbench-chrome", in: host).map { $0.contains(button) && abs(button.height - 32) < 2 } } == true
+            }, "cleaning shares the top navigation's fixed-height buttons and header region")
+            for id in ["space-cleaning-scope-global", "space-cleaning-scope-custom"] {
                 check(try await hoverBackground(id, host: host, window: window, output: output),
                       "\(id) changes its visible background on hover without moving its hit area")
             }
@@ -97,7 +100,7 @@ import LauncherCore
             window.ignoresMouseEvents = true
             app.navigate(.overview)
             _ = await settle(window) { exists("home-open-cleaning", in: host) }
-            let homeBoundaryIDs = ["fc.page.home", "fc.home.agenda", "fc.home.calendar.strip", "home-device-detail"]
+            let homeBoundaryIDs = ["fc.page.home", "fc.home.reminders", "fc.home.calendar", "home-device-detail"]
             let homeBoundaryFrames = homeBoundaryIDs.map { frame($0, in: host) }
             let homePageScroll = objects(host).compactMap { $0 as? NSScrollView }.max { $0.bounds.width * $0.bounds.height < $1.bounds.width * $1.bounds.height }
             check(homeBoundaryFrames.allSatisfy { $0 != nil } && homePageScroll != nil,
@@ -136,7 +139,7 @@ import LauncherCore
                       "\(id) retains its full compact card material on actual OS hover")
             }
             let thermalText = accessibilityText("home-device-detail", in: host)
-            check(thermalText.contains("CPU 温度") && thermalText.contains("GPU 温度") && thermalText.contains("运行内存"),
+            check(thermalText.contains("CPU") && thermalText.contains("GPU") && thermalText.contains("内存"),
                   "home's single device-card action exposes the real visible readings instead of replacing them with a generic action name")
             app.navigate(.ai)
             _ = await settle(window) { exists("fc.ai.provider.codex", in: host) }
@@ -158,7 +161,7 @@ import LauncherCore
                 _ = await settle(window) { host.bounds.size == size }
                 try capture(host: host, name: "calendar-" + name, output: output)
                 app.navigate(.overview)
-                _ = await settle(window) { exists("fc.home.calendar.strip", in: host) }
+                _ = await settle(window) { exists("fc.home.calendar", in: host) }
                 try capture(host: host, name: "home-" + name, output: output)
                 app.navigate(.calendar)
                 _ = await settle(window) { exists("fc.calendar.workspace", in: host) }
@@ -186,18 +189,18 @@ import LauncherCore
 
             let sizes: [(String, NSSize)] = [("window", .init(width: 1120, height: 758)), ("compact", .init(width: 900, height: 620)), ("large", .init(width: 1728, height: 978))]
             var ordinaryOverviewFrames: [String: [NSRect?]] = [:]
-            let stableOverviewIDs = ["space-cleaning-disk-occupancy", "space-cleaning-home-intro", "space-cleaning-mode-cleanup", "space-cleaning-mode-largeFiles"]
+            let stableOverviewIDs = ["space-cleaning-disk-occupancy", "space-cleaning-disk-used", "space-cleaning-mode-cleanup", "space-cleaning-mode-largeFiles"]
             for (name, size) in sizes {
                 window.setContentSize(size)
                 _ = await settle(window) { exists("space-cleaning-start", in: host) }
                 ordinaryOverviewFrames[name] = stableOverviewIDs.map { frame($0, in: host) }
                 let metrics = WorkbenchShellMetrics(viewport: size)
-                let contentWidth = min(1360, size.width - metrics.sidebarWidth - 2 - metrics.contentGutter * 2)
+                let contentWidth = metrics.pageWidth
                 let module = frame("space-cleaning", in: host)
                 check(module.map { abs($0.width - contentWidth) < 3 } == true,
                       "\(name) cleaning uses the shared content width without a second gutter")
-                check(frame("workbench-sidebar", in: host).map { abs($0.width - metrics.sidebarWidth) < 2 } == true,
-                      "\(name) cleaning preserves the production sidebar width")
+                check(!exists("workbench-sidebar", in: host) && frame("workbench-chrome", in: host).map { abs($0.height - metrics.chromeHeight) < 2 } == true,
+                      "\(name) cleaning preserves the shared top navigation without adding a sidebar")
                 check(host.bounds.size == size, "\(name) cleaning keeps the native viewport size")
                 for result in homeLayoutChecks(in: host) { check(result.0, "\(name) global home " + result.1) }
                 for result in scopeTileLayoutChecks(in: host) { check(result.0, "\(name) global home " + result.1) }
@@ -227,8 +230,8 @@ import LauncherCore
                 for result in homeLayoutChecks(in: host) { check(result.0, "\(Int(height))-point viewport " + result.1) }
                 if height >= 720, let currentHeight = frame("space-cleaning-home-surface", in: host)?.height {
                     if let roomyPreparationHeight {
-                        check(abs(currentHeight - roomyPreparationHeight) < 2,
-                              "extra window height does not create blank space between preparation content and its actions")
+                        check(currentHeight >= roomyPreparationHeight,
+                              "the preparation work area grows with a taller viewport without compressing either card")
                     }
                     roomyPreparationHeight = currentHeight
                 }
@@ -300,9 +303,8 @@ import LauncherCore
                   !cleaning.recommendedItems.contains { $0.url == otherDownload },
                   "downloaded disk images are visible suggestions without auto-selecting them or personal recordings")
             check(cleaning.method == .trash && !cleaning.rememberMethod &&
-                  accessibilityValue("space-cleaning-method-trash", in: host) == "已选择" &&
-                  accessibilityValue("space-cleaning-method-permanent", in: host) == "未选择",
-                  "direct method choices visibly default to Trash with remembering off")
+                  selectedMethodTitle(in: host) == "移入废纸篓",
+                  "the shared method dropdown visibly defaults to Trash with remembering off")
             check(cleaning.items.allSatisfy { $0.url.path.hasPrefix(home.path + "/") }, "global fixture scanning stays inside the injected home")
             check(Set(cleaning.items.map(\.group)) == Set(CleaningResultGroup.allCases), "real scanner retains distinct protection and review classifications")
             check(exists("space-cleaning-rescan", in: host) && exists("space-cleaning-edit-scope", in: host), "rescan and scope editing remain visible in the results header")
@@ -332,17 +334,17 @@ import LauncherCore
                 window.setContentSize(size)
                 _ = await settle(window) { exists("space-cleaning-remember-method", in: host) }
                 for result in footerLayoutChecks(in: host) { check(result.0, "\(name) recommended results " + result.1) }
-                let fixedIDs = ["space-cleaning-method-trash", "space-cleaning-method-permanent", "space-cleaning-remember-method", "space-cleaning-cleanup"]
+                let fixedIDs = ["space-cleaning-method-selector", "space-cleaning-remember-method", "space-cleaning-cleanup"]
                 let originalFrames = fixedIDs.map { frame($0, in: host) }
                 cleaning.chooseMethod(.permanent)
-                _ = await settle(window) { accessibilityValue("space-cleaning-method-permanent", in: host) == "已选择" }
+                _ = await settle(window) { selectedMethodTitle(in: host) == "永久删除" }
                 check(fixedIDs.enumerated().allSatisfy { index, id in
                     originalFrames[index].flatMap { before in frame(id, in: host).map { after in
                         abs(before.minX - after.minX) < 1 && abs(before.minY - after.minY) < 1 && abs(before.width - after.width) < 1
                     } } == true
                 }, "\(name) switching deletion method keeps every footer control anchored at the same width and position")
                 cleaning.chooseMethod(.trash)
-                _ = await settle(window) { accessibilityValue("space-cleaning-method-trash", in: host) == "已选择" }
+                _ = await settle(window) { selectedMethodTitle(in: host) == "移入废纸篓" }
                 let savedSelection = cleaning.selectedIDs
                 for selection in [Set<UUID>(), Set(cleaning.items.filter(\.isSelectable).map(\.id))] {
                     cleaning.selectedIDs = selection
@@ -359,7 +361,7 @@ import LauncherCore
             }
             window.setContentSize(NSSize(width: 1120, height: 758))
             _ = await settle(window) { host.bounds.width == 1120 }
-            for id in ["space-cleaning-method-trash", "space-cleaning-method-permanent"] {
+            for id in ["space-cleaning-method-selector"] {
                 check(try await hoverBackground(id, host: host, window: window, output: output),
                       "\(id) has visible hover feedback in the mounted results footer")
             }
@@ -377,15 +379,15 @@ import LauncherCore
             cleaning.requestTestPurpose(testPackage.id)
             _ = await settle(window) { exists("space-cleaning-file-detail", in: host) }
             check(cleaning.detailID == testPackage.id && cleaning.dialog == .purpose(testPackage.id) && !cleaning.acknowledgement,
-                  "the protection action opens its inline explanation and requires a fresh purpose declaration")
+                  "the protection action opens its detail sidebar and requires a fresh purpose declaration")
             _ = await settle(window) {
-                frame("space-cleaning-result-list", in: host).flatMap { list in
+                frame("space-cleaning-detail-scroll", in: host).flatMap { list in
                     frame("space-cleaning-confirm-test-purpose", in: host).map { list.contains($0) }
                 } == true
             }
-            check(frame("space-cleaning-result-list", in: host).flatMap { list in
+            check(frame("space-cleaning-detail-scroll", in: host).flatMap { list in
                 frame("space-cleaning-confirm-test-purpose", in: host).map { list.contains($0) }
-            } == true, "opening purpose review scrolls its confirmation into the visible result list")
+            } == true, "opening purpose review scrolls its confirmation into the visible detail body")
             try capture(host: host, name: "protected-purpose-review", output: output)
             cleaning.acknowledgement = true; cleaning.confirmTestPurpose(testPackage.id)
             await cleaning.waitUntilIdle()
@@ -419,15 +421,20 @@ import LauncherCore
                   geometryIdentifiers: ["space-cleaning-file-" + item.id.uuidString, "space-cleaning-file-date-" + item.id.uuidString,
                                         "space-cleaning-select-" + item.id.uuidString, "space-cleaning-results-surface"]),
                   "result hover uses a faint complete row surface and preserves its geometry")
-            guard let page = pageScroll(in: host) else { throw SpaceCleaningFixtureError.invalid("internal result scroll missing") }
-            let sidebarBefore = frame("workbench-sidebar", in: host)
+            guard scroll("space-cleaning-result-list", in: host) != nil else { throw SpaceCleaningFixtureError.invalid("internal result scroll missing") }
+            let navigationBefore = frame("workbench-chrome", in: host)
             let surfaceBefore = frame("space-cleaning-results-surface", in: host)
             let footerBefore = frame("space-cleaning-selection-footer", in: host)
             cleaning.showDetail(item.id)
             _ = await settle(window) { exists("space-cleaning-file-detail", in: host) }
-            check(frame("space-cleaning-file-detail", in: host).map { $0.width > 600 } == true, "file review expands inline across the list instead of opening a popup or side panel")
-            check(frame("space-cleaning-results-surface", in: host) == surfaceBefore && frame("space-cleaning-selection-footer", in: host) == footerBefore,
-                  "expanding a file preserves card geometry and the fixed selection footer")
+            check(frame("space-cleaning-detail-surface", in: host).map { abs($0.width - 286) < 2 } == true &&
+                  frame("space-cleaning-results-surface", in: host).flatMap { list in
+                      frame("space-cleaning-detail-surface", in: host).map { detail in !list.intersects(detail) && abs(detail.minX - list.maxX - 12) < 2 }
+                  } == true, "file review opens an independent right-hand detail card with the shared column gap")
+            check(frame("space-cleaning-results-surface", in: host).flatMap { after in surfaceBefore.map { before in
+                abs(after.minX - before.minX) < 1 && abs(after.height - before.height) < 1 && after.width < before.width
+            } } == true && frame("space-cleaning-selection-footer", in: host) == footerBefore,
+                  "expanding details narrows only the list and preserves its height and fixed selection footer")
             check(item.handlingNote != nil && cleaning.selectedIDs == [item.id],
                   "installer review explains its manual decision and only becomes selected through an explicit choice")
             try capture(host: host, name: "recommendation-installer-detail", output: output)
@@ -443,24 +450,27 @@ import LauncherCore
                       "\(name) the visible-selection control aligns with the manual file checkbox")
                 for result in footerLayoutChecks(in: host) { check(result.0, "\(name) selected results " + result.1) }
                 let footer = frame("space-cleaning-selection-footer", in: host)
-                move(page, fraction: 0.55)
+                if let resultScroll = scroll("space-cleaning-result-list", in: host) { move(resultScroll, fraction: 0.55) }
                 _ = await settle(window) { frame("space-cleaning-selection-footer", in: host) == footer }
                 check(frame("space-cleaning-selection-footer", in: host) == footer && enabled("space-cleaning-cleanup", in: host) == true,
                       "\(name) scrolling the results keeps the enabled cleanup action fixed")
-                check(objects(host).compactMap { $0 as? NSScrollView }.filter { !$0.isHiddenOrHasHiddenAncestor }.count == 1,
-                      "\(name) has only an internal result scroll, no outer Content scrollbar")
+                check(scroll("space-cleaning-result-list", in: host) != nil && scroll("space-cleaning-detail-scroll", in: host) != nil &&
+                      frame("space-cleaning-detail-surface", in: host).flatMap { detail in
+                          frame("space-cleaning-detail-actions", in: host).map { detail.insetBy(dx: -1, dy: -1).contains($0) }
+                      } == true,
+                      "\(name) list and details have independent scroll regions with fixed detail actions")
                 try capture(host: host, name: "results-scrolled-" + name, output: output)
             }
             window.setContentSize(NSSize(width: 1120, height: 758))
             _ = await settle(window) { host.bounds.width == 1120 }
-            check(frame("workbench-sidebar", in: host) == sidebarBefore, "result interactions preserve the existing shell navigation geometry")
+            check(frame("workbench-chrome", in: host) == navigationBefore, "result interactions preserve the existing shell navigation geometry")
             let selectedBefore = cleaning.selectedIDs
             cleaning.editScope(custom: true)
             _ = await settle(window) { exists("space-cleaning-scope-editor", in: host) }
             check(frame("space-cleaning-home-surface", in: host).flatMap { card in
                 frame("space-cleaning-scope-editor", in: host).map { card.contains($0) }
             } == true && exists("space-cleaning-home-heading", in: host),
-                  "scope editing stays inside the same home launch card with its heading and animation")
+                  "scope editing stays inside the preparation workspace with its volume heading")
             check(cleaning.draftDirectories.isEmpty && enabled("space-cleaning-apply-scope", in: host) == false,
                   "empty custom scope cannot replace an existing scan")
             cleaning.addDraftDirectories([home.appendingPathComponent("Downloads"), home.appendingPathComponent("Developer")])
@@ -470,11 +480,10 @@ import LauncherCore
             check(cleaning.screen == .results && cleaning.selectedIDs == selectedBefore && cleaning.scopeChoice == .global,
                   "cancelling the scope draft preserves the existing results and selection")
             cleaning.closeDetail(); cleaning.chooseMethod(.permanent); cleaning.setRememberMethod(true)
-            _ = await settle(window) { accessibilityValue("space-cleaning-method-permanent", in: host) == "已选择" }
+            _ = await settle(window) { selectedMethodTitle(in: host) == "永久删除" }
             check(cleaning.method == .permanent && cleaning.rememberMethod &&
-                  accessibilityValue("space-cleaning-method-permanent", in: host) == "已选择" &&
-                  accessibilityValue("space-cleaning-method-trash", in: host) == "未选择",
-                  "changing the direct choice updates the selected state while remembering stays a separate option")
+                  selectedMethodTitle(in: host) == "永久删除",
+                  "changing the dropdown updates its visible value while remembering stays a separate option")
             for (name, size) in sizes {
                 window.setContentSize(size)
                 _ = await settle(window) { exists("space-cleaning-remember-method", in: host) }
@@ -501,8 +510,7 @@ import LauncherCore
                 window.setContentSize(size)
                 _ = await settle(window) { exists("space-cleaning-confirm-execute", in: host) }
                 for result in footerLayoutChecks(in: host) { check(result.0, "\(name) permanent confirmation " + result.1) }
-                check(!exists("space-cleaning-method-trash", in: host) &&
-                      !exists("space-cleaning-method-permanent", in: host) &&
+                check(!exists("space-cleaning-method-selector", in: host) &&
                       !exists("space-cleaning-remember-method", in: host),
                       "\(name) confirmation replaces redundant method controls to preserve list space")
                 try capture(host: host, name: "permanent-confirmation-" + name, output: output)
@@ -548,8 +556,15 @@ import LauncherCore
             cleaning.showHistory()
             await cleaning.waitUntilIdle()
             _ = await settle(window) { exists("space-cleaning-history-expand-" + batch.id.uuidString, in: host) }
+            check(exists("space-cleaning-history-table-" + batch.id.uuidString, in: host),
+                  "the latest history batch opens its item details by default")
             check(clickBackground("space-cleaning-history-expand-" + batch.id.uuidString, in: host),
-                  "history batch expansion responds across its summary background")
+                  "history batch collapse responds across its summary background")
+            _ = await settle(window) { !exists("space-cleaning-history-table-" + batch.id.uuidString, in: host) }
+            check(!exists("space-cleaning-history-table-" + batch.id.uuidString, in: host),
+                  "clicking the expanded history summary folds its details")
+            check(clickBackground("space-cleaning-history-expand-" + batch.id.uuidString, in: host),
+                  "the same history summary reopens the recorded items")
             for (name, size) in sizes {
                 window.setContentSize(size)
                 _ = await settle(window) { exists("space-cleaning-history-restore-item-" + record.id.uuidString, in: host) }
@@ -733,10 +748,11 @@ import LauncherCore
         NSApp.sendEvent(down)
         return true
     }
-    private static func accessibilityText(_ identifier: String, in root: NSView) -> String {
+    private static func accessibilityText(_ identifier: String, in root: NSView, includeDescendants: Bool = false) -> String {
         objects(root).filter { object in
             object.responds(to: NSSelectorFromString("accessibilityIdentifier"))
                 && object.value(forKey: "accessibilityIdentifier") as? String == identifier
+        }.flatMap { includeDescendants ? objects($0) : [$0]
         }.flatMap { object in
             ["accessibilityLabel", "accessibilityValue"].compactMap { selector -> String? in
                 guard object.responds(to: NSSelectorFromString(selector)) else { return nil }
@@ -774,6 +790,10 @@ import LauncherCore
         guard let object = element(identifier, in: root), object.responds(to: NSSelectorFromString("accessibilityValue")) else { return nil }
         return object.value(forKey: "accessibilityValue") as? String
     }
+    private static func selectedMethodTitle(in host: NSView) -> String? {
+        if let popup = element("space-cleaning-method-selector", in: host) as? NSPopUpButton { return popup.titleOfSelectedItem }
+        return accessibilityValue("space-cleaning-method-selector", in: host)
+    }
     private static func footerLayoutChecks(in host: NSView) -> [(Bool, String)] {
         let footer = frame("space-cleaning-selection-footer", in: host)
         let module = frame("space-cleaning", in: host)
@@ -788,7 +808,7 @@ import LauncherCore
                  "keeps at least one complete result row visible while confirming")
             ]
         }
-        let controls = ["space-cleaning-method-trash", "space-cleaning-method-permanent", "space-cleaning-remember-method"]
+        let controls = ["space-cleaning-method-selector", "space-cleaning-remember-method"]
         let frames = controls.compactMap { frame($0, in: host) }
         let contained = frames.count == controls.count && frames.allSatisfy { control in
             guard let footer, let module else { return false }
@@ -800,10 +820,10 @@ import LauncherCore
         let action = frame("space-cleaning-confirm-execute", in: host) ?? frame("space-cleaning-cleanup", in: host)
         let actionVisible = action.flatMap { rect in module.map { $0.insetBy(dx: -1, dy: -1).contains(rect) } } ?? false
         return [
-            (contained, "keeps both method choices and the independent checkbox inside the footer and viewport"),
-            (separate, "keeps the two choices and remember checkbox from overlapping"),
+            (contained, "keeps the method dropdown and independent checkbox inside the footer and viewport"),
+            (separate, "keeps the method dropdown and remember checkbox from overlapping"),
             (frames.count == controls.count && frames.allSatisfy { abs($0.midY - frames[0].midY) < 2 },
-             "keeps the remember checkbox on the same row as both deletion methods"),
+             "keeps the remember checkbox on the same row as the method dropdown"),
             (action.map { abs($0.height - 32) < 1 && $0.width >= 144 } ?? false,
              "keeps the full cleanup caption in a stable standard-height button"),
             (action.flatMap { button in frames.first.map { abs(button.midY - $0.midY) < 2 } } ?? false,
@@ -812,40 +832,38 @@ import LauncherCore
         ]
     }
     private static func homeRulesStayWithCard(in host: NSView) -> Bool {
-        guard let surface = frame("space-cleaning-home-surface", in: host),
+        guard let surface = frame("space-cleaning-home-scroll", in: host),
               let rules = frame("space-cleaning-rules-link", in: host) else { return false }
         // AX frames are in screen coordinates, where the lower edge has minY.
         let gap = surface.minY - rules.maxY
         return gap >= -1 && gap <= 35
     }
     private static func homeLayoutChecks(in host: NSView) -> [(Bool, String)] {
-        let surface = frame("space-cleaning-home-surface", in: host)
+        let viewport = frame("space-cleaning-home-scroll", in: host)
         let module = frame("space-cleaning", in: host)
         let start = frame("space-cleaning-start", in: host)
         let occupancy = frame("space-cleaning-disk-occupancy", in: host)
-        let intro = frame("space-cleaning-home-intro", in: host)
+        let volume = frame("space-cleaning-volume-card", in: host)
+        let configuration = frame("space-cleaning-configuration-card", in: host)
+        let wide = (viewport?.width ?? 0) >= 760
         let buttonContained = module.flatMap { outer in start.map { outer.insetBy(dx: -1, dy: -1).contains($0) } } ?? false
-        let scope = frame("space-cleaning-scope-options", in: host) ?? frame("space-cleaning-scope-editor", in: host)
         let actions = frame("space-cleaning-home-actions", in: host)
-        let scopeFits = scope.flatMap { scope in actions.map { scope.minY >= $0.maxY - 1 } } ?? false
-        let scopeActionGap = scope.flatMap { scope in actions.map { scope.minY - $0.maxY } }
+        let columnsAligned = volume.flatMap { left in configuration.map { right in
+            wide ? abs(right.minX - left.maxX - 12) < 2 && abs(left.maxY - right.maxY) < 2 && abs(left.height - right.height) < 2
+                 : abs(left.minX - right.minX) < 2 && abs(left.width - right.width) < 2 && abs(left.minY - right.maxY - 12) < 2
+        } } ?? false
         return [
-            (homeRulesStayWithCard(in: host), "keeps the rules link within 35 pt of the card"),
-            (surface.flatMap { card in module.map { card.height >= min(360, $0.height * 0.65) } } ?? false,
-             "gives the scan preparation card useful vertical space"),
-            (buttonContained, "keeps the scan button inside the visible module"),
-            (surface.flatMap { card in module.map { $0.insetBy(dx: -1, dy: -1).contains(card) } } ?? false,
-             "bounds the preparation surface by the actual available viewport"),
-            (!scopeFits || scopeActionGap.map { $0 >= 8 && $0 <= 20 } == true,
-             "places visible scope content directly above its actions without a blank filler area"),
-            (scopeFits || exists("space-cleaning-scope-scroll-hint", in: host),
-             "identifies overflowing scope content with a visible scrolling hint"),
-            // The ring keeps its intrinsic size in both scan modes. A short
-            // viewport scrolls the document instead of shrinking the overview.
-            (occupancy.flatMap { ring in surface.map { $0.contains(ring) && ring.width >= 96 && ring.width <= 133 } } ?? false,
-             "keeps the actual disk occupancy ring inside the preparation card"),
-            (occupancy.flatMap { ring in intro.map { $0.minX > ring.maxX && !$0.intersects(ring) } } ?? false,
-             "separates the storage readouts from the occupancy ring")
+            (homeRulesStayWithCard(in: host), "keeps the rules link next to the work-area viewport"),
+            (columnsAligned, "aligns capacity and scan configuration with the shared 12-point column or row gap"),
+            (!wide || buttonContained, "keeps the scan button visible in the two-column work area"),
+            (viewport.flatMap { card in module.map { $0.insetBy(dx: -1, dy: -1).contains(card) } } ?? false,
+             "bounds the preparation scroll viewport by the actual available module"),
+            (actions.flatMap { buttons in configuration.map { $0.insetBy(dx: -1, dy: -1).contains(buttons) } } ?? false,
+             "keeps scan actions in the configuration card's fixed footer"),
+            (occupancy.flatMap { ring in volume.map { $0.contains(ring) && abs(ring.width - 174) < 2 && abs(ring.height - 174) < 2 } } ?? false,
+             "keeps the larger disk occupancy ring inside its dedicated capacity card"),
+            (["used", "available", "total"].allSatisfy { exists("space-cleaning-disk-" + $0, in: host) },
+             "retains actual used, available and total storage values")
         ]
     }
     private static func largeFileControlChecks(in host: NSView) -> [(Bool, String)] {
@@ -857,34 +875,31 @@ import LauncherCore
         let fieldFrames = fieldIDs.compactMap { frame($0, in: host) }
         let options = frame("space-cleaning-large-file-options", in: host)
         let all = presetFrames + fieldFrames
-        let expectedSingleRow = (frame("space-cleaning-home-surface", in: host)?.width ?? 0) >= 600
+        let sameRowWithinGroups = [presetFrames, fieldFrames].allSatisfy { group in
+            group.count == 3 && group.allSatisfy { abs($0.midY - group[0].midY) < 1 }
+        }
         return [
-            (modeFrames.count == 2 && modeFrames.allSatisfy { abs($0.height - 32) < 1 && abs($0.width - 140) < 1 },
-             "uses bounded, standard-height mode controls"),
+            (modeFrames.count == 2 && modeFrames.allSatisfy { $0.height >= 100 && abs($0.width - modeFrames[0].width) < 2 },
+             "uses equally sized scan mode cards with their explanatory copy"),
             (presetFrames.count == 3 && fieldFrames.count == 3 && all.allSatisfy { abs($0.height - 32) < 1 },
              "gives presets, range inputs and unit selection the same 32-point height"),
-            (!expectedSingleRow || (all.count == 6 && all.allSatisfy { abs($0.midY - all[0].midY) < 1 }),
-             "keeps presets and size range on one row whenever the complete controls fit"),
+            (sameRowWithinGroups,
+             "keeps each preset and range group aligned when the two groups reflow"),
             (options.map { outer in all.count == 6 && all.allSatisfy { outer.insetBy(dx: -1, dy: -1).contains($0) } } ?? false,
              "keeps every size control inside its options container")
         ]
     }
     private static func scopeTileLayoutChecks(in host: NSView) -> [(Bool, String)] {
-        let names = ["downloads", "desktop", "documents", "media", "caches", "development", "applications", "archives"]
+        let names = ["downloads", "caches", "documents", "desktop"]
         let tiles = names.compactMap { frame("space-cleaning-scope-tile-" + $0, in: host) }
-        let icons = names.compactMap { frame("space-cleaning-scope-icon-" + $0, in: host) }
-        let copies = names.compactMap { frame("space-cleaning-scope-copy-" + $0, in: host) }
+        let copy = accessibilityText("space-cleaning-global-locations", in: host, includeDescendants: true)
         return [
-            (tiles.count == 8 && tiles.allSatisfy { abs($0.width - tiles[0].width) < 1 && abs($0.height - tiles[0].height) < 1 && $0.height >= 72 },
-             "uses eight equal scope cards with room for their subtitles"),
-            // SwiftUI reports each SF Symbol's painted bounds, not the outer
-            // layout frame. Different symbols retain their own aspect ratios.
-            (icons.count == 8 && tiles.count == 8 && icons.allSatisfy { $0.width >= 12 && $0.width <= 28 && $0.height >= 16 && $0.height <= 28 } &&
-             names.indices.allSatisfy { abs((icons[$0].midX - tiles[$0].minX) - (icons[0].midX - tiles[0].minX)) < 1 },
-             "keeps all eight glyphs bounded and centered in a common icon column"),
-            (tiles.count == 8 && icons.count == 8 && copies.count == 8 && names.indices.allSatisfy {
-                abs(icons[$0].midY - tiles[$0].midY) < 1 && copies[$0].minX >= icons[$0].maxX + 7 && tiles[$0].contains(icons[$0])
-            }, "centers every scope icon beside a separate left-aligned text column")
+            (tiles.count == 4 && tiles.allSatisfy { abs($0.width - tiles[0].width) < 1 && abs($0.height - tiles[0].height) < 1 && $0.height >= 52 },
+             "uses four equal compact scope cards with room for their paths"),
+            (tiles.count == 4 && abs(tiles[0].maxY - tiles[1].maxY) < 1 && abs(tiles[2].maxY - tiles[3].maxY) < 1,
+             "aligns the two rows of scope cards"),
+            (copy.contains("图片影音") && copy.contains("开发构建") && copy.contains("用户应用") && copy.contains("归档"),
+             "keeps the remaining scan categories explicit without adding more scope cards")
         ]
     }
     private static func selectionAligned(item: UUID, in host: NSView) -> Bool {
@@ -893,9 +908,15 @@ import LauncherCore
         return abs(header.midX - row.midX) < 1 && abs(header.width - row.width) < 1 &&
             header.width >= 20 && header.width <= 28
     }
-    private static func pageScroll(in host: NSView) -> NSScrollView? {
-        objects(host).compactMap { $0 as? NSScrollView }.filter { !$0.isHiddenOrHasHiddenAncestor && $0.documentView != nil }
-            .max { $0.bounds.width * $0.bounds.height < $1.bounds.width * $1.bounds.height }
+    private static func scroll(_ identifier: String, in host: NSView) -> NSScrollView? {
+        guard let expected = frame(identifier, in: host), let window = host.window else { return nil }
+        let candidates = objects(host).compactMap { $0 as? NSScrollView }.filter { !$0.isHiddenOrHasHiddenAncestor && $0.documentView != nil }
+        func difference(_ scroll: NSScrollView) -> CGFloat {
+            let actual = window.convertToScreen(scroll.convert(scroll.bounds, to: nil))
+            return abs(actual.minX - expected.minX) + abs(actual.minY - expected.minY) + abs(actual.width - expected.width) + abs(actual.height - expected.height)
+        }
+        guard let closest = candidates.min(by: { difference($0) < difference($1) }), difference(closest) < 8 else { return nil }
+        return closest
     }
     private static func visiblePageFrame(_ scroll: NSScrollView, in host: NSView) -> NSRect {
         guard let window = host.window else { return .zero }

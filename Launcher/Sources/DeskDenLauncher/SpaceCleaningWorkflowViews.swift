@@ -7,153 +7,328 @@ struct SpaceCleaningHistoryView: View {
     @Environment(\.workbenchPalette) private var palette
     @Environment(\.timeZone) private var timeZone
     @State private var expandedBatch: UUID?
+    @StateObject private var search = CleaningHistorySearchModel()
+    @State private var collapsedMatches: Set<UUID> = []
+    @State private var availableWidth: CGFloat = 864
+    @State private var initializedExpansion = false
+    private var searching: Bool { SpaceCleaningHistorySearch.isSearching(search.query) }
+    private var wide: Bool { availableWidth >= 780 }
 
     var body: some View {
+        let matches = search.matches
         SpaceCleaningSurface {
-            HStack(spacing: 12) {
-                Text("\(model.batches.count) 次处理 · \(model.batches.reduce(0) { $0 + $1.items.count }) 项记录")
-                    .font(.system(size: 11)).foregroundStyle(palette.muted)
-                Spacer(minLength: 8)
-                Text("\(model.batches.reduce(0) { $0 + $1.restorableCount }) 项可恢复")
-                    .font(.system(size: 11)).foregroundStyle(palette.secondary)
-                if model.isReconcilingHistory {
-                    Button("停止核对", action: model.cancelHistoryVerification)
-                        .buttonStyle(WBButtonStyle(compact: true))
-                }
-            }.frame(minHeight: 28).padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 10)
+            historyControls(matches: matches)
+            if wide && !matches.isEmpty { batchColumns }
             WorkbenchScrollView {
-                LazyVStack(spacing: 8) {
-                    if model.batches.isEmpty {
-                        VStack(spacing: 10) {
-                            Image(systemName: "clock.arrow.circlepath").font(.system(size: 24, weight: .light))
-                            Text("还没有清理记录").font(.system(size: 12, weight: .medium))
-                            Text("完成处理后，可在这里查看文件去向与恢复状态。")
-                                .font(.system(size: 11))
-                        }.foregroundStyle(palette.muted).frame(maxWidth: .infinity).padding(.vertical, 70)
+                LazyVStack(spacing: 0) {
+                    if search.isUpdating {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("正在整理记录…").font(.system(size: 12)).foregroundStyle(palette.muted)
+                        }.frame(maxWidth: .infinity).padding(.vertical, 70)
+                            .accessibilityIdentifier("space-cleaning-history-updating")
+                    } else {
+                        if matches.isEmpty { emptyHistory }
+                        ForEach(matches) { match in batchRow(match) }
                     }
-                    ForEach(model.batches) { batch in batchRow(batch) }
-                }.padding(.horizontal, 14).padding(.bottom, 2)
-            }.scrollBounceBehavior(.basedOnSize)
+                }
+                .padding(.horizontal, 14).padding(.bottom, 2)
+            }.scrollBounceBehavior(.basedOnSize).accessibilityIdentifier("space-cleaning-history-scroll")
             Label("移入废纸篓后仍占用空间；永久删除仅保留操作记录。", systemImage: "info.circle")
                 .font(.system(size: 11)).foregroundStyle(palette.muted)
                 .fixedSize(horizontal: false, vertical: true).padding(14)
-        }.accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-history")
+        }.background(GeometryReader { geometry in
+            Color.clear.onAppear { availableWidth = geometry.size.width }
+                .onChange(of: geometry.size.width) { _, width in availableWidth = width }
+                .allowsHitTesting(false)
+        })
+        .onAppear {
+            if !initializedExpansion {
+                expandedBatch = model.batches.first?.id
+                initializedExpansion = true
+            }
+        }
+        .onReceive(model.$batches) { batches in search.rebuild(batches, timeZone: timeZone) }
+        .onChange(of: timeZone.identifier) { _, _ in search.rebuild(model.batches, timeZone: timeZone) }
+        .onChange(of: search.query) { _, _ in collapsedMatches.removeAll() }
+        .onDisappear { search.cancel() }
+        .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-history")
     }
 
-    private func batchRow(_ batch: CleaningHistoryBatchDisplay) -> some View {
-        let expanded = expandedBatch == batch.id
+    private func historyControls(matches: [CleaningHistorySearchMatch]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 16) { historyTitle; Spacer(minLength: 10); historySearch.frame(width: 300) }
+                VStack(alignment: .leading, spacing: 12) { historyTitle; historySearch }
+            }
+            HStack(spacing: 12) {
+                Text(search.isUpdating ? "正在更新匹配结果…" : searching ? "匹配 \(search.matchedItemCount) / 共 \(search.totalItemCount) 项 · \(matches.count) 次处理" : "\(search.batchCount) 次处理 · \(search.totalItemCount) 项记录")
+                    .accessibilityIdentifier("space-cleaning-history-match-summary")
+                Spacer(minLength: 8)
+                if model.isReconcilingHistory {
+                    Button("停止核对", action: model.cancelHistoryVerification).buttonStyle(WBButtonStyle(compact: true))
+                } else {
+                    if !search.isUpdating { Text("\(search.restorableCount) 项可恢复") }
+                }
+            }.font(.system(size: 11)).foregroundStyle(palette.muted)
+        }.padding(14)
+    }
+
+    private var historyTitle: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("处理记录").font(.system(size: 14, weight: .medium))
+            Text("保留原位置与逐项结果，随时回看。")
+                .font(.system(size: 11)).foregroundStyle(palette.muted)
+        }.fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var historySearch: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass").foregroundStyle(palette.muted)
+            TextField("名称、路径、日期、方式或状态", text: $search.query).textFieldStyle(.plain)
+                .accessibilityLabel("搜索清理记录")
+                .accessibilityIdentifier("space-cleaning-history-search-input")
+            if !search.query.isEmpty {
+                Button { search.query = "" } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(WBIconButtonStyle(size: 24)).accessibilityLabel("清除清理记录搜索")
+                    .accessibilityIdentifier("space-cleaning-history-search-clear")
+            }
+        }.font(.system(size: 12)).padding(.horizontal, 10).frame(height: 32)
+            .background(palette.soft, in: RoundedRectangle(cornerRadius: 8))
+            .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-history-search")
+    }
+
+    private var emptyHistory: some View {
+        VStack(spacing: 10) {
+            Image(systemName: searching ? "magnifyingglass" : "clock.arrow.circlepath").font(.system(size: 24, weight: .light))
+            Text(searching ? "没有匹配的清理记录" : "还没有清理记录").font(.system(size: 12, weight: .medium))
+            Text(searching ? "可搜索文件名称、原路径、处理日期、方式或状态。" : "完成处理后，可在这里查看文件去向、大小与恢复状态。")
+                .font(.system(size: 11)).multilineTextAlignment(.center)
+            if searching {
+                Button("清除搜索") { search.query = "" }.buttonStyle(WBButtonStyle(compact: true))
+            }
+        }.foregroundStyle(palette.muted).frame(maxWidth: .infinity).padding(.vertical, 70)
+    }
+
+    private var batchColumns: some View {
+        HStack(spacing: 12) {
+            Text("处理日期").frame(maxWidth: .infinity, alignment: .leading)
+            Text("处理方式").frame(width: 100, alignment: .leading)
+            Text("项目数量").frame(width: 68, alignment: .leading)
+            Text("记录占用").frame(width: 100, alignment: .trailing)
+            Text("结果").frame(width: 90, alignment: .leading)
+            Color.clear.frame(width: 84, height: 1)
+        }.font(.system(size: 11)).foregroundStyle(palette.muted).padding(.horizontal, 12).frame(height: 32)
+            .background(palette.soft, in: RoundedRectangle(cornerRadius: 8)).padding(.horizontal, 14)
+            .accessibilityHidden(true)
+    }
+
+    private func batchRow(_ match: CleaningHistorySearchMatch) -> some View {
+        let batch = match.batch
+        let expanded = searching ? !collapsedMatches.contains(batch.id) : expandedBatch == batch.id
         return VStack(alignment: .leading, spacing: 0) {
-            Button { expandedBatch = expanded ? nil : batch.id } label: {
-                HStack(alignment: .center, spacing: 10) {
-                    SpaceCleaningRecordOperationIcon(method: batch.method)
-                        .frame(width: 32, height: 32)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(palette.soft))
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(SpaceCleaningFormat.date(batch.date, timeZone: timeZone)).font(.system(size: 12, weight: .medium))
-                        Text("\(batch.method == .trash ? "移入废纸篓" : "永久删除") · \(batch.items.count) 项 · 扫描时占用 \(SpaceCleaningFormat.bytes(batch.allocatedBytes))")
-                            .font(.system(size: 11)).foregroundStyle(palette.muted)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                    Text(batch.restorableCount > 0 ? "\(batch.restorableCount) 项可恢复" : batch.attentionCount > 0 ? "\(batch.attentionCount) 项需核对" : "处理已结束")
-                        .font(.system(size: 11)).foregroundStyle(palette.muted).fixedSize()
-                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(expanded ? palette.accent : palette.muted).frame(width: 16, height: 28)
-                }.frame(maxWidth: .infinity, minHeight: 40, alignment: .leading).padding(12)
-                    .contentShape(RoundedRectangle(cornerRadius: 10))
-            }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 10, drawsSelection: false, showsBorder: false))
+            Button {
+                if searching {
+                    if expanded { collapsedMatches.insert(batch.id) } else { collapsedMatches.remove(batch.id) }
+                } else { expandedBatch = expanded ? nil : batch.id }
+            } label: {
+                batchSummary(match, expanded: expanded).padding(12).contentShape(RoundedRectangle(cornerRadius: 8))
+            }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 8, drawsSelection: false, showsBorder: false))
                 .accessibilityLabel((expanded ? "收起" : "展开") + "清理记录 " + SpaceCleaningFormat.date(batch.date, timeZone: timeZone))
                 .accessibilityValue(expanded ? "已展开" : "已收起")
                 .accessibilityIdentifier("space-cleaning-history-expand-" + batch.id.uuidString)
             if expanded {
-                VStack(spacing: 8) {
-                    ForEach(batch.items) { item in historyItem(item) }
-                }.padding(.horizontal, 12)
-                HStack(spacing: 8) {
-                    Text(batch.purgeableCount > 0 ? "仅处理本批仍在废纸篓且核验一致的项目" : batch.restorableCount > 0 ? "恢复前核验文件，不覆盖同名项目" : "文件状态与处理记录已保留")
-                        .font(.system(size: 11)).foregroundStyle(palette.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 8)
-                    if batch.purgeableCount > 0 {
-                        Button { model.requestPurge(batch.id) } label: {
-                            Label("永久删除本批 \(batch.purgeableCount) 项", systemImage: "doc.badge.minus")
-                                .frame(minWidth: 120)
-                        }.buttonStyle(WBButtonStyle(destructive: true, compact: true)).disabled(model.isBusy)
-                            .accessibilityIdentifier("space-cleaning-history-purge-" + batch.id.uuidString)
+                VStack(alignment: .leading, spacing: 0) {
+                    if searching {
+                        Text("匹配 \(match.items.count) / 共 \(batch.items.count) 项 · 上方合计为完整批次")
+                            .font(.system(size: 11)).foregroundStyle(palette.muted).padding(.vertical, 10)
+                            .accessibilityIdentifier("space-cleaning-history-batch-matches-" + batch.id.uuidString)
                     }
-                    if batch.restorableCount > 0 {
-                        Button("恢复本次") { model.requestRestore(batch.id) }
-                            .buttonStyle(WBButtonStyle(compact: true)).disabled(model.isBusy)
-                            .accessibilityIdentifier("space-cleaning-history-restore-" + batch.id.uuidString)
+                    if wide { itemColumns }
+                    LazyVStack(spacing: 0) {
+                        ForEach(match.items) { item in historyItem(item) }
                     }
+                    batchActions(match)
                 }.padding(12)
+                    .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-history-table-" + batch.id.uuidString)
             }
+            Rectangle().fill(palette.line).frame(height: 1)
         }.frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 10).fill(palette.soft))
+    }
+
+    @ViewBuilder private func batchSummary(_ match: CleaningHistorySearchMatch, expanded: Bool) -> some View {
+        let batch = match.batch
+        if wide {
+            HStack(spacing: 12) {
+                batchDate(batch).frame(maxWidth: .infinity, alignment: .leading)
+                Text(SpaceCleaningHistorySearch.methodTitle(batch.method)).frame(width: 100, alignment: .leading)
+                Text("\(batch.items.count) 项").frame(width: 68, alignment: .leading)
+                Text(SpaceCleaningFormat.bytes(match.summary.allocatedBytes)).monospacedDigit().frame(width: 100, alignment: .trailing)
+                batchStatus(match.summary).frame(width: 90, alignment: .leading)
+                disclosure(expanded).frame(width: 84, alignment: .trailing)
+            }.font(.system(size: 12)).frame(minHeight: 50)
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack { batchDate(batch); Spacer(minLength: 8); disclosure(expanded) }
+                HStack(spacing: 10) {
+                    Text(SpaceCleaningHistorySearch.methodTitle(batch.method))
+                    Text("\(batch.items.count) 项")
+                    Text(SpaceCleaningFormat.bytes(match.summary.allocatedBytes)).monospacedDigit()
+                    Spacer(minLength: 0)
+                }.font(.system(size: 11)).foregroundStyle(palette.secondary)
+                batchStatus(match.summary)
+            }
+        }
+    }
+
+    private func batchDate(_ batch: CleaningHistoryBatchDisplay) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(SpaceCleaningFormat.day(batch.date, timeZone: timeZone)).font(.system(size: 12, weight: .medium))
+            Text(SpaceCleaningFormat.time(batch.date, timeZone: timeZone)).font(.system(size: 11)).foregroundStyle(palette.muted)
+        }
+    }
+
+    private func batchStatus(_ summary: CleaningHistoryBatchSummary) -> some View {
+        let tint = summary.hasAttention ? palette.warning : palette.accent
+        return Text(summary.status).font(.system(size: 11))
+            .foregroundStyle(tint).padding(.horizontal, 7).padding(.vertical, 4)
+            .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func disclosure(_ expanded: Bool) -> some View {
+        HStack(spacing: 6) {
+            Text(expanded ? "收起明细" : "查看明细")
+            Image(systemName: "chevron.down").font(.system(size: 10, weight: .medium)).rotationEffect(.degrees(expanded ? 180 : 0))
+        }.font(.system(size: 11)).foregroundStyle(palette.secondary).fixedSize()
+    }
+
+    private var itemColumns: some View {
+        HStack(spacing: 12) {
+            Text("项目 / 原位置").frame(maxWidth: .infinity, alignment: .leading)
+            Text("文件大小").frame(width: 86, alignment: .trailing)
+            Text("磁盘占用").frame(width: 86, alignment: .trailing)
+            Text("处理结果 / 操作").frame(width: 228, alignment: .leading)
+        }.font(.system(size: 11)).foregroundStyle(palette.muted).padding(.horizontal, 10).frame(height: 32)
+            .background(palette.soft, in: RoundedRectangle(cornerRadius: 7)).accessibilityHidden(true)
+    }
+
+    @ViewBuilder private func batchActions(_ match: CleaningHistorySearchMatch) -> some View {
+        if searching {
+            HStack(spacing: 8) {
+                Text("搜索中仅支持逐项恢复；清除搜索后可操作完整批次。")
+                    .font(.system(size: 11)).foregroundStyle(palette.muted).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Button("清除搜索") { search.query = "" }.buttonStyle(WBButtonStyle(compact: true))
+            }.padding(.top, 14)
+        } else {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) { batchNote(match); Spacer(minLength: 8); batchButtons(match) }
+                VStack(alignment: .leading, spacing: 12) { batchNote(match); batchButtons(match) }
+            }.padding(.top, 14)
+        }
+    }
+
+    private func batchNote(_ match: CleaningHistorySearchMatch) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("本批记录 \(match.batch.items.count) 项 · 扫描时占用 \(SpaceCleaningFormat.bytes(match.summary.allocatedBytes))")
+                .font(.system(size: 11, weight: .medium))
+            Text(match.summary.purgeableCount > 0 ? "仅处理仍在废纸篓且核验一致的项目" : match.summary.restorableCount > 0 ? "恢复前核验文件，不覆盖同名项目" : "文件状态与处理记录已保留")
+                .font(.system(size: 11)).foregroundStyle(palette.muted)
+        }.fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func batchButtons(_ match: CleaningHistorySearchMatch) -> some View {
+        HStack(spacing: 8) {
+            if match.summary.purgeableCount > 0 {
+                Button { model.requestPurge(match.id) } label: {
+                    Label("永久删除本批 \(match.summary.purgeableCount) 项", systemImage: "doc.badge.minus").frame(minWidth: 120)
+                }.buttonStyle(WBButtonStyle(destructive: true, compact: true)).disabled(model.isBusy || search.isUpdating || searching)
+                    .accessibilityIdentifier("space-cleaning-history-purge-" + match.id.uuidString)
+            }
+            if match.summary.restorableCount > 0 {
+                Button("恢复本批 \(match.summary.restorableCount) 项") { model.requestRestore(match.id) }
+                    .buttonStyle(WBButtonStyle(compact: true)).disabled(model.isBusy || search.isUpdating || searching)
+                    .accessibilityIdentifier("space-cleaning-history-restore-" + match.id.uuidString)
+            }
+        }
     }
 
     private func historyItem(_ item: CleaningHistoryItemDisplay) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .center, spacing: 10) {
-                HStack(spacing: 8) {
-                    Image(systemName: SpaceCleaningRecordFileSymbol.name(for: item.originalURL))
-                        .font(.system(size: 18, weight: .regular)).foregroundStyle(palette.secondary)
-                        .frame(width: 24, height: 28).accessibilityHidden(true)
-                    Text(item.name).font(.system(size: 12, weight: .medium))
-                        .lineLimit(1).truncationMode(.middle)
-                }.frame(maxWidth: .infinity, alignment: .leading)
-                HStack(alignment: .center, spacing: 10) {
-                    Text(item.statusText).font(.system(size: 11)).foregroundStyle(palette.secondary)
-                        .lineLimit(1).fixedSize().frame(minHeight: 28)
-                        .accessibilityIdentifier("space-cleaning-history-status-" + item.id.uuidString)
-                    if item.canRestore {
-                        Button("恢复") { model.requestRestoreItem(item.id) }
-                            .buttonStyle(WBButtonStyle(compact: true)).disabled(model.isBusy)
-                            .accessibilityIdentifier("space-cleaning-history-restore-item-" + item.id.uuidString)
-                    }
-                    if let result = item.resultURL {
-                        Button { NSWorkspace.shared.activateFileViewerSelecting([result]) } label: { Image(systemName: "folder") }
-                            .buttonStyle(WBIconButtonStyle(size: 28)).accessibilityLabel("在 Finder 中查看 " + item.name)
-                            .accessibilityIdentifier("space-cleaning-history-reveal-" + item.id.uuidString)
-                    }
-                }.fixedSize()
-            }.frame(minHeight: 28)
+        VStack(alignment: .leading, spacing: 0) {
+            if wide {
+                HStack(alignment: .center, spacing: 12) {
+                    itemIdentity(item).frame(maxWidth: .infinity, alignment: .leading)
+                    Text(SpaceCleaningFormat.bytes(item.bytes)).font(.system(size: 12)).monospacedDigit().frame(width: 86, alignment: .trailing)
+                    Text(SpaceCleaningFormat.bytes(item.allocatedBytes)).font(.system(size: 12)).monospacedDigit().frame(width: 86, alignment: .trailing)
+                    itemActions(item).frame(width: 228, alignment: .leading)
+                }.padding(.horizontal, 10).padding(.vertical, 12)
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    itemIdentity(item)
+                    HStack(spacing: 14) {
+                        itemSize("文件大小", value: item.bytes)
+                        itemSize("磁盘占用", value: item.allocatedBytes)
+                    }.padding(.leading, 34)
+                    itemActions(item).padding(.leading, 34)
+                }.padding(.horizontal, 10).padding(.vertical, 12)
+            }
+            Rectangle().fill(palette.line).frame(height: 1)
+        }.frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-history-item-" + item.id.uuidString)
+    }
+
+    private func itemIdentity(_ item: CleaningHistoryItemDisplay) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            SpaceCleaningFileGlyph(category: CleaningFileCategory(url: item.originalURL, isDirectory: item.isDirectory ?? false))
             VStack(alignment: .leading, spacing: 4) {
-                Text((item.resultURL ?? item.originalURL).path)
-                    .font(.system(size: 11)).foregroundStyle(palette.muted)
+                Text(item.name).font(.system(size: 12, weight: .medium)).lineLimit(2).truncationMode(.middle)
+                    .accessibilityIdentifier("space-cleaning-history-name-" + item.id.uuidString)
+                Text(item.originalURL.path).font(.system(size: 11)).foregroundStyle(palette.muted)
                     .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                Text("文件大小 \(SpaceCleaningFormat.bytes(item.bytes)) · 扫描时磁盘占用 \(SpaceCleaningFormat.bytes(item.allocatedBytes))")
-                    .font(.system(size: 11)).foregroundStyle(palette.muted).fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("space-cleaning-history-original-path-" + item.id.uuidString)
+                if let currentURL = item.resultURL, currentURL != item.originalURL,
+                   [.restored, .needsReview, .isolated, .restoring, .deleting].contains(item.state) {
+                    Text("当前位置：" + currentURL.path).font(.system(size: 11)).foregroundStyle(palette.muted)
+                        .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                }
                 if !item.explanation.isEmpty {
                     Text(item.explanation).font(.system(size: 11)).foregroundStyle(palette.muted)
                         .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 }
-            }.padding(.leading, 32)
-        }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 8).fill(palette.soft))
-            .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-history-item-" + item.id.uuidString)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
-}
 
-private struct SpaceCleaningRecordOperationIcon: View {
-    let method: SpaceCleaningMethod
-    @Environment(\.workbenchPalette) private var palette
+    private func itemSize(_ title: String, value: UInt64) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.system(size: 11)).foregroundStyle(palette.muted)
+            Text(SpaceCleaningFormat.bytes(value)).font(.system(size: 12)).monospacedDigit()
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
 
-    var body: some View {
-        Group {
-            if method == .trash, let trash = NSImage(named: NSImage.trashFullName) {
-                Image(nsImage: trash).resizable().interpolation(.high).scaledToFit().frame(width: 24, height: 26)
-            } else if method == .trash {
-                Image(systemName: "trash").font(.system(size: 18)).foregroundStyle(palette.secondary)
-            } else {
-                Image(systemName: "doc").font(.system(size: 18)).foregroundStyle(palette.secondary)
-                    .overlay(alignment: .bottomTrailing) {
-                        Image(systemName: "xmark.circle.fill").font(.system(size: 10, weight: .medium))
-                            .symbolRenderingMode(.palette).foregroundStyle(palette.critical, palette.control)
-                            .offset(x: 4, y: 2)
-                    }
+    private func itemActions(_ item: CleaningHistoryItemDisplay) -> some View {
+        HStack(alignment: .center, spacing: 8) {
+            Text(item.statusText).font(.system(size: 11)).foregroundStyle(itemTint(item))
+                .fixedSize(horizontal: false, vertical: true).frame(minHeight: 28)
+                .accessibilityIdentifier("space-cleaning-history-status-" + item.id.uuidString)
+            Spacer(minLength: 0)
+            if item.canRestore {
+                Button("恢复") { model.requestRestoreItem(item.id) }.buttonStyle(WBButtonStyle(compact: true)).disabled(model.isBusy || search.isUpdating)
+                    .accessibilityIdentifier("space-cleaning-history-restore-item-" + item.id.uuidString)
             }
-        }.accessibilityHidden(true)
+            if let result = item.resultURL {
+                Button { NSWorkspace.shared.activateFileViewerSelecting([result]) } label: { Image(systemName: "folder") }
+                    .buttonStyle(WBIconButtonStyle(size: 28)).accessibilityLabel("在 Finder 中查看 " + item.name)
+                    .disabled(search.isUpdating)
+                    .accessibilityIdentifier("space-cleaning-history-reveal-" + item.id.uuidString)
+            }
+        }
+    }
+
+    private func itemTint(_ item: CleaningHistoryItemDisplay) -> Color {
+        if [.failed, .needsReview].contains(item.state) { return palette.warning }
+        if [.trashed, .deleted, .restored].contains(item.state) { return palette.accent }
+        return palette.secondary
     }
 }
 

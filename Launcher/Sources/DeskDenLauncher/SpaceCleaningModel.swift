@@ -29,6 +29,7 @@ import Quartz
     @Published private(set) var diskAvailable: UInt64?
     @Published private(set) var diskImmediatelyFree: UInt64?
     @Published private(set) var diskReclaimableEstimate: UInt64?
+    @Published private(set) var diskUpdatedAt: Date?
     @Published private(set) var coverageIssues: [String] = []
     @Published private(set) var coverageNotes: [String] = []
     private var scanReachedLimit = false
@@ -85,6 +86,11 @@ import Quartz
     @Published private(set) var scanTotalItems: Int?
     @Published private(set) var scanDirectory = ""
     @Published private(set) var scanItem = ""
+    @Published private(set) var scanRecordedCandidates = 0
+    @Published private(set) var scanLogicalBytes: UInt64 = 0
+    @Published private(set) var scanCompletedScopes = 0
+    @Published private(set) var scanTotalScopes = 0
+    @Published private(set) var scanRecentPaths: [String] = []
     @Published private(set) var lastScanDate: Date?
     @Published private(set) var purposeReviewID: UUID?
     @Published private(set) var measuringDirectoryID: UUID?
@@ -348,8 +354,15 @@ import Quartz
             $0.isRecommendedForSelection && SpaceCleaningScanner.validatePolicy(candidate: $0, context: context) == .unchanged
         }.map(\.id))
     }
-    func showDetail(_ id: UUID) { detailID = detailID == id ? nil : id; acknowledgement = false; if case .purpose = dialog { closeDialog() } }
-    func closeDetail() { detailID = nil }
+    func showDetail(_ id: UUID) {
+        guard resultIndex.item(id) != nil else { return }
+        if detailID != id, case .purpose = dialog { closeDialog() }
+        detailID = id
+    }
+    func closeDetail() {
+        if case .purpose = dialog { closeDialog() }
+        detailID = nil
+    }
     func showHistory() { guard !isBusy else { return }; previousScreen = screen; screen = .history; reconcileHistory() }
     var historyReturnTitle: String { "返回" + screenTitle(previousScreen == .history || requiresRescan ? .start : previousScreen) }
     var dialogReturnTitle: String { "返回" + screenTitle(screen) }
@@ -497,6 +510,7 @@ import Quartz
             guard let self else { return }
             self.diskVolumeName = capacity?.volumeName; self.diskTotal = capacity?.total; self.diskAvailable = capacity?.available
             self.diskImmediatelyFree = capacity?.immediatelyFree; self.diskReclaimableEstimate = capacity?.reclaimableEstimate
+            self.diskUpdatedAt = capacity == nil ? nil : Date()
         }
     }
     func reveal(_ id: UUID) {
@@ -527,6 +541,7 @@ import Quartz
         directorySizes = [:]; measuringDirectoryID = nil
         if scanMode == .largeFiles { resultTab = .reviewable; sortKey = .size; sortAscending = false }
         coverageIssues = []; coverageNotes = []; scanReachedLimit = false; requiresRescan = false; checkedCount = 0; scanPhase = .discovering; scanCompletedItems = 0; scanTotalItems = nil; scanDirectory = ""; scanItem = ""
+        scanRecordedCandidates = 0; scanLogicalBytes = 0; scanCompletedScopes = 0; scanTotalScopes = scopes.count; scanRecentPaths = []
         closeDialog(); message = historyError; screen = .scanning
         task = Task { [weak self] in
             let report = await Task.detached(priority: .utility) {
@@ -752,7 +767,8 @@ import Quartz
                         allocatedBytes: record.candidate.allocatedBytes,
                         state: record.state, statusText: Self.stateTitle(record.state), explanation: record.explanation + (record.state == .needsReview ? record.previousTrashURL.map { " 上次废纸篓位置：" + $0.path } ?? "" : ""),
                         canRestore: record.canRestore && historyError == nil, canPurge: record.canPurge && historyError == nil,
-                        originalURL: record.originalURL, resultURL: record.restoredURL ?? record.locationURL)
+                        originalURL: record.originalURL, resultURL: record.restoredURL ?? record.locationURL,
+                        isDirectory: record.candidate.isDirectory)
                 }, bytes: entries.reduce(0) { $0 &+ $1.candidate.logicalBytes })
         }.sorted { $0.date > $1.date }
         currentBatch = batches.first { $0.id == currentOperationID }
@@ -799,10 +815,17 @@ import Quartz
     private func acceptProgress(_ progress: SpaceCleaningProgress) {
         checkedCount = progress.checkedEntries; scanPhase = progress.phase
         scanCompletedItems = progress.completedItems; scanTotalItems = progress.totalItems
+        scanRecordedCandidates = progress.recordedCandidates
+        scanLogicalBytes = progress.logicalBytes
+        scanCompletedScopes = progress.completedScopes; scanTotalScopes = progress.totalScopes
         if let path = progress.currentPath {
             let url = URL(fileURLWithPath: path)
             scanDirectory = shortPath(url)
             scanItem = progress.currentFileName ?? url.lastPathComponent
+            let recent = shortPath(progress.currentFileName.map { url.appendingPathComponent($0) } ?? url)
+            if scanRecentPaths.first != recent {
+                scanRecentPaths = [recent] + scanRecentPaths.filter { $0 != recent }.prefix(3)
+            }
         }
     }
     private struct ScopePreference: Codable {

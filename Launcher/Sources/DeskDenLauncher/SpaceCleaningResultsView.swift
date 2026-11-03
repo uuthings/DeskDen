@@ -5,11 +5,12 @@ struct SpaceCleaningResultsView: View {
     @ObservedObject var model: SpaceCleaningModel
     @Environment(\.workbenchPalette) private var palette
     @Environment(\.timeZone) private var timeZone
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     private let columnGap: CGFloat = 12
     private let typeWidth: CGFloat = 86
     private let dateWidth: CGFloat = 110
     private let sizeWidth: CGFloat = 112
-    private let methodOptionWidth: CGFloat = 106
+    private let methodSelectorWidth: CGFloat = 136
     private let rememberMethodWidth: CGFloat = 104
     private var confirming: Bool { model.dialog == .confirm }
     @State private var availableWidth: CGFloat = 864
@@ -20,45 +21,72 @@ struct SpaceCleaningResultsView: View {
         max(144, 104 + CGFloat(String(max(1, model.items.count)).count) * 8)
     }
     private var methodActionsWidth: CGFloat {
-        methodOptionWidth * 2 + 6 + rememberMethodWidth + cleanupButtonWidth + 24
+        methodSelectorWidth + rememberMethodWidth + cleanupButtonWidth + 24
     }
 
     var body: some View {
-        VStack(spacing: 12) {
-            SpaceCleaningSurface {
-                summary
-                controls
-                tableHeader
-                SpaceCleaningResultScrollView(resetID: model.resultScrollResetID, requestedID: model.resultScrollID, updating: model.isUpdatingResults) {
-                    LazyVStack(spacing: 0) {
-                        ForEach(model.visibleItems) { item in row(item).id(item.id) }
-                        if model.isUpdatingResults {
-                            HStack(spacing: 8) {
-                                ProgressView().controlSize(.small)
-                                Text("正在整理结果…").font(.system(size: 12)).foregroundStyle(palette.secondary)
-                            }.frame(maxWidth: .infinity).padding(.vertical, 40)
-                                .accessibilityIdentifier("space-cleaning-results-updating")
-                        } else if model.visibleItems.isEmpty { emptyResults }
-                    }
-                }.scrollBounceBehavior(.basedOnSize)
-                    .accessibilityIdentifier("space-cleaning-result-list")
-                HStack {
-                    Text(model.onlySelected ? "显示全部已选项目，可直接在下方清理" : model.resultTab == .protected ? "这些项目保持保留，展开可查看具体原因" : "点击文件名查看详情，或在 Finder 中定位")
-                    Spacer(minLength: 8)
-                    if !model.coverageIssues.isEmpty {
-                        Button("\(model.coverageIssues.count) 处未完整覆盖") { model.dialog = .issues }
-                            .buttonStyle(WBTextActionButtonStyle()).foregroundStyle(palette.warning)
-                    }
-                    Text("\(model.visibleItems.count) 项")
-                }.font(.system(size: 11)).foregroundStyle(palette.muted).padding(.horizontal, 14).frame(height: 34)
-                    .background(palette.soft)
-            }.accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-results-surface")
-            selectionFooter
-        }.background(GeometryReader { geometry in
-            Color.clear.onAppear { availableWidth = geometry.size.width }
+        GeometryReader { geometry in
+            VStack(spacing: 12) {
+                SpaceCleaningSurface(fillHeight: false) { summary }
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("space-cleaning-result-summary")
+                workspace(width: geometry.size.width)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                selectionFooter.fixedSize(horizontal: false, vertical: true)
+            }.onAppear { availableWidth = geometry.size.width }
                 .onChange(of: geometry.size.width) { _, width in availableWidth = width }
-                .allowsHitTesting(false)
-        })
+                .animation(systemReduceMotion || model.reduceMotion ? nil : .easeInOut(duration: 0.24), value: model.detailID != nil)
+        }
+    }
+    @ViewBuilder private func workspace(width: CGFloat) -> some View {
+        if width < 700, let item = model.detail {
+            WorkbenchScrollView {
+                VStack(spacing: 12) {
+                    resultList(width: width).frame(height: 320)
+                    detailSidebar(item).frame(height: 400)
+                }
+            }.scrollBounceBehavior(.basedOnSize)
+        } else {
+            HStack(alignment: .top, spacing: model.detail == nil ? 0 : 12) {
+                resultList(width: width - (model.detail == nil ? 0 : 298))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if let item = model.detail {
+                    detailSidebar(item).frame(width: 286)
+                        .transition(.opacity)
+                }
+            }
+        }
+    }
+    private func resultList(width: CGFloat) -> some View {
+        SpaceCleaningSurface {
+            controls(width: width)
+            tableHeader(showsMetadata: width >= 740)
+            SpaceCleaningResultScrollView(resetID: model.resultScrollResetID, requestedID: model.resultScrollID, updating: model.isUpdatingResults) {
+                LazyVStack(spacing: 0) {
+                    ForEach(model.visibleItems) { item in row(item, showsMetadata: width >= 740).id(item.id) }
+                    if model.isUpdatingResults {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("正在整理结果…").font(.system(size: 12)).foregroundStyle(palette.secondary)
+                        }.frame(maxWidth: .infinity).padding(.vertical, 40)
+                            .accessibilityIdentifier("space-cleaning-results-updating")
+                    } else if model.visibleItems.isEmpty { emptyResults }
+                }
+            }.scrollBounceBehavior(.basedOnSize)
+                .accessibilityIdentifier("space-cleaning-result-list")
+            HStack(spacing: 8) {
+                Text(model.onlySelected ? "仅显示已选项目" : model.resultTab == .protected ? "这些项目保持保留" : "点击项目查看详情")
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if !model.coverageIssues.isEmpty {
+                    Button("\(model.coverageIssues.count) 处未完整覆盖") { model.dialog = .issues }
+                        .buttonStyle(WBTextActionButtonStyle()).foregroundStyle(palette.warning)
+                        .fixedSize()
+                }
+                Text("\(model.visibleItems.count) 项").fixedSize()
+            }.font(.system(size: 11)).foregroundStyle(palette.muted).padding(.horizontal, 14).frame(height: 34)
+                .overlay(alignment: .top) { Rectangle().fill(palette.line).frame(height: 1) }
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-results-surface")
     }
     private var summary: some View {
         HStack(alignment: .center, spacing: 24) {
@@ -73,22 +101,59 @@ struct SpaceCleaningResultsView: View {
             }
         }.padding(14)
     }
-    private var controls: some View {
+    private func controls(width: CGFloat) -> some View {
+        Group {
+            if width >= 740 {
+                HStack(spacing: 18) {
+                    resultTabs
+                    Spacer(minLength: 0)
+                    searchField.frame(width: min(260, max(196, width * 0.26)))
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    resultTabs
+                    HStack(spacing: 8) {
+                        searchField
+                        compactSorting
+                    }
+                }
+            }
+        }.padding(14).fixedSize(horizontal: false, vertical: true)
+    }
+    private var resultTabs: some View {
         HStack(spacing: 18) {
             if model.scanMode == .cleanup { tab("建议清理", count: model.recommendedItems.count, value: .recommended) }
             tab(model.scanMode == .largeFiles ? "符合范围的文件" : "其他文件", count: model.otherItems.count, value: .reviewable)
             if !model.protectedItems.isEmpty { tab("已保护", count: model.protectedItems.count, value: .protected) }
-            Spacer(minLength: 0)
-            HStack(spacing: 7) {
-                Image(systemName: "magnifyingglass").foregroundStyle(palette.muted)
-                TextField("搜索名称或目录", text: $model.searchText).textFieldStyle(.plain)
-                if !model.searchText.isEmpty {
-                    Button { model.searchText = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(WBIconButtonStyle(size: 24)).accessibilityLabel("清除搜索")
-                }
-            }.font(.system(size: 11)).padding(.horizontal, 10).frame(width: min(260, max(196, availableWidth * 0.26)), height: 28)
-                .background(RoundedRectangle(cornerRadius: 8).fill(palette.soft)).overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.line))
-                .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-search")
-        }.padding(.horizontal, 14)
+        }
+    }
+    private var searchField: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "magnifyingglass").foregroundStyle(palette.muted)
+            TextField("搜索名称或目录", text: $model.searchText).textFieldStyle(.plain)
+                .disabled(model.isBusy || confirming)
+            if !model.searchText.isEmpty {
+                Button { model.searchText = "" } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(WBIconButtonStyle(size: 24)).accessibilityLabel("清除搜索")
+                    .disabled(model.isBusy || confirming)
+            }
+        }.font(.system(size: 12)).padding(.horizontal, 10).frame(height: 32)
+            .background(RoundedRectangle(cornerRadius: 8).fill(palette.soft))
+            .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-search")
+    }
+    private var compactSorting: some View {
+        HStack(spacing: 4) {
+            WBSelect("排序", selection: Binding(get: { model.sortKey }, set: model.sortResults), options: [
+                (.name, "名称"), (.directory, "所在目录"), (.type, "类型"), (.modified, "修改日期"), (.size, "文件大小")
+            ]).frame(width: 112, height: 32).accessibilityLabel("排序依据")
+                .accessibilityIdentifier("space-cleaning-sort-selector")
+            Button { model.sortResults(by: model.sortKey) } label: {
+                Image(systemName: model.sortAscending ? "arrow.up" : "arrow.down")
+            }.buttonStyle(WBIconButtonStyle(size: 28))
+                .help(model.sortAscending ? "当前升序，点击改为降序" : "当前降序，点击改为升序")
+                .accessibilityLabel("切换排序方向").accessibilityValue(model.sortAscending ? "升序" : "降序")
+                .accessibilityIdentifier("space-cleaning-sort-direction")
+        }.disabled(model.isBusy || confirming)
     }
     private func tab(_ title: String, count: Int, value: CleaningResultTab) -> some View {
         let active = model.resultTab == value && !model.onlySelected
@@ -96,13 +161,13 @@ struct SpaceCleaningResultsView: View {
             HStack(spacing: 6) {
                 Text(title).fontWeight(active ? .semibold : .regular)
                 Text(count.formatted()).font(.system(size: 10)).monospacedDigit().foregroundStyle(palette.muted)
-            }.font(.system(size: 12)).foregroundStyle(active ? palette.text : palette.muted).frame(height: 40)
+            }.font(.system(size: 12)).foregroundStyle(active ? palette.text : palette.muted).frame(height: 28)
                 .overlay(alignment: .bottom) { if active { Capsule().fill(palette.accent).frame(height: 2) } }
                 .contentShape(Rectangle())
         }.buttonStyle(WBTextActionButtonStyle()).accessibilityLabel("\(title)，\(count) 项")
             .accessibilityValue(active ? "当前分类" : "切换查看")
     }
-    private var tableHeader: some View {
+    private func tableHeader(showsMetadata: Bool) -> some View {
         HStack(spacing: columnGap) {
             let all = model.allVisibleSelected
             let mixed = model.someVisibleSelected && !all
@@ -110,12 +175,14 @@ struct SpaceCleaningResultsView: View {
                 .disabled(model.visibleSelectableCount == 0 || model.isUpdatingResults || model.isBusy || model.requiresRescan || confirming)
                 .accessibilityIdentifier("space-cleaning-select-visible")
             HStack(spacing: 14) {
-                sortHeader("名称", key: .name)
-                sortHeader("所在目录", key: .directory)
+                sortHeader("名称", key: .name).fixedSize(horizontal: true, vertical: false)
+                sortHeader("所在目录", key: .directory).fixedSize(horizontal: true, vertical: false)
                 Spacer(minLength: 0)
             }.frame(maxWidth: .infinity, alignment: .leading)
-            sortHeader("类型", key: .type).frame(width: typeWidth, alignment: .leading)
-            sortHeader("修改日期", key: .modified).frame(width: dateWidth, alignment: .leading)
+            if showsMetadata {
+                sortHeader("类型", key: .type).frame(width: typeWidth, alignment: .leading)
+                sortHeader("修改日期", key: .modified).frame(width: dateWidth, alignment: .leading)
+            }
             sortHeader("文件大小", key: .size, trailing: true).frame(width: sizeWidth, alignment: .trailing)
         }.font(.system(size: 11)).foregroundStyle(palette.muted).padding(.horizontal, 14).frame(height: 34)
             .background(palette.soft).overlay(alignment: .top) { Rectangle().fill(palette.line).frame(height: 1) }
@@ -137,7 +204,7 @@ struct SpaceCleaningResultsView: View {
             .accessibilityIdentifier("space-cleaning-sort-" + key.rawValue)
             .help("点击按" + title + "排序，再次点击切换升序或降序")
     }
-    private func row(_ item: CleaningItemDisplay) -> some View {
+    private func row(_ item: CleaningItemDisplay, showsMetadata: Bool) -> some View {
         let measured = model.directorySizes[item.id]
         return VStack(spacing: 0) {
             SpaceCleaningResultRowSurface(expanded: model.detailID == item.id, enabled: !model.isBusy && !confirming) {
@@ -161,48 +228,51 @@ struct SpaceCleaningResultsView: View {
                         .accessibilityIdentifier("space-cleaning-select-" + item.id.uuidString)
                 }
                 Button { model.showDetail(item.id) } label: {
-                    VStack(alignment: .leading, spacing: 7) {
-                        HStack(spacing: 7) {
+                    HStack(spacing: columnGap) {
+                        HStack(spacing: 10) {
                             SpaceCleaningFileGlyph(category: item.fileCategory)
-                            Text(item.name).fontWeight(.medium).lineLimit(1).truncationMode(.middle)
-                            if item.needsSuggestionReview {
-                                Text("手动选择").font(.system(size: 10)).foregroundStyle(palette.warning)
-                                    .padding(.horizontal, 6).padding(.vertical, 3)
-                                    .background(Capsule().fill(palette.warning.opacity(0.12))).fixedSize()
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(item.name).font(.system(size: 12, weight: .medium)).lineLimit(1).truncationMode(.middle)
+                                Text(model.shortPath(item.url.deletingLastPathComponent()))
+                                    .font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1).truncationMode(.middle)
                             }
-                            if let status = item.protectionTitle {
-                                Text(status).font(.system(size: 10)).foregroundStyle(item.needsPurposeConfirmation ? palette.accent : palette.muted)
-                                    .fixedSize()
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                        if showsMetadata {
+                            Text(item.typeTitle).font(.system(size: 11)).foregroundStyle(item.fileCategory.tint(palette: palette))
+                                .lineLimit(2).frame(width: typeWidth, alignment: .leading)
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(SpaceCleaningFormat.day(item.modifiedDate, timeZone: timeZone))
+                                Text(SpaceCleaningFormat.time(item.modifiedDate, timeZone: timeZone)).foregroundStyle(palette.muted)
+                            }.font(.system(size: 11)).monospacedDigit().frame(width: dateWidth, alignment: .leading)
+                                .accessibilityElement(children: .combine)
+                                .accessibilityIdentifier("space-cleaning-file-date-" + item.id.uuidString)
+                        }
+                        VStack(alignment: .trailing, spacing: 5) {
+                            Text(logicalSizeText(item)).font(.system(size: 12))
+                            if measured.map({ $0.complete || $0.checkedEntries > 0 }) == true || (measured == nil && (item.sizeIsComplete || item.allocatedBytes > 0)) {
+                                Text("占用 " + SpaceCleaningFormat.bytes(measured?.allocatedBytes ?? item.allocatedBytes)).font(.system(size: 11)).foregroundStyle(palette.muted)
                             }
-                            Image(systemName: model.detailID == item.id ? "chevron.up" : "chevron.down").font(.system(size: 9)).foregroundStyle(palette.muted)
-                        }.font(.system(size: 12))
-                        Text(model.shortPath(item.url.deletingLastPathComponent()))
-                            .font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1).truncationMode(.middle)
-                    }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                        }.monospacedDigit().lineLimit(1).frame(width: sizeWidth, alignment: .trailing)
+                    }.frame(maxWidth: .infinity, minHeight: 68, alignment: .leading).contentShape(Rectangle())
                 }.buttonStyle(ClickablePlainButtonStyle()).disabled(model.isBusy || confirming)
                     .accessibilityIdentifier("space-cleaning-file-" + item.id.uuidString)
-                Text(item.typeTitle).font(.system(size: 11)).foregroundStyle(item.fileCategory.tint(palette: palette))
-                    .lineLimit(2).frame(width: typeWidth, alignment: .leading)
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(SpaceCleaningFormat.day(item.modifiedDate, timeZone: timeZone))
-                    Text(SpaceCleaningFormat.time(item.modifiedDate, timeZone: timeZone)).foregroundStyle(palette.muted)
-                }.font(.system(size: 11)).monospacedDigit().frame(width: dateWidth, alignment: .leading)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityIdentifier("space-cleaning-file-date-" + item.id.uuidString)
-                VStack(alignment: .trailing, spacing: 5) {
-                    Text(measured.map { $0.checkedEntries == 0 && !$0.complete ? "大小未知" : ($0.complete ? "" : "部分 ") + SpaceCleaningFormat.bytes($0.logicalBytes) } ??
-                         (!item.sizeIsComplete && item.bytes == 0 ? "未统计" : (item.sizeIsComplete ? "" : "至少 ") + SpaceCleaningFormat.bytes(item.bytes)))
-                        .font(.system(size: 12))
-                    if measured.map({ $0.complete || $0.checkedEntries > 0 }) == true || (measured == nil && (item.sizeIsComplete || item.allocatedBytes > 0)) {
-                        Text("占用 " + SpaceCleaningFormat.bytes(measured?.allocatedBytes ?? item.allocatedBytes)).font(.system(size: 10)).foregroundStyle(palette.muted)
-                    }
-                }.monospacedDigit().lineLimit(1).frame(width: sizeWidth, alignment: .trailing)
             }.padding(.horizontal, 14).frame(height: 68)
             }.accessibilityElement(children: .contain)
                 .accessibilityIdentifier("space-cleaning-file-row-" + item.id.uuidString)
-            if model.detailID == item.id { detail(item) }
             Rectangle().fill(palette.line).frame(height: 1)
         }
+    }
+    private func logicalSizeText(_ item: CleaningItemDisplay) -> String {
+        if let measured = model.directorySizes[item.id] {
+            return measured.checkedEntries == 0 && !measured.complete ? "大小未知" : (measured.complete ? "" : "部分 ") + SpaceCleaningFormat.bytes(measured.logicalBytes)
+        }
+        return !item.sizeIsComplete && item.bytes == 0 ? "未统计" : (item.sizeIsComplete ? "" : "至少 ") + SpaceCleaningFormat.bytes(item.bytes)
+    }
+    private func allocatedSizeText(_ item: CleaningItemDisplay) -> String {
+        if let measured = model.directorySizes[item.id] {
+            return measured.checkedEntries == 0 && !measured.complete ? "未统计" : (measured.complete ? "" : "部分 ") + SpaceCleaningFormat.bytes(measured.allocatedBytes)
+        }
+        return !item.sizeIsComplete && item.allocatedBytes == 0 ? "未统计" : (item.sizeIsComplete ? "" : "至少 ") + SpaceCleaningFormat.bytes(item.allocatedBytes)
     }
     private var emptyResults: some View {
         VStack(spacing: 12) {
@@ -215,61 +285,134 @@ struct SpaceCleaningResultsView: View {
             } else if model.onlySelected { Button("返回文件列表") { model.showResults(model.scanMode == .largeFiles ? .reviewable : .recommended) }.buttonStyle(WBQuietButtonStyle()) }
         }.frame(maxWidth: .infinity).padding(.horizontal, 24).padding(.vertical, 40)
     }
-    private func detail(_ item: CleaningItemDisplay) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if let note = item.handlingNote {
-                Label { Text(note).lineSpacing(4) } icon: { Image(systemName: item.group == .protected ? "lock.shield" : "info.circle") }
-                    .font(.system(size: 11)).foregroundStyle(item.group == .protected ? palette.secondary : palette.accent)
+    private func detailSidebar(_ item: CleaningItemDisplay) -> some View {
+        SpaceCleaningSurface {
+            HStack(spacing: 8) {
+                Text("项目详情").font(.system(size: 12)).foregroundStyle(palette.secondary)
+                Spacer(minLength: 0)
+                Button(action: model.closeDetail) {
+                    Image(systemName: "sidebar.right").font(.system(size: 13, weight: .regular))
+                }.buttonStyle(WBIconButtonStyle(size: 24))
+                    .disabled(model.isBusy)
+                    .help("折叠项目详情")
+                    .accessibilityLabel("折叠项目详情")
+                    .accessibilityIdentifier("space-cleaning-collapse-detail")
+            }.padding(.leading, 14).padding(.trailing, 8).frame(height: 44)
+                .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-detail-header")
+            Rectangle().fill(palette.line).frame(height: 1)
+            // The scroll viewport spans the card. Only its document is inset,
+            // keeping the scrollbar at the outer edge and actions stationary.
+            ScrollViewReader { proxy in
+                WorkbenchScrollView {
+                    detailContents(item).frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true).padding(14)
+                }.scrollBounceBehavior(.basedOnSize)
+                    .accessibilityIdentifier("space-cleaning-detail-scroll")
+                    .task(id: model.dialog == .purpose(item.id)) {
+                        guard model.dialog == .purpose(item.id) else { return }
+                        await Task.yield()
+                        guard !Task.isCancelled else { return }
+                        proxy.scrollTo("space-cleaning-purpose", anchor: .bottom)
+                    }
+            }.id(item.id)
+            Rectangle().fill(palette.line).frame(height: 1)
+            HStack(spacing: 8) {
+                Button { model.preview(item.id) } label: {
+                    Label("快速预览", systemImage: "eye").frame(maxWidth: .infinity)
+                }.buttonStyle(WBButtonStyle(compact: true))
+                    .accessibilityIdentifier("space-cleaning-detail-preview")
+                Button { model.reveal(item.id) } label: {
+                    Label("Finder", systemImage: "folder").frame(maxWidth: .infinity)
+                }.buttonStyle(WBButtonStyle(compact: true)).help("在 Finder 中查看")
+                    .accessibilityLabel("在 Finder 中查看")
+                    .accessibilityIdentifier("space-cleaning-detail-finder")
+            }.disabled(model.isBusy || confirming).padding(.horizontal, 14).padding(.vertical, 12)
+                .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-detail-actions")
+        }.environment(\.workbenchScale, 1)
+            .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-detail-surface")
+    }
+    private func detailContents(_ item: CleaningItemDisplay) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                SpaceCleaningFileGlyph(category: item.fileCategory)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.name).font(.system(size: 14, weight: .medium)).textSelection(.enabled)
+                    Text(item.typeTitle).font(.system(size: 11)).foregroundStyle(palette.muted)
+                }.frame(maxWidth: .infinity, alignment: .leading)
             }
-            if let guidance = item.protectionGuidance {
-                Text(guidance).font(.system(size: 11)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
+            Text(item.url.path).font(.system(size: 11)).foregroundStyle(palette.muted)
+                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            VStack(spacing: 12) {
+                detailFact("文件大小", value: logicalSizeText(item))
+                detailFact("磁盘占用", value: allocatedSizeText(item))
+                detailFact("修改时间", value: SpaceCleaningFormat.day(item.modifiedDate, timeZone: timeZone) + "\n" + SpaceCleaningFormat.time(item.modifiedDate, timeZone: timeZone))
+                detailFact("显示时区", value: WorkbenchContextModel.zoneTitle(timeZone.identifier, at: item.modifiedDate))
+            }.padding(.vertical, 12)
+                .overlay(alignment: .top) { Rectangle().fill(palette.line).frame(height: 1) }
+                .overlay(alignment: .bottom) { Rectangle().fill(palette.line).frame(height: 1) }
+            if let note = item.handlingNote {
+                VStack(alignment: .leading, spacing: 7) {
+                    Label(item.protectionTitle ?? (item.group == .rebuildable ? "可重建缓存" : "处理前请复核"), systemImage: item.group == .protected ? "lock.shield" : "info.circle")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(item.group == .protected ? palette.secondary : palette.accent)
+                    Text(note).font(.system(size: 11)).foregroundStyle(palette.secondary).lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let guidance = item.protectionGuidance {
+                        Text(guidance).font(.system(size: 11)).foregroundStyle(palette.muted).lineSpacing(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(10)
+                    .background(palette.soft, in: RoundedRectangle(cornerRadius: 8))
             }
             if item.kind == .developmentEnvironment && item.isDirectory { directorySizeAnalysis(item) }
             if model.dialog == .purpose(item.id) {
-                Rectangle().fill(palette.line).frame(height: 1)
-                Toggle("我确认它仅用于测试，不是发布原件或唯一保留归档", isOn: $model.acknowledgement)
-                    .toggleStyle(.checkbox).font(.system(size: 11)).clickableCursor().disabled(model.isBusy)
-                    .accessibilityIdentifier("space-cleaning-test-purpose-acknowledgement")
-                HStack {
-                    Text("仅核验这一项，确认后可手动选择。")
-                        .font(.system(size: 11)).foregroundStyle(palette.muted)
-                    Spacer(minLength: 8)
-                    Button("取消", action: model.closeDialog).buttonStyle(WBButtonStyle()).disabled(model.isBusy)
-                    Button(model.purposeReviewID == item.id ? "正在核验…" : "确认测试用途") { model.confirmTestPurpose(item.id) }
-                        .buttonStyle(WBButtonStyle(primary: true)).disabled(!model.acknowledgement || model.isBusy)
-                        .accessibilityIdentifier("space-cleaning-confirm-test-purpose")
-                }
+                purposeConfirmation(item).id("space-cleaning-purpose")
+            } else if item.needsPurposeConfirmation {
+                Button("确认测试用途") { model.requestTestPurpose(item.id) }.buttonStyle(WBButtonStyle())
+                    .disabled(model.requiresRescan || model.isBusy || confirming)
             }
-            Text(item.url.path).font(.system(size: 11)).foregroundStyle(palette.muted).textSelection(.enabled)
-            if item.sizeIsComplete {
-                Text("文件大小 \(SpaceCleaningFormat.bytes(item.bytes)) · 磁盘占用 \(SpaceCleaningFormat.bytes(item.allocatedBytes))。稀疏、压缩或共享数据可能使两者不同；删除后实际释放量以系统可用空间为准。")
-                    .font(.system(size: 11)).foregroundStyle(palette.muted).fixedSize(horizontal: false, vertical: true)
-            }
+            Text("文件大小与磁盘占用可能不同；稀疏、压缩或共享数据会影响实际释放量，以处理后系统可用空间为准。")
+                .font(.system(size: 11)).foregroundStyle(palette.muted).lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-file-detail")
+    }
+    private func detailFact(_ title: String, value: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(title).foregroundStyle(palette.muted).fixedSize()
+            Spacer(minLength: 0)
+            Text(value).multilineTextAlignment(.trailing).monospacedDigit().textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }.font(.system(size: 11)).accessibilityElement(children: .combine)
+    }
+    private func purposeConfirmation(_ item: CleaningItemDisplay) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle("我确认它仅用于测试，不是发布原件或唯一保留归档", isOn: $model.acknowledgement)
+                .toggleStyle(.checkbox).font(.system(size: 11)).clickableCursor().disabled(model.isBusy)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("space-cleaning-test-purpose-acknowledgement")
+            Text("仅核验这一项，确认后可手动选择。")
+                .font(.system(size: 11)).foregroundStyle(palette.muted)
             HStack(spacing: 8) {
-                Button("快速预览") { model.preview(item.id) }.buttonStyle(WBButtonStyle(compact: true))
-                Button("在 Finder 中查看") { model.reveal(item.id) }.buttonStyle(WBButtonStyle(compact: true))
-                Spacer()
-                if item.needsPurposeConfirmation && model.dialog != .purpose(item.id) {
-                    Button("确认测试用途") { model.requestTestPurpose(item.id) }.buttonStyle(WBButtonStyle()).disabled(model.requiresRescan || model.isBusy)
-                }
+                Button("取消", action: model.closeDialog).buttonStyle(WBButtonStyle(compact: true)).disabled(model.isBusy)
+                Spacer(minLength: 0)
+                Button(model.purposeReviewID == item.id ? "正在核验…" : "确认测试用途") { model.confirmTestPurpose(item.id) }
+                    .buttonStyle(WBButtonStyle(primary: true, compact: true)).disabled(!model.acknowledgement || model.isBusy)
+                    .accessibilityIdentifier("space-cleaning-confirm-test-purpose")
             }
-        }.padding(EdgeInsets(top: 12, leading: 50, bottom: 14, trailing: 14)).background(palette.soft)
-            .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-file-detail")
+        }
     }
     private func directorySizeAnalysis(_ item: CleaningItemDisplay) -> some View {
         let active = model.measuringDirectoryID == item.id
         let measured = model.directorySizes[item.id]
         return VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            VStack(alignment: .leading, spacing: 8) {
                 if active {
                     Text("正在统计 · 已检查 \(measured?.checkedEntries ?? 0) 项").font(.system(size: 11)).foregroundStyle(palette.secondary)
-                    Spacer()
                     Button("停止统计", action: model.cancelDirectorySize).buttonStyle(WBButtonStyle(compact: true))
                         .accessibilityIdentifier("space-cleaning-cancel-size")
                 } else {
                     Text(measured.map { $0.complete ? "统计完成 · 保持保护" : $0.checkedEntries == 0 ? "容量未知 · 保持保护" : "部分统计 · 保持保护" } ?? "仅查看容量，不改变清理保护")
                         .font(.system(size: 11)).foregroundStyle(palette.secondary)
-                    Spacer()
                     Button(measured == nil ? "仅统计占用" : "重新统计占用") { model.measureDirectorySize(item.id) }
                         .buttonStyle(WBButtonStyle(compact: true)).disabled(model.isBusy || model.requiresRescan)
                         .accessibilityIdentifier("space-cleaning-measure-size-" + item.id.uuidString)
@@ -308,12 +451,24 @@ struct SpaceCleaningResultsView: View {
         }.padding(14)
     }
     private var methodActions: some View {
-        HStack(spacing: 12) {
-            methodSelector
-            rememberMethodToggle
-            cleanupButton
-        }.frame(width: methodActionsWidth, height: 32)
-            .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-method-actions")
+        Group {
+            if availableWidth >= methodActionsWidth + 28 {
+                HStack(spacing: 12) {
+                    methodSelector
+                    rememberMethodToggle
+                    cleanupButton
+                }.frame(width: methodActionsWidth, height: 32)
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 12) {
+                        methodSelector
+                        Spacer(minLength: 0)
+                        cleanupButton
+                    }
+                    rememberMethodToggle
+                }
+            }
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-method-actions")
     }
     private var selectionSummary: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -341,28 +496,11 @@ struct SpaceCleaningResultsView: View {
             .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-selection-summary")
     }
     private var methodSelector: some View {
-        HStack(spacing: 2) {
-            methodOption(.trash, title: "移入废纸篓", icon: "trash")
-            methodOption(.permanent, title: "永久删除", icon: "trash.slash")
-        }.padding(2)
-            .background(RoundedRectangle(cornerRadius: 8).fill(palette.soft))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(palette.line))
-            .fixedSize().disabled(model.isBusy || confirming)
-            .accessibilityElement(children: .contain).accessibilityLabel("清理方式")
-    }
-    private func methodOption(_ method: SpaceCleaningMethod, title: String, icon: String) -> some View {
-        let selected = model.method == method
-        let color = method == .permanent ? palette.warning : palette.accent
-        return Button { model.chooseMethod(method) } label: {
-            HStack(spacing: 6) {
-                Image(systemName: icon).font(.system(size: 12))
-                Text(title).font(.system(size: 11, weight: selected ? .medium : .regular))
-            }.foregroundStyle(selected ? color : palette.secondary)
-                .padding(.horizontal, 10).frame(width: methodOptionWidth, height: 28)
-                .contentShape(RoundedRectangle(cornerRadius: 6))
-        }.buttonStyle(WBSelectableButtonStyle(selected: selected, cornerRadius: 6, tint: color))
-            .accessibilityValue(selected ? "已选择" : "未选择")
-            .accessibilityIdentifier(method == .trash ? "space-cleaning-method-trash" : "space-cleaning-method-permanent")
+        WBSelect("处理方式", selection: Binding(get: { model.method }, set: model.chooseMethod), options: [
+            (.trash, "移入废纸篓"), (.permanent, "永久删除")
+        ]).frame(width: methodSelectorWidth, height: 32).disabled(model.isBusy || confirming)
+            .accessibilityLabel("处理方式")
+            .accessibilityIdentifier("space-cleaning-method-selector")
     }
     private var rememberMethodToggle: some View {
         Toggle("记住处理方式", isOn: Binding(get: { model.rememberMethod }, set: model.setRememberMethod))

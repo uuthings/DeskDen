@@ -136,6 +136,7 @@ struct WorkbenchRootView: View {
                 .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.top)
         } else if model.route == .cleaning {
             SpaceCleaningModuleView(model:model.cleaning)
+                .environment(\.timeZone, model.context.dateContext.timeZone)
                 .workbenchPageCanvas()
                 .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.top)
         } else if model.route == .network {
