@@ -6,6 +6,92 @@ enum CleaningResultGroup: String, CaseIterable, Sendable { case rebuildable, rev
 enum CleaningSortKey: String, CaseIterable, Sendable { case name, directory, type, modified, size }
 
 enum CleaningScopeChoice: String, CaseIterable, Codable { case global, custom }
+
+/// Presentation groups select existing scanner scopes without changing their policies.
+enum CleaningScopeGroup: String, CaseIterable, Codable, Identifiable, Sendable {
+    case downloads, documents, desktop, media, caches, development
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .downloads: "下载"
+        case .documents: "文稿"
+        case .desktop: "桌面"
+        case .media: "图片与影音"
+        case .caches: "应用缓存"
+        case .development: "开发与归档"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .downloads: "arrow.down.circle"
+        case .documents: "doc.text"
+        case .desktop: "desktopcomputer"
+        case .media: "photo.on.rectangle"
+        case .caches: "square.3.layers.3d"
+        case .development: "chevron.left.forwardslash.chevron.right"
+        }
+    }
+    var summary: String {
+        switch self {
+        case .downloads: "安装包、归档与下载文件"
+        case .documents: "文档、资料与工作文件"
+        case .desktop: "桌面文件与临时整理"
+        case .media: "照片、音乐与视频资料"
+        case .caches: "应用产生的可重建内容"
+        case .development: "构建产物与归档内容"
+        }
+    }
+    var detailPaths: [String] {
+        switch self {
+        case .downloads: ["~/Downloads"]
+        case .documents: ["~/Documents", "~/Public"]
+        case .desktop: ["~/Desktop"]
+        case .media: ["~/Pictures", "~/Music", "~/Movies"]
+        case .caches: ["~/Library/Caches", "~/Library/Containers/com.apple.Safari/Data/Library/Caches", "~/.npm/_cacache", "~/Library/Logs/DiagnosticReports"]
+        case .development: ["~/Developer", "~/Library/Developer/Xcode/DerivedData", "~/Library/Developer/Xcode/Archives", "~/Applications", "~/Library/Application Support 内的发布档案", "已登记的发布档案位置"]
+        }
+    }
+    var pathDescription: String { detailPaths.joined(separator: " · ") }
+    var content: String {
+        switch self {
+        case .downloads: "检查下载目录中的文件与子目录，按实际体积呈现。"
+        case .documents: "检查文稿与公共目录，保留层级供你核对文档、资料和归档。"
+        case .desktop: "检查桌面上的文件与目录，保留原始路径供你核对。"
+        case .media: "检查用户媒体目录中的照片、视频、音频与归档。"
+        case .caches: "识别已知应用缓存、包下载缓存和诊断记录，显示具体文件与判断依据。"
+        case .development: "检查开发目录、构建缓存、用户应用及归档，发布档案只核验保护状态。"
+        }
+    }
+    var impact: String {
+        switch self {
+        case .downloads: "下载时间与文件体积只作参考，处理前由你逐项确认。"
+        case .documents: "不因文件较旧或体积较大而自动判断为可清理。"
+        case .desktop: "先确认文件用途与归属，再选择移入废纸篓或保留。"
+        case .media: "不自动推断哪些媒体资料已经不再需要。"
+        case .caches: "仅完整核验的可重建缓存可预选，部分内容会重新下载。"
+        case .development: "Git 资料、依赖、虚拟环境、已安装应用及发布原件保持保护。"
+        }
+    }
+    func includes(_ scope: SpaceCleaningScope, home: URL) -> Bool {
+        switch scope.kind {
+        case .downloads: return self == .downloads
+        case .browserCache, .packageCache, .diagnostics: return self == .caches
+        case .derivedData, .development, .archives, .releaseArchives, .releaseArchiveDiscovery, .installedApplications:
+            return self == .development
+        case .custom:
+            let root = SpaceCleaningScanner.canonicalURL(home) ?? home.standardizedFileURL
+            let names: [String]
+            switch self {
+            case .documents: names = ["Documents", "Public"]
+            case .desktop: names = ["Desktop"]
+            case .media: names = ["Pictures", "Music", "Movies"]
+            case .development: names = ["Developer"]
+            case .downloads, .caches: names = []
+            }
+            return names.contains { root.appendingPathComponent($0).standardizedFileURL == scope.directory.standardizedFileURL }
+        }
+    }
+}
 enum CleaningResultTab: Sendable { case recommended, reviewable, protected }
 enum CleaningFileSizeUnit: String, Codable, CaseIterable {
     case mb = "MB", gb = "GB"

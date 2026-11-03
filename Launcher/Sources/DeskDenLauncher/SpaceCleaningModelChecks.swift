@@ -5,6 +5,178 @@ import LauncherCore
 /// barrier. All source objects, history and the injected Trash are temporary
 /// fixtures; this never invokes the system Trash or scans the user's home.
 @MainActor enum SpaceCleaningModelChecks {
+    /// Focused scope-selection checks; all scans use owned temporary folders.
+    static func runScopeGroups() async -> (count: Int, failures: Int) {
+        var count = 0, failures = 0
+        func check(_ condition: Bool, _ label: String) {
+            count += 1; if !condition { failures += 1 }
+            print("\(condition ? "PASS" : "FAIL") \(label)")
+        }
+        let fm = FileManager.default
+        let rawRoot = fm.temporaryDirectory.appendingPathComponent("deskden-cleaning-groups-" + UUID().uuidString)
+        var models: [SpaceCleaningModel] = []
+        defer { try? fm.removeItem(at: rawRoot) }
+        do {
+            try fm.createDirectory(at: rawRoot, withIntermediateDirectories: true)
+            guard let root = SpaceCleaningScanner.canonicalURL(rawRoot) else { throw CheckError.missing }
+            let home = root.appendingPathComponent("Home"), state = root.appendingPathComponent("State")
+            // realpath-backed scanner URLs and Foundation/bookmark URLs can use
+            // different /var aliases or directory hints for the same fixture.
+            func path(_ url: URL) -> String { url.standardizedFileURL.path }
+            func relativePath(_ url: URL) -> String {
+                let prefix = path(home) + "/", value = path(url)
+                return value.hasPrefix(prefix) ? String(value.dropFirst(prefix.count)) : "<outside fixture home>"
+            }
+            func itemDetails(_ items: [CleaningItemDisplay]) -> String {
+                items.map { relativePath($0.url) + "|" + $0.kind.rawValue + "|" + $0.group.rawValue }.sorted().joined(separator: ", ")
+            }
+            let relativeFiles = ["Downloads/download.txt", "Documents/document.txt", "Public/shared.txt", "Desktop/desktop.txt",
+                                 "Pictures/photo.txt", "Music/audio.txt", "Movies/movie.txt", "Extra/selected.txt",
+                                 "Library/Caches/pip/http-v2/cache", "Developer/Project/node_modules/library/index.js",
+                                 "Applications/Keep.app/Contents/keep.data", "ReleaseArchives/release.dmg",
+                                 "Library/Application Support/ScopeApp/user-note.txt",
+                                 "Library/Application Support/ScopeApp/ReleaseArchives/1.0/release.dmg"]
+            for path in relativeFiles {
+                let file = home.appendingPathComponent(path)
+                try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data("owned-scope-check".utf8).write(to: file)
+            }
+            let mover = SpaceCleaningCheckMover(root: root, trash: root.appendingPathComponent("UnusedTrash"))
+            let model = SpaceCleaningModel(dataDirectory: state, homeDirectory: home, mover: mover); models.append(model)
+            await model.waitUntilIdle()
+            let context = SpaceCleaningContext(homeDirectory: home, protectedReleaseURLs: [home.appendingPathComponent("ReleaseArchives")])
+            let global = SpaceCleaningScanner.globalScopes(context: context)
+            func descriptors(_ scopes: [SpaceCleaningScope]) -> [String] {
+                scopes.map { $0.directory.standardizedFileURL.path + "|" + $0.kind.rawValue + "|" + $0.title }
+            }
+            check(CleaningScopeGroup.allCases.count == 6 && model.canScanScope && model.selectedScopeGroups.isEmpty &&
+                  CleaningScopeGroup.allCases.allSatisfy { model.includesScopeGroup($0) },
+                  "global scanning displays all six groups without creating a custom selection")
+            check(descriptors(model.selectedScopes(context)) == descriptors(global) && global.allSatisfy { scope in
+                CleaningScopeGroup.allCases.filter { $0.includes(scope, home: home) }.count == 1
+            }, "the six presentation groups partition the complete unchanged global scope definitions")
+            check(CleaningScopeGroup.documents.detailPaths.contains("~/Public") &&
+                  global.filter { CleaningScopeGroup.caches.includes($0, home: home) }.allSatisfy { [.browserCache, .packageCache, .diagnostics].contains($0.kind) } &&
+                  global.filter { $0.kind == .derivedData || $0.kind == .releaseArchives || $0.kind == .installedApplications }.allSatisfy { CleaningScopeGroup.development.includes($0, home: home) },
+                  "group mapping includes Public and preserves cache, build, archive and application policies")
+            model.editScope(custom: true)
+            check(!model.canApplyScope && model.draftScopeGroups.isEmpty && !model.includesScopeGroup(.downloads, draft: true),
+                  "an empty custom draft does not silently inherit all global groups")
+            model.applyScope()
+            check(model.scopeChoice == .global && model.screen == .scope && !fm.fileExists(atPath: state.appendingPathComponent("scope.json").path),
+                  "saving an empty custom draft cannot replace or persist the active global range")
+            model.toggleDraftScopeGroup(.downloads)
+            check(model.canApplyScope && model.draftScopeGroups == [.downloads] && model.selectedScopeGroups.isEmpty,
+                  "group toggles update only the editable draft")
+            model.cancelScope()
+            check(model.scopeChoice == .global && model.screen == .start && model.selectedScopeGroups.isEmpty &&
+                  !fm.fileExists(atPath: state.appendingPathComponent("scope.json").path),
+                  "cancelling the group draft preserves the active range and saved configuration")
+            model.editScope(custom: true)
+            model.setDraftScopeGroup(.downloads, selected: true); model.setDraftScopeGroup(.documents, selected: true)
+            model.addDraftDirectories([home.appendingPathComponent("Extra"), home.appendingPathComponent("Downloads"), home.appendingPathComponent("Downloads")])
+            model.applyScope()
+            let chosen = model.selectedScopes(context)
+            check(model.scopeChoice == .custom && model.selectedScopeGroups == [.downloads, .documents] && model.canScanScope && model.customDirectories.count == 2,
+                  "saving combines selected groups with bookmarked arbitrary folders without starting a scan")
+            check(chosen.filter { $0.directory.lastPathComponent == "Downloads" }.map(\.kind) == [.downloads] &&
+                  Set(chosen.map { $0.directory.lastPathComponent }) == ["Downloads", "Documents", "Public", "Extra"],
+                  "duplicate extra folders cannot replace a selected built-in scope or change its kind")
+            model.startScan(); await model.waitUntilIdle()
+            let expectedFiles = Set(["Downloads/download.txt", "Documents/document.txt", "Public/shared.txt", "Extra/selected.txt"].map { home.appendingPathComponent($0) })
+            let savedRangeMatches = Set(model.items.map { path($0.url) }) == Set(expectedFiles.map(path)) &&
+                model.items.first { $0.name == "download.txt" }?.kind == .downloadedFile && mover.moveCount == 0
+            check(savedRangeMatches,
+                  "the production scanner reads exactly the saved groups and extra folder without scanning unchecked categories or moving files")
+            if !savedRangeMatches {
+                print("DETAIL saved-range actual=[\(itemDetails(model.items))]; expected=[\(expectedFiles.map(relativePath).sorted().joined(separator: ", "))]")
+            }
+            let resultIDs = model.items.map(\.id)
+            model.editScope()
+            for group in CleaningScopeGroup.allCases { model.setDraftScopeGroup(group, selected: false) }
+            for directory in model.draftDirectories { model.removeDraftDirectory(directory) }
+            model.applyScope()
+            check(!model.canApplyScope && model.screen == .scope && model.selectedScopeGroups == [.downloads, .documents] && model.items.map(\.id) == resultIDs,
+                  "clearing every draft choice cannot overwrite the saved range or discard existing results")
+            model.cancelScope()
+            check(model.screen == .results && model.draftScopeGroups == model.selectedScopeGroups && model.items.map(\.id) == resultIDs,
+                  "cancel restores the saved group selection and returns to the unchanged results")
+            let savedData = try Data(contentsOf: state.appendingPathComponent("scope.json"))
+            let saved = try JSONSerialization.jsonObject(with: savedData) as! [String: Any]
+            check((saved["bookmarks"] as? [String])?.count == 2 && Set(saved["groups"] as? [String] ?? []) == ["downloads", "documents"],
+                  "scope persistence retains security bookmarks alongside explicit group identifiers")
+            let reload = SpaceCleaningModel(dataDirectory: state, homeDirectory: home, mover: mover); models.append(reload)
+            await reload.waitUntilIdle()
+            check(reload.selectedScopeGroups == [.downloads, .documents] && reload.customDirectories == model.customDirectories &&
+                  descriptors(reload.selectedScopes(context)) == descriptors(chosen),
+                  "saved groups and existing security-scoped folders restore to the same actual scan definitions")
+            reload.selectScope(.global)
+            check(descriptors(reload.selectedScopes(context)) == descriptors(global) && reload.selectedScopeGroups == [.downloads, .documents],
+                  "returning to global restores every original scope while remembering the custom choice")
+
+            let legacyState = root.appendingPathComponent("LegacyState")
+            try fm.createDirectory(at: legacyState, withIntermediateDirectories: true)
+            var legacy = saved; legacy.removeValue(forKey: "groups")
+            try JSONSerialization.data(withJSONObject: legacy).write(to: legacyState.appendingPathComponent("scope.json"))
+            let legacyModel = SpaceCleaningModel(dataDirectory: legacyState, homeDirectory: home, mover: mover); models.append(legacyModel)
+            await legacyModel.waitUntilIdle()
+            check(legacyModel.scopeChoice == .custom && legacyModel.selectedScopeGroups.isEmpty && legacyModel.customDirectories == model.customDirectories &&
+                  Set(legacyModel.selectedScopes(context).map(\.directory)) == Set(model.customDirectories),
+                  "legacy custom settings without a groups field restore only their previously authorized directories")
+            let emptyState = root.appendingPathComponent("EmptyLegacyState")
+            try fm.createDirectory(at: emptyState, withIntermediateDirectories: true)
+            let empty: [String: Any] = ["format": 1, "choice": "custom", "bookmarks": [], "requestedPaths": []]
+            try JSONSerialization.data(withJSONObject: empty).write(to: emptyState.appendingPathComponent("scope.json"))
+            let emptyModel = SpaceCleaningModel(dataDirectory: emptyState, homeDirectory: home, mover: mover); models.append(emptyModel)
+            emptyModel.startScan()
+            check(!emptyModel.canScanScope && !emptyModel.isBusy && emptyModel.items.isEmpty && emptyModel.selectedScopes(context).isEmpty,
+                  "an empty restored custom scope cannot trigger a global scan")
+
+            model.editScope(custom: true)
+            for group in CleaningScopeGroup.allCases { model.setDraftScopeGroup(group, selected: true) }
+            for directory in model.draftDirectories { model.removeDraftDirectory(directory) }
+            model.applyScope()
+            check(descriptors(model.selectedScopes(context)) == descriptors(global),
+                  "selecting all six groups produces the original global scope order and policies exactly")
+            let groupedScopes = model.selectedScopes(context)
+            let report = await Task.detached(priority: .utility) {
+                SpaceCleaningScanner.scan(scopes: groupedScopes, context: context)
+            }.value
+            check(report.candidates.contains { $0.kind == .packageCache && $0.group == .rebuildable } &&
+                  report.candidates.contains { $0.kind == .developmentEnvironment && $0.group == .protected } &&
+                  report.candidates.contains { $0.url.path.contains("/ReleaseArchives/") && $0.group == .protected } &&
+                  report.candidates.contains { $0.url.lastPathComponent == "Keep.app" && $0.group == .protected },
+                  "real grouped scanning preserves recognized caches, dependency boundaries, release archives and installed-app protection")
+            let applicationSupport = home.appendingPathComponent("Library/Application Support")
+            let supportUserFile = applicationSupport.appendingPathComponent("ScopeApp/user-note.txt")
+            let supportArchive = applicationSupport.appendingPathComponent("ScopeApp/ReleaseArchives")
+            check(!report.candidates.contains { path($0.url) == path(supportUserFile) },
+                  "release-archive discovery alone never scans unrelated Application Support user content")
+            model.editScope(custom: true)
+            for group in CleaningScopeGroup.allCases { model.setDraftScopeGroup(group, selected: group == .development) }
+            model.addDraftDirectories([applicationSupport, applicationSupport])
+            model.applyScope()
+            let supportScopes = model.selectedScopes(context).filter { path($0.directory) == path(applicationSupport) }
+            let supportScopesMatch = supportScopes.map(\.kind) == [.releaseArchiveDiscovery, .custom]
+            check(supportScopesMatch,
+                  "same-root archive discovery and an explicit custom folder both remain in scan order without duplicating ordinary scopes")
+            if !supportScopesMatch {
+                print("DETAIL support scopes=[\(model.selectedScopes(context).map { relativePath($0.directory) + "|" + $0.kind.rawValue }.joined(separator: ", "))]")
+            }
+            model.startScan(); await model.waitUntilIdle()
+            let supportContentMatches = model.items.contains { path($0.url) == path(supportUserFile) && $0.kind == .personalFile && $0.group == .review && !$0.isDirectory } &&
+                model.items.contains { path($0.url) == path(supportArchive) && $0.kind == .releaseMaterial && $0.group == .protected && !$0.isSelectable } &&
+                fm.fileExists(atPath: supportArchive.appendingPathComponent("1.0/release.dmg").path)
+            check(supportContentMatches,
+                  "an explicit Application Support scan finds user content while its discovered release archives remain protected")
+            if !supportContentMatches { print("DETAIL support scan=[\(itemDetails(model.items))]") }
+            check(mover.moveCount == 0 && expectedFiles.allSatisfy { fm.fileExists(atPath: $0.path) },
+                  "scope selection and verification never perform cleanup transactions")
+        } catch { check(false, "scope-group fixture setup or execution: " + error.localizedDescription) }
+        for model in models { await model.prepareForQuit() }
+        return (count, failures)
+    }
+
     static func run() async -> (count: Int, failures: Int) {
         var count = 0, failures = 0
         func check(_ condition: Bool, _ label: String) {
@@ -478,7 +650,8 @@ import LauncherCore
             check(false, "space cleaning model check setup or execution: \(error.localizedDescription)")
         }
         for model in models { await model.prepareForQuit() }
-        return (count, failures)
+        let groups = await runScopeGroups()
+        return (count + groups.count, failures + groups.failures)
     }
 
     /// Opt-in, separate from the routine fixture suite. Creates exactly two own

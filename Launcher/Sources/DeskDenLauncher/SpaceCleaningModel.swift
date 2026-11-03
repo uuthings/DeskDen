@@ -46,6 +46,8 @@ import Quartz
     let homeDirectory: URL
     private let preferenceURL: URL
     @Published private(set) var customDirectories: [URL] = []
+    @Published private(set) var selectedScopeGroups: Set<CleaningScopeGroup> = []
+    @Published private(set) var draftScopeGroups: Set<CleaningScopeGroup> = []
     @Published var draftScope: CleaningScopeChoice = .global
     @Published private(set) var draftDirectories: [URL] = []
     @Published var resultTab: CleaningResultTab = .recommended {
@@ -160,7 +162,21 @@ import Quartz
     var canProcess: Bool { !isBusy && !frozenForQuit && !requiresRescan && historyError == nil && selectedCount > 0 }
     var animationActive: Bool { windowVisible && [.start, .scope, .scanning].contains(screen) && !reduceMotion && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion && dialog == nil }
     var scopeSummary: String {
-        (scanMode == .largeFiles ? "大文件 · " : "") + (scopeChoice == .global ? "全局扫描 · 当前用户可访问位置" : "自定义位置 · \(customDirectories.count) 个文件夹")
+        let custom = [selectedScopeGroups.isEmpty ? nil : "\(selectedScopeGroups.count) 类位置",
+                      customDirectories.isEmpty ? nil : "\(customDirectories.count) 个文件夹"].compactMap { $0 }.joined(separator: " · ")
+        return (scanMode == .largeFiles ? "大文件 · " : "") + (scopeChoice == .global ? "全局扫描 · 当前用户可访问位置" : "自定义范围 · " + (custom.isEmpty ? "未选择位置" : custom))
+    }
+    var canScanScope: Bool { scopeChoice == .global || !selectedScopeGroups.isEmpty || !customDirectories.isEmpty }
+    var canApplyScope: Bool { draftScope == .global || !draftScopeGroups.isEmpty || !draftDirectories.isEmpty }
+    func includesScopeGroup(_ group: CleaningScopeGroup, draft: Bool = false) -> Bool {
+        (draft ? draftScope : scopeChoice) == .global || (draft ? draftScopeGroups : selectedScopeGroups).contains(group)
+    }
+    func setDraftScopeGroup(_ group: CleaningScopeGroup, selected: Bool) {
+        guard screen == .scope, !isBusy, !frozenForQuit, draftScope == .custom else { return }
+        if selected { draftScopeGroups.insert(group) } else { draftScopeGroups.remove(group) }
+    }
+    func toggleDraftScopeGroup(_ group: CleaningScopeGroup) {
+        setDraftScopeGroup(group, selected: !draftScopeGroups.contains(group))
     }
     var largeFileRangeError: String? {
         guard scanMode == .largeFiles else { return nil }
@@ -381,9 +397,13 @@ import Quartz
     func editScope(custom: Bool = false) {
         guard !isBusy else { return }
         scopeOrigin = screen; draftScope = custom ? .custom : scopeChoice
-        draftDirectories = customDirectories; screen = .scope
+        draftDirectories = customDirectories; draftScopeGroups = selectedScopeGroups; screen = .scope
     }
-    func cancelScope() { guard !isBusy else { return }; draftDirectories = []; releaseUnusedScopeAccess(); screen = scopeOrigin }
+    func cancelScope() {
+        guard !isBusy else { return }
+        draftScope = scopeChoice; draftDirectories = customDirectories; draftScopeGroups = selectedScopeGroups
+        releaseUnusedScopeAccess(); screen = scopeOrigin
+    }
     func selectScope(_ choice: CleaningScopeChoice) {
         guard !isBusy else { return }
         if choice == .custom { editScope(custom: true); return }
@@ -409,9 +429,9 @@ import Quartz
     }
     func removeDraftDirectory(_ url: URL) { draftDirectories.removeAll { $0 == url } }
     func applyScope() {
-        guard screen == .scope, !isBusy, draftScope == .global || !draftDirectories.isEmpty else { return }
-        let changed = draftScope != scopeChoice || (draftScope == .custom && draftDirectories != customDirectories)
-        scopeChoice = draftScope; customDirectories = draftDirectories
+        guard screen == .scope, !isBusy, canApplyScope else { return }
+        let changed = draftScope != scopeChoice || (draftScope == .custom && (draftDirectories != customDirectories || draftScopeGroups != selectedScopeGroups))
+        scopeChoice = draftScope; customDirectories = draftDirectories; selectedScopeGroups = draftScopeGroups
         if changed { invalidateResults() } else { screen = scopeOrigin }
         saveScopePreference(); releaseUnusedScopeAccess()
     }
@@ -528,6 +548,7 @@ import Quartz
 
     func startScan() {
         guard !isBusy, !frozenForQuit else { return }
+        guard canScanScope else { message = "请先选择要扫描的范围或目录。"; return }
         guard largeFileRangeError == nil else { message = largeFileRangeError; return }
         let context = makeContext()
         let options = SpaceCleaningOptions(mode: scanMode, minimumFileBytes: fileSizeBytes(minimumFileSize) ?? 100_000_000,
@@ -796,9 +817,20 @@ import Quartz
               kind: item.kind, isDirectory: item.isDirectory,
               modifiedDate: Date(timeIntervalSince1970: Double(item.identity.modifiedSeconds) + Double(item.identity.modifiedNanoseconds) / 1_000_000_000))
     }
-    private func selectedScopes(_ context: SpaceCleaningContext) -> [SpaceCleaningScope] {
-        scopeChoice == .global ? SpaceCleaningScanner.globalScopes(context: context) :
-            customDirectories.map { .init(directory: $0, title: $0.lastPathComponent) }
+    func selectedScopes(_ context: SpaceCleaningContext) -> [SpaceCleaningScope] {
+        let global = SpaceCleaningScanner.globalScopes(context: context)
+        guard scopeChoice == .custom else { return global }
+        // Preserve the original ordering and kind of specialized scopes before
+        // any broad parent or extra user folder can encounter the same files.
+        let grouped = global.filter { scope in selectedScopeGroups.contains { $0.includes(scope, home: context.homeDirectory) } }
+        var paths = Set<String>(), discoveryPaths = Set<String>()
+        return (grouped + customDirectories.map { .init(directory: $0, title: $0.lastPathComponent) }).filter {
+            let path = $0.directory.standardizedFileURL.path
+            // Discovery inspects only ReleaseArchives children. It cannot
+            // replace an explicitly selected scan of the same parent folder.
+            if $0.kind == .releaseArchiveDiscovery { return discoveryPaths.insert(path).inserted }
+            return paths.insert(path).inserted
+        }
     }
     private nonisolated static func runningAt(_ url: URL, context: SpaceCleaningContext) -> Bool {
         let path = url.standardizedFileURL.path
@@ -831,6 +863,7 @@ import Quartz
     private struct ScopePreference: Codable {
         var format = 1; var choice: CleaningScopeChoice; var bookmarks: [Data]
         var requestedPaths: [String]? = nil
+        var groups: [CleaningScopeGroup]? = nil
     }
     private struct ScanPreference: Codable {
         var mode: SpaceCleaningScanMode; var minimum: String; var maximum: String; var unit: CleaningFileSizeUnit
@@ -879,6 +912,8 @@ import Quartz
                 } else { resolved.append(url) }
             }
             customDirectories = resolved; scopeChoice = saved.choice
+            // Older custom selections contain only their bookmarked folders.
+            selectedScopeGroups = Set(saved.groups ?? [])
         } catch {
             scopePreferencesWritable = false
             message = "扫描位置未能恢复，已保留原设置；本次使用全局扫描，可重新选择位置。"
@@ -889,7 +924,7 @@ import Quartz
         do {
             let bookmarks = try customDirectories.map { try $0.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil) }
             try FileManager.default.createDirectory(at: dataDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            try JSONEncoder().encode(ScopePreference(choice: scopeChoice, bookmarks: bookmarks, requestedPaths: customDirectories.map(\.path))).write(to: scopePreferenceURL, options: .atomic)
+            try JSONEncoder().encode(ScopePreference(choice: scopeChoice, bookmarks: bookmarks, requestedPaths: customDirectories.map(\.path), groups: CleaningScopeGroup.allCases.filter { selectedScopeGroups.contains($0) })).write(to: scopePreferenceURL, options: .atomic)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: scopePreferenceURL.path)
         } catch { message = "本次扫描位置已生效，但未能保存；下次需重新选择。" }
     }

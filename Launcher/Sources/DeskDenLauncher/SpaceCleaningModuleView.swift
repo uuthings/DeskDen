@@ -70,7 +70,7 @@ struct SpaceCleaningModuleView: View {
     }
     private var subtitle: String {
         switch model.screen {
-        case .start, .scope: "查看空间占用，找到值得整理的内容"
+        case .start, .scope: "查看空间占用，选择本次扫描范围"
         case .scanning: "正在检查空间占用，完成后逐项复核"
         case .results: "核对文件用途，选择处理方式"
         case .processing: "重新核验所选项目，安全完成处理"

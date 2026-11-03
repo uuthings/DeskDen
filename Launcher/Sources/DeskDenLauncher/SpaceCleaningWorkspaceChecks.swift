@@ -35,7 +35,7 @@ import LauncherCore
             check(await NativeUIFixtureWindow.prepare(window: window, until: { frame("space-cleaning-start", host) != nil }),
                   "production cleaning preparation mounts with its real controls")
             check(model.items.isEmpty && !model.isBusy, "preparation never starts a scan implicitly")
-            for size in [NSSize(width: 1120, height: 700), NSSize(width: 900, height: 562), NSSize(width: 1440, height: 860)] {
+            for size in [NSSize(width: 1120, height: 700), NSSize(width: 900, height: 562), NSSize(width: 1440, height: 860), NSSize(width: 1600, height: 1000)] {
                 window.setContentSize(size)
                 _ = await settle(window) { frame("space-cleaning-start", host) != nil }
                 let volume = frame("space-cleaning-volume-card", host)
@@ -43,8 +43,43 @@ import LauncherCore
                 check(volume != nil && start != nil && volume!.maxX < start!.minX,
                       "\(Int(size.width))-point preparation keeps disk and scan configuration in separate columns")
                 check(start.map { window.frame.contains($0) } == true, "\(Int(size.width))-point preparation keeps the scan action visible")
+                try await capture(host, "cleanup-home-\(Int(size.width))-light.png")
             }
             try await capture(host, "cleanup-home-light.png")
+            host.rootView = fixture(model: model, light: false)
+            _ = await settle(window) { frame("space-cleaning-start", host) != nil }
+            check(frame("space-cleaning-start", host).map { window.frame.contains($0) } == true,
+                  "dark preparation keeps the same fixed action geometry")
+            try await capture(host, "cleanup-home-dark.png")
+            host.rootView = fixture(model: model, light: true)
+            _ = await settle(window) { frame("space-cleaning-scope-tile-documents", host) != nil }
+            let originalGroups = model.selectedScopeGroups
+            check(click("space-cleaning-scope-tile-documents", host), "a real pointer press opens the document range explanation")
+            check(await settle(window) { accessibilityText("space-cleaning-scope-detail-title", host).contains("文稿") },
+                  "range-card selection updates the independent explanation")
+            check(model.scopeChoice == .global && model.selectedScopeGroups == originalGroups && model.items.isEmpty,
+                  "opening a global range explanation does not change scan scope or start a scan")
+            check(click("space-cleaning-scope-custom", host), "the custom-range control receives a real pointer press")
+            check(await settle(window) { model.screen == .scope && frame("space-cleaning-scope-toggle-downloads", host) != nil },
+                  "custom scope editing exposes an independent range inclusion control")
+            let detailBeforeToggle = accessibilityText("space-cleaning-scope-detail-title", host)
+            let includedBeforeToggle = model.draftScopeGroups.contains(.downloads)
+            check(click("space-cleaning-scope-toggle-downloads", host), "the download inclusion control receives a real pointer press")
+            check(await settle(window) { model.draftScopeGroups.contains(.downloads) != includedBeforeToggle },
+                  "a custom range toggle changes the draft inclusion")
+            check(accessibilityText("space-cleaning-scope-detail-title", host) == detailBeforeToggle && model.scopeChoice == .global,
+                  "toggling inclusion preserves the viewed explanation and does not commit the draft")
+            let expectedGroups = model.draftScopeGroups
+            check(click("space-cleaning-apply-scope", host), "custom range selection saves through its real button")
+            check(await settle(window) { model.screen == .start && model.scopeChoice == .custom && model.selectedScopeGroups == expectedGroups },
+                  "saving the custom draft commits the selected real scanner groups")
+            check(click("space-cleaning-scope-global", host), "the global scope control restores the full fixture scan")
+            check(await settle(window) { model.screen == .start && model.scopeChoice == .global },
+                  "range interaction leaves the subsequent thirty-six-file scan in its original global mode")
+            // A failed pointer assertion must not contaminate the independent
+            // scanner/transaction checks that follow this interaction batch.
+            if model.screen == .scope { model.cancelScope() }
+            model.selectScope(.global)
             window.setContentSize(NSSize(width: 900, height: 562))
             model.selectScanMode(.largeFiles)
             _ = await settle(window) { frame("space-cleaning-large-file-options", host) != nil }
@@ -117,7 +152,122 @@ import LauncherCore
             model.returnFromHistory()
             check(model.screen == .start, "return from processed history respects the required fresh scan")
         } catch { check(false, "workspace fixture: \(error)") }
+        let capacities = await capacityFixtureChecks()
+        return (count + capacities.count, failures + capacities.failures)
+    }
+
+    private static func capacityFixtureChecks() async -> (count: Int, failures: Int) {
+        var count = 0, failures = 0
+        func check(_ condition: Bool, _ label: String) {
+            count += 1; if !condition { failures += 1 }
+            print("\(condition ? "PASS" : "FAIL") \(label)")
+        }
+        let total: UInt64 = 994_700_000_000
+        let available: UInt64 = 78_600_000_000
+        let free: UInt64 = 42_300_000_000
+        let reclaim: UInt64 = 36_300_000_000
+        let host = NSHostingView(rootView: capacityFixture(total: total, available: available, free: free, reclaim: reclaim, light: true))
+        let window = NativeUIFixtureWindow(contentRect: NSRect(x: 80, y: 80, width: 292, height: 680),
+            styleMask: [.borderless, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host
+        defer { window.orderOut(nil); window.contentView = nil; window.close() }
+        check(await NativeUIFixtureWindow.prepare(window: window, until: { frame("space-cleaning-disk-used-value", host) != nil }),
+              "value-only capacity fixture mounts without changing the live cleaning model")
+        do {
+            for light in [true, false] {
+                for size in [NSSize(width: 292, height: 680), NSSize(width: 400, height: 800)] {
+                    window.setContentSize(size)
+                    host.rootView = capacityFixture(total: total, available: available, free: free, reclaim: reclaim, light: light)
+                    let variant = "\(Int(size.width))-point \(light ? "light" : "dark") capacity"
+                    _ = await settle(window) { frame("space-cleaning-disk-reclaimable-unit", host) != nil }
+                    let rows = ["used", "free", "reclaimable"]
+                    let labels = rows.compactMap { frame("space-cleaning-disk-" + $0 + "-label", host) }
+                    let values = rows.compactMap { frame("space-cleaning-disk-" + $0 + "-value", host) }
+                    let units = rows.compactMap { frame("space-cleaning-disk-" + $0 + "-unit", host) }
+                    check(labels.count == 3 && values.count == 3 && units.count == 3,
+                          variant + " exposes three separate label, number and unit columns")
+                    if labels.count == 3, values.count == 3, units.count == 3 {
+                        check(spread(labels.map(\.minX)) <= 1.5 && spread(values.map(\.maxX)) <= 1.5 && spread(units.map(\.maxX)) <= 1.5,
+                              variant + " aligns labels left and numbers and units right")
+                        check((0..<3).allSatisfy { index in
+                            labels[index].maxX <= values[index].minX && values[index].maxX <= units[index].minX
+                                && abs(labels[index].minY - units[index].minY) <= 4
+                                && abs(values[index].minY - units[index].minY) <= 6
+                                && window.frame.contains(labels[index]) && window.frame.contains(values[index]) && window.frame.contains(units[index])
+                        }, variant + " keeps every label, number and GB unit on one visible baseline without overlap")
+                        check(labels[0].minY > labels[1].maxY && labels[1].minY > labels[2].maxY,
+                              variant + " keeps used, immediately free and reclaimable rows in their approved order")
+                        print("DETAIL \(variant) labels=\(labels) values=\(values) units=\(units)")
+                    }
+                    let usedSegment = frame("space-cleaning-disk-segment-used", host)
+                    let freeSegment = frame("space-cleaning-disk-segment-free", host)
+                    let reclaimSegment = frame("space-cleaning-disk-segment-reclaimable", host)
+                    check(usedSegment != nil && freeSegment != nil && reclaimSegment != nil, variant + " exposes all three measured capacity segments")
+                    if let usedSegment, let freeSegment, let reclaimSegment {
+                        let height = usedSegment.height + freeSegment.height + reclaimSegment.height
+                        // AppKit AX frames use bottom-up screen coordinates.
+                        check(abs(usedSegment.maxY - reclaimSegment.minY) <= 1.5 && abs(reclaimSegment.maxY - freeSegment.minY) <= 1.5
+                                && usedSegment.minY < reclaimSegment.minY && reclaimSegment.minY < freeSegment.minY,
+                              variant + " places used capacity at the bottom and immediately free capacity at the top")
+                        check(height > 0 && abs(usedSegment.height / height - CGFloat(Double(total - available) / Double(total))) <= 0.006
+                                && abs(freeSegment.height / height - CGFloat(Double(free) / Double(total))) <= 0.006
+                                && abs(reclaimSegment.height / height - CGFloat(Double(reclaim) / Double(total))) <= 0.006,
+                              variant + " preserves the measured segment proportions instead of enlarging small bands")
+                        print("DETAIL \(variant) used=\(usedSegment) reclaim=\(reclaimSegment) free=\(freeSegment)")
+                    }
+                    check(accessibilityText("space-cleaning-disk-percentage", host).contains("92%"), variant + " displays the real ninety-two-percent warning reading")
+                    try await capture(host, "cleanup-capacity-\(Int(size.width))-\(light ? "light" : "dark").png")
+                }
+            }
+            window.setContentSize(NSSize(width: 292, height: 680))
+            host.rootView = capacityFixture(total: total, available: free, free: free, reclaim: nil, light: true)
+            _ = await settle(window) { accessibilityText("space-cleaning-disk-reclaimable-value", host).contains("—") }
+            check(accessibilityText("space-cleaning-disk-reclaimable-value", host).contains("—")
+                    && frame("space-cleaning-disk-segment-reclaimable", host) == nil
+                    && accessibilityText("space-cleaning-disk-capacity-note", host).contains("未提供按需回收估算"),
+                  "missing reclaimable estimate remains unknown with an explicit fallback explanation")
+            check(accessibilityText("space-cleaning-disk-available-value", host).contains("42.3"),
+                  "missing reclaimable estimate uses the actual immediately free amount without adding a fabricated estimate")
+            try await capture(host, "cleanup-capacity-unknown.png")
+            host.rootView = capacityFixture(total: total, available: 0, free: 0, reclaim: 0, light: false)
+            _ = await settle(window) { accessibilityText("space-cleaning-disk-percentage", host).contains("100%") }
+            check(accessibilityText("space-cleaning-disk-available-value", host).contains("0")
+                    && accessibilityText("space-cleaning-disk-reclaimable-value", host).contains("0")
+                    && accessibilityText("space-cleaning-disk-percentage", host).contains("100%")
+                    && frame("space-cleaning-disk-segment-used", host) != nil
+                    && frame("space-cleaning-disk-segment-free", host) == nil && frame("space-cleaning-disk-segment-reclaimable", host) == nil,
+                  "measured zero availability stays zero with a full used band and no false free-space band")
+            try await capture(host, "cleanup-capacity-zero.png")
+        } catch { check(false, "capacity fixture: \(error)") }
         return (count, failures)
+    }
+
+    private static func capacityFixture(total: UInt64?, available: UInt64?, free: UInt64?, reclaim: UInt64?, light: Bool) -> some View {
+        SpaceCleaningCapacityCard(total: total, available: available, immediatelyFree: free, reclaimableEstimate: reclaim,
+            volumeName: "Fixture Volume", updatedAt: Date(timeIntervalSince1970: 1_800_000_000))
+            .background(WorkbenchFluidBackground())
+            .workbenchThemeEnvironment(theme: .qingbiMist, opacity: 0.7, backgroundMotion: false, appearance: light ? .light : .dark)
+            .environment(\.timeZone, TimeZone(identifier: "Asia/Shanghai")!)
+            .nativeCheckAccessibility()
+    }
+
+    private static func spread(_ values: [CGFloat]) -> CGFloat { (values.max() ?? 0) - (values.min() ?? 0) }
+
+    private static func accessibilityText(_ identifier: String, _ root: NSView) -> String {
+        var pending: [NSObject] = [root], visited = Set<ObjectIdentifier>(), strings: [String] = []
+        while let object = pending.popLast(), visited.count < 8192 {
+            guard visited.insert(ObjectIdentifier(object)).inserted else { continue }
+            if object.responds(to: NSSelectorFromString("accessibilityIdentifier")),
+               object.value(forKey: "accessibilityIdentifier") as? String == identifier {
+                for selector in ["accessibilityLabel", "accessibilityValue"] where object.responds(to: NSSelectorFromString(selector)) {
+                    if let value = object.value(forKey: selector) as? String { strings.append(value) }
+                }
+            }
+            if let view = object as? NSView { pending.append(contentsOf: view.subviews) }
+            if object.responds(to: NSSelectorFromString("accessibilityChildren")),
+               let children = object.value(forKey: "accessibilityChildren") as? [NSObject] { pending.append(contentsOf: children) }
+        }
+        return strings.joined(separator: " ")
     }
 
     private static func fixture(model: SpaceCleaningModel, light: Bool) -> some View {
