@@ -512,7 +512,6 @@ private struct WorkbenchHomeCardButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .overlay(RoundedRectangle(cornerRadius: radius).fill(configuration.isPressed ? HomeFluidPalette.green.opacity(0.075) : hovering ? highlight.opacity(colorScheme == .dark ? 0.3 : 1) : .clear).allowsHitTesting(false))
-            .overlay(RoundedRectangle(cornerRadius: radius).strokeBorder(.white.opacity(hovering ? (colorScheme == .dark ? 0.30 : 0.95) : 0), lineWidth: 1).allowsHitTesting(false))
             .contentShape(RoundedRectangle(cornerRadius: radius))
             .onHover { hovering = $0 }.clickableCursor()
             .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: hovering)

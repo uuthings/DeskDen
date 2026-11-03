@@ -8,7 +8,7 @@ Data remains connected to the existing device, calendar, weather, and cleanup se
 
 Calendar selection reveals that day's actual events and reminders in a compact attached section below the month, without opening a popover. It does not remove unrelated pending items from the home list. Events remain read-only; reminders retain completion, editing, and undo. Reminder colors distinguish known source types because custom source colors are not currently supplied by the data model.
 
-The white linear desk mark and DeskDen name form the brand entry, with no hover background. The compact desk mark is 20 points and the DeskDen name is 14 points. The version sits at the lower right of every page, on a subtle dark backing to remain legible over either artwork. The brand is display-only. The separate close-window control hides the workbench while the app keeps running; application quit remains in the macOS application and status menus. Available updates retain their dedicated header entry. The arrowless account menu only identifies the local macOS account; it does not imply an online sign-in service. A light stroke follows the greeting outline once every ten seconds; reduced motion, application inactivity, or a hidden window stops the animation. All modules and their dialogs share the new appearance. Their real data and actions remain connected to their existing models.
+The white linear desk mark and DeskDen name form the brand entry, with no hover background. The compact desk mark is 20 points and the DeskDen name is 14 points. The 10-point version follows the name on the same text baseline at the upper left; it no longer overlays the page footer. The brand is display-only. The separate close-window control hides the workbench while the app keeps running; application quit remains in the macOS application and status menus. Available updates retain their dedicated header entry. The arrowless account menu only identifies the local macOS account; it does not imply an online sign-in service. A light stroke follows the greeting outline once every ten seconds; reduced motion, application inactivity, or a hidden window stops the animation. All modules and their dialogs share the new appearance. Their real data and actions remain connected to their existing models.
 
 ## Shared appearance and layout
 
@@ -18,11 +18,17 @@ The 58-point top navigation and 24-point left/right content gutters stay fixed a
 
 ## Module entry and popups
 
+Standard action buttons and selectors share a fixed 32-point height and eight-point corner radius. Compact 28-point actions remain available for separate content rows, but do not mix with regular selectors in a toolbar. Neutral control borders keep the same color and width at rest, on hover and when pressed. Hover uses a gentle 180-millisecond fill transition without resizing; icon actions do not acquire a new outline. Reduced motion removes the transition. Supporting notes outside cards have a shared material backing so their text remains readable over both backgrounds.
+
+Mini display preferences use the same equal-width grid for header information, built-in cards and service cards, with up to four columns. Checkboxes have 16-point marks and 32-point rows. Changing the pointer preference does not reapply the window appearance or redraw every desktop widget; actual appearance and card preference changes keep their normal update paths.
+
 Primary navigation opens each module at its root, including when the current module is selected again. Internal links retain their requested detail. Existing readings, filters, selection and queries survive root navigation. Active cleaning scans or transactions keep their progress screen; open editors and unapplied price or scan-scope drafts must be saved or cancelled first. The Mini disk card opens space cleaning, while memory and thermal cards keep their corresponding device details.
 
 Custom selectors, the account view, usage icon choices, device meter styles and desktop-widget actions share an arrowless popup surface: a ten-point radius, five-point trigger gap, screen-edge placement, theme-aware material, and Escape/outside-click dismissal. Clicking the trigger again closes action popups. Native macOS status and context menus retain system behavior. Cleanup layout alternatives remain previews and do not change file operations.
 
 ## Local acceptance
+
+The focused `--control-surface-check` fixture verifies button/selector heights, neutral dropdown borders through feedback states, supporting-note contrast and checkbox stability after appearance and cursor updates. Its rendering window stays hidden; it neither moves the system pointer nor saves real preferences. Actual pointer and page-layout acceptance is performed separately.
 
 The opt-in `--home-fluid-check --interface-fluid-check` fixture exercises the mounted production home and all main routes in both appearances at regular, narrow and wide window sizes. It uses disposable data, disabled account sources and fake calendar/notification adapters. It checks real navigation and dialogs rather than screenshots alone. Mini appearance and layout checks use the separate `--mini-appearance-check` fixture. Neither fixture establishes real account availability or system permission grants.
 

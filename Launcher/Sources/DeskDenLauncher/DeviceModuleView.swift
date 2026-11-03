@@ -59,13 +59,15 @@ struct DeviceModuleView: View {
                     if model.dashboardLayout.cards.allSatisfy({ !$0.visible }) {
                         Button("从卡片库添加信息") { editing = true; library = true }.buttonStyle(WBButtonStyle()).padding(.top, 12)
                     }
-                    HStack(spacing: 10) {
-                        Text("本机状态 · 每 \(Int(model.samplingInterval)) 秒更新").foregroundStyle(.white.opacity(0.92)).shadow(color:.black.opacity(0.45),radius:2,y:1)
-                        Spacer()
-                        if editing { Button("恢复默认布局") { resetLayout = true }.buttonStyle(WBQuietButtonStyle()) }
-                        if model.undoLayout != nil { Button("撤销布局修改") { model.undoLayoutChange() }.buttonStyle(WBQuietButtonStyle()) }
-                        Button("数据来源") { sheet = .sensors }.buttonStyle(WBQuietButtonStyle())
-                    }.font(.system(size: 11)).environment(\.workbenchOnBackdrop, true).padding(.top, 14)
+                    WBPageNote(symbol: "waveform.path.ecg") {
+                        HStack(spacing: 10) {
+                            Text("本机状态 · 每 \(Int(model.samplingInterval)) 秒更新")
+                            Spacer()
+                            if editing { Button("恢复默认布局") { resetLayout = true }.buttonStyle(WBQuietButtonStyle()) }
+                            if model.undoLayout != nil { Button("撤销布局修改") { model.undoLayoutChange() }.buttonStyle(WBQuietButtonStyle()) }
+                            Button("数据来源") { sheet = .sensors }.buttonStyle(WBQuietButtonStyle())
+                        }
+                    }.padding(.top, 14)
                 }
             }.frame(maxWidth: .infinity, alignment: .topLeading).foregroundStyle(palette.text)
                 .background(GeometryReader { proxy in Color.clear.preference(key: DeviceContentWidth.self, value: proxy.size.width) })

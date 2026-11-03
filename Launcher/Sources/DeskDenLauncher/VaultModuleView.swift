@@ -182,7 +182,7 @@ private struct VaultUnlockedView:View {
             HStack(spacing:6){
                 WBSelect("筛选分类",selection:Binding(get:{model.categoryFilter},set:{_ = model.selectCategory($0,matching:query)}),options:[("all","全部分类")]+model.categoryOptions)
                 Button{categoryName="";editingCategoryID=nil;showCategories=true;model.recordActivity()}label:{Label("管理分类",systemImage:"folder.badge.gearshape")}
-                    .buttonStyle(WBButtonStyle(compact:true)).help("新增、重命名或删除分类").accessibilityIdentifier("fc.vault.categories.manage")
+                    .buttonStyle(WBButtonStyle()).help("新增、重命名或删除分类").accessibilityIdentifier("fc.vault.categories.manage")
             }
             WorkbenchScrollView {
                 LazyVStack(spacing:2) {

@@ -147,9 +147,9 @@ struct CalendarModuleView:View {
             Text(verbatim: "\(model.displayCalendar.component(.year,from:model.displayedMonth)) 年 \(model.displayCalendar.component(.month,from:model.displayedMonth)) 月")
                 .font(.system(size:12,weight:.medium)).lineLimit(1).fixedSize(horizontal:true,vertical:false)
             Spacer(minLength:4)
-            Button {move(-1)} label:{Image(systemName:"chevron.left")}.buttonStyle(WBIconButtonStyle(size:28)).accessibilityLabel(model.presentationMode == .week ? "上一周":"上个月")
-            Button("今天"){model.goToToday()}.buttonStyle(WBButtonStyle(compact:true))
-            Button {move(1)} label:{Image(systemName:"chevron.right")}.buttonStyle(WBIconButtonStyle(size:28)).accessibilityLabel(model.presentationMode == .week ? "下一周":"下个月")
+            Button {move(-1)} label:{Image(systemName:"chevron.left")}.buttonStyle(WBIconButtonStyle(size:WBControlMetrics.regularHeight)).accessibilityLabel(model.presentationMode == .week ? "上一周":"上个月")
+            Button("今天"){model.goToToday()}.buttonStyle(WBButtonStyle())
+            Button {move(1)} label:{Image(systemName:"chevron.right")}.buttonStyle(WBIconButtonStyle(size:WBControlMetrics.regularHeight)).accessibilityLabel(model.presentationMode == .week ? "下一周":"下个月")
             WBSelect("视图",selection:$model.presentationMode,options:CalendarPresentationMode.allCases.map{(value:$0,title:$0.title)}).frame(width:58,height:32).accessibilityIdentifier("fc.calendar.view-mode")
         }
     }

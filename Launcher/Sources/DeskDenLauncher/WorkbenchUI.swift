@@ -38,6 +38,13 @@ enum WorkbenchViewport {
     static let windowRadius: CGFloat = 12
 }
 
+enum WBControlMetrics {
+    static let regularHeight: CGFloat = 32
+    static let compactHeight: CGFloat = 28
+    static let cornerRadius: CGFloat = 8
+    static let hoverDuration: Double = 0.18
+}
+
 /// Compatibility tokens for existing content. New reusable components obtain
 /// their theme from the environment instead of sharing mutable global state.
 enum WorkbenchStyle {
@@ -61,6 +68,7 @@ struct WBSelect<Value: Hashable>: NSViewRepresentable {
     @Environment(\.workbenchOpacity) private var opacity
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.workbenchControlBorders) private var showsBorder
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(_ title: String, selection: Binding<Value>, options: [(value: Value, title: String)]) {
         self.title = title; self._selection = selection; self.options = options
@@ -105,6 +113,7 @@ struct WBSelect<Value: Hashable>: NSViewRepresentable {
         button.interfaceOpacity = opacity
         button.interfaceLight = colorScheme == .light
         button.showsBorder = showsBorder
+        button.reduceMotion = reduceMotion
         button.setAccessibilityLabel(title)
         button.setAccessibilityValue(selectionIndex.map { options[$0].title } ?? "未选择")
         button.toolTip = title
@@ -113,7 +122,7 @@ struct WBSelect<Value: Hashable>: NSViewRepresentable {
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: WBPopUpButton, context: Context) -> CGSize? {
         let naturalWidth = max(120, nsView.cell?.cellSize.width ?? 160)
-        return CGSize(width: proposal.width ?? naturalWidth, height: 32)
+        return CGSize(width: proposal.width ?? naturalWidth, height: WBControlMetrics.regularHeight)
     }
 
     @MainActor final class Coordinator: NSObject {
@@ -143,22 +152,26 @@ class WBPopUpButton: ClickablePopUpButton {
         if [49, 36, 76, 125, 126].contains(event.keyCode) { openChoiceList() } else { super.keyDown(with: event) }
     }
     override func viewWillMove(toWindow newWindow: NSWindow?) {
-        if newWindow == nil { choicePanel?.dismiss() }; super.viewWillMove(toWindow: newWindow)
+        if newWindow == nil { choicePanel?.dismiss(); feedbackTask?.cancel(); feedbackTask = nil }
+        super.viewWillMove(toWindow: newWindow)
     }
-    fileprivate func choiceListDismissed() { choicePanel = nil; needsDisplay = true }
+    fileprivate func choiceListDismissed() { choicePanel = nil; updateFeedback() }
     private func openChoiceList() {
         guard isEnabled, !itemArray.isEmpty else { return }
         if let choicePanel { choicePanel.dismiss(); return }
-        let panel = WBChoicePopup(anchor: self); choicePanel = panel; panel.present(); needsDisplay = true
+        let panel = WBChoicePopup(anchor: self); choicePanel = panel; panel.present(); updateFeedback()
     }
     var workbenchTheme: LauncherTheme = .arWorld
     var interfaceOpacity: Double = 0.70
     var interfaceLight = false
     var showsBorder = true
+    var reduceMotion = false
     private var hovering = false
     private var hoverArea: NSTrackingArea?
+    private var feedbackOpacity: CGFloat = 0
+    private var feedbackTask: Task<Void, Never>?
     override var isEnabled: Bool {
-        didSet { if !isEnabled { hovering = false }; needsDisplay = true }
+        didSet { if oldValue != isEnabled { if !isEnabled { hovering = false }; updateFeedback() } }
     }
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -166,9 +179,9 @@ class WBPopUpButton: ClickablePopUpButton {
         let area = NSTrackingArea(rect: .zero, options: [.activeInKeyWindow, .inVisibleRect, .mouseEnteredAndExited], owner: self, userInfo: nil)
         addTrackingArea(area); hoverArea = area
     }
-    override func mouseEntered(with event: NSEvent) { hovering = isEnabled; needsDisplay = true }
-    override func mouseExited(with event: NSEvent) { hovering = false; needsDisplay = true }
-    override func highlight(_ flag: Bool) { super.highlight(flag); needsDisplay = true }
+    override func mouseEntered(with event: NSEvent) { hovering = isEnabled; updateFeedback() }
+    override func mouseExited(with event: NSEvent) { hovering = false; updateFeedback() }
+    override func highlight(_ flag: Bool) { super.highlight(flag); updateFeedback() }
     override func becomeFirstResponder() -> Bool {
         let accepted = super.becomeFirstResponder(); needsDisplay = true; return accepted
     }
@@ -180,17 +193,32 @@ class WBPopUpButton: ClickablePopUpButton {
     // Our custom surface already occupies the full shared 32-point control frame.
     override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0) }
     override var intrinsicContentSize: NSSize {
-        NSSize(width: super.intrinsicContentSize.width, height: 32)
+        NSSize(width: super.intrinsicContentSize.width, height: WBControlMetrics.regularHeight)
+    }
+    private func updateFeedback() {
+        feedbackTask?.cancel()
+        let target: CGFloat = !isEnabled ? 0 : isHighlighted ? 0.14 : (hovering || choicePanel != nil) ? 0.08 : 0
+        guard !reduceMotion, window != nil else { feedbackOpacity = target; needsDisplay = true; return }
+        let initial = feedbackOpacity
+        feedbackTask = Task { @MainActor [weak self] in
+            for step in 1...12 {
+                try? await Task.sleep(for: .milliseconds(15))
+                guard !Task.isCancelled, let self else { return }
+                let progress = CGFloat(step) / 12
+                let eased = 1 - (1 - progress) * (1 - progress)
+                self.feedbackOpacity = initial + (target - initial) * eased
+                self.needsDisplay = true
+            }
+        }
     }
     override func draw(_ dirtyRect: NSRect) {
         let rect = bounds.insetBy(dx: 0.5, dy: 0.5)
         let path = NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8)
         let palette = ThemePalette(theme: workbenchTheme, opacity: interfaceOpacity, light: interfaceLight)
         NSColor(palette.control).setFill(); path.fill()
-        let active = isEnabled && (hovering || window?.firstResponder === self || choicePanel != nil), pressed = isEnabled && isHighlighted
-        if active || pressed { palette.nsAccent.withAlphaComponent(pressed ? 0.25 : 0.15).setFill(); path.fill() }
+        if feedbackOpacity > 0 { palette.nsAccent.withAlphaComponent(feedbackOpacity).setFill(); path.fill() }
         if showsBorder {
-            (active || pressed ? palette.nsAccent.withAlphaComponent(pressed ? 0.66 : 0.48) : NSColor(palette.controlBorder)).setStroke()
+            NSColor(palette.controlBorder).setStroke()
             path.lineWidth = 1; path.stroke()
         }
         let color = palette.nsText.withAlphaComponent(isEnabled ? 1 : 0.4)
@@ -313,22 +341,27 @@ struct WBButtonStyle: ButtonStyle {
     @Environment(\.workbenchScale) private var displayScale
     @Environment(\.isEnabled) private var enabled
     @Environment(\.workbenchPalette) private var palette
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hovering = false
     func makeBody(configuration: Configuration) -> some View {
         let hovered = enabled && hovering
         let pressed = enabled && configuration.isPressed
         let tone = destructive ? palette.critical : palette.accent
-        let shape = RoundedRectangle(cornerRadius: 8)
+        let shape = RoundedRectangle(cornerRadius: WBControlMetrics.cornerRadius)
         return configuration.label
             .font(.system(size: (compact ? 11 : 12) * displayScale, weight: primary ? .medium : .regular))
             .multilineTextAlignment(.center)
+            .lineLimit(1)
             .padding(.horizontal, (compact ? 8 : 11) * displayScale)
-            .frame(minHeight: (compact ? 28 : 32) * displayScale, alignment: .center)
-            .foregroundStyle(primary ? palette.primaryText : destructive ? palette.critical : hovered ? palette.text : palette.secondary)
+            .frame(height: (compact ? WBControlMetrics.compactHeight : WBControlMetrics.regularHeight) * displayScale, alignment: .center)
+            .foregroundStyle(primary ? palette.primaryText : destructive ? palette.critical : palette.secondary)
             .background(shape.fill(primary ? palette.primary : palette.control))
-            .overlay(shape.fill(primary ? Color.black.opacity(pressed ? 0.22 : hovered ? 0.12 : 0) : tone.opacity(pressed ? 0.25 : hovered ? 0.15 : 0)).allowsHitTesting(false))
-            .overlay(shape.strokeBorder(primary ? (hovered || pressed ? palette.primaryText.opacity(0.35) : palette.primary.opacity(0.50)) : hovered || pressed ? tone.opacity(pressed ? 0.66 : 0.48) : palette.controlBorder, lineWidth: showsBorder ? 1 : 0).allowsHitTesting(false))
+            .overlay(shape.fill(primary ? Color.black.opacity(pressed ? 0.12 : hovered ? 0.06 : 0) : tone.opacity(pressed ? 0.14 : hovered ? 0.08 : 0)).allowsHitTesting(false))
+            .overlay(shape.strokeBorder(primary ? palette.primary : palette.controlBorder, lineWidth: showsBorder ? 1 : 0).allowsHitTesting(false))
             .contentShape(shape).opacity(enabled ? 1 : 0.4)
+            .focusEffectDisabled()
+            .animation(reduceMotion ? nil : .easeOut(duration: WBControlMetrics.hoverDuration), value: hovered)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: pressed)
             .onHover { hovering = $0 }.clickableCursor()
     }
 }
@@ -419,10 +452,13 @@ private struct WBInteractionOverlay: View {
     let pressed: Bool
     var selected = false
     var showsBorder = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius)
-        shape.fill(tint.opacity(pressed ? 0.25 : hovering ? 0.15 : 0))
-            .overlay(shape.strokeBorder(tint.opacity(showsBorder ? (pressed ? 0.66 : hovering ? 0.44 : selected ? 0.30 : 0) : 0), lineWidth: 1))
+        shape.fill(tint.opacity(pressed ? 0.14 : hovering ? 0.08 : 0))
+            .overlay(shape.strokeBorder(tint.opacity(showsBorder && selected ? 0.30 : 0), lineWidth: 1))
+            .animation(reduceMotion ? nil : .easeOut(duration: WBControlMetrics.hoverDuration), value: hovering)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: pressed)
             .allowsHitTesting(false).accessibilityHidden(true)
     }
 }

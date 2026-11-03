@@ -354,14 +354,9 @@ struct DeviceRuleHelp: View {
     var notice = false
     var body: some View {
         if notice {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "info.circle").font(.system(size: 14)).padding(.top, 1).accessibilityHidden(true)
+            WBPageNote {
                 Text(text).font(.system(size: 11)).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }.foregroundStyle(palette.secondary).padding(.vertical, 10).padding(.horizontal, 12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(palette.soft, in: RoundedRectangle(cornerRadius: 8))
-                .accessibilityElement(children: .combine)
+            }.accessibilityElement(children: .combine)
         } else {
             Text(text).font(.system(size: 11)).foregroundStyle(palette.muted).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
         }

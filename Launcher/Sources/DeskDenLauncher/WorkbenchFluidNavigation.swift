@@ -58,10 +58,18 @@ struct WorkbenchFluidNavigation: View {
         HStack(spacing: 7) {
             WorkbenchFluidDeskGlyph().stroke(style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
                 .frame(width: 20, height: 20).accessibilityHidden(true)
-            Text("DeskDen").font(.system(size: 14, weight: .medium)).tracking(0.25)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("DeskDen").font(.system(size: 14, weight: .medium)).tracking(0.25)
+                Text(version).font(.system(size: 10)).foregroundStyle(.white.opacity(0.90))
+                    .accessibilityIdentifier("fc.home.version")
+            }.fixedSize()
         }.foregroundStyle(.white).padding(.vertical, 3)
-            .accessibilityElement(children: .ignore).accessibilityLabel("DeskDen")
+            .accessibilityElement(children: .contain).accessibilityLabel("DeskDen " + version)
             .accessibilityIdentifier("window-brand")
+    }
+
+    private var version: String {
+        "v" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")
     }
 
     private func navigation(_ route: WorkbenchRoute) -> some View {
@@ -271,7 +279,7 @@ private struct WorkbenchFluidSettingsTab: View {
             }.padding(.horizontal, 12).frame(height: 32)
                 .foregroundStyle(selected || hovered || focused ? FluidNavigationColors.ink : .white)
                 .background(Color.white.opacity(selected || hovered || focused ? 0.94 : 0.05), in: Capsule())
-                .overlay(Capsule().strokeBorder(Color.white.opacity(selected || hovered || focused ? 1 : 0.31), lineWidth: 1))
+                .overlay(Capsule().strokeBorder(Color.white.opacity(0.31), lineWidth: 1))
                 .contentShape(Capsule())
         }.buttonStyle(FluidNavigationButtonStyle(suppressMotion: suppressMotion)).focused($focused).focusEffectDisabled().onHover { hovered = $0 }
             .animation(FluidNavigationMotion.transition(disabled: reduceMotion || suppressMotion), value: hovered || focused || selected)

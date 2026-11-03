@@ -44,11 +44,15 @@ struct NetworkMonitorView: View {
                 VStack(spacing: 12) {
                     liveCard
                     periodCard
-                    HStack(alignment: .top, spacing: 16) {
-                        Label("睡眠、退出和采集间断不补记流量；预算仅提醒，不限速。", systemImage: "info.circle")
-                        Spacer(minLength: 8)
-                        Text("记录时区 · \(summary.timeZoneIdentifier)")
-                    }.font(.system(size: 11)).foregroundStyle(.white.opacity(0.92)).shadow(color:.black.opacity(0.45),radius:2,y:1)
+                    WBPageNote {
+                        HStack(alignment: .top, spacing: 16) {
+                            Text("睡眠、退出和采集间断不补记流量；预算仅提醒，不限速。")
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 8)
+                            Text("记录时区 · \(summary.timeZoneIdentifier)")
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
                 }
                 if let error = model.lastError ?? model.monitoringError {
                     Text(error).font(.system(size: 11)).foregroundStyle(palette.warning).padding(.top, 12)
@@ -85,7 +89,7 @@ struct NetworkMonitorView: View {
                 Spacer(minLength: 8)
                 WBSelect("实时接口", selection: interfaceBinding, options: interfaceOptions).frame(width: expanded ? 180 : 155)
                     .accessibilityIdentifier("fc.field.networkInterface")
-                Button { interfaceSheet = .networkOptions } label: { Image(systemName: "ellipsis") }.buttonStyle(WBIconButtonStyle()).help("管理实时网卡与本次记录")
+                Button { interfaceSheet = .networkOptions } label: { Image(systemName: "ellipsis") }.buttonStyle(WBIconButtonStyle(size: WBControlMetrics.regularHeight)).help("管理实时网卡与本次记录")
             }.frame(height: 32)
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: expanded ? 30 : compact ? 16 : 22) {

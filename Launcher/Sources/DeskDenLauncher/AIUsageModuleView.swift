@@ -316,12 +316,14 @@ struct AIUsageModuleView: View {
         }
     }
     private var privacyFootnote: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "lock.shield").font(.system(size: 11))
-            Text("仅保存本机计量字段，不保存提示词或对话正文").aiText(11, color: palette.muted)
-            Spacer()
-            Button("口径说明") { model.present(.help) }.buttonStyle(WBQuietButtonStyle())
-        }.foregroundStyle(palette.muted)
+        WBPageNote(symbol: "lock.shield") {
+            HStack(spacing: 8) {
+                Text("仅保存本机计量字段，不保存提示词或对话正文")
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                Button("口径说明") { model.present(.help) }.buttonStyle(WBQuietButtonStyle())
+            }
+        }
     }
     private func providerDetail(_ provider: AIProvider) -> some View {
         let value = summary(provider)

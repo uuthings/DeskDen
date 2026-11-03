@@ -69,7 +69,7 @@ struct WorkbenchSettingsView: View {
                         WBSelect("设备采样间隔", selection: Binding(get: { model.preferences.sampleInterval }, set: model.changeSampleInterval), options: [1.0, 2, 5].map { (value: $0, title: "\(Int($0)) 秒") }).frame(width: 174)
                     }
                     settingsRow("本机数据目录", "管理配置与本机历史记录", last: true) {
-                        Button("在访达中打开") { model.revealDataDirectory() }.buttonStyle(WBButtonStyle(compact: true))
+                        Button("在访达中打开") { model.revealDataDirectory() }.buttonStyle(WBButtonStyle())
                     }
                 }
             }
@@ -214,21 +214,33 @@ private struct WorkbenchMiniDisplaySettings: View {
     @ObservedObject var providers: ProviderUsageModel
     @ObservedObject var balances: APIBalanceModel
     @Environment(\.workbenchPalette) private var palette
+    @Environment(\.workbenchPageWidth) private var pageWidth
+    private var columns: [GridItem] {
+        let count = max(1, min(4, Int((max(0, pageWidth - 28) + 12) / 172)))
+        return Array(repeating: GridItem(.flexible(minimum: 0), spacing: 12, alignment: .leading), count: count)
+    }
     var body: some View {
         WBCard(title: "Mini 显示内容", symbol: "rectangle.topthird.inset.filled", spacing: 14) {
-            HStack(spacing: 20) {
-                Toggle("日期时间", isOn: Binding(get: { controller.preferences.showDate }, set: { controller.setMiniHeader(date: $0, weather: controller.preferences.showWeather) }))
-                Toggle("城市天气", isOn: Binding(get: { controller.preferences.showWeather }, set: { controller.setMiniHeader(date: controller.preferences.showDate, weather: $0) }))
+            HStack {
+                Text("顶部信息").font(.system(size: 11, weight: .medium)).foregroundStyle(palette.secondary)
                 Spacer()
                 Button("恢复默认", action: controller.restoreMiniSections).buttonStyle(WBButtonStyle(compact: true))
-            }.toggleStyle(.checkbox).font(.system(size: 12))
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), alignment: .leading)], alignment: .leading, spacing: 12) {
+                    .accessibilityIdentifier("mini-display-restore-defaults")
+            }
+            LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
+                Toggle("日期时间", isOn: Binding(get: { controller.preferences.showDate }, set: { controller.setMiniHeader(date: $0, weather: controller.preferences.showWeather) }))
+                    .accessibilityIdentifier("mini-display-date")
+                Toggle("城市天气", isOn: Binding(get: { controller.preferences.showWeather }, set: { controller.setMiniHeader(date: controller.preferences.showDate, weather: $0) }))
+                    .accessibilityIdentifier("mini-display-weather")
+            }
+            Text("卡片内容").font(.system(size: 11, weight: .medium)).foregroundStyle(palette.secondary)
+            LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
                 ForEach(WorkbenchMiniCardID.builtIn) { card in cardToggle(card, title: card.title) }
             }
             if !providers.sources.isEmpty || !balances.sources.isEmpty {
-                Text("服务额度").font(.system(size: 11, weight: .medium)).foregroundStyle(palette.muted)
+                Text("服务额度").font(.system(size: 11, weight: .medium)).foregroundStyle(palette.secondary)
                 WorkbenchScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), alignment: .leading)], alignment: .leading, spacing: 12) {
+                    LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
                         ForEach(providers.sources) { source in cardToggle(.provider(source.id), title: source.name) }
                         ForEach(balances.sources) { source in cardToggle(.apiBalance(source.id), title: source.name) }
                     }.padding(.vertical, 2)
@@ -237,11 +249,12 @@ private struct WorkbenchMiniDisplaySettings: View {
             Text("在 Mini 编辑模式中拖动或使用方向键调整顺序。每张卡片宽 220 点，空间不足时分页；城市、时区和温度单位沿用首页设置。")
                 .font(.system(size: 11)).foregroundStyle(palette.muted)
             if let error = controller.error { Text(error).font(.system(size: 11)).foregroundStyle(palette.warning) }
-        }
+        }.toggleStyle(WBCheckboxToggleStyle())
+            .accessibilityElement(children: .contain).accessibilityIdentifier("mini-display-settings")
     }
     private func cardToggle(_ card: WorkbenchMiniCardID, title: String) -> some View {
         Toggle(title, isOn: Binding(get: { controller.preferences.activeCards(available: controller.availableMiniCards).contains(card) }, set: { controller.setMiniCard(card, visible: $0) }))
-            .toggleStyle(.checkbox).font(.system(size: 12)).lineLimit(1).help(title)
+            .help(title).accessibilityIdentifier("mini-display-card-" + card.rawValue)
     }
 }
 

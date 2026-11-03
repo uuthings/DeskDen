@@ -233,19 +233,32 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         device.setWidgetsVisible(preferences.cards.contains(where:{$0.visible && $0.id == .device}) || (windowVisible && route == .settings && settingsTab == .widgets))
     }
     func syncAppearance() {
-        guard let owner else {return};opacity=owner.configuration.settings.glassOpacity;appearance=owner.configuration.settings.workbenchAppearance
-        buttonHoverCursor=owner.configuration.settings.buttonHoverCursor
-        light=appearance == .light || (appearance == .system && NSApp.effectiveAppearance.bestMatch(from:[.aqua,.darkAqua]) == .aqua)
-        theme=owner.configuration.settings.workbenchTheme;backgroundMotion=owner.configuration.settings.backgroundMotionEnabled;reduceMotion=owner.configuration.settings.reduceMotion
-        cleaning.reduceMotion=reduceMotion
+        guard let owner else {return}
+        let settings=owner.configuration.settings
+        let nextAppearance=settings.workbenchAppearance
+        let nextLight=nextAppearance == .light || (nextAppearance == .system && NSApp.effectiveAppearance.bestMatch(from:[.aqua,.darkAqua]) == .aqua)
+        let materialChanged=opacity != settings.glassOpacity || appearance != nextAppearance || light != nextLight || theme != settings.workbenchTheme
+        // All settings publish this notification, including cursor changes.
+        // Only changed visual preferences should invalidate native surfaces.
+        if opacity != settings.glassOpacity {opacity=settings.glassOpacity}
+        if appearance != nextAppearance {appearance=nextAppearance}
+        if buttonHoverCursor != settings.buttonHoverCursor {buttonHoverCursor=settings.buttonHoverCursor}
+        if light != nextLight {light=nextLight}
+        if theme != settings.workbenchTheme {theme=settings.workbenchTheme}
+        if backgroundMotion != settings.backgroundMotionEnabled {backgroundMotion=settings.backgroundMotionEnabled}
+        if reduceMotion != settings.reduceMotion {reduceMotion=settings.reduceMotion}
+        if cleaning.reduceMotion != reduceMotion {cleaning.reduceMotion=reduceMotion}
         Palette.workbenchTheme=theme;Palette.isLight=light;Palette.glassOpacity=opacity
-        hostWindow?.appearance=appearance == .system ? nil:NSAppearance(named:light ? .aqua:.darkAqua)
-        widgets.apply(preferences.cards,opacity:opacity,light:light,theme:theme)
+        let appearanceName:NSAppearance.Name?=appearance == .system ? nil:(light ? .aqua:.darkAqua)
+        if hostWindow?.appearance?.name != appearanceName {hostWindow?.appearance=appearanceName.flatMap(NSAppearance.init(named:))}
+        // Card visibility/position changes are applied by applyPreferences().
+        if materialChanged {widgets.apply(preferences.cards,opacity:opacity,light:light,theme:theme)}
     }
     func changeOpacity(_ value:Double) {guard owner?.setGlobalGlassOpacity(value) == true else {message=owner?.lastSaveError;return};syncAppearance()}
     func changeButtonHoverCursor(_ value:ButtonHoverCursor) {
+        guard value != buttonHoverCursor else {return}
         guard let owner,owner.updateSettings({$0.buttonHoverCursor=value}) else {message=owner?.lastSaveError;return}
-        syncAppearance()
+        buttonHoverCursor=value
     }
     func changeLight(_ value:Bool) {changeAppearance(value ? .light:.dark)}
     func changeAppearance(_ value:LauncherAppearance) {

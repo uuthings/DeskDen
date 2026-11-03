@@ -42,7 +42,7 @@ struct ThemePalette: Sendable {
     var navBorder: Color { accent.opacity(light ? 0.24 : 0.32) }
     var soft: Color { accent.opacity(0.08) }
     var control: Color { token(light ? 0xFFFFFF : 0xD4E2E6, light ? 0.66 : 0.07) }
-    var controlBorder: Color { token(light ? 0xFFFFFF : 0xD4E2E6, light ? 0.65 : 0.22) }
+    var controlBorder: Color { token(light ? 0x50676D : 0xD4E2E6, light ? 0.24 : 0.22) }
     var progressTrack: Color { token(light ? 0x3D7882 : 0x9EC6C1, light ? 0.12 : 0.13) }
     var shadow: Color { token(0x061014, light ? 0.04 : 0.12) }
     var highlight: Color { token(0xFFFFFF, light ? 0.16 : 0.08) }

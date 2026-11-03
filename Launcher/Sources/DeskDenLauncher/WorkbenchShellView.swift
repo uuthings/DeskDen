@@ -94,15 +94,6 @@ struct WorkbenchRootView: View {
                     .blur(radius: model.modals.isPresented || model.confirmingQuit || model.quitting ? 8 : 0)
                     .disabled(model.modals.isPresented || model.confirmingQuit || model.quitting)
                     .accessibilityHidden(model.modals.isPresented || model.confirmingQuit)
-                if !model.modals.isPresented && !model.confirmingQuit {
-                    Text("v" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"))
-                        .font(.system(size: 10)).foregroundStyle(.white.opacity(0.92))
-                        .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(Color.black.opacity(0.24), in: Capsule())
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                        .padding(.trailing, gutter).padding(.bottom, 9)
-                        .allowsHitTesting(false).accessibilityIdentifier("fc.home.version")
-                }
                 WorkbenchModalHost(coordinator:model.modals)
                 WorkbenchContextDialogs(model:model.context)
                 CalendarDialogs(model:model.calendar,context:model.context)
