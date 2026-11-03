@@ -3,8 +3,8 @@ import CoreText
 import QuartzCore
 import SwiftUI
 
-/// The glyph outlines stay readable while a short light stroke travels along
-/// them. Core Animation owns the frames; the dashboard is not redrawn at 60 Hz.
+/// A slow tracing stroke and a restrained brightness swell share one ten-second
+/// cycle. Core Animation owns the frames; the dashboard is not redrawn at 60 Hz.
 struct WorkbenchOutlinedText: NSViewRepresentable {
     var text: String
     var fontSize: CGFloat = 56
@@ -34,6 +34,7 @@ final class WorkbenchOutlinedTextView: NSView {
     private let lightStroke = CAShapeLayer()
     private var sourcePath: CGPath?
     private var signature = ""
+    private var laidOutBounds = CGRect.null
     private var animationAllowed = false
     private var leading = false
     // Only the main actor installs these tokens; deinit only unregisters them.
@@ -53,8 +54,8 @@ final class WorkbenchOutlinedTextView: NSView {
             layer?.addSublayer(shape)
         }
         lightStroke.shadowColor = NSColor.white.cgColor
-        lightStroke.shadowRadius = 1.3
-        lightStroke.shadowOpacity = 0.65
+        lightStroke.shadowRadius = 0.8
+        lightStroke.shadowOpacity = 0.30
         lightStroke.shadowOffset = .zero
         setAccessibilityElement(false)
         let names: [Notification.Name] = [
@@ -83,18 +84,22 @@ final class WorkbenchOutlinedTextView: NSView {
 
     func configure(text: String, fontSize: CGFloat, letterSpacing: CGFloat,
                    lineWidth: CGFloat, animates: Bool, leading: Bool = false) {
-        if self.leading != leading { self.leading = leading; needsLayout = true }
+        if self.leading != leading { self.leading = leading; laidOutBounds = .null; needsLayout = true }
         let newSignature = "\(text)|\(fontSize)|\(letterSpacing)"
         if signature != newSignature {
             signature = newSignature
             sourcePath = Self.glyphPath(text: text, fontSize: fontSize, letterSpacing: letterSpacing)
+            laidOutBounds = .null
             needsLayout = true
         }
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        outline.lineWidth = lineWidth
-        lightStroke.lineWidth = lineWidth + 0.45
-        CATransaction.commit()
+        if outline.lineWidth != lineWidth {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            outline.lineWidth = lineWidth
+            lightStroke.lineWidth = lineWidth + 0.20
+            CATransaction.commit()
+            laidOutBounds = .null; needsLayout = true
+        }
         animationAllowed = animates
         updateAnimationState()
     }
@@ -117,6 +122,7 @@ final class WorkbenchOutlinedTextView: NSView {
     override func layout() {
         super.layout()
         guard let sourcePath else { return }
+        guard laidOutBounds != bounds else { updateAnimationState(); return }
         let sourceBounds = sourcePath.boundingBoxOfPath
         guard sourceBounds.width > 0, sourceBounds.height > 0 else { return }
         let scale = min(1, max(0, bounds.width - outline.lineWidth) / sourceBounds.width, max(0, bounds.height - outline.lineWidth) / sourceBounds.height)
@@ -132,11 +138,14 @@ final class WorkbenchOutlinedTextView: NSView {
             shape.contentsScale = window?.backingScaleFactor ?? 2
         }
         CATransaction.commit()
+        laidOutBounds = bounds
         updateAnimationState()
     }
 
     func stopAnimating() {
+        guard !lightStroke.isHidden || outline.animation(forKey: "welcome-outline-breath") != nil else { return }
         lightStroke.removeAnimation(forKey: "welcome-light-stroke")
+        outline.removeAnimation(forKey: "welcome-outline-breath")
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         outline.opacity = 0.94
@@ -154,20 +163,34 @@ final class WorkbenchOutlinedTextView: NSView {
         guard lightStroke.animation(forKey: "welcome-light-stroke") == nil else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        outline.opacity = 0.72
+        outline.opacity = 0.86
+        lightStroke.opacity = 0
         lightStroke.isHidden = false
         CATransaction.commit()
         let end = CAKeyframeAnimation(keyPath: "strokeEnd")
-        end.values = [0, 1, 1]
-        end.keyTimes = [0, 0.25, 1]
+        end.values = [0, 0, 1, 1]
+        end.keyTimes = [0, 0.08, 0.44, 1]
         let start = CAKeyframeAnimation(keyPath: "strokeStart")
         start.values = [0, 0, 1, 1]
-        start.keyTimes = [0, 0.045, 0.30, 1]
+        start.keyTimes = [0, 0.13, 0.49, 1]
+        let brightness = CAKeyframeAnimation(keyPath: "opacity")
+        brightness.values = [0, 0, 0.70, 0.70, 0, 0]
+        brightness.keyTimes = [0, 0.07, 0.14, 0.42, 0.50, 1]
         let group = CAAnimationGroup()
-        group.animations = [end, start]
+        group.animations = [end, start, brightness]
         group.duration = 10
         group.repeatCount = .infinity
-        group.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        group.timingFunction = CAMediaTimingFunction(name: .linear)
+        let breath = CAKeyframeAnimation(keyPath: "opacity")
+        breath.values = [0.86, 0.86, 0.97, 0.86, 0.86]
+        breath.keyTimes = [0, 0.08, 0.28, 0.54, 1]
+        breath.duration = 10
+        breath.repeatCount = .infinity
+        breath.timingFunctions = Array(repeating: CAMediaTimingFunction(name: .easeInEaseOut), count: 4)
+        let begin = CACurrentMediaTime()
+        group.beginTime = lightStroke.convertTime(begin, from: nil)
+        breath.beginTime = outline.convertTime(begin, from: nil)
+        outline.add(breath, forKey: "welcome-outline-breath")
         lightStroke.add(group, forKey: "welcome-light-stroke")
     }
 

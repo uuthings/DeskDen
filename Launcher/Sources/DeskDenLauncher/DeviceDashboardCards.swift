@@ -451,6 +451,82 @@ enum DeviceChartAxisMetrics {
         return max(minimum, ceil(measured) + 2)
     }
 }
+/// One linear projection per view update. Canvas redraws must not repeatedly
+/// filter an hour of history and rescan the axis range for every painted point.
+struct DeviceHistoryChartData {
+    struct Sample {
+        var segment: UUID
+        var location: CGPoint?
+    }
+    let end: Date
+    let visible: [DeviceHistoryPoint]
+    let series: [[Sample]]
+    let minValue: Double
+    let maxValue: Double
+    let hasReadings: Bool
+
+    init(points: [DeviceHistoryPoint], kind: DeviceChartKind, minutes: Int, networkScale: Bool, now: Date = Date()) {
+        let end = points.last?.date ?? now
+        self.end = end
+        let duration = Double(max(1, minutes) * 60)
+        let visible = points.filter { end.timeIntervalSince($0.date) <= duration }
+        self.visible = visible
+        let values = visible.map { Self.values($0, kind: kind) }
+        let finite = values.flatMap { $0.compactMap { $0 }.filter(\.isFinite) }
+        hasReadings = !finite.isEmpty
+        let minValue: Double, maxValue: Double
+        switch kind {
+        case .cpu, .memory:
+            minValue = 0; maxValue = 100
+        case .thermal:
+            minValue = max(0, ((finite.min() ?? 40) / 10).rounded(.down) * 10 - 5)
+            maxValue = max(70, ((finite.max() ?? 60) / 10).rounded(.up) * 10 + 10)
+        case .network:
+            minValue = 0
+            let maximum = max(1024, (finite.max() ?? 0) * 1.15)
+            let divisor: Double = maximum >= 1_048_576 ? 1_048_576 : 1024
+            maxValue = networkScale ? ceil(maximum / divisor) * divisor : maximum
+        }
+        self.minValue = minValue; self.maxValue = maxValue
+        let range = maxValue - minValue
+        series = (0..<(kind == .network || kind == .thermal ? 2 : 1)).map { index in
+            zip(visible, values).map { point, readings in
+                let location = readings[index].flatMap { value -> CGPoint? in
+                    guard value.isFinite else { return nil }
+                    return CGPoint(x: 1 - end.timeIntervalSince(point.date) / duration,
+                                   y: 1 - (min(maxValue, max(minValue, value)) - minValue) / range)
+                }
+                return Sample(segment: point.segment, location: location)
+            }
+        }
+    }
+
+    static func values(_ point: DeviceHistoryPoint, kind: DeviceChartKind) -> [Double?] {
+        switch kind {
+        case .cpu: [point.cpuPercent]
+        case .network: [point.downloadBytesPerSecond, point.uploadBytesPerSecond]
+        case .thermal: [point.cpuTemperature, point.gpuTemperature]
+        case .memory: [point.memoryPercent]
+        }
+    }
+
+    func segments(series index: Int, size: CGSize) -> [[CGPoint]] {
+        guard series.indices.contains(index) else { return [] }
+        var result: [[CGPoint]] = [], current: [CGPoint] = [], previous: UUID?
+        for sample in series[index] {
+            guard let location = sample.location else {
+                if !current.isEmpty { result.append(current) }
+                current = []; previous = nil; continue
+            }
+            if previous != sample.segment && !current.isEmpty { result.append(current); current = [] }
+            current.append(CGPoint(x: size.width * location.x, y: size.height * location.y))
+            previous = sample.segment
+        }
+        if !current.isEmpty { result.append(current) }
+        return result
+    }
+}
+
 struct DeviceHistoryChart: View {
     @Environment(\.workbenchPalette) private var palette
     let points: [DeviceHistoryPoint]
@@ -460,27 +536,15 @@ struct DeviceHistoryChart: View {
     var networkScale = false
     var showsSeriesLegend = true
     @State private var hover: CGPoint?
-    private var end: Date { points.last?.date ?? Date() }
-    private var visible: [DeviceHistoryPoint] { points.filter { end.timeIntervalSince($0.date) <= Double(minutes * 60) } }
-    private func values(_ p: DeviceHistoryPoint) -> [Double?] {
-        switch kind { case .cpu: [p.cpuPercent]; case .network: [p.downloadBytesPerSecond, p.uploadBytesPerSecond]; case .thermal: [p.cpuTemperature, p.gpuTemperature]; case .memory: [p.memoryPercent] }
-    }
-    private var maxValue: Double {
-        switch kind {
-        case .cpu, .memory: return 100
-        case .thermal: return max(70, ((visible.flatMap { values($0).compactMap { $0 } }.max() ?? 60) / 10).rounded(.up) * 10 + 10)
-        case .network:
-            let maximum = max(1024, (visible.flatMap { values($0).compactMap { $0 } }.max() ?? 0) * 1.15)
-            if networkScale { let divisor: Double = maximum >= 1_048_576 ? 1_048_576 : 1024; return ceil(maximum / divisor) * divisor }
-            return maximum
-        }
-    }
-    private var minValue: Double { kind == .thermal ? max(0, ((visible.flatMap { values($0).compactMap { $0 } }.min() ?? 40) / 10).rounded(.down) * 10 - 5) : 0 }
-    private var networkDivisor: Double { maxValue >= 1_048_576 ? 1_048_576 : 1024 }
-    private func axisValue(_ value: Double) -> String { let text = String(format: "%.1f", value / networkDivisor); return text.hasSuffix(".0") ? String(text.dropLast(2)) : text }
-    private var networkAxisWidth: CGFloat { DeviceChartAxisMetrics.width(for: [axisValue(maxValue), axisValue(maxValue / 2), "0"], minimum: 21) }
+    private func axisValue(_ value: Double, divisor: Double) -> String { let text = String(format: "%.1f", value / divisor); return text.hasSuffix(".0") ? String(text.dropLast(2)) : text }
     private func clock(_ date: Date) -> String { let format = DateFormatter(); format.dateFormat = "HH:mm"; return format.string(from: date) }
     var body: some View {
+        let data = DeviceHistoryChartData(points: points, kind: kind, minutes: minutes, networkScale: networkScale)
+        let visible = data.visible, end = data.end, minValue = data.minValue, maxValue = data.maxValue
+        let networkDivisor: Double = maxValue >= 1_048_576 ? 1_048_576 : 1024
+        let maximumLabel = axisValue(maxValue, divisor: networkDivisor)
+        let middleLabel = axisValue(maxValue / 2, divisor: networkDivisor)
+        let networkAxisWidth = DeviceChartAxisMetrics.width(for: [maximumLabel, middleLabel, "0"], minimum: 21)
         VStack(spacing: 8) {
             if networkScale {
                 HStack { Text("近 \(minutes) 分钟"); Spacer(); Text(networkDivisor == 1_048_576 ? "MB/s" : "KB/s") }
@@ -489,9 +553,9 @@ struct DeviceHistoryChart: View {
             HStack(spacing: networkScale ? 6 : 0) {
             if networkScale {
                 VStack(alignment: .trailing) {
-                    Text(axisValue(maxValue)).lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                    Text(maximumLabel).lineLimit(1).fixedSize(horizontal: true, vertical: false)
                     Spacer()
-                    Text(axisValue(maxValue / 2)).lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                    Text(middleLabel).lineLimit(1).fixedSize(horizontal: true, vertical: false)
                     Spacer()
                     Text("0").lineLimit(1)
                 }.font(.system(size: 11)).monospacedDigit().foregroundStyle(palette.muted).frame(width: networkAxisWidth, alignment: .trailing)
@@ -503,14 +567,7 @@ struct DeviceHistoryChart: View {
                         context.stroke(line, with: .color(palette.line), lineWidth: 1)
                     }
                     for index in 0..<(kind == .network || kind == .thermal ? 2 : 1) {
-                        var segments: [[CGPoint]] = [], current: [CGPoint] = [], previous: UUID?
-                        for point in visible {
-                            guard let value = values(point)[index], value.isFinite else { if !current.isEmpty { segments.append(current) }; current = []; previous = nil; continue }
-                            let location = CGPoint(x: size.width * (1 - end.timeIntervalSince(point.date) / Double(minutes * 60)), y: size.height * (1 - (min(maxValue, max(minValue, value)) - minValue) / (maxValue - minValue)))
-                            if previous != point.segment && !current.isEmpty { segments.append(current); current = [] }
-                            current.append(location); previous = point.segment
-                        }
-                        if !current.isEmpty { segments.append(current) }
+                        let segments = data.segments(series: index, size: size)
                         let color = index == 0 ? palette.accent : palette.cool
                         for segment in segments where !segment.isEmpty {
                             var path = Path(); path.move(to: segment[0])
@@ -533,7 +590,7 @@ struct DeviceHistoryChart: View {
                         context.stroke(path, with: .color(palette.secondary.opacity(0.55)), style: .init(lineWidth: 1, dash: [2,3]))
                     }
                 }.overlay {
-                    if visible.flatMap({ values($0).compactMap { $0 } }).isEmpty { Text(kind == .thermal ? "暂无温度读数" : "等待连续有效样本").font(.system(size: 11)).foregroundStyle(palette.muted) }
+                    if !data.hasReadings { Text(kind == .thermal ? "暂无温度读数" : "等待连续有效样本").font(.system(size: 11)).foregroundStyle(palette.muted) }
                 }.onContinuousHover { phase in
                     switch phase { case .active(let point): hover = point; case .ended: hover = nil }
                 }.overlay(alignment: .topLeading) {
@@ -560,7 +617,7 @@ struct DeviceHistoryChart: View {
     }
     private func legend(_ title: String, _ color: Color) -> some View { HStack(spacing: 4) { Capsule().fill(color).frame(width: 10, height: 1.5); Text(title) } }
     private func tooltip(_ point: DeviceHistoryPoint) -> String {
-        let formatted = values(point).map { value in kind == .network ? DeviceFormat.rate(value) : kind == .thermal ? DeviceFormat.temperature(value) : DeviceFormat.percent(value) }.joined(separator: " / ")
+        let formatted = DeviceHistoryChartData.values(point, kind: kind).map { value in kind == .network ? DeviceFormat.rate(value) : kind == .thermal ? DeviceFormat.temperature(value) : DeviceFormat.percent(value) }.joined(separator: " / ")
         return point.date.formatted(date: .omitted, time: .standard) + "　" + formatted
     }
 }

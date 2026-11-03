@@ -2,8 +2,184 @@ import AppKit
 import LauncherCore
 
 /// Drives the production polling path with an isolated pointer provider.
-/// No cursor is moved, no mouse event is synthesized, and account providers remain disabled.
+/// No system input is generated and account providers remain disabled. The
+/// focused activation check waits for real CUA input on its own process's Mini.
 @MainActor enum WorkbenchTopEntryChecks {
+    /// Exercises the actual Mini mouse gesture and ordinary-window handoff.
+    /// Unlike AX performPress, a real mouse click passes through the SwiftUI
+    /// gesture hierarchy. Each READY step requires a single CUA pointer click.
+    static func runMiniActivation() async -> (count: Int, failures: Int) {
+        var count = 0, failures = 0
+        func check(_ condition: Bool, _ message: String) {
+            count += 1; if !condition { failures += 1 }
+            FileHandle.standardOutput.write(Data("\(condition ? "PASS" : "FAIL") \(message)\n".utf8))
+        }
+        let previousPolicy = NSApp.activationPolicy()
+        let previousApplication = NSWorkspace.shared.frontmostApplication
+        let interactionDeadline = Date().addingTimeInterval(30 * 60)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("deskden-mini-click-\(UUID().uuidString)")
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+            NSApp.setActivationPolicy(previousPolicy)
+            if previousApplication?.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+                previousApplication?.activate(options: [])
+            }
+        }
+        do {
+            guard let screen = NSScreen.screens.first else {
+                check(false, "Mini activation has a native display"); return (count, failures)
+            }
+            NSApp.setActivationPolicy(.accessory)
+            let owner = LauncherController(dataDirectory: directory.appendingPathComponent("Launcher"))
+            try owner.store.save(owner.configuration)
+            owner.configurePanel(); owner.scanning = true
+            let system = TopEntryCheckCalendar(), notifications = TopEntryCheckNotifications()
+            let calendar = CalendarModel(dataDirectory: directory.appendingPathComponent("Calendar"), system: system, notifier: notifications)
+            let aiDirectory = directory.appendingPathComponent("AI")
+            let sourceDirectory = aiDirectory.appendingPathComponent("AIUsage")
+            try FileManager.default.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
+            let sources = AIProvider.allCases.map {
+                AIUsageSourceConfiguration(provider: $0, enabled: false,
+                    sessionsPath: directory.appendingPathComponent("disabled-\($0.rawValue)").path,
+                    quotaPath: nil, manualSnapshot: nil)
+            }
+            try JSONEncoder().encode(sources).write(to: sourceDirectory.appendingPathComponent("sources.json"))
+            let model = WorkbenchAppModel(owner: owner, calendar: calendar, ai: AIUsageModel(dataDirectory: aiDirectory), startServices: false)
+            // Mini still declares its real sampling demand. Suppress its sensor
+            // implementation at the normal shutdown barrier for this fixture.
+            try await model.device.prepareForQuit()
+            let workbench = WorkbenchWindowController(owner: owner, model: model, autosavesFrame: false)
+            owner.workbenchController = workbench
+            guard let ordinary = workbench.window else {
+                check(false, "Mini activation retains an ordinary window"); return (count, failures)
+            }
+            let originalContent = ordinary.contentView
+            let outside = CGPoint(x: screen.frame.midX, y: screen.frame.midY)
+            let top = CGPoint(x: screen.frame.midX, y: screen.frame.maxY)
+            var pointer = WorkbenchTopEntryInput(location: outside, pressedButtons: 0, uptime: 0)
+            let controller = WorkbenchTopEntryController(owner: owner, input: { pointer },
+                workspaceNotifications: NotificationCenter(), monitorSystemInput: false)
+            owner.topEntryController = controller
+            defer {
+                controller.stop(); owner.panel.orderOut(nil); ordinary.orderOut(nil); model.shutdown()
+                owner.workbenchController = nil; owner.topEntryController = nil
+                owner.hotKey.unregister(); owner.bindingHotKeys.unregister(); owner.toastTask?.cancel()
+            }
+            controller.start(automaticPolling: false)
+            var clock: TimeInterval = 0
+            func poll(_ point: CGPoint, step: TimeInterval = 1) {
+                clock += step
+                pointer = .init(location: point, pressedButtons: 0, uptime: clock)
+                controller.poll()
+            }
+            func reveal(_ card: WorkbenchMiniCardID) async -> NSWindow? {
+                if ordinary.isVisible { model.closeWindow?(); await waitUntil { !ordinary.isVisible } }
+                model.deviceDetail = nil; model.navigate(.settings)
+                var layout = controller.preferences
+                layout.usesDefaultLayout = false; layout.visibleCards = [card]
+                _ = controller.saveMiniLayout(layout)
+                poll(outside); poll(top); poll(top, step: 0.2)
+                await settle()
+                guard let mini = NSApp.windows.first(where: { $0.windowNumber == controller.islandWindowNumber }),
+                      let host = mini.contentView,
+                      let frame = actionFrame("mini-card-" + card.rawValue, in: host) else { return nil }
+                poll(CGPoint(x: frame.midX, y: frame.midY))
+                return mini
+            }
+            func routeMatches(_ card: WorkbenchMiniCardID) -> Bool {
+                switch card {
+                case .disk: return model.route == .device && model.deviceDetail == .storage && model.requestedReadingReturnTitle == "返回设备状态"
+                case .memory: return model.route == .device && model.deviceDetail == .memory && model.requestedReadingReturnTitle == "返回设备状态"
+                case .thermal: return model.route == .device && model.deviceDetail == .thermal && model.requestedReadingReturnTitle == "返回设备状态"
+                case .network, .traffic: return model.route == .network
+                case .todo: return model.route == .calendar
+                case .codex, .claude: return model.route == .ai && model.ai.destination == .provider(card == .codex ? .codex : .claude)
+                default: return false
+                }
+            }
+            for card in WorkbenchMiniCardID.builtIn {
+                guard let mini = await reveal(card), let host = mini.contentView else {
+                    check(false, "\(card.rawValue): real Mini card is mounted"); continue
+                }
+                check(!mini.ignoresMouseEvents && controller.isQuickSummaryVisible && !ordinary.isVisible,
+                      "\(card.rawValue): hovering the card enables its native panel before a single click")
+                let clicked = await waitForPointerClick("mini-card-" + card.rawValue, in: host, window: mini,
+                    step: card.rawValue, deadline: interactionDeadline)
+                check(clicked, "\(card.rawValue): one real pointer click targets the production card")
+                guard clicked else { return (count, failures) }
+                await waitUntil { ordinary.isVisible && ordinary.isKeyWindow && ordinary.alphaValue == 1 }
+                FileHandle.standardOutput.write(Data("DETAIL Mini \(card.rawValue) active=\(NSApp.isActive) miniKey=\(mini.isKeyWindow) ordinaryVisible=\(ordinary.isVisible) ordinaryKey=\(ordinary.isKeyWindow) route=\(model.route.rawValue)\n".utf8))
+                check(ordinary.isVisible && ordinary.isKeyWindow && model.windowVisible && NSApp.isActive
+                      && ordinary.contentView === originalContent && !controller.isQuickSummaryVisible && !workbench.isTopEntryPresented,
+                      "\(card.rawValue): the first click reveals and fronts the same ordinary window")
+                check(routeMatches(card), "\(card.rawValue): the first click preserves its requested detail and logical parent")
+            }
+            if let mini = await reveal(.disk), let host = mini.contentView {
+                check(press("mini-configure", in: host), "Mini can enter its real layout editor")
+                await settle()
+                let editingClick = await waitForPointerClick("mini-card-disk", in: host, window: mini,
+                    step: "editing-disk", deadline: interactionDeadline)
+                check(editingClick, "an editing card receives one real pointer click")
+                guard editingClick else { return (count, failures) }
+                await settle()
+                check(!ordinary.isVisible && controller.isQuickSummaryVisible, "editing focuses a card without opening the main window")
+                check(press("mini-cancel", in: host), "cancel exits the Mini draft")
+                await settle()
+                let resumedClick = await waitForPointerClick("mini-card-disk", in: host, window: mini,
+                    step: "cancelled-editing-disk", deadline: interactionDeadline)
+                check(resumedClick, "a card receives one real click immediately after cancelling editing")
+                guard resumedClick else { return (count, failures) }
+                await waitUntil { ordinary.isVisible && ordinary.isKeyWindow }
+                check(ordinary.isVisible && ordinary.isKeyWindow && routeMatches(.disk), "cancelled editing restores normal card navigation without remounting")
+            } else { check(false, "Mini editor activation fixture is mounted") }
+            check(system.permissionRequests == 0 && system.reads == 0 && notifications.permissionRequests == 0 && !model.device.isSampling,
+                  "Mini activation checks use no real account, calendar or sensor services")
+        } catch { check(false, "Mini activation fixture setup: \(error.localizedDescription)") }
+        return (count, failures)
+    }
+
+    private static func actionFrame(_ identifier: String, in root: NSView) -> CGRect? {
+        var pending: [NSObject] = [root], visited = Set<ObjectIdentifier>()
+        while let object = pending.popLast(), visited.count < 8_192 {
+            guard visited.insert(ObjectIdentifier(object)).inserted else { continue }
+            if object.responds(to: NSSelectorFromString("accessibilityIdentifier")),
+               object.value(forKey: "accessibilityIdentifier") as? String == identifier,
+               object.responds(to: NSSelectorFromString("accessibilityFrame")),
+               let frame = (object.value(forKey: "accessibilityFrame") as? NSValue)?.rectValue, frame.width > 0 { return frame }
+            if let view = object as? NSView { pending.append(contentsOf: view.subviews) }
+            for key in ["accessibilityChildren", "accessibilityContents"] where object.responds(to: NSSelectorFromString(key)) {
+                if let children = object.value(forKey: key) as? [NSObject] { pending.append(contentsOf: children) }
+            }
+        }
+        return nil
+    }
+    private static func waitForPointerClick(_ identifier: String, in root: NSView, window: NSWindow,
+                                            step: String, deadline: Date) async -> Bool {
+        guard window.isVisible, !window.ignoresMouseEvents,
+              let frame = actionFrame(identifier, in: root) else { return false }
+        let observation = TopEntryPointerObservation()
+        guard let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown], handler: { event in
+            MainActor.assumeIsolated {
+                if event.window === window,
+                   frame.contains(window.convertPoint(toScreen: event.locationInWindow)) {
+                    observation.downs += 1
+                }
+            }
+            return event
+        }) else { return false }
+        defer { NSEvent.removeMonitor(monitor) }
+        FileHandle.standardOutput.write(Data("READY Mini \(step): click \(identifier) once; ownWindow=\(window.windowNumber) screenFrame=\(frame)\n".utf8))
+        let stepDeadline = min(deadline, Date().addingTimeInterval(300))
+        while observation.downs == 0, Date() < stepDeadline, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        // Let the physical release and SwiftUI action finish. This observer
+        // never consumes or injects an event, and accepts only this card's hit area.
+        if observation.downs > 0 { await settle() }
+        FileHandle.standardOutput.write(Data("DETAIL Mini \(step): observed real pointer downs=\(observation.downs)\n".utf8))
+        return observation.downs == 1
+    }
+
     static func run() async -> (count: Int, failures: Int) {
         // Match the real app's background accessory policy when validating
         // WindowServer visibility; .prohibited intentionally forbids UI activation.
@@ -592,6 +768,10 @@ import LauncherCore
             try? await Task.sleep(for: .milliseconds(50))
         }
     }
+}
+
+@MainActor private final class TopEntryPointerObservation {
+    var downs = 0
 }
 
 @MainActor private final class TopEntryModalCheckAction: NSObject {

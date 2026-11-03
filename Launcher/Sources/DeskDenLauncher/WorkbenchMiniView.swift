@@ -169,7 +169,11 @@ struct WorkbenchMiniPanelView: View {
                                     let width = CGFloat(capacity) * 230 - 10
                                     if value.location.x < -24 || value.location.x > width + 24 || value.location.y < -44 || value.location.y > 260 { cancelDrag() }
                                     else { dragged = nil; dragOriginal = nil; dragPageDirection = 0 }
-                                }, including: editing ? .all : .none)
+                                // Disable only the editor's drag recognizer in
+                                // normal mode. `.none` also disables the child
+                                // buttons' pointer gestures, despite AX press
+                                // actions continuing to work.
+                                }, including: editing ? .all : .subviews)
                             .animation(reduceMotion ? nil : .easeInOut(duration: 0.16), value: current.cardOrder)
 
                     }

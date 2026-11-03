@@ -8,12 +8,11 @@ struct WorkbenchFluidNavigation: View {
     @ObservedObject var model: WorkbenchAppModel
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @State private var hoveredRoute: WorkbenchRoute?
-    @State private var pointerRoute: WorkbenchRoute?
     @State private var hoverTask: Task<Void, Never>?
     @FocusState private var focusedRoute: WorkbenchRoute?
     @FocusState private var brandFocused: Bool
     private let routes: [WorkbenchRoute] = [.overview, .device, .cleaning, .calendar, .ai, .network, .vault]
-    private var motion: Animation? { model.reduceMotion || systemReduceMotion ? nil : .timingCurve(0.22, 0.75, 0.25, 1, duration: 0.34) }
+    private var motion: Animation? { FluidNavigationMotion.transition(disabled: model.reduceMotion || systemReduceMotion) }
 
     var body: some View {
         ZStack {
@@ -43,7 +42,6 @@ struct WorkbenchFluidNavigation: View {
                 .accessibilityLabel("主导航")
                 .accessibilityIdentifier("workbench-top-navigation")
         }.padding(.horizontal, 24).frame(height: 58)
-            .onChange(of: model.route) { _, _ in resetHover() }
             .onChange(of: model.windowVisible) { _, visible in if !visible { resetHover() } }
             .onDisappear { resetHover() }
     }
@@ -85,7 +83,7 @@ struct WorkbenchFluidNavigation: View {
                 .clipShape(Capsule())
                 .shadow(color: FluidNavigationColors.shadow.opacity(expanded ? 0.05 : 0), radius: 2, y: 1)
                 .contentShape(Capsule())
-        }.buttonStyle(ClickablePlainButtonStyle()).focused($focusedRoute, equals: route).focusEffectDisabled()
+        }.buttonStyle(FluidNavigationButtonStyle(suppressMotion: model.reduceMotion)).focused($focusedRoute, equals: route).focusEffectDisabled()
             .onHover { inside in trackHover(route, inside: inside) }
             .accessibilityLabel(route.title)
             .accessibilityValue(selected ? "当前页面" : "")
@@ -106,32 +104,23 @@ struct WorkbenchFluidNavigation: View {
         }
     }
 
-    // Briefly hold the current target while the pointer crosses the moving
-    // capsule edges, so an expanding label cannot trigger a collapse loop.
+    // Keep the expanded target until the pointer leaves the whole navigation
+    // region. An animated capsule edge moving away is not a user hover exit.
     private func trackHover(_ route: WorkbenchRoute, inside: Bool) {
-        if inside {
-            pointerRoute = route
-            hoverTask?.cancel()
-            hoverTask = Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(90))
-                guard !Task.isCancelled, pointerRoute == route else { return }
-                hoveredRoute = route
-            }
-        } else if pointerRoute == route {
-            finishHover()
-        }
+        guard inside else { return }
+        hoverTask?.cancel(); hoverTask = nil
+        hoveredRoute = route
     }
     private func finishHover() {
-        pointerRoute = nil
         hoverTask?.cancel()
         hoverTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(160))
-            guard !Task.isCancelled, pointerRoute == nil else { return }
+            try? await Task.sleep(for: .milliseconds(180))
+            guard !Task.isCancelled else { return }
             hoveredRoute = nil
         }
     }
     private func resetHover() {
-        hoverTask?.cancel(); hoverTask = nil; pointerRoute = nil; hoveredRoute = nil
+        hoverTask?.cancel(); hoverTask = nil; hoveredRoute = nil
     }
 }
 
@@ -170,8 +159,8 @@ private struct WorkbenchFluidSettingsTab: View {
                 .background(Color.white.opacity(selected || hovered || focused ? 0.94 : 0.05), in: Capsule())
                 .overlay(Capsule().strokeBorder(Color.white.opacity(selected || hovered || focused ? 1 : 0.31), lineWidth: 1))
                 .contentShape(Capsule())
-        }.buttonStyle(ClickablePlainButtonStyle()).focused($focused).focusEffectDisabled().onHover { hovered = $0 }
-            .animation(reduceMotion || suppressMotion ? nil : .easeInOut(duration: 0.28), value: hovered || focused || selected)
+        }.buttonStyle(FluidNavigationButtonStyle(suppressMotion: suppressMotion)).focused($focused).focusEffectDisabled().onHover { hovered = $0 }
+            .animation(FluidNavigationMotion.transition(disabled: reduceMotion || suppressMotion), value: hovered || focused || selected)
             .accessibilityLabel(tab.title).accessibilityValue(selected ? "当前页面" : "")
             .accessibilityAddTraits(selected ? .isSelected : [])
             .accessibilityIdentifier("settings-navigation-" + tab.rawValue)
@@ -188,16 +177,38 @@ private struct WorkbenchFluidRoundButton: View {
     @FocusState private var focused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
+        let engaged = selected || hovered || focused
+        let motion = FluidNavigationMotion.transition(disabled: reduceMotion || suppressMotion)
         Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 15, weight: .regular))
+            ZStack {
+                Image(systemName: symbol).font(.system(size: 15, weight: .regular))
+                    .id(symbol).transition(.opacity)
+            }
                 .frame(width: 32, height: 32)
-                .foregroundStyle(selected ? FluidNavigationColors.ink : .white)
-                .background(Circle().fill(Color.white.opacity(selected ? 0.94 : hovered || focused ? 0.14 : 0.03)))
-                .overlay(Circle().strokeBorder(Color.white.opacity(0.31), lineWidth: 1))
+                .foregroundStyle(engaged ? FluidNavigationColors.ink : .white)
+                .background(Circle().fill(Color.white.opacity(engaged ? 0.94 : 0.03)))
+                .overlay(Circle().strokeBorder(Color.white.opacity(engaged ? 1 : 0.31), lineWidth: 1))
                 .contentShape(Circle())
-        }.buttonStyle(ClickablePlainButtonStyle()).focused($focused).focusEffectDisabled().onHover { hovered = $0 }
-            .animation(reduceMotion || suppressMotion ? nil : .easeInOut(duration: 0.28), value: hovered || focused || selected)
+        }.buttonStyle(FluidNavigationButtonStyle(suppressMotion: suppressMotion)).focused($focused).focusEffectDisabled().onHover { hovered = $0 }
+            .animation(motion, value: engaged)
+            .animation(motion, value: symbol)
             .accessibilityLabel(title).help(title)
+    }
+}
+
+private enum FluidNavigationMotion {
+    static func transition(disabled: Bool) -> Animation? {
+        disabled ? nil : .timingCurve(0.25, 0.10, 0.25, 1, duration: 0.40)
+    }
+}
+
+private struct FluidNavigationButtonStyle: ButtonStyle {
+    var suppressMotion: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.contentShape(Rectangle()).clickableCursor()
+            .opacity(configuration.isPressed ? 0.82 : 1)
+            .animation(reduceMotion || suppressMotion ? nil : .easeOut(duration: 0.16), value: configuration.isPressed)
     }
 }
 

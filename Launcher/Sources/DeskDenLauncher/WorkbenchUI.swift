@@ -527,12 +527,16 @@ final class WorkbenchTrafficLights:NSView {
     func endHover(_ view: ClickableCursorView) {
         guard hoveredView === view else { return }
         hoveredView = nil
+        if let next = views.allObjects.compactMap({ $0 as? ClickableCursorView }).first(where: { $0 !== view && $0.window === view.window && $0.containsPointer }) {
+            next.refreshHoverCursor()
+            return
+        }
         if NSCursor.current === NSCursor.pointingHand { NSCursor.arrow.set() }
     }
 }
 
 class ClickableButton: NSButton {
-    override var isEnabled: Bool { didSet { window?.invalidateCursorRects(for: self) } }
+    override var isEnabled: Bool { didSet { if oldValue != isEnabled { window?.invalidateCursorRects(for: self) } } }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow(); ButtonCursorPolicy.shared.register(self)
         window?.invalidateCursorRects(for: self)
@@ -545,7 +549,7 @@ class ClickableButton: NSButton {
 }
 
 class ClickablePopUpButton: NSPopUpButton {
-    override var isEnabled: Bool { didSet { window?.invalidateCursorRects(for: self) } }
+    override var isEnabled: Bool { didSet { if oldValue != isEnabled { window?.invalidateCursorRects(for: self) } } }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow(); ButtonCursorPolicy.shared.register(self)
         window?.invalidateCursorRects(for: self)
@@ -561,6 +565,7 @@ class ClickableCursorView: NSView {
     private var hoverTracking: NSTrackingArea?
     private var hovering = false
     private var refreshTask: Task<Void, Never>?
+    private var refreshGeneration = 0
     var enabled = true {
         didSet {
             guard oldValue != enabled else { return }
@@ -581,9 +586,16 @@ class ClickableCursorView: NSView {
     }
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let hoverTracking { removeTrackingArea(hoverTracking) }
-        hoverTracking = nil
-        guard enabled else { return }
+        guard enabled else {
+            if let hoverTracking { removeTrackingArea(hoverTracking) }
+            hoverTracking = nil; endHover(); return
+        }
+        // inVisibleRect follows resizing without replacing the region. Replacing
+        // it on every data-driven layout emits synthetic exits under a still pointer.
+        if hoverTracking != nil {
+            if containsPointer { refreshHoverCursor() }
+            return
+        }
         // SwiftUI's hosting view can install a later arrow cursor rectangle
         // over a hit-transparent background. Native tracking receives the
         // actual pointer event after that update while leaving clicks with
@@ -592,13 +604,17 @@ class ClickableCursorView: NSView {
             options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited, .mouseMoved, .cursorUpdate],
             owner: self, userInfo: nil)
         addTrackingArea(area); hoverTracking = area
+        if containsPointer { refreshHoverCursor() }
     }
     override func mouseEntered(with event: NSEvent) { hovering = true; refreshHoverCursor() }
     override func mouseMoved(with event: NSEvent) { hovering = true; refreshHoverCursor() }
     override func cursorUpdate(with event: NSEvent) { hovering = true; refreshHoverCursor() }
-    override func mouseExited(with event: NSEvent) { endHover() }
+    override func mouseExited(with event: NSEvent) {
+        if containsPointer { refreshHoverCursor() } else { endHover() }
+    }
     var containsPointer: Bool {
         guard enabled, !isHiddenOrHasHiddenAncestor, let window, window.isVisible else { return false }
+        guard NSWindow.windowNumber(at: NSEvent.mouseLocation, belowWindowWithWindowNumber: 0) == window.windowNumber else { return false }
         let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
         return bounds.intersection(visibleRect).contains(point)
     }
@@ -607,12 +623,15 @@ class ClickableCursorView: NSView {
         hovering = true
         ButtonCursorPolicy.shared.beginHover(self)
         ButtonCursorPolicy.shared.cursor.set()
-        refreshTask?.cancel()
+        guard refreshTask == nil else { return }
+        refreshGeneration += 1
+        let generation = refreshGeneration
         refreshTask = Task { @MainActor [weak self] in
             // A hover-driven SwiftUI redraw may rebuild its cursor rectangles
             // after mouseEntered returns. Reassert once after that transaction,
             // without polling or retaining a cursor beyond the hovered region.
             try? await Task.sleep(for: .milliseconds(20))
+            defer { if self?.refreshGeneration == generation { self?.refreshTask = nil } }
             guard !Task.isCancelled, let self, self.hovering, self.containsPointer,
                   ButtonCursorPolicy.shared.ownsHover(self) else { return }
             ButtonCursorPolicy.shared.cursor.set()
@@ -621,16 +640,17 @@ class ClickableCursorView: NSView {
     private func endHover() {
         guard hovering else { return }
         hovering = false
+        refreshGeneration += 1
         refreshTask?.cancel(); refreshTask = nil
         // A delayed exit from an old/rebuilt region must not clear the cursor
         // already installed by the button that the pointer entered next.
         ButtonCursorPolicy.shared.endHover(self)
-        window?.invalidateCursorRects(for: self)
     }
     override func resetCursorRects() {
         super.resetCursorRects()
         let rect = bounds.intersection(visibleRect)
         if enabled && !rect.isEmpty { addCursorRect(rect, cursor: ButtonCursorPolicy.shared.cursor) }
+        if hovering && containsPointer { refreshHoverCursor() }
     }
 }
 

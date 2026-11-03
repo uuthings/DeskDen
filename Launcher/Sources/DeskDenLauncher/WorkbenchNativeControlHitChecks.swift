@@ -214,6 +214,19 @@ import LauncherCore
             ButtonCursorPolicy.shared.apply(.pointingHand)
             try? await Task.sleep(for: .milliseconds(70))
             checks.append((systemCursorMatches(.pointingHand), "restoring default hand updates the visible hovered button immediately"))
+            let topNumber = NSWindow.windowNumber(at: NSEvent.mouseLocation, belowWindowWithWindowNumber: 0)
+            print("DETAIL stationary pointer: inside=\(region.containsPointer) target=\(window.windowNumber) top=\(topNumber) screen=\(NSEvent.mouseLocation) local=\(window.mouseLocationOutsideOfEventStream) targetRect=\(rect) windows=\(NSApp.windows.filter { $0.isVisible }.map { "\($0.windowNumber):\(type(of: $0)):\($0.frame):level=\($0.level.rawValue)" })")
+            let regionIDs = region.trackingAreas.map(ObjectIdentifier.init)
+            var stableCursor = true
+            for _ in 0..<24 {
+                region.updateTrackingAreas()
+                window.invalidateCursorRects(for: region)
+                host.layoutSubtreeIfNeeded()
+                try? await Task.sleep(for: .milliseconds(25))
+                stableCursor = stableCursor && systemCursorMatches(.pointingHand)
+            }
+            checks.append((stableCursor && region.trackingAreas.map(ObjectIdentifier.init) == regionIDs,
+                           "a stationary hand survives repeated layout and cursor refresh without replacing its tracking region"))
         }
         await movePointer(to: NSPoint(x: 12, y: 12), in: window)
         checks.append((!systemCursorMatches(.pointingHand), "leaving a button clears the hand instead of retaining a stale cursor"))

@@ -267,6 +267,29 @@ private extension CGRect { var center: CGPoint { CGPoint(x:midX,y:midY) } }
         let beforeAccessiblePress = opened.count
         check(tile.accessibilityPerformPress() && opened.count == beforeAccessiblePress + 1 && opened.last == .cpu,
               "the whole native card exposes its destination as an accessibility press action")
+        for card in grid.cards.values {
+            let point = card.convert(NSPoint(x: 24, y: 50), to: nil)
+            let before = opened.count
+            mouse(.leftMouseDown, at: point, in: window)
+            mouse(.leftMouseDragged, at: NSPoint(x: point.x + 1, y: point.y + 1), in: window)
+            // A sample arriving between down/up must not reset the click.
+            grid.configure(model: model, editing: false, light: true, theme: .qingbiMist,
+                           open: { opened.append($0) }, heightChanged: { _ in })
+            mouse(.leftMouseUp, at: NSPoint(x: point.x + 1, y: point.y + 1), in: window)
+            check(opened.count == before + 1 && opened.last == card.id,
+                  "\(card.id.rawValue) opens once despite pointer jitter and a data redraw between down/up")
+            check(card.acceptsFirstMouse(for: nil) && (card.layer?.borderWidth ?? 0) == 0,
+                  "\(card.id.rawValue) accepts the first click without painting a green focus border")
+        }
+        let point = tile.convert(NSPoint(x: 24, y: 90), to: nil)
+        let beforeDrag = opened.count
+        mouse(.leftMouseDown, at: point, in: window)
+        mouse(.leftMouseDragged, at: NSPoint(x: point.x + 16, y: point.y), in: window)
+        mouse(.leftMouseUp, at: NSPoint(x: point.x + 16, y: point.y), in: window)
+        check(opened.count == beforeDrag, "a deliberate card drag is still cancelled instead of navigating")
+        mouse(.leftMouseDown, at: point, in: window)
+        mouse(.leftMouseUp, at: tile.convert(NSPoint(x: -2, y: -2), to: nil), in: window)
+        check(opened.count == beforeDrag, "releasing outside the pressed card does not navigate")
         check(model.dashboardLayout == savedLayout && !grid.isInteracting && !model.isSampling,
               "native detail clicks preserve layout and never start a drag or sensor sampling")
         grid.configure(model: model, editing: true, light: false, theme: .qingbiMist, open: { opened.append($0) }, heightChanged: { _ in })
@@ -305,6 +328,12 @@ private extension CGRect { var center: CGPoint { CGPoint(x:midX,y:midY) } }
         }
         guard let down = event(.leftMouseDown), let up = event(.leftMouseUp) else { return }
         NSApp.postEvent(up, atStart: false); NSApp.sendEvent(down)
+    }
+    private static func mouse(_ type: NSEvent.EventType, at point: NSPoint, in window: NSWindow) {
+        guard let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+            context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1) else { return }
+        NSApp.sendEvent(event)
     }
     private static func postPointer(_ point: CGPoint) {
         CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)

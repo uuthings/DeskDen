@@ -93,6 +93,7 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
     private func reconcile(animated: Bool) {
         guard let model, bounds.width > 0 else { return }
         let placements = gridPlacements(layoutValue)
+        let trafficSummary = model.trafficSummary(period: .day, scope: .all)
         let visible = Set(placements.map(\.id))
         for (id, card) in cards where !visible.contains(id) { card.removeFromSuperview(); cards.removeValue(forKey: id) }
         for placement in placements {
@@ -100,21 +101,20 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
             let tile: DeviceDashboardTile
             if let old = cards[placement.id] { tile = old }
             else { tile = DeviceDashboardTile(id: placement.id); tile.grid = self; cards[placement.id] = tile; addSubview(tile); tile.frame = placement.frame }
-            tile.update(preference: preference, snapshot: model.snapshot, history: model.history, trafficSummary: model.trafficSummary(period: .day, scope: .all), budget: model.budget, temperatureRule: model.temperatureRule, editing: editing, light: light, expanded: expanded, scale: scale, theme: theme, opacity: opacity)
+            tile.update(preference: preference, snapshot: model.snapshot, history: model.history, trafficSummary: trafficSummary, budget: model.budget, temperatureRule: model.temperatureRule, editing: editing, light: light, expanded: expanded, scale: scale, theme: theme, opacity: opacity)
             if animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
                 NSAnimationContext.runAnimationGroup { context in context.duration = 0.18; context.timingFunction = CAMediaTimingFunction(name: .easeOut); tile.animator().frame = placement.frame }
-            } else { tile.frame = placement.frame }
+            } else if tile.frame != placement.frame { tile.frame = placement.frame }
             tile.alphaValue = interaction?.started == true && interaction?.id == placement.id ? 0.18 : 1
         }
         if let ghost, let gesture = interaction, let preference = layoutValue.cards.first(where: { $0.id == gesture.id }) {
-            ghost.update(preference: preference, snapshot: model.snapshot, history: model.history, trafficSummary: model.trafficSummary(period: .day, scope: .all), budget: model.budget, temperatureRule: model.temperatureRule, editing: editing, light: light, expanded: expanded, scale: scale, theme: theme, opacity: opacity)
+            ghost.update(preference: preference, snapshot: model.snapshot, history: model.history, trafficSummary: trafficSummary, budget: model.budget, temperatureRule: model.temperatureRule, editing: editing, light: light, expanded: expanded, scale: scale, theme: theme, opacity: opacity)
         }
         let height = max(interaction.flatMap { gridPlacements($0.original).map(\.frame.maxY).max() } ?? 0, placements.map(\.frame.maxY).max() ?? 180 * scale)
         if abs(height - lastHeight) > 0.5 {
             lastHeight = height
             DispatchQueue.main.async { [weak self] in guard let self else { return }; self.heightChanged?(self.lastHeight) }
         }
-        window?.invalidateCursorRects(for: self)
     }
     private var gridMetrics: DeviceDashboardGrid.Metrics {
         interaction?.metrics ?? DeviceDashboardGrid.metrics(layoutValue, width: bounds.width, scale: scale, minimumHeight: minimumHeight, expanded: expanded)
@@ -240,13 +240,14 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
     private var editing = false
     private var scale: CGFloat = 1
     private var host: NSHostingView<AnyView>?
-    private var bodyClickPending = false
-    private var focusColor = ThemePalette().nsAccent
+    private var bodyClickOrigin: CGPoint?
+    private let bodyCursor = ClickableCursorView(frame: .zero)
     private let hideButton = DeviceCardActionButton(), styleButton = DeviceCardActionButton()
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
     override var canBecomeKeyView: Bool { !isGhost }
     override var mouseDownCanMoveWindow: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { !editing && !isGhost }
     init(id: DeviceCardID) {
         self.id = id; super.init(frame: .zero); wantsLayer = true
         for button in [hideButton, styleButton] {
@@ -260,7 +261,8 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
     }
     required init?(coder: NSCoder) { fatalError() }
     func update(preference: DeviceCardPreference, snapshot: DeviceSnapshot, history: [DeviceHistoryPoint], trafficSummary: DeviceTrafficSummary, budget: DeviceTrafficBudget, temperatureRule: DeviceTemperatureRule = .init(), editing: Bool, light: Bool, expanded: Bool = false, scale: CGFloat = 1, theme: LauncherTheme = .arWorld, opacity: Double = 0.70) {
-        if self.editing != editing { bodyClickPending = false }
+        let interactionChanged = self.editing != editing || self.scale != scale
+        if interactionChanged { bodyClickOrigin = nil }
         self.editing = editing; self.scale = scale
         setAccessibilityRole(editing ? .group : .button)
         let content = AnyView(DeviceCardContent(card: preference, snapshot: snapshot, history: history, editing: editing, trafficSummary: trafficSummary, budget: budget, temperatureRule: temperatureRule, expanded: expanded)
@@ -269,10 +271,12 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
         else {
             let host = NSHostingView(rootView: content); host.sizingOptions = []; self.host = host
             addSubview(host, positioned: .below, relativeTo: hideButton)
+            addSubview(bodyCursor, positioned: .above, relativeTo: host)
         }
-        appearance = NSAppearance(named: light ? .aqua : .darkAqua)
+        bodyCursor.enabled = !editing && !isGhost
+        let appearanceName: NSAppearance.Name = light ? .aqua : .darkAqua
+        if appearance?.name != appearanceName { appearance = NSAppearance(named: appearanceName) }
         let actionPalette = ThemePalette(theme: theme, opacity: opacity, light: light)
-        focusColor = actionPalette.nsAccent
         hideButton.configure(symbol: "xmark", palette: actionPalette, scale: scale)
         hideButton.setAccessibilityLabel("隐藏" + id.title)
         hideButton.setAccessibilityIdentifier("fc.device.card.\(id.rawValue).hide")
@@ -281,11 +285,12 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
         styleButton.configure(symbol: "slider.horizontal.3", palette: actionPalette, scale: scale)
         styleButton.isHidden = !editing || !id.supportsMeterStyle || isGhost
         styleButton.setAccessibilityLabel(id.title + "显示设置"); styleButton.toolTip = "进度显示设置"
-        updateFocusCue()
-        needsLayout = true; window?.invalidateCursorRects(for: self)
+        needsLayout = true
+        if interactionChanged { window?.invalidateCursorRects(for: self) }
     }
     override func layout() {
         super.layout(); host?.frame = bounds
+        if bodyCursor.frame != bounds { bodyCursor.frame = bounds }
         hideButton.frame = NSRect(x: bounds.width - 41 * scale, y: 11 * scale, width: 28 * scale, height: 28 * scale)
         styleButton.frame = NSRect(x: bounds.width - 73 * scale, y: 11 * scale, width: 28 * scale, height: 28 * scale)
     }
@@ -326,15 +331,19 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         if editing { grid?.begin(id: id, event: event, edge: edge(at: convert(event.locationInWindow, from: nil))) }
-        else { bodyClickPending = true }
+        else { bodyClickOrigin = event.locationInWindow }
     }
     override func mouseDragged(with event: NSEvent) {
-        if editing { grid?.move(event: event) } else { bodyClickPending = false }
+        if editing { grid?.move(event: event) }
+        else if let origin = bodyClickOrigin, hypot(event.locationInWindow.x - origin.x, event.locationInWindow.y - origin.y) > 4 {
+            bodyClickOrigin = nil
+        }
     }
     override func mouseUp(with event: NSEvent) {
         if editing { grid?.end(event: event); return }
-        let activate = bodyClickPending && bounds.contains(convert(event.locationInWindow, from: nil))
-        bodyClickPending = false
+        let activate = bodyClickOrigin.map { hypot(event.locationInWindow.x - $0.x, event.locationInWindow.y - $0.y) <= 4 } == true
+            && bounds.contains(convert(event.locationInWindow, from: nil))
+        bodyClickOrigin = nil
         if activate { grid?.activate(id) }
     }
     override func accessibilityPerformPress() -> Bool {
@@ -348,13 +357,6 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
             else { grid?.keyboardMove(id, forward: event.keyCode == 124 || event.keyCode == 125) }; return
         }
         if [36, 49].contains(event.keyCode) && !editing { grid?.activate(id); return }; super.keyDown(with: event)
-    }
-    override func becomeFirstResponder() -> Bool { let result = super.becomeFirstResponder(); DispatchQueue.main.async { [weak self] in self?.updateFocusCue() }; return result }
-    override func resignFirstResponder() -> Bool { let result = super.resignFirstResponder(); DispatchQueue.main.async { [weak self] in self?.updateFocusCue() }; return result }
-    private func updateFocusCue() {
-        layer?.cornerRadius = 15
-        layer?.borderColor = focusColor.withAlphaComponent(0.7).cgColor
-        layer?.borderWidth = !editing && !isGhost && window?.firstResponder === self ? 1 : 0
     }
     @objc private func hide() { guard editing else { return }; grid?.activate(id) }
     @objc private func style() { grid?.style(id, anchor: styleButton) }

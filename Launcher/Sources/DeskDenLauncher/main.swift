@@ -14,7 +14,7 @@ let application = NSApplication.shared
         FileHandle.standardError.write(Data("Unable to query the native UI check process accessibility bridge\n".utf8)); exit(2)
     }
 }
-if !CommandLine.arguments.contains("--window-menu-check"), !CommandLine.arguments.contains("--update-interface-check"), !CommandLine.arguments.contains("--update-calendar-check"), !CommandLine.arguments.contains("--calendar-deadline-editor-check"), !CommandLine.arguments.contains("--calendar-layout-check"), !CommandLine.arguments.contains("--home-resize-check"), !CommandLine.arguments.contains("--home-fluid-check"), !CommandLine.arguments.contains("--home-feedback-check"), !CommandLine.arguments.contains("--top-entry-check"), !CommandLine.arguments.contains("--usage-ui-check"), !CommandLine.arguments.contains("--mini-data-check"), !CommandLine.arguments.contains("--mini-appearance-check"), !CommandLine.arguments.contains("--mini-drag-check"), !CommandLine.arguments.contains("--context-model-check"), !CommandLine.arguments.contains("--appearance-check"), !CommandLine.arguments.contains("--shortcut-responder-check"), !CommandLine.arguments.contains("--pointer-check"), !CommandLine.arguments.contains("--space-cleaning-system-trash-check"), !CommandLine.arguments.contains("--space-cleaning-model-check"), !CommandLine.arguments.contains("--space-cleaning-check"), !CommandLine.arguments.contains("--self-check"), !CommandLine.arguments.contains("--device-check"), !CommandLine.arguments.contains("--form-check"), !CommandLine.arguments.contains("--vault-signing-check"), let identifier = Bundle.main.bundleIdentifier,
+if !CommandLine.arguments.contains("--window-menu-check"), !CommandLine.arguments.contains("--update-interface-check"), !CommandLine.arguments.contains("--update-calendar-check"), !CommandLine.arguments.contains("--calendar-deadline-editor-check"), !CommandLine.arguments.contains("--calendar-layout-check"), !CommandLine.arguments.contains("--home-resize-check"), !CommandLine.arguments.contains("--home-fluid-check"), !CommandLine.arguments.contains("--home-feedback-check"), !CommandLine.arguments.contains("--top-entry-check"), !CommandLine.arguments.contains("--usage-ui-check"), !CommandLine.arguments.contains("--mini-data-check"), !CommandLine.arguments.contains("--mini-appearance-check"), !CommandLine.arguments.contains("--mini-drag-check"), !CommandLine.arguments.contains("--mini-activation-check"), !CommandLine.arguments.contains("--interaction-feedback-check"), !CommandLine.arguments.contains("--context-model-check"), !CommandLine.arguments.contains("--appearance-check"), !CommandLine.arguments.contains("--shortcut-responder-check"), !CommandLine.arguments.contains("--pointer-check"), !CommandLine.arguments.contains("--space-cleaning-system-trash-check"), !CommandLine.arguments.contains("--space-cleaning-model-check"), !CommandLine.arguments.contains("--space-cleaning-check"), !CommandLine.arguments.contains("--self-check"), !CommandLine.arguments.contains("--device-check"), !CommandLine.arguments.contains("--form-check"), !CommandLine.arguments.contains("--vault-signing-check"), let identifier = Bundle.main.bundleIdentifier,
    NSRunningApplication.runningApplications(withBundleIdentifier:identifier).contains(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) {
     DistributedNotificationCenter.default().postNotificationName(Notification.Name(CommandLine.arguments.contains("--launcher") ? "local.deskden.launcher.show":"local.deskden.workbench.show"),object:nil,userInfo:nil,deliverImmediately:true)
     exit(0)
@@ -54,6 +54,27 @@ if CommandLine.arguments.contains("--window-menu-check") {
         let result = await CalendarLayoutNativeChecks.run()
         print("Calendar layout checks: \(result.count) checks, \(result.failures) failures")
         exit(result.count > 0 && result.failures == 0 ? 0 : 1)
+    }
+    application.run()
+} else if CommandLine.arguments.contains("--mini-activation-check") {
+    Task {
+        await prepareNativeCheckWindows()
+        let result = await WorkbenchTopEntryChecks.runMiniActivation()
+        print("Mini activation checks: \(result.count) checks, \(result.failures) failures")
+        exit(result.count > 0 && result.failures == 0 ? 0 : 1)
+    }
+    application.run()
+} else if CommandLine.arguments.contains("--interaction-feedback-check") {
+    Task {
+        await prepareNativeCheckWindows()
+        let cards = await DeviceCardActionInteractionChecks.run()
+        let pointer = await WorkbenchNativeControlHitChecks.pointerInteractionChecks()
+        let chart = WorkbenchChartPerformanceChecks.run()
+        let count = cards.count + pointer.count + chart.count
+        let failures = cards.failures + pointer.filter { !$0.0 }.count + chart.failures
+        for value in pointer { print("\(value.0 ? "PASS" : "FAIL") \(value.1)") }
+        print("Interaction feedback checks: \(count) checks, \(failures) failures")
+        exit(count > 0 && failures == 0 ? 0 : 1)
     }
     application.run()
 } else if CommandLine.arguments.contains("--home-fluid-check") {
