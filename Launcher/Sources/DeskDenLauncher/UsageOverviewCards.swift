@@ -179,7 +179,15 @@ struct UsageAIQuotaCard: View {
     @Environment(\.workbenchPalette) private var palette
     private var name: String { display.displayName ?? summary.title }
     private var subtitle: String {
-        let source = summary.snapshot?.source == .manual ? "手动记录" : summary.snapshot?.source == .imported ? "导入读数" : summary.provider == .codex ? "本机会话" : "状态栏同步"
+        let source: String
+        switch summary.snapshot?.source {
+        case .manual: source = "手动记录"
+        case .imported: source = "导入读数"
+        case .claudeCLI: source = "官方客户端"
+        case .claudeStatusLine: source = "状态栏同步"
+        case .localSession: source = "本机会话"
+        case nil: source = summary.provider == .codex ? "本机会话" : "官方客户端"
+        }
         let plan = summary.effectiveAccountPlan.map { $0.title + (summary.accountPlanIsDeclared ? "（用户设置）" : "") } ?? "会员未提供"
         return plan + " · " + source
     }
@@ -214,7 +222,8 @@ struct UsageAIQuotaCard: View {
                 }
             } else {
                 VStack(alignment: .leading, spacing: 7) {
-                    Label(summary.provider == .claude ? "等待额度同步" : "等待额度读数", systemImage: "arrow.triangle.2.circlepath")
+                    Label(summary.state == .unavailable || summary.state == .error ? "额度尚未可用" : "等待额度读数",
+                          systemImage: summary.state == .unavailable || summary.state == .error ? "info.circle" : "arrow.triangle.2.circlepath")
                         .font(.system(size: 13, weight: .medium)).foregroundStyle(palette.secondary)
                     Text(summary.detail).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(2)
                 }.frame(maxWidth: .infinity, minHeight: 102, alignment: .center)

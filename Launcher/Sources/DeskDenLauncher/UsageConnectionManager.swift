@@ -161,7 +161,7 @@ struct UsageManagedConnection: Identifiable {
         if let category = original.appearance.categoryID, !valid.contains(category) { original.appearance.categoryID = "uncategorized" }
     }
 
-    func connectSubscription(app: WorkbenchAppModel, allowDirectorySelection: Bool = false) {
+    func connectSubscription(app: WorkbenchAppModel, allowDirectorySelection: Bool = false, loginClaudeMember: Bool = false) {
         guard !busy, let provider = draft.service?.aiProvider else { return }
         // Local subscriptions are unique sources. Connecting from the new form
         // reuses that source without replacing its saved card customization.
@@ -181,9 +181,14 @@ struct UsageManagedConnection: Identifiable {
         Task { @MainActor [weak self, weak app] in
             guard let self, let app else { return }
             defer { self.busy = false }
-            let result = allowDirectorySelection
-                ? await UsageSubscriptionAuthorization.connect(model: app.ai, provider: provider)
-                : await app.ai.connectLocalSubscription(provider: provider)
+            let result: AISubscriptionConnectionResult
+            if provider == .claude, loginClaudeMember {
+                result = await app.ai.connectClaudeSubscriptionAccount()
+            } else {
+                result = allowDirectorySelection
+                    ? await UsageSubscriptionAuthorization.connect(model: app.ai, provider: provider)
+                    : await app.ai.connectLocalSubscription(provider: provider)
+            }
             switch result {
             case .ready(let message): self.notice = message
             case .waiting(let message): self.notice = message; self.waitingForSubscription = provider
@@ -195,7 +200,8 @@ struct UsageManagedConnection: Identifiable {
         guard let provider = waitingForSubscription,
               let summary = app.ai.providerSummaries.first(where: { $0.provider == provider }),
               summary.state == .ready,
-              summary.snapshot?.source == (provider == .claude ? .claudeStatusLine : .localSession) else { return }
+              let source = summary.snapshot?.source,
+              provider == .claude ? [.claudeCLI, .claudeStatusLine].contains(source) : source == .localSession else { return }
         waitingForSubscription = nil
         notice = "已连接本机 " + provider.title + " 订阅，额度已更新。"
     }

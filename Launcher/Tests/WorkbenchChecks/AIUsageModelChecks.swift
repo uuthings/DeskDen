@@ -20,6 +20,33 @@ import LauncherCore
     }
 }
 
+private actor FixtureClaudeSubscription: ClaudeSubscriptionProviding {
+    var reading: ClaudeSubscriptionReading
+    var loginReading: ClaudeSubscriptionReading
+    var fetchCount = 0
+    var loginCount = 0
+    var refreshCount = 0
+    var delay: Duration
+    var loginDelay: Duration
+    init(_ reading: ClaudeSubscriptionReading = .unavailable("fixture: no current official quota"),
+         login: ClaudeSubscriptionReading = .failed("fixture: login cancelled"), delay: Duration = .zero, loginDelay: Duration = .zero) {
+        self.reading = reading; loginReading = login; self.delay = delay; self.loginDelay = loginDelay
+    }
+    func setReading(_ value: ClaudeSubscriptionReading) { reading = value }
+    func counts() -> (fetch: Int, login: Int, refresh: Int) { (fetchCount, loginCount, refreshCount) }
+    func refresh() async -> ClaudeSubscriptionReading { refreshCount += 1; return await fetch() }
+    func fetch() async -> ClaudeSubscriptionReading {
+        fetchCount += 1
+        try? await Task.sleep(for: delay)
+        return reading
+    }
+    func login() async -> ClaudeSubscriptionReading {
+        loginCount += 1
+        try? await Task.sleep(for: loginDelay)
+        return loginReading
+    }
+}
+
 @main struct AIUsageModelChecks {
     @MainActor static func main() async throws {
         _ = NSApplication.shared; NSApp.setActivationPolicy(.prohibited)
@@ -39,7 +66,7 @@ import LauncherCore
         func refresh(_ model: AIUsageModel) async {
             model.refresh()
             for _ in 0..<500 {
-                if !model.isRefreshing { break }
+                if !model.isRefreshing && !model.isRefreshingClaudeSubscription { break }
                 try? await Task.sleep(for: .milliseconds(10))
             }
         }
@@ -58,12 +85,12 @@ import LauncherCore
         var membershipSources = AIProvider.allCases.map { AIUsageSourceConfiguration(provider: $0, enabled: false, sessionsPath: membershipBase.appendingPathComponent("unused-" + $0.rawValue).path) }
         membershipSources[0].enabled = true; membershipSources[0].sessionsPath = membershipSessions.path
         try JSONEncoder().encode(membershipSources).write(to: file(membershipBase, "sources.json"))
-        let membershipModel = AIUsageModel(dataDirectory: membershipBase, startServices: false, notifications: FixtureAIQuotaNotifications())
+        let membershipModel = AIUsageModel(dataDirectory: membershipBase, startServices: false, notifications: FixtureAIQuotaNotifications(), claudeSubscription: FixtureClaudeSubscription())
         await refresh(membershipModel)
         let membershipSummary = membershipModel.providerSummaries.first { $0.provider == .codex }
         check(membershipSummary?.snapshot?.accountPlan == .pro && membershipSummary?.shortWindow == nil && membershipSummary?.snapshot?.availableWindows.map(\.durationMinutes) == [10_080],
               "source-provided Pro membership and a weekly-only quota survive the real local metering reader")
-        let membershipReload = AIUsageModel(dataDirectory: membershipBase, startServices: false, notifications: FixtureAIQuotaNotifications())
+        let membershipReload = AIUsageModel(dataDirectory: membershipBase, startServices: false, notifications: FixtureAIQuotaNotifications(), claudeSubscription: FixtureClaudeSubscription())
         check(membershipReload.quotaHistory.last?.accountPlan == .pro && membershipReload.quotaHistory.last?.shortWindow == nil,
               "quota history persists actual membership metadata without manufacturing a five-hour window")
         check(membershipModel.setDeclaredPlan(.plus, provider: .codex), "membership preference saves independently of metering")
@@ -89,7 +116,7 @@ import LauncherCore
         try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executable)
         try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
         let syncModel = AIUsageModel(dataDirectory: syncBase, startServices: false, notifications: FixtureAIQuotaNotifications(),
-                                     claudeSettingsDirectory: settingsDirectory, statusLineExecutableURL: executable)
+                                     claudeSettingsDirectory: settingsDirectory, statusLineExecutableURL: executable, claudeSubscription: FixtureClaudeSubscription())
         check(syncModel.enableClaudeQuotaSync(), "explicit quota sync installs into an isolated Claude settings fixture")
         await refresh(syncModel)
         let installedSettings = try JSONSerialization.jsonObject(with: Data(contentsOf: settingsURL)) as! [String: Any]
@@ -169,83 +196,163 @@ import LauncherCore
         do { try ClaudeQuotaStatusLineHost.consume(payload, outputURL: symlinkURL, now: now); check(false, "status-line host refuses a symlink output") }
         catch { check(true, "status-line host refuses a symlink output") }
 
-        func connectionFixture(_ name: String, wait: TimeInterval = 0.25) throws -> (AIUsageModel, URL, URL) {
+        func connectionFixture(_ name: String, service: FixtureClaudeSubscription) throws -> (AIUsageModel, URL, URL) {
             let base = try fixture(name), settings = base.appendingPathComponent("Claude config")
-            let projects = settings.appendingPathComponent("projects")
-            try fm.createDirectory(at: projects, withIntermediateDirectories: true)
-            var sources = AIProvider.allCases.map { AIUsageSourceConfiguration(provider: $0, enabled: false, sessionsPath: base.appendingPathComponent("unused-" + $0.rawValue).path) }
-            sources[1].sessionsPath = projects.path
-            try JSONEncoder().encode(sources).write(to: file(base, "sources.json"))
+            try fm.createDirectory(at: settings, withIntermediateDirectories: true)
             return (AIUsageModel(dataDirectory: base, startServices: false, notifications: FixtureAIQuotaNotifications(),
-                                 claudeSettingsDirectory: settings, statusLineExecutableURL: executable, subscriptionConnectionWait: wait), base, settings)
+                                 claudeSettingsDirectory: settings, statusLineExecutableURL: executable,
+                                 claudeSubscription: service), base, settings)
         }
-        let (pendingModel, pendingBase, _) = try connectionFixture("one-click-waits-for-real-quota")
-        let pending = await pendingModel.connectLocalSubscription(provider: .claude)
-        if case .waiting = pending { check(true, "one-click Claude returns waiting when setup succeeds without a real quota window") }
-        else { check(false, "one-click Claude returns waiting when setup succeeds without a real quota window") }
-        check(!pending.isReady && pendingModel.configuration(for: .claude).enabled && pendingModel.configuration(for: .claude).quotaPath == file(pendingBase, "claude-quota.json").path
-              && pendingModel.providerSummaries.first(where: { $0.provider == .claude })?.snapshot == nil
-              && pendingModel.claudeQuotaSyncMessage == pending.message && pendingModel.errorMessage == nil,
-              "one-click setup enables both local reading and quota sync while publishing an honest waiting message")
-        let pendingOutput = file(pendingBase, "claude-quota.json")
-        try ClaudeQuotaStatusLineHost.consume(payload, outputURL: pendingOutput, now: now)
-        await refresh(pendingModel)
-        check(pendingModel.subscriptionConnectionResults[.claude]?.isReady == true,
-              "a later official status-line reading completes the pending connection without another user action")
-        try fm.removeItem(at: pendingOutput)
-        let reconnectWithoutReading = await pendingModel.connectLocalSubscription(provider: .claude)
-        check(!reconnectWithoutReading.isReady && pendingModel.providerSummaries.first(where: { $0.provider == .claude })?.state == .stale,
-              "reconnecting cannot report ready from a previously fresh cached window before the current source scan finishes")
+        let apiKeyService = FixtureClaudeSubscription(.loginRequired("当前 Claude Code 使用 API 计费登录，请连接会员账号。"))
+        let (apiKeyModel, apiKeyBase, apiKeySettings) = try connectionFixture("api-key-needs-membership", service: apiKeyService)
+        let apiKeyBefore = try Data(contentsOf: file(apiKeyBase, "sources.json"))
+        let apiKeyResult = await apiKeyModel.connectLocalSubscription(provider: .claude)
+        if case .failed = apiKeyResult { check(true, "API-key authentication reports a membership-login requirement instead of directory authorization or indefinite waiting") }
+        else { check(false, "API-key authentication reports a membership-login requirement instead of directory authorization or indefinite waiting") }
+        let apiKeyAfter = try Data(contentsOf: file(apiKeyBase, "sources.json"))
+        check(apiKeyModel.claudeSubscriptionNeedsLogin && apiKeyBefore == apiKeyAfter
+              && !fm.fileExists(atPath: apiKeySettings.appendingPathComponent("settings.json").path),
+              "diagnosing API-key authentication preserves source and Claude settings without creating a session directory")
+        let initialServiceCounts = await apiKeyService.counts()
+        check(initialServiceCounts.fetch == 1 && initialServiceCounts.login == 0 && initialServiceCounts.refresh == 1,
+              "explicit subscription checks request fresh quota without starting interactive account login")
+        let failedLogin = await apiKeyModel.connectClaudeSubscriptionAccount()
+        let loginServiceCounts = await apiKeyService.counts()
+        check(!failedLogin.isReady && loginServiceCounts.login == 1 && !apiKeyModel.configuration(for: .claude).enabled,
+              "explicit failed account login is reported honestly and does not enable an unconnected source")
 
-        let (liveModel, liveBase, _) = try connectionFixture("one-click-hot-reload", wait: 1)
-        let liveOutput = file(liveBase, "claude-quota.json")
-        let hotReload = Task {
-            try await Task.sleep(for: .milliseconds(150))
-            return try ClaudeQuotaStatusLineHost.consume(payload, outputURL: liveOutput, now: now)
+        let actualQuota = AIQuotaSnapshot(provider: .claude, observedAt: now, source: .claudeCLI,
+            shortWindow: try .init(usedPercent: 13, durationMinutes: 300, resetsAt: reset),
+            weeklyWindow: try .init(usedPercent: 27, durationMinutes: 10_080, resetsAt: reset), accountPlan: .pro)
+        let readyService = FixtureClaudeSubscription(.ready(actualQuota), login: .ready(actualQuota))
+        let (readyModel, readyBase, readySettings) = try connectionFixture("official-cli-ready", service: readyService)
+        let readySettingsURL = readySettings.appendingPathComponent("settings.json")
+        try existingStatus.write(to: readySettingsURL)
+        let readyResult = await readyModel.connectLocalSubscription(provider: .claude)
+        await refresh(readyModel)
+        let readySummary = readyModel.providerSummaries.first { $0.provider == .claude }
+        let preservedSettings = try Data(contentsOf: readySettingsURL)
+        check(readyResult.isReady && readySummary?.state == .ready && readySummary?.snapshot == actualQuota
+              && readyModel.configuration(for: .claude).quotaPath == nil && preservedSettings == existingStatus,
+              "official CLI quota connects without local conversation history and preserves a third-party status line")
+        let storedQuota = try JSONDecoder().decode([AIQuotaSnapshot].self, from: Data(contentsOf: file(readyBase, "quota-history.json")))
+        check(storedQuota.contains(actualQuota) && readySummary?.effectiveAccountPlan == .pro,
+              "real five-hour and weekly windows with membership persist through the existing quota history")
+
+        check(readyModel.saveManual(provider: .claude, shortPercent: "44", weekPercent: "", observedAt: now.addingTimeInterval(30),
+                                    shortReset: reset, weekReset: reset), "an explicit Claude manual reading can coexist with an automatic source")
+        await refresh(readyModel)
+        check(readyModel.providerSummaries.first { $0.provider == .claude }?.snapshot?.source == .manual,
+              "an older cached official response cannot erase a newer explicit manual reading")
+        let reconnectedActual = await readyModel.connectLocalSubscription(provider: .claude)
+        check(reconnectedActual.isReady && readyModel.configuration(for: .claude).manualSnapshot == nil,
+              "explicit Claude reconnect clears the manual override and restores the verified official reading")
+
+        await readyService.setReading(.failed("fixture: official service temporarily unavailable"))
+        let failedQuery = await readyModel.connectLocalSubscription(provider: .claude)
+        await refresh(readyModel)
+        let failedSummary = readyModel.providerSummaries.first { $0.provider == .claude }
+        check(!failedQuery.isReady && failedSummary?.state == .error && failedSummary?.snapshot == actualQuota
+              && failedSummary?.detail == "fixture: official service temporarily unavailable"
+              && readyModel.subscriptionConnectionResults[.claude]?.isReady == false,
+              "query failure retains the last real quota while neither a local refresh nor a cached window hides the error")
+        let failedReload = AIUsageModel(dataDirectory: readyBase, startServices: false, notifications: FixtureAIQuotaNotifications(),
+            claudeSubscription: FixtureClaudeSubscription(.failed("fixture: source still unavailable")))
+        await refresh(failedReload)
+        check(failedReload.providerSummaries.first { $0.provider == .claude }?.snapshot == actualQuota
+              && failedReload.providerSummaries.first { $0.provider == .claude }?.state == .error,
+              "restart restores the last official reading without reviving a cleared manual override when the source is unavailable")
+        await readyService.setReading(.loginRequired("fixture: membership login expired"))
+        await refresh(readyModel)
+        check(readyModel.claudeSubscriptionNeedsLogin && readyModel.providerSummaries.first { $0.provider == .claude }?.detail == "fixture: membership login expired"
+              && readyModel.providerSummaries.first { $0.provider == .claude }?.snapshot == actualQuota,
+              "expired membership keeps the useful last reading and a durable login action")
+        let loginResult = await readyModel.connectClaudeSubscriptionAccount()
+        check(loginResult.isReady && !readyModel.claudeSubscriptionNeedsLogin,
+              "explicit account login accepts a verified official quota and clears the login requirement")
+        check(readyModel.setEnabled(false, provider: .claude), "a connected Claude source can be disconnected")
+        let disconnectedCounts = await readyService.counts()
+        await refresh(readyModel)
+        let afterDisconnectedCounts = await readyService.counts()
+        check(disconnectedCounts.fetch == afterDisconnectedCounts.fetch
+              && readyModel.providerSummaries.first { $0.provider == .claude }?.state == .disconnected,
+              "a disconnected source stops official quota queries while preserving history")
+
+        let singleQuota = AIQuotaSnapshot(provider: .claude, observedAt: now, source: .claudeCLI,
+            shortWindow: nil, weeklyWindow: try .init(usedPercent: 19, durationMinutes: 10_080, resetsAt: reset))
+        let (singleModel, _, _) = try connectionFixture("official-cli-single-window", service: FixtureClaudeSubscription(.ready(singleQuota)))
+        let singleResult = await singleModel.connectLocalSubscription(provider: .claude)
+        check(singleResult.isReady && singleModel.providerSummaries.first { $0.provider == .claude }?.shortWindow == nil
+              && singleModel.quotaHistory.allSatisfy { $0.shortWindow == nil },
+              "a weekly-only official response remains useful without manufacturing a five-hour quota")
+
+        var staleQuota = actualQuota; staleQuota.observedAt = now.addingTimeInterval(-1_800)
+        let (staleModel, _, _) = try connectionFixture("official-cli-stale-result", service: FixtureClaudeSubscription(.ready(staleQuota)))
+        let staleResult = await staleModel.connectLocalSubscription(provider: .claude)
+        if case .failed = staleResult { check(true, "an expired official reading fails explicit connection instead of waiting indefinitely") }
+        else { check(false, "an expired official reading fails explicit connection instead of waiting indefinitely") }
+
+        let slowService = FixtureClaudeSubscription(.ready(actualQuota), delay: .milliseconds(350))
+        let (slowModel, _, _) = try connectionFixture("official-cli-independent-refresh", service: slowService)
+        check(slowModel.setEnabled(true, provider: .claude), "a slow official source can start an independent quota query")
+        for _ in 0..<20 {
+            if !slowModel.isRefreshing { break }
+            try? await Task.sleep(for: .milliseconds(5))
         }
-        let liveConnection = await liveModel.connectLocalSubscription(provider: .claude)
-        _ = try await hotReload.value
-        check(liveConnection.isReady && liveModel.providerSummaries.first(where: { $0.provider == .claude })?.snapshot?.source == .claudeStatusLine
-              && liveModel.claudeQuotaSyncMessage == liveConnection.message,
-              "one-click Claude can await a hot-reloaded real quota and finish ready in the same action")
+        let slowCounts = await slowService.counts()
+        check(!slowModel.isRefreshing && slowModel.isRefreshingClaudeSubscription && slowModel.lastRefreshed != nil && slowCounts.refresh == 0,
+              "slow Claude quota requests do not block local token and other-provider refreshes")
+        slowModel.cancelClaudeSubscriptionAccountConnection()
+        check(slowModel.isRefreshingClaudeSubscription, "account-login cancellation does not cancel an unrelated background quota query")
+        check(slowModel.setEnabled(false, provider: .claude), "disconnect cancels an in-flight official quota query")
+        try? await Task.sleep(for: .milliseconds(400))
+        check(!slowModel.isRefreshingClaudeSubscription && slowModel.quotaHistory.isEmpty,
+              "a cancelled official response cannot reconnect a disabled source or add a late quota")
 
-        let (conflictModel, _, conflictDirectory) = try connectionFixture("one-click-keeps-third-party-statusline")
-        let conflictURL = conflictDirectory.appendingPathComponent("settings.json")
-        try existingStatus.write(to: conflictURL)
-        let conflicted = await conflictModel.connectLocalSubscription(provider: .claude)
-        if case .failed = conflicted { check(true, "one-click Claude reports a third-party status-line conflict as failure") }
-        else { check(false, "one-click Claude reports a third-party status-line conflict as failure") }
-        let conflictAfter = try Data(contentsOf: conflictURL)
-        check(conflictAfter == existingStatus && !conflictModel.configuration(for: .claude).enabled && conflictModel.errorMessage == conflicted.message,
-              "conflicted one-click setup preserves third-party bytes and does not silently enable a disconnected source")
+        let cancelledService = FixtureClaudeSubscription(.ready(actualQuota), delay: .milliseconds(350))
+        let (cancelledModel, _, _) = try connectionFixture("official-cli-cancelled-action", service: cancelledService)
+        let cancelledAction = Task { await cancelledModel.connectLocalSubscription(provider: .claude) }
+        try? await Task.sleep(for: .milliseconds(20))
+        cancelledAction.cancel()
+        let cancelledResult = await cancelledAction.value
+        check(!cancelledResult.isReady && !cancelledModel.isRefreshingClaudeSubscription && cancelledModel.quotaHistory.isEmpty,
+              "cancelling a connect action cancels its query and clears loading without retaining a late result")
+        var cancelledLoginQuota = actualQuota
+        cancelledLoginQuota.observedAt = now.addingTimeInterval(20)
+        cancelledLoginQuota.shortWindow = try .init(usedPercent: 89, durationMinutes: 300, resetsAt: reset)
+        let cancellableLoginService = FixtureClaudeSubscription(.ready(actualQuota), login: .ready(cancelledLoginQuota), loginDelay: .seconds(10))
+        let (cancellableLoginModel, _, _) = try connectionFixture("official-cli-cancel-account-login", service: cancellableLoginService)
+        _ = await cancellableLoginModel.connectLocalSubscription(provider: .claude)
+        let accountAction = Task { await cancellableLoginModel.connectClaudeSubscriptionAccount() }
+        for _ in 0..<100 {
+            if cancellableLoginModel.isConnectingClaudeSubscriptionAccount { break }
+            try? await Task.sleep(for: .milliseconds(2))
+        }
+        check(cancellableLoginModel.isConnectingClaudeSubscriptionAccount, "interactive membership login publishes a cancellable state while waiting")
+        cancellableLoginModel.cancelClaudeSubscriptionAccountConnection()
+        check(!cancellableLoginModel.isConnectingClaudeSubscriptionAccount && !cancellableLoginModel.isRefreshingClaudeSubscription,
+              "explicit membership cancellation immediately clears the login and loading states")
+        let cancelledAccountResult = await accountAction.value
+        check(!cancelledAccountResult.isReady && cancellableLoginModel.configuration(for: .claude).enabled
+              && cancellableLoginModel.providerSummaries.first { $0.provider == .claude }?.snapshot == actualQuota
+              && !cancellableLoginModel.quotaHistory.contains(cancelledLoginQuota),
+              "cancelled membership login preserves the connected source and previous quota and rejects its late result")
+        let afterCancelledLogin = await cancellableLoginModel.connectLocalSubscription(provider: .claude)
+        check(afterCancelledLogin.isReady && !cancellableLoginModel.isConnectingClaudeSubscriptionAccount,
+              "a cancelled membership flow releases its connection lock for a later explicit retry")
 
-        let missingConnectionBase = try fixture("one-click-missing-client-source")
-        let missingSettings = missingConnectionBase.appendingPathComponent("absent-claude-config")
-        let missingConnectionModel = AIUsageModel(dataDirectory: missingConnectionBase, startServices: false, notifications: FixtureAIQuotaNotifications(),
-                                       claudeSettingsDirectory: missingSettings, statusLineExecutableURL: executable, subscriptionConnectionWait: 0)
-        let missingBefore = try Data(contentsOf: file(missingConnectionBase, "sources.json"))
-        let missingConnection = await missingConnectionModel.connectLocalSubscription(provider: .claude)
-        let missingAfter = try Data(contentsOf: file(missingConnectionBase, "sources.json"))
-        if case .authorizationRequired = missingConnection { check(true, "missing official local sources return a recoverable authorization/setup state") }
-        else { check(false, "missing official local sources return a recoverable authorization/setup state") }
-        check(missingBefore == missingAfter && !fm.fileExists(atPath: missingSettings.appendingPathComponent("settings.json").path),
-              "missing-source recovery does not create a fake session directory or alter Claude settings")
-        let selectedSettings = missingConnectionBase.appendingPathComponent("user-selected-Claude-profile")
-        let selectedProjects = selectedSettings.appendingPathComponent("projects")
-        try fm.createDirectory(at: selectedProjects, withIntermediateDirectories: true)
-        check(missingConnectionModel.useLocalSubscriptionDirectory(selectedProjects, provider: .claude)
-              && !missingConnectionModel.configuration(for: .claude).enabled && missingConnectionModel.dialog == nil,
-              "an already authorized directory can be selected without enabling the source or opening a second preview")
-        let recoveredConnection = await missingConnectionModel.connectLocalSubscription(provider: .claude)
-        check(!recoveredConnection.isReady && missingConnectionModel.configuration(for: .claude).enabled
-              && fm.fileExists(atPath: selectedSettings.appendingPathComponent("settings.json").path)
-              && !fm.fileExists(atPath: missingSettings.appendingPathComponent("settings.json").path),
-              "directory recovery reconnects the selected Claude profile rather than changing another account's default settings")
-        let beforeInvalidDirectory = try Data(contentsOf: file(missingConnectionBase, "sources.json"))
-        let invalidDirectoryRejected = !missingConnectionModel.useLocalSubscriptionDirectory(file(missingConnectionBase, "sources.json"), provider: .claude)
-        let afterInvalidDirectory = try Data(contentsOf: file(missingConnectionBase, "sources.json"))
-        check(invalidDirectoryRejected && beforeInvalidDirectory == afterInvalidDirectory,
-              "directory recovery rejects a regular file without replacing the saved source")
+        let quitService = FixtureClaudeSubscription(.ready(actualQuota), delay: .milliseconds(350))
+        let (quitModel, _, _) = try connectionFixture("official-cli-quit-cleanup", service: quitService)
+        _ = quitModel.setEnabled(true, provider: .claude)
+        try await quitModel.prepareForQuit()
+        check(!quitModel.isRefreshingClaudeSubscription && quitModel.quotaHistory.isEmpty,
+              "application quit cancels the independent Claude task before flushing history")
+
+        let invalidDirectoryBefore = try Data(contentsOf: file(apiKeyBase, "sources.json"))
+        check(!apiKeyModel.useLocalSubscriptionDirectory(file(apiKeyBase, "sources.json"), provider: .claude),
+              "directory recovery still rejects a regular file")
+        let invalidDirectoryAfter = try Data(contentsOf: file(apiKeyBase, "sources.json"))
+        check(invalidDirectoryBefore == invalidDirectoryAfter, "invalid directory recovery preserves the saved source")
 
         let manualBase = try fixture("manual-with-automatic-reading-disabled")
         let trapSessions = manualBase.appendingPathComponent("disabled-session-trap")
@@ -265,7 +372,7 @@ import LauncherCore
         let retainedQuota = AIQuotaSnapshot(provider: .codex, observedAt: now.addingTimeInterval(-1_200), source: .localSession,
                                           shortWindow: try AIQuotaWindow(usedPercent: 5, durationMinutes: 300, resetsAt: reset), weeklyWindow: nil)
         try JSONEncoder().encode([retainedQuota]).write(to: file(manualBase, "quota-history.json"))
-        let manualModel = AIUsageModel(dataDirectory: manualBase, startServices: false, notifications: FixtureAIQuotaNotifications())
+        let manualModel = AIUsageModel(dataDirectory: manualBase, startServices: false, notifications: FixtureAIQuotaNotifications(), claudeSubscription: FixtureClaudeSubscription())
         check(manualModel.saveManual(provider: .codex, shortPercent: "12", weekPercent: "34", observedAt: now, shortReset: reset, weekReset: reset, note: "isolated manual reading"),
               "manual quota can save while automatic reading is disconnected")
         await refresh(manualModel)
@@ -278,7 +385,7 @@ import LauncherCore
               "disabled readers ignore populated Token and newer quota trap files without claiming a directory connection")
         check(manualModel.quotaHistory.contains(retainedQuota) && manualModel.quotaHistory.contains { $0.source == .manual && $0.shortWindow?.usedPercent == 12 },
               "manual-only refresh adds its marked snapshot while preserving existing automatic quota history")
-        let manualReload = AIUsageModel(dataDirectory: manualBase, startServices: false, notifications: FixtureAIQuotaNotifications())
+        let manualReload = AIUsageModel(dataDirectory: manualBase, startServices: false, notifications: FixtureAIQuotaNotifications(), claudeSubscription: FixtureClaudeSubscription())
         await refresh(manualReload)
         check(!manualReload.configuration(for: .codex).enabled && manualReload.configuration(for: .codex).sessionsPath == trapSessions.path && manualReload.configuration(for: .codex).quotaPath == trapQuotaURL.path && manualReload.providerSummaries.first(where: { $0.provider == .codex })?.shortWindow?.usedPercent == 12 && manualReload.records.isEmpty && manualReload.quotaHistory.contains(retainedQuota),
               "restart restores manual quota and retained history without reconnecting or reading either automatic trap")
@@ -301,7 +408,7 @@ import LauncherCore
         var activeSources = AIProvider.allCases.map { AIUsageSourceConfiguration(provider: $0, enabled: false, sessionsPath: activeSessions.path) }
         activeSources[0].enabled = true
         try JSONEncoder().encode(activeSources).write(to: file(activeManualBase, "sources.json"))
-        let activeManual = AIUsageModel(dataDirectory: activeManualBase, startServices: false, notifications: FixtureAIQuotaNotifications())
+        let activeManual = AIUsageModel(dataDirectory: activeManualBase, startServices: false, notifications: FixtureAIQuotaNotifications(), claudeSubscription: FixtureClaudeSubscription())
         _ = activeManual.saveManual(provider: .codex, shortPercent: "22", weekPercent: "", observedAt: now, shortReset: reset, weekReset: reset)
         await refresh(activeManual)
         check(activeManual.configuration(for: .codex).enabled && activeManual.configuration(for: .codex).sessionsPath == activeSessions.path && activeManual.providerSummaries.first(where: { $0.provider == .codex })?.shortWindow?.usedPercent == 22 && activeManual.coverage[.codex]?.sourceAvailable == false,
@@ -313,7 +420,7 @@ import LauncherCore
 
         let historyBase = try fixture("history")
         try bad.write(to: file(historyBase, "quota-history.json"))
-        let historyModel = AIUsageModel(dataDirectory: historyBase, startServices: false)
+        let historyModel = AIUsageModel(dataDirectory: historyBase, startServices: false, claudeSubscription: FixtureClaudeSubscription())
         check(Set(historyModel.storageReadErrors.keys) == ["quota-history.json"], "history load error protects only history file")
         await refresh(historyModel)
         check(!historyModel.isRefreshing, "refresh completes while history storage is protected")
@@ -327,14 +434,14 @@ import LauncherCore
         try fm.moveItem(at: file(historyBase, "quota-history.json"), to: backup)
         await refresh(historyModel)
         check(!fm.fileExists(atPath: file(historyBase, "quota-history.json").path), "moving protected file does not bypass current-session write protection")
-        let restarted = AIUsageModel(dataDirectory: historyBase, startServices: false)
+        let restarted = AIUsageModel(dataDirectory: historyBase, startServices: false, claudeSubscription: FixtureClaudeSubscription())
         await refresh(restarted)
         check(restarted.storageReadErrors.isEmpty && fm.fileExists(atPath: file(historyBase, "quota-history.json").path), "explicit move and model restart safely create new history")
         check(try Data(contentsOf: backup) == bad, "recovery leaves original backup untouched")
 
         let sourceBase = try fixture("sources")
         try bad.write(to: file(sourceBase, "sources.json"))
-        let sourceModel = AIUsageModel(dataDirectory: sourceBase, startServices: false)
+        let sourceModel = AIUsageModel(dataDirectory: sourceBase, startServices: false, claudeSubscription: FixtureClaudeSubscription())
         check(Set(sourceModel.storageReadErrors.keys) == ["sources.json"], "source load error protects only source file")
         check(sourceModel.configurations.allSatisfy { !$0.enabled }, "damaged opt-in settings never enable default session readers")
         sourceModel.setEnabled(true, provider: .codex)
@@ -347,7 +454,7 @@ import LauncherCore
 
         let priceBase = try fixture("prices")
         try bad.write(to: file(priceBase, "model-prices.json"))
-        let priceModel = AIUsageModel(dataDirectory: priceBase, startServices: false)
+        let priceModel = AIUsageModel(dataDirectory: priceBase, startServices: false, claudeSubscription: FixtureClaudeSubscription())
         check(Set(priceModel.storageReadErrors.keys) == ["model-prices.json"], "price load error protects only price file")
         check(!priceModel.savePrice(price) && priceModel.prices.isEmpty, "protected price writes report failure without mutating state")
         priceModel.removePrice(price.id)
@@ -363,18 +470,18 @@ import LauncherCore
         var invalidWindow = try AIQuotaWindow(usedPercent: 20, durationMinutes: 300, resetsAt: reset); invalidWindow.usedPercent = 200
         let invalidSnapshot = AIQuotaSnapshot(provider: .codex, observedAt: now, source: .manual, shortWindow: invalidWindow, weeklyWindow: nil)
         try JSONEncoder().encode([invalidSnapshot]).write(to: file(invalidBase, "quota-history.json"))
-        let invalidModel = AIUsageModel(dataDirectory: invalidBase, startServices: false)
+        let invalidModel = AIUsageModel(dataDirectory: invalidBase, startServices: false, claudeSubscription: FixtureClaudeSubscription())
         check(Set(invalidModel.storageReadErrors.keys) == ["model-prices.json", "quota-history.json"], "decodable but invalid rates and prices are write protected")
         check(invalidModel.errorMessage != nil && !invalidModel.storageRecoveryInstructions.isEmpty, "load errors retain explicit user-visible recovery guidance")
         let freshBase = try fixture("fresh")
-        let freshModel = AIUsageModel(dataDirectory: freshBase, startServices: false)
+        let freshModel = AIUsageModel(dataDirectory: freshBase, startServices: false, claudeSubscription: FixtureClaudeSubscription())
         check(freshModel.storageReadErrors.isEmpty, "absent history and prices are valid fresh state")
         check(freshModel.savePrice(price), "fresh model price writes remain available")
 
         let notificationBase = try fixture("notifications")
         let notificationService = FixtureAIQuotaNotifications()
         notificationService.status = .notDetermined
-        let notificationModel = AIUsageModel(dataDirectory: notificationBase, startServices: false, notifications: notificationService)
+        let notificationModel = AIUsageModel(dataDirectory: notificationBase, startServices: false, notifications: notificationService, claudeSubscription: FixtureClaudeSubscription())
         await refresh(notificationModel)
         check(notificationService.permissionRequests == 0, "automatic refresh never requests notification permission")
         check(notificationModel.saveManual(provider: .codex, shortPercent: "80", weekPercent: "", observedAt: now, shortReset: reset, weekReset: reset), "quota fixture saves before reminder activation")
@@ -385,7 +492,7 @@ import LauncherCore
         check(notificationService.delivered.count == 1 && notificationService.delivered.first?.level == .warning, "fresh threshold crossing sends real notification through delivery service")
         await refresh(notificationModel)
         check(notificationService.delivered.count == 1, "repeated refresh suppresses already delivered threshold")
-        let notificationRestart = AIUsageModel(dataDirectory: notificationBase, startServices: false, notifications: notificationService)
+        let notificationRestart = AIUsageModel(dataDirectory: notificationBase, startServices: false, notifications: notificationService, claudeSubscription: FixtureClaudeSubscription())
         await refresh(notificationRestart)
         check(notificationService.delivered.count == 1, "successful delivery deduplication survives model restart")
         check(notificationRestart.saveManual(provider: .codex, shortPercent: "95", weekPercent: "", observedAt: now, shortReset: reset, weekReset: reset), "same window can receive a newer high-severity reading")
@@ -397,7 +504,7 @@ import LauncherCore
 
         let retryBase = try fixture("notification-retry")
         let retryService = FixtureAIQuotaNotifications(); retryService.failingDeliveries = 1
-        let retryModel = AIUsageModel(dataDirectory: retryBase, startServices: false, notifications: retryService)
+        let retryModel = AIUsageModel(dataDirectory: retryBase, startServices: false, notifications: retryService, claudeSubscription: FixtureClaudeSubscription())
         _ = retryModel.saveManual(provider: .codex, shortPercent: "85", weekPercent: "", observedAt: now, shortReset: reset, weekReset: reset)
         await refresh(retryModel)
         let retryRuleSaved = await retryModel.saveAlertRule(enabledRule)
@@ -409,7 +516,7 @@ import LauncherCore
 
         let deniedBase = try fixture("notification-denied")
         let deniedService = FixtureAIQuotaNotifications(); deniedService.status = .notDetermined; deniedService.grantsPermission = false
-        let deniedModel = AIUsageModel(dataDirectory: deniedBase, startServices: false, notifications: deniedService)
+        let deniedModel = AIUsageModel(dataDirectory: deniedBase, startServices: false, notifications: deniedService, claudeSubscription: FixtureClaudeSubscription())
         let deniedSaved = await deniedModel.saveAlertRule(enabledRule)
         check(deniedSaved && deniedModel.alertRule.enabled && deniedModel.notificationPermission == .denied, "denied system permission preserves the user's explicit saved rule")
         await refresh(deniedModel)
@@ -424,7 +531,7 @@ import LauncherCore
         let metadata: [String: Any] = ["type": "event_msg", "timestamp": timestamp, "payload": ["type": "token_count", "info": ["total_token_usage": ["input_tokens": 200, "output_tokens": 25, "cached_input_tokens": 50]], "private_prompt": "fixture-secret-body"]]
         var meteringData = try JSONSerialization.data(withJSONObject: metadata); meteringData.append(10)
         try meteringData.write(to: sessions.appendingPathComponent("private-project-name.jsonl"))
-        let ledgerModel = AIUsageModel(dataDirectory: ledgerBase, startServices: false, notifications: FixtureAIQuotaNotifications())
+        let ledgerModel = AIUsageModel(dataDirectory: ledgerBase, startServices: false, notifications: FixtureAIQuotaNotifications(), claudeSubscription: FixtureClaudeSubscription())
         await refresh(ledgerModel)
         check(ledgerModel.records.count == 1 && ledgerModel.todayTokens == 225, "scanner records disjoint input output and cache metering")
         check(ledgerModel.coverage[.codex]?.scannedFiles == 1 && ledgerModel.coverage[.codex]?.parsedRecords == 1, "coverage reports actual scanned files and parsed records")
@@ -436,14 +543,14 @@ import LauncherCore
         check(ledgerModel.todayTokens == 0 && ledgerModel.filteredRecords(period: .month, includeDisconnected: true).count == 1, "disconnect removes active summaries while retaining activity history")
         check(ledgerModel.coverage[.codex]?.enabled == false && ledgerModel.coverage[.codex]?.scannedFiles == 0, "disconnected coverage does not claim a current scan")
         try fm.removeItem(at: sessions)
-        let ledgerRestart = AIUsageModel(dataDirectory: ledgerBase, startServices: false, notifications: FixtureAIQuotaNotifications())
+        let ledgerRestart = AIUsageModel(dataDirectory: ledgerBase, startServices: false, notifications: FixtureAIQuotaNotifications(), claudeSubscription: FixtureClaudeSubscription())
         check(ledgerRestart.records.count == 1, "retained Token history restores without the original session directory")
         await refresh(ledgerRestart)
         check(ledgerRestart.filteredRecords(period: .month, includeDisconnected: true).count == 1, "refresh with source absent preserves durable historical records")
 
         let protectedBase = try fixture("new-files-protection")
         try bad.write(to: file(protectedBase, "token-ledger.json")); try bad.write(to: file(protectedBase, "quota-alerts.json"))
-        let protectedModel = AIUsageModel(dataDirectory: protectedBase, startServices: false, notifications: FixtureAIQuotaNotifications())
+        let protectedModel = AIUsageModel(dataDirectory: protectedBase, startServices: false, notifications: FixtureAIQuotaNotifications(), claudeSubscription: FixtureClaudeSubscription())
         check(Set(protectedModel.storageReadErrors.keys) == ["token-ledger.json", "quota-alerts.json"], "new persistence failures are isolated to their own files")
         await refresh(protectedModel)
         let protectedSaved = await protectedModel.saveAlertRule(enabledRule)
@@ -452,7 +559,7 @@ import LauncherCore
         check(try Data(contentsOf: file(protectedBase, "token-ledger.json")) == bad, "refresh preserves corrupt original Token ledger")
         check(protectedModel.savePrice(price), "new storage failures do not block independent healthy prices")
 
-        let navigationModel = AIUsageModel(dataDirectory: freshBase, startServices: false, notifications: FixtureAIQuotaNotifications())
+        let navigationModel = AIUsageModel(dataDirectory: freshBase, startServices: false, notifications: FixtureAIQuotaNotifications(), claudeSubscription: FixtureClaudeSubscription())
         navigationModel.openSources(fromSettingsPrivacy: true)
         navigationModel.show(.provider(.codex))
         check(navigationModel.backTitle(overviewTitle: "用量与额度") == "返回来源管理", "AI back labels name the actual immediate parent")
@@ -477,7 +584,7 @@ import LauncherCore
 
         let importBase = try fixture("import-confirmation")
         let importService = FixtureAIQuotaNotifications()
-        let importModel = AIUsageModel(dataDirectory: importBase, startServices: false, notifications: importService)
+        let importModel = AIUsageModel(dataDirectory: importBase, startServices: false, notifications: importService, claudeSubscription: FixtureClaudeSubscription())
         let importURL = importBase.appendingPathComponent("quota-reading.json")
         let importSnapshot = AIQuotaSnapshot(provider: .claude, observedAt: now, source: .manual,
                                             shortWindow: try AIQuotaWindow(usedPercent: 36, durationMinutes: 300, resetsAt: reset), weeklyWindow: nil)
@@ -513,7 +620,7 @@ import LauncherCore
                                     "payload": ["type": "token_count", "rate_limits": ["primary": ["used_percent": 85, "window_minutes": 300, "resets_at": reset.timeIntervalSince1970]]]]
         var liveData = try JSONSerialization.data(withJSONObject: liveJSON); liveData.append(10); try liveData.write(to: liveFile)
         let missingService = FixtureAIQuotaNotifications()
-        let missingModel = AIUsageModel(dataDirectory: missingBase, startServices: false, notifications: missingService)
+        let missingModel = AIUsageModel(dataDirectory: missingBase, startServices: false, notifications: missingService, claudeSubscription: FixtureClaudeSubscription())
         await refresh(missingModel)
         check(missingModel.providerSummaries.first(where: { $0.provider == .codex })?.state == .ready, "a present fresh local quota is reported as ready")
         try fm.removeItem(at: liveFile)

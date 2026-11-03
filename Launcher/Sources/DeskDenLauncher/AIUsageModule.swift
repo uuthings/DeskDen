@@ -417,12 +417,21 @@ final class AIUsageModel: ObservableObject {
     @Published private(set) var connectionPreview: AIUsageConnectionPreview?
     @Published private(set) var connectionPreviewLoading = false
     @Published private(set) var claudeQuotaSyncMessage: String?
+    @Published private(set) var claudeSubscriptionNeedsLogin = false
+    @Published private(set) var isRefreshingClaudeSubscription = false
+    @Published private(set) var isConnectingClaudeSubscriptionAccount = false
     @Published private(set) var subscriptionConnectionResults: [AIProvider: AISubscriptionConnectionResult] = [:]
     private let directory: URL
     private let claudeSettingsDirectory: URL
     private let statusLineExecutableURL: URL?
     private let subscriptionConnectionWait: TimeInterval
     private let followsSubscriptionConnections: Bool
+    private let claudeSubscription: any ClaudeSubscriptionProviding
+    private let automaticallyFetchesClaudeSubscription: Bool
+    private var claudeSubscriptionTask: Task<Void, Never>?
+    private var claudeSubscriptionGeneration = UUID()
+    private var claudeSubscriptionReading: ClaudeSubscriptionReading?
+    private var lastClaudeSubscriptionSnapshot: AIQuotaSnapshot?
     private var connectingSubscriptions = Set<AIProvider>()
     private var subscriptionFollowups: [AIProvider: Task<Void, Never>] = [:]
     private let tokenStore: AITokenLedgerStore
@@ -450,8 +459,11 @@ final class AIUsageModel: ObservableObject {
     var storageRecoveryInstructions: String { "原文件已保留，对应文件的写入已暂停。请先退出方寸，备份下列原文件，再修复文件或将损坏文件移出此目录，重新打开方寸。移走文件会重新建立该项数据，不会恢复旧记录。" }
     func revealDataDirectory() { NSWorkspace.shared.open(directory) }
     init(dataDirectory: URL, startServices: Bool = true, notifications: (any AIQuotaNotificationProviding)? = nil,
-         claudeSettingsDirectory: URL? = nil, statusLineExecutableURL: URL? = nil, subscriptionConnectionWait: TimeInterval = 4) {
+         claudeSettingsDirectory: URL? = nil, statusLineExecutableURL: URL? = nil, subscriptionConnectionWait: TimeInterval = 4,
+         claudeSubscription: (any ClaudeSubscriptionProviding)? = nil) {
         directory = dataDirectory.appendingPathComponent("AIUsage", isDirectory: true)
+        self.claudeSubscription = claudeSubscription ?? ClaudeSubscriptionService(dataDirectory: directory)
+        automaticallyFetchesClaudeSubscription = startServices || claudeSubscription != nil
         let environmentDirectory = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"].flatMap { path -> URL? in
             guard path.hasPrefix("/"), !path.contains("\0") else { return nil }
             return URL(fileURLWithPath: path, isDirectory: true)
@@ -490,7 +502,10 @@ final class AIUsageModel: ObservableObject {
         if let history: [AIQuotaSnapshot] = loadStorage("quota-history.json", validate: {
             guard $0.count <= 8_000 else { throw AIUsageError.invalid("额度历史超过容量上限。") }
             for snapshot in $0 { try snapshot.validate() }
-        }) { quotaHistory = history }
+        }) {
+            quotaHistory = history
+            lastClaudeSubscriptionSnapshot = history.filter { $0.provider == .claude && $0.source == .claudeCLI }.max { $0.observedAt < $1.observedAt }
+        }
         if let saved: [AITokenPrice] = loadStorage("model-prices.json", validate: { items in
             guard Set(items.map(\.id)).count == items.count else { throw AIUsageError.invalid("模型单价重复。") }
             for item in items { _ = try AITokenPrice(provider: item.provider, model: item.model, inputPerMillion: item.inputPerMillion, outputPerMillion: item.outputPerMillion, cacheReadPerMillion: item.cacheReadPerMillion, cacheWritePerMillion: item.cacheWritePerMillion) }
@@ -514,6 +529,9 @@ final class AIUsageModel: ObservableObject {
         }
     }
     func refresh() {
+        if automaticallyFetchesClaudeSubscription, configuration(for: .claude).enabled, !connectingSubscriptions.contains(.claude) {
+            startClaudeSubscriptionRefresh()
+        }
         guard !isRefreshing, !preparingForQuit, let historyStore else { return }
         isRefreshing = true; generation += 1
         let currentGeneration = generation, configs = configurations, now = Date()
@@ -526,6 +544,9 @@ final class AIUsageModel: ObservableObject {
             self.tokenLedger = update.ledger; self.records = update.ledger.records; self.tokenHistoryCapacityLimited = update.ledger.capacityLimited
             self.tokenHistoryMessage = update.tokenError; self.monthlyTokenHistory = update.monthlySummaries
             self.quotaHistory = update.quotaHistory
+            if case .ready(let snapshot) = self.claudeSubscriptionReading, !self.quotaHistory.contains(snapshot) {
+                self.quotaHistory.append(snapshot); self.quotaHistory.sort { $0.observedAt < $1.observedAt }
+            }
             if let error = update.quotaError { self.errorMessage = error }
             self.coverage = Dictionary(uniqueKeysWithValues: configs.map { config in
                 let result = results.first { $0.provider == config.provider }
@@ -560,6 +581,7 @@ final class AIUsageModel: ObservableObject {
                 value.declaredPlan = configs.first { $0.provider == summary.provider }?.declaredPlan
                 return value
             }
+            self.applyClaudeSubscriptionSummary()
             self.lastRefreshed = now
             self.updateSubscriptionConnectionResults()
             await self.processAlerts(at: now)
@@ -568,6 +590,7 @@ final class AIUsageModel: ObservableObject {
     }
     func prepareForQuit() async throws {
         preparingForQuit = true
+        cancelClaudeSubscriptionRefresh()
         subscriptionFollowups.values.forEach { $0.cancel() }; subscriptionFollowups.removeAll()
         refreshTask?.cancel()
         if let refreshTask { await refreshTask.value }
@@ -737,7 +760,10 @@ final class AIUsageModel: ObservableObject {
     func configuration(for provider: AIProvider) -> AIUsageSourceConfiguration { configurations.first { $0.provider == provider }! }
     @discardableResult func setEnabled(_ enabled: Bool, provider: AIProvider) -> Bool {
         guard mutate(provider, update: { $0.enabled = enabled }) else { return false }
-        if !enabled { subscriptionFollowups.removeValue(forKey: provider)?.cancel(); subscriptionConnectionResults.removeValue(forKey: provider) }
+        if !enabled {
+            subscriptionFollowups.removeValue(forKey: provider)?.cancel(); subscriptionConnectionResults.removeValue(forKey: provider)
+            if provider == .claude { cancelClaudeSubscriptionRefresh(); claudeSubscriptionReading = nil; claudeSubscriptionNeedsLogin = false }
+        }
         return true
     }
     /// Accepts the directory already chosen in a system open panel. No second
@@ -751,9 +777,10 @@ final class AIUsageModel: ObservableObject {
         guard mutate(provider, update: { $0.sessionsPath = url.standardizedFileURL.path }) else { return false }
         errorMessage = nil; return true
     }
-    /// One explicit action connects the local source and, for Claude, its official
-    /// status-line adapter. Only a fresh automatic quota may return ready.
+    /// Queries the official Claude subscription independently of conversation logs.
+    /// Only a fresh automatic quota may return ready; login is a separate action.
     func connectLocalSubscription(provider: AIProvider) async -> AISubscriptionConnectionResult {
+        if provider == .claude { return await connectClaudeSubscription(login: false) }
         guard connectingSubscriptions.insert(provider).inserted else {
             return .waiting(message: "正在检查本机来源，请稍候。")
         }
@@ -778,12 +805,8 @@ final class AIUsageModel: ObservableObject {
         if !sourceExists {
             return finish(.authorizationRequired(message: "未找到 \(provider.title) 本机会话目录。可选择实际会话文件夹恢复；若尚未使用官方客户端，请先安装并完成登录。"))
         }
-        if provider == .claude {
-            guard enableClaudeQuotaSync() else { return finish(.failed(message: errorMessage ?? "Claude 额度同步设置未完成，原设置已保留。")) }
-        } else {
-            guard mutate(provider, update: { $0.enabled = true; $0.quotaPath = nil; $0.manualSnapshot = nil; $0.manualNote = nil }) else {
-                return finish(.failed(message: errorMessage ?? "本机来源无法保存，请检查设置文件后重试。"))
-            }
+        guard mutate(provider, update: { $0.enabled = true; $0.quotaPath = nil; $0.manualSnapshot = nil; $0.manualNote = nil }) else {
+            return finish(.failed(message: errorMessage ?? "本机来源无法保存，请检查设置文件后重试。"))
         }
         subscriptionConnectionResults[provider] = waitingForSubscription(provider)
         let deadline = Date().addingTimeInterval(subscriptionConnectionWait)
@@ -809,20 +832,158 @@ final class AIUsageModel: ObservableObject {
         followSubscriptionReading(provider)
         return result
     }
+    /// The account login path is called only by the explicit subscription-login action.
+    func connectClaudeSubscriptionAccount() async -> AISubscriptionConnectionResult {
+        await connectClaudeSubscription(login: true)
+    }
+    /// Cancels only the user-initiated account flow, preserving any previous reading.
+    func cancelClaudeSubscriptionAccountConnection() {
+        guard isConnectingClaudeSubscriptionAccount else { return }
+        cancelClaudeSubscriptionRefresh()
+        isConnectingClaudeSubscriptionAccount = false
+        claudeQuotaSyncMessage = "Claude 会员连接已取消，原有读数已保留。"
+    }
+    private func connectClaudeSubscription(login: Bool) async -> AISubscriptionConnectionResult {
+        guard !preparingForQuit, connectingSubscriptions.insert(.claude).inserted else {
+            return .waiting(message: "正在检查 Claude 会员额度，请稍候。")
+        }
+        defer {
+            connectingSubscriptions.remove(.claude)
+            if login { isConnectingClaudeSubscriptionAccount = false }
+        }
+        errorMessage = nil
+        let task = startClaudeSubscriptionRefresh(login: login, forceRefresh: !login)
+        if login { isConnectingClaudeSubscriptionAccount = true }
+        let request = claudeSubscriptionGeneration
+        await withTaskCancellationHandler { await task?.value } onCancel: { task?.cancel() }
+        guard !Task.isCancelled, !preparingForQuit, claudeSubscriptionGeneration == request else { return .failed(message: "Claude 额度连接已取消。") }
+        var result: AISubscriptionConnectionResult
+        switch claudeSubscriptionReading {
+        case .ready:
+            guard mutate(.claude, update: { $0.enabled = true; $0.manualSnapshot = nil; $0.manualNote = nil }) else {
+                return .failed(message: errorMessage ?? "Claude 额度来源无法保存。")
+            }
+            applyClaudeSubscriptionSummary()
+            result = freshSubscriptionResult(.claude) ?? .failed(message: "Claude 返回的额度读数已过期，请稍后重新检测。")
+        case .loginRequired(let message), .failed(let message): result = .failed(message: message)
+        case .unavailable(let message):
+            result = freshSubscriptionResult(.claude) ?? .failed(message: message)
+        case nil: result = .failed(message: "Claude 额度连接已取消，请重试。")
+        }
+        subscriptionConnectionResults[.claude] = result
+        claudeQuotaSyncMessage = result.message
+        if case .failed = result { errorMessage = result.message }
+        return result
+    }
+    @discardableResult private func startClaudeSubscriptionRefresh(login: Bool = false, forceRefresh: Bool = false) -> Task<Void, Never>? {
+        guard !preparingForQuit else { return nil }
+        if !login, let existing = claudeSubscriptionTask { return existing }
+        if login { cancelClaudeSubscriptionRefresh() }
+        let request = UUID(); claudeSubscriptionGeneration = request
+        isRefreshingClaudeSubscription = true
+        let service = claudeSubscription
+        let task = Task { [weak self] in
+            defer {
+                if let self, self.claudeSubscriptionGeneration == request {
+                    self.claudeSubscriptionTask = nil; self.isRefreshingClaudeSubscription = false
+                }
+            }
+            let reading: ClaudeSubscriptionReading
+            if login { reading = await service.login() }
+            else if forceRefresh { reading = await service.refresh() }
+            else { reading = await service.fetch() }
+            guard let self, !Task.isCancelled, !self.preparingForQuit, self.claudeSubscriptionGeneration == request else { return }
+            await self.acceptClaudeSubscriptionReading(reading)
+        }
+        claudeSubscriptionTask = task
+        return task
+    }
+    private func cancelClaudeSubscriptionRefresh() {
+        claudeSubscriptionGeneration = UUID()
+        claudeSubscriptionTask?.cancel(); claudeSubscriptionTask = nil
+        isRefreshingClaudeSubscription = false
+    }
+    private func acceptClaudeSubscriptionReading(_ reading: ClaudeSubscriptionReading) async {
+        var accepted = reading
+        if case .ready(let snapshot) = reading {
+            do {
+                guard snapshot.provider == .claude, snapshot.source == .claudeCLI else { throw AIUsageError.invalid("Claude 额度来源格式无效。") }
+                try snapshot.validate()
+                if let historyStore {
+                    let update = await historyStore.update(records: [], snapshots: [snapshot], now: Date())
+                    // A session scan may finish while the query is awaiting persistence.
+                    // Merge observations instead of replacing a newer in-memory history.
+                    func identity(_ value: AIQuotaSnapshot) -> String {
+                        value.id + ":" + value.availableWindows.map {
+                            AIQuotaWindowIdentity(provider: value.provider, durationMinutes: $0.durationMinutes, resetsAt: $0.resetsAt).id
+                        }.joined(separator: "|")
+                    }
+                    var combined = Dictionary(quotaHistory.map { (identity($0), $0) }, uniquingKeysWith: { _, last in last })
+                    for value in update.quotaHistory { combined[identity(value)] = value }
+                    let cutoff = Date().addingTimeInterval(-31 * 86_400)
+                    quotaHistory = Array(combined.values.filter { $0.observedAt >= cutoff }.sorted { $0.observedAt < $1.observedAt }.suffix(8_000))
+                    if let error = update.quotaError { errorMessage = error }
+                }
+            } catch { accepted = .failed("Claude 返回的额度数据无效，已保留最后读数。") }
+        }
+        guard !Task.isCancelled, !preparingForQuit else { return }
+        claudeSubscriptionReading = accepted
+        switch accepted {
+        case .loginRequired: claudeSubscriptionNeedsLogin = true
+        case .ready(let snapshot): claudeSubscriptionNeedsLogin = false; lastClaudeSubscriptionSnapshot = snapshot
+        case .unavailable, .failed: break
+        }
+        applyClaudeSubscriptionSummary()
+        updateSubscriptionConnectionResults()
+    }
+    private func applyClaudeSubscriptionSummary() {
+        guard configuration(for: .claude).enabled, let reading = claudeSubscriptionReading,
+              let index = providerSummaries.firstIndex(where: { $0.provider == .claude }) else { return }
+        let previous = providerSummaries[index]
+        let retained = configuration(for: .claude).manualSnapshot
+            ?? lastClaudeSubscriptionSnapshot ?? previous.snapshot
+            ?? quotaHistory.filter { $0.provider == .claude }.max { $0.observedAt < $1.observedAt }
+        var summary: AIProviderSummary
+        switch reading {
+        case .ready(let snapshot):
+            if let manual = configuration(for: .claude).manualSnapshot, manual.observedAt > snapshot.observedAt {
+                summary = .init(provider: .claude, state: manual.isStale() ? .stale : .ready, snapshot: manual, detail: "展示较新的" + manual.source.title + "；官方额度仍会独立更新。")
+            } else {
+                summary = .init(provider: .claude, state: snapshot.isStale() ? .stale : .ready, snapshot: snapshot,
+                                detail: snapshot.isStale() ? "保留最后有效读数，等待 Claude 更新额度窗口。" : "额度由 Claude 官方命令读取，不由 Token 数推算。")
+            }
+        case .loginRequired(let message):
+            summary = .init(provider: .claude, state: .unavailable, snapshot: retained, detail: message)
+        case .failed(let message):
+            summary = .init(provider: .claude, state: .error, snapshot: retained, detail: message)
+        case .unavailable(let message):
+            if previous.state == .ready, let snapshot = previous.snapshot, snapshot.source == .claudeStatusLine, !snapshot.isStale() { return }
+            summary = .init(provider: .claude, state: retained == nil ? .unavailable : .stale, snapshot: retained, detail: message)
+        }
+        summary.declaredPlan = configuration(for: .claude).declaredPlan
+        providerSummaries[index] = summary
+    }
     private func freshSubscriptionResult(_ provider: AIProvider) -> AISubscriptionConnectionResult? {
         guard configuration(for: provider).enabled,
               let summary = providerSummaries.first(where: { $0.provider == provider }), summary.state == .ready,
               let snapshot = summary.snapshot, !snapshot.isStale(),
-              snapshot.source == (provider == .claude ? .claudeStatusLine : .localSession) else { return nil }
+              (provider == .claude ? [.claudeCLI, .claudeStatusLine].contains(snapshot.source) : snapshot.source == .localSession) else { return nil }
         return .ready(message: provider.title + " 订阅额度已连接。")
     }
     private func waitingForSubscription(_ provider: AIProvider) -> AISubscriptionConnectionResult {
         .waiting(message: provider == .claude
-            ? "同步设置已完成，等待 Claude Code 提供真实额度。已有会话会自动更新；尚无读数时，下一次正常使用后自动显示。"
+            ? "尚未取得当前有效的 Claude 额度；保留最后读数并等待官方来源更新。"
             : "本机来源已启用，等待 Codex 提供真实额度。下一次正常使用后会自动更新。")
     }
     private func updateSubscriptionConnectionResults() {
         for provider in Array(subscriptionConnectionResults.keys) where configuration(for: provider).enabled {
+            if provider == .claude, let reading = claudeSubscriptionReading {
+                switch reading {
+                case .loginRequired(let message), .failed(let message):
+                    subscriptionConnectionResults[provider] = .failed(message: message); continue
+                default: break
+                }
+            }
             if let ready = freshSubscriptionResult(provider) {
                 subscriptionConnectionResults[provider] = ready; subscriptionFollowups.removeValue(forKey: provider)?.cancel()
                 if provider == .claude { claudeQuotaSyncMessage = ready.message }

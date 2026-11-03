@@ -217,12 +217,24 @@ struct UsageConnectionManagerView: View {
                     Text(subscriptionStatus(provider)).font(.system(size: 11)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
-                Button(manager.busy ? "正在连接…" : "连接本机订阅") { manager.connectSubscription(app: app, allowDirectorySelection: true) }
+                Button(manager.busy ? "正在连接…" : provider == .claude && ai.claudeSubscriptionNeedsLogin ? "连接会员账号" : "连接本机订阅") {
+                    manager.connectSubscription(app: app, allowDirectorySelection: true,
+                                                loginClaudeMember: provider == .claude && ai.claudeSubscriptionNeedsLogin)
+                }
                     .buttonStyle(WBButtonStyle(primary: true)).disabled(manager.busy)
                     .accessibilityIdentifier("fc.usage.manager.connect-subscription")
             }
-            Text("自动读取本机登录来源并配置额度同步，无需填写密钥或选择额度文件。")
+            Text(provider == .claude
+                 ? "通过 Claude 官方客户端查询五小时和每周额度。会员登录在官方网页完成，单独保存，不改变现有 Claude Code 登录。"
+                 : "自动读取本机登录来源并配置额度同步，无需填写密钥或选择额度文件。")
                 .font(.system(size: 11)).foregroundStyle(palette.secondary)
+            if provider == .claude {
+                Button(ai.claudeSubscriptionNeedsLogin ? "重新检测本机登录" : "连接其他会员账号") {
+                    manager.connectSubscription(app: app, loginClaudeMember: !ai.claudeSubscriptionNeedsLogin)
+                }
+                .buttonStyle(WBButtonStyle()).disabled(manager.busy)
+                .accessibilityIdentifier("fc.usage.manager.claude-member")
+            }
             if let plan = ai.providerSummaries.first(where: { $0.provider == provider })?.effectiveAccountPlan {
                 Text("会员计划 · " + plan.title).font(.system(size: 12)).foregroundStyle(palette.secondary)
             }
@@ -237,9 +249,13 @@ struct UsageConnectionManagerView: View {
         }
     }
     private func subscriptionStatus(_ provider: AIProvider) -> String {
+        if provider == .claude && ai.isRefreshingClaudeSubscription { return "正在向 Claude 官方客户端查询额度…" }
         if ai.isRefreshing { return "正在读取本机用量元数据…" }
         if !ai.configuration(for: provider).enabled { return "自动读取已暂停，已有记录保留。" }
-        if let summary = ai.providerSummaries.first(where: { $0.provider == provider }), summary.snapshot != nil { return summary.state.title + " · " + summary.accountPlanDescription }
+        if let summary = ai.providerSummaries.first(where: { $0.provider == provider }) {
+            if provider == .claude { return summary.detail }
+            if summary.snapshot != nil { return summary.state.title + " · " + summary.accountPlanDescription }
+        }
         if ai.coverage[provider]?.sourceAvailable == true { return "本机来源可读取，暂未提供有效额度。" }
         return "尚无可用读数，请确认已登录并使用过本机客户端。"
     }
@@ -314,9 +330,14 @@ struct UsageConnectionManagerView: View {
     private var footer: some View {
         HStack(spacing: 8) {
             if manager.busy { ProgressView().controlSize(.small) }
-            Text(manager.busy ? "正在验证或保存连接" : manager.hasChanges ? "有未保存的修改" : "设置保存后应用到卡片列表")
+            Text(ai.isConnectingClaudeSubscriptionAccount ? "等待 Claude 官方网页登录" : manager.busy ? "正在验证或保存连接" : manager.hasChanges ? "有未保存的修改" : "设置保存后应用到卡片列表")
                 .font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(1)
             Spacer(minLength: 8)
+            if ai.isConnectingClaudeSubscriptionAccount {
+                Button("取消连接") { ai.cancelClaudeSubscriptionAccountConnection() }
+                    .buttonStyle(WBButtonStyle())
+                    .accessibilityIdentifier("fc.usage.manager.cancel-member-login")
+            }
             Button("取消") { manager.requestClose(onClose) }.buttonStyle(WBButtonStyle()).disabled(manager.busy)
             Button(manager.primaryTitle) { manager.save(app: app) }.buttonStyle(WBButtonStyle(primary: true))
                 .disabled(manager.busy || manager.draft.service == nil || manager.existingSubscriptionID != nil || manager.draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || appearance.storageError != nil)

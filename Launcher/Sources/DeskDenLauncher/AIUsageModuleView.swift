@@ -488,10 +488,10 @@ struct AIUsageModuleView: View {
                     }
                 }
             } else {
-                AISourceRow(title: "额度快照", detail: value.snapshot?.source.title ?? "官方状态栏导出的用量字段") {
+                AISourceRow(title: "额度快照", detail: value.snapshot?.source.title ?? "等待 Claude 官方额度读数") {
                     AIStateChip(title: value.state == .ready ? "有效" + (value.updatedAt.map { " · " + $0.formatted(date: .omitted, time: .shortened) } ?? "") : value.state.title, positive: value.state == .ready)
                 }
-                AISourceRow(title: "连接方式", detail: "一键连接本机订阅，自动配置额度同步", last: true) {
+                AISourceRow(title: "连接方式", detail: "通过官方客户端查询会员额度", last: true) {
                     Button("连接设置") { model.present(.claudeConnect) }.buttonStyle(WBButtonStyle(compact: true))
                 }
             }
@@ -1178,8 +1178,8 @@ private struct AIUsageDialogContent: View {
     private var claudeDialog: some View {
         AIDialogShell(title: "连接 Claude 额度", close: model.requestDismissDialog) {
             VStack(alignment: .leading, spacing: 0) {
-                Text("自动连接本机 Claude Code 并配置额度同步，无需填写密钥或选择文件。").aiText(12, color: palette.secondary).padding(.bottom, 4)
-                AISourceRow(title: "本机 Claude 订阅", detail: "读取已有会话，并自动接管方寸旧版连接", last: true) {
+                Text("通过 Claude 官方客户端主动查询五小时和每周额度，无需发送对话，也不通过 Token 数推算。").aiText(12, color: palette.secondary).padding(.bottom, 4)
+                AISourceRow(title: "检测本机登录", detail: "检查当前身份并读取订阅额度", last: true) {
                     Button(model.dialogBusy ? "正在连接…" : "连接本机订阅") {
                         guard !model.dialogBusy else { return }
                         model.dialogBusy = true
@@ -1189,6 +1189,17 @@ private struct AIUsageDialogContent: View {
                         }
                     }.buttonStyle(WBButtonStyle(primary: true, compact: true)).disabled(model.dialogBusy)
                         .accessibilityIdentifier("fc.ai.claude.enableSync")
+                }
+                AISourceRow(title: "连接会员账号", detail: "在官方网页登录，独立保存，不改变现有 Claude Code 登录", last: true) {
+                    Button(model.dialogBusy ? "正在连接…" : "官方登录") {
+                        guard !model.dialogBusy else { return }
+                        model.dialogBusy = true
+                        Task { @MainActor in
+                            _ = await model.connectClaudeSubscriptionAccount()
+                            model.dialogBusy = false
+                        }
+                    }.buttonStyle(WBButtonStyle(primary: model.claudeSubscriptionNeedsLogin, compact: true)).disabled(model.dialogBusy)
+                        .accessibilityIdentifier("fc.ai.claude.member-login")
                 }
                 DisclosureGroup("高级连接方式") {
                     AISourceRow(title: "选择额度 JSON", detail: "读取已有额度文件") {
@@ -1211,7 +1222,13 @@ private struct AIUsageDialogContent: View {
                 if model.configuration(for: .claude).enabled { Button("断开 Claude 来源") { model.present(.disconnect(.claude)) } }
                 else { Button("恢复读取") { model.setEnabled(true, provider: .claude) } }
             }.menuStyle(.borderlessButton).fixedSize().font(.system(size: 11)).foregroundStyle(palette.secondary)
-            Button("完成") { model.requestDismissDialog() }.buttonStyle(WBButtonStyle(primary: true))
+            if model.isConnectingClaudeSubscriptionAccount {
+                Button("取消连接") { model.cancelClaudeSubscriptionAccountConnection() }
+                    .buttonStyle(WBButtonStyle())
+                    .accessibilityIdentifier("fc.ai.claude.cancel-member-login")
+            }
+            Button("完成") { model.requestDismissDialog() }
+                .buttonStyle(WBButtonStyle(primary: true)).disabled(model.dialogBusy)
         }.accessibilityIdentifier("fc.modal.ai.claude-connect")
     }
     private var previewDialog: some View {
@@ -1273,7 +1290,8 @@ private struct AIUsageDialogContent: View {
                 helpLine("本机 Token", "仅读取已连接目录内可识别的计量字段。扫描有文件大小、数量和时间范围限制；读取覆盖情况在各来源详情中显示。")
                 helpLine("保留范围", "Token 计量最多保留 31 天、20,000 条。断开只停止采集，不删除已记录的计量历史；不保存提示词、对话正文或认证密钥。")
                 helpLine("等价成本", "只按你保存的模型单价估算，未配置的模型不计入金额。它不代表订阅账单、实际扣款或完整账户费用。")
-                if let open = URL(string: "https://code.claude.com/docs/en/statusline") { Link("Claude 官方状态栏说明", destination: open).font(.system(size: 11)).foregroundStyle(palette.accent) }
+                helpLine("Claude 连接", "通过官方客户端查询会员额度；API 计费登录与会员登录分开识别。独立会员连接由官方登录完成，不改变现有 Claude Code 登录。")
+                if let open = URL(string: "https://code.claude.com/docs/en/authentication") { Link("Claude 官方登录说明", destination: open).font(.system(size: 11)).foregroundStyle(palette.accent) }
             }
         } footer: { Button("知道了") { model.requestDismissDialog() }.buttonStyle(WBButtonStyle(primary: true)) }
     }

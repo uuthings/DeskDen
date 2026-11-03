@@ -12,9 +12,9 @@ public enum AIUsageState: String, Codable, Sendable {
     }
 }
 public enum AIQuotaSource: String, Codable, Sendable {
-    case localSession, claudeStatusLine, imported, manual
+    case localSession, claudeStatusLine, claudeCLI, imported, manual
     public var title: String {
-        switch self { case .localSession: "Codex 本地会话额度"; case .claudeStatusLine: "Claude 官方状态栏读数"; case .imported: "用户导入的额度读数"; case .manual: "用户手动记录" }
+        switch self { case .localSession: "Codex 本地会话额度"; case .claudeStatusLine: "Claude 官方状态栏读数"; case .claudeCLI: "Claude 官方客户端额度"; case .imported: "用户导入的额度读数"; case .manual: "用户手动记录" }
     }
 }
 /// Plan names may come from metering or an explicitly marked user preference.
