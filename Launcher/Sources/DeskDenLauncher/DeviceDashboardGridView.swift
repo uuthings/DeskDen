@@ -17,7 +17,7 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
     func updateNSView(_ view: DeviceDashboardNSView, context: Context) {
         view.configure(model: model, editing: editing, light: scheme == .light, opacity: opacity, theme: theme, scale: scale, minimumHeight: minimumHeight, expanded: expanded, open: open, heightChanged: heightChanged)
     }
-    static func dismantleNSView(_ view: DeviceDashboardNSView, coordinator: ()) { view.rememberScroll(); view.cancelInteraction(); view.detachObservers() }
+    static func dismantleNSView(_ view: DeviceDashboardNSView, coordinator: ()) { view.rememberScroll(); view.cancelInteraction(); view.dismissPopover(); view.detachObservers() }
 }
 
 @MainActor final class DeviceDashboardNSView: NSView {
@@ -38,7 +38,7 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
     private var observers: [NSObjectProtocol] = []
     private var monitor: Any?
     private var scrollTimer: Timer?
-    private var popover: NSPopover?
+    private var popover: WBContentPopup?
     private var restoredScroll = false
     private struct Interaction {
         let id: DeviceCardID
@@ -75,7 +75,7 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
     }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow(); detachObservers()
-        guard let window else { cancelInteraction(); return }
+        guard let window else { cancelInteraction(); dismissPopover(); return }
         for name in [NSWindow.didResignKeyNotification, NSWindow.willCloseNotification, NSWindow.willStartLiveResizeNotification, NSWindow.willEnterFullScreenNotification, NSWindow.willExitFullScreenNotification] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.cancelInteraction() } })
         }
@@ -83,6 +83,7 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
         DispatchQueue.main.async { [weak self] in self?.restoreScroll() }
     }
     func detachObservers() { for observer in observers { NotificationCenter.default.removeObserver(observer) }; observers = [] }
+    func dismissPopover() { popover?.dismiss(); popover = nil }
     func rememberScroll() { if let scroll = enclosingScrollView { model?.dashboardScrollOffset = scroll.contentView.bounds.origin.y } }
     private func restoreScroll() {
         guard !restoredScroll, let scroll = enclosingScrollView, let model else { return }
@@ -214,11 +215,12 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
     }
     func style(_ id: DeviceCardID, anchor: NSView) {
         guard editing, let model else { return }
-        let popover = NSPopover(); popover.behavior = .transient
         let content = DeviceMeterPopover(model: model, id: id)
-        popover.contentViewController = NSHostingController(rootView: content.environment(\.workbenchOpacity,opacity).environment(\.workbenchTheme,theme).preferredColorScheme(light ? .light : .dark))
-        popover.contentSize = CGSize(width: 220, height: 112)
-        self.popover = popover; popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
+        popover?.dismiss()
+        let popup = WBContentPopup(anchor: anchor,
+            content: AnyView(content.workbenchThemeEnvironment(theme: theme, opacity: opacity, appearance: light ? .light : .dark)),
+            width: 220, theme: theme, opacity: opacity, light: light)
+        self.popover = popup; popup.present()
     }
     func keyboardMove(_ id: DeviceCardID, forward: Bool) {
         guard editing else { return }
@@ -418,6 +420,6 @@ struct DeviceMeterPopover: View {
             Picker("进度展示", selection: Binding(get: { model.dashboardLayout.cards.first { $0.id == id }?.meter ?? .bar }, set: { value in model.changeCard(id) { $0.meter = value } })) {
                 Text("长条").tag(DeviceMeterStyle.bar); Text("圆环").tag(DeviceMeterStyle.ring)
             }.pickerStyle(.segmented)
-        }.padding(14).frame(width: 220).workbenchSheetSurface()
+        }.padding(14).frame(width: 220)
     }
 }

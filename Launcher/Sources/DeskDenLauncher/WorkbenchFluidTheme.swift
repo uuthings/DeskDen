@@ -2,6 +2,41 @@ import AppKit
 import SwiftUI
 import LauncherCore
 
+/// Blend a cached presentation over the live view. Data, focus and navigation
+/// remain in one view tree; only the compositor animates during theme changes.
+@MainActor final class WorkbenchAppearanceTransition: NSView {
+    static let duration: TimeInterval = 0.34
+    static func capture(_ window: NSWindow?, reduceMotion: Bool) -> WorkbenchAppearanceTransition? {
+        guard !reduceMotion, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+              let window, window.isVisible, let content = window.contentView,
+              let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { return nil }
+        content.cacheDisplay(in: content.bounds, to: bitmap)
+        guard let image = bitmap.cgImage else { return nil }
+        content.subviews.compactMap { $0 as? WorkbenchAppearanceTransition }.forEach { $0.removeFromSuperview() }
+        let overlay = WorkbenchAppearanceTransition(frame: content.bounds)
+        overlay.autoresizingMask = [.width, .height]; overlay.wantsLayer = true
+        overlay.layer?.contents = image; overlay.layer?.contentsGravity = .resize
+        overlay.layer?.contentsScale = window.backingScaleFactor
+        overlay.setAccessibilityElement(false)
+        content.addSubview(overlay, positioned: .above, relativeTo: nil)
+        return overlay
+    }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    func finish() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let layer = self.layer else { return }
+            self.superview?.layoutSubtreeIfNeeded()
+            CATransaction.begin()
+            CATransaction.setCompletionBlock { [weak self] in self?.removeFromSuperview() }
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 1; fade.toValue = 0; fade.duration = Self.duration
+            fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            layer.opacity = 0; layer.add(fade, forKey: "appearanceTransition")
+            CATransaction.commit()
+        }
+    }
+}
+
 /// The approved milky surface and the dark glass surface share semantic colors.
 enum HomeFluidPalette {
     static let light = ThemePalette(theme: .qingbiMist, opacity: 0.87, light: true)

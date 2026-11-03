@@ -88,7 +88,7 @@ import LauncherCore
             }
             func routeMatches(_ card: WorkbenchMiniCardID) -> Bool {
                 switch card {
-                case .disk: return model.route == .device && model.deviceDetail == .storage && model.requestedReadingReturnTitle == "返回设备状态"
+                case .disk: return model.route == .cleaning && model.cleaning.screen == .start
                 case .memory: return model.route == .device && model.deviceDetail == .memory && model.requestedReadingReturnTitle == "返回设备状态"
                 case .thermal: return model.route == .device && model.deviceDetail == .thermal && model.requestedReadingReturnTitle == "返回设备状态"
                 case .network, .traffic: return model.route == .network

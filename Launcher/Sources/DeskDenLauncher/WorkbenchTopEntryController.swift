@@ -434,11 +434,11 @@ struct WorkbenchTopEntryInput {
                             model.openUsageOverview()
                             if model.route == .ai { model.ai.show(.provider(card == .codex ? .codex : .claude)) }
                         }
-                    case .traffic, .network: model.navigate(.network)
-                    case .disk: model.openDeviceReading(.storage, fromMini: true)
+                    case .traffic, .network: model.selectModule(.network)
+                    case .disk: model.selectModule(.cleaning)
                     case .memory: model.openDeviceReading(.memory, fromMini: true)
                     case .thermal: model.openDeviceReading(.thermal, fromMini: true)
-                    case .todo: model.navigate(.calendar)
+                    case .todo: model.selectModule(.calendar)
                     default:
                         if let id = card.providerID { model.openProviderUsage(id) }
                         else if let id = card.apiBalanceID, !model.modals.isPresented, !model.usagePresentation.blocksNavigation {

@@ -254,7 +254,7 @@ struct UsageIconPicker: View {
                     .background(WorkbenchMaterialSurface(kind: .control, radius: 8))
             }.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel("选择卡片图标")
                 .accessibilityValue(selectionTitle).accessibilityIdentifier("fc.usage.icon.picker")
-                .popover(isPresented: $showingChoices, arrowEdge: .bottom) {
+                .workbenchPopover(isPresented: $showingChoices, width: 296) {
                     choices.preferredColorScheme(colorScheme)
                 }
         }
@@ -314,7 +314,6 @@ struct UsageIconPicker: View {
                 .buttonStyle(WBButtonStyle()).accessibilityIdentifier("fc.usage.icon.choose")
             Text("PNG、JPEG 或 WebP · 图标仅用于显示").font(.system(size: 11)).foregroundStyle(palette.muted)
         }.foregroundStyle(palette.text).padding(14).frame(width: 296)
-            .background(WorkbenchMaterialSurface(kind: .control, radius: 12))
             .accessibilityIdentifier("fc.usage.icon.choices")
     }
     private func choiceButton<Content: View>(_ value: UsageCardIcon, title: String, identifier: String,

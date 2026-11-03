@@ -680,6 +680,152 @@ struct ClickablePlainButtonStyle: ButtonStyle {
 }
 
 
+/// Shared arrowless floating surface for selections, actions and small editors.
+@MainActor enum WBPopupSurface {
+    static func view(size: CGSize, theme: LauncherTheme, opacity: Double, light: Bool) -> NSView {
+        let surface = NSView(frame: NSRect(origin: .zero, size: size))
+        surface.wantsLayer = true
+        surface.layer?.cornerRadius = 10; surface.layer?.masksToBounds = true
+        let material = NSHostingView(rootView: WorkbenchMaterialSurface(kind: .panel, radius: 10, behindWindow: true)
+            .workbenchThemeEnvironment(theme: theme, opacity: opacity, appearance: light ? .light : .dark))
+        material.frame = surface.bounds; material.autoresizingMask = [.width, .height]
+        surface.addSubview(material)
+        return surface
+    }
+    static func origin(trigger: CGRect, size: CGSize, visible: CGRect, trailing: Bool = false) -> CGPoint {
+        let below = trigger.minY - 5 - size.height
+        let y = below >= visible.minY + 6 ? below : min(visible.maxY - size.height - 6, trigger.maxY + 5)
+        let x = trailing ? trigger.maxX - size.width : trigger.minX
+        return CGPoint(x: min(max(visible.minX + 6, x), visible.maxX - size.width - 6), y: max(visible.minY + 6, y))
+    }
+}
+
+@MainActor final class WBContentPopup: NSPanel {
+    private weak var anchor: NSView?
+    private let trailing: Bool
+    private let host: NSHostingView<AnyView>
+    private var theme: LauncherTheme
+    private var opacity: Double
+    private var light: Bool
+    private var outsideMonitor: Any?
+    private var resignObserver: NSObjectProtocol?
+    private var dismissing = false
+    private var returningToAnchor = false
+    var onDismiss: () -> Void = {}
+
+    init(anchor: NSView, content: AnyView, width: CGFloat, theme: LauncherTheme, opacity: Double, light: Bool, trailing: Bool = false) {
+        self.anchor = anchor; self.trailing = trailing
+        self.theme = theme; self.opacity = opacity; self.light = light
+        host = NSHostingView(rootView: content)
+        let size = CGSize(width: width, height: max(28, host.fittingSize.height))
+        super.init(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        isReleasedWhenClosed = false; isOpaque = false; backgroundColor = .clear; hasShadow = true
+        appearance = NSAppearance(named: light ? .aqua : .darkAqua)
+        level = .popUpMenu; animationBehavior = .none; hidesOnDeactivate = true
+        let surface = WBPopupSurface.view(size: size, theme: theme, opacity: opacity, light: light)
+        host.frame = surface.bounds; host.autoresizingMask = [.width, .height]
+        surface.addSubview(host); contentView = surface
+    }
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+    func update(_ content: AnyView, theme: LauncherTheme, opacity: Double, light: Bool) {
+        host.rootView = content
+        if self.theme != theme || self.opacity != opacity || self.light != light {
+            self.theme = theme; self.opacity = opacity; self.light = light
+            appearance = NSAppearance(named: light ? .aqua : .darkAqua)
+            let surface = WBPopupSurface.view(size: frame.size, theme: theme, opacity: opacity, light: light)
+            host.removeFromSuperview(); host.frame = surface.bounds; surface.addSubview(host); contentView = surface
+        }
+    }
+    private func isTriggerClick(_ event: NSEvent) -> Bool {
+        guard event.type == .leftMouseDown, let anchor, event.window === anchor.window else { return false }
+        return anchor.bounds.contains(anchor.convert(event.locationInWindow, from: nil))
+    }
+    func present() {
+        guard let anchor, let parent = anchor.window else { return }
+        let trigger = parent.convertToScreen(anchor.convert(anchor.bounds, to: nil))
+        setFrameOrigin(WBPopupSurface.origin(trigger: trigger, size: frame.size,
+            visible: (parent.screen ?? NSScreen.main)?.visibleFrame ?? parent.frame, trailing: trailing))
+        parent.addChildWindow(self, ordered: .above); makeKeyAndOrderFront(nil)
+        outsideMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel, .keyDown]) { [weak self] event in
+            let consumed = MainActor.assumeIsolated {
+                if let self, event.type == .keyDown, event.keyCode == 53 { self.dismiss(); return true }
+                if let self, self.isTriggerClick(event) { self.returningToAnchor = true; return false }
+                if let self, event.type != .keyDown, event.window !== self { self.dismiss() }
+                return false
+            }
+            return consumed ? nil : event
+        }
+        resignObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: self, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if self.returningToAnchor { self.returningToAnchor = false; return }
+                self.dismiss()
+            }
+        }
+    }
+    func dismiss() {
+        guard !dismissing else { return }; dismissing = true
+        if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor) }; outsideMonitor = nil
+        if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }; resignObserver = nil
+        let wasKey = isKeyWindow, parent = parent
+        parent?.removeChildWindow(self); orderOut(nil)
+        if wasKey, NSApp.isActive { parent?.makeKey() }
+        onDismiss(); super.close()
+    }
+    override func close() { dismiss() }
+}
+
+extension View {
+    func workbenchPopover<Content: View>(isPresented: Binding<Bool>, width: CGFloat = 240,
+        alignment: HorizontalAlignment = .leading, @ViewBuilder content: () -> Content) -> some View {
+        background(WBPopoverAnchor(isPresented: isPresented, width: width, trailing: alignment == .trailing, content: content()))
+    }
+}
+private struct WBPopoverAnchor<Content: View>: NSViewRepresentable {
+    @Binding var isPresented: Bool
+    let width: CGFloat, trailing: Bool, content: Content
+    @Environment(\.workbenchTheme) private var theme
+    @Environment(\.workbenchOpacity) private var opacity
+    @Environment(\.colorScheme) private var scheme
+    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeNSView(context: Context) -> NSView { WBPopoverAnchorView() }
+    func updateNSView(_ view: NSView, context: Context) {
+        let coordinator = context.coordinator
+        coordinator.binding = $isPresented
+        let body = AnyView(content.frame(width: width).fixedSize(horizontal: false, vertical: true)
+            .workbenchThemeEnvironment(theme: theme, opacity: opacity, appearance: scheme == .light ? .light : .dark))
+        // Presentation changes are deferred outside SwiftUI's update transaction.
+        coordinator.generation += 1
+        let generation = coordinator.generation
+        DispatchQueue.main.async { [weak view, weak coordinator] in
+            guard let view, let coordinator, coordinator.generation == generation else { return }
+            if !isPresented { coordinator.popup?.dismiss(); coordinator.popup = nil; return }
+            guard view.window != nil else { return }
+            if let popup = coordinator.popup { popup.update(body, theme: theme, opacity: opacity, light: scheme == .light); return }
+            let popup = WBContentPopup(anchor: view, content: body, width: width, theme: theme, opacity: opacity, light: scheme == .light, trailing: trailing)
+            coordinator.popup = popup
+            popup.onDismiss = { [weak coordinator] in
+                coordinator?.popup = nil
+                if coordinator?.binding?.wrappedValue == true { coordinator?.binding?.wrappedValue = false }
+            }
+            popup.present()
+        }
+    }
+    static func dismantleNSView(_ view: NSView, coordinator: Coordinator) {
+        coordinator.generation += 1; coordinator.binding = nil
+        coordinator.popup?.dismiss(); coordinator.popup = nil
+    }
+    @MainActor final class Coordinator {
+        var popup: WBContentPopup?
+        var binding: Binding<Bool>?
+        var generation = 0
+    }
+}
+private final class WBPopoverAnchorView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 /// A choice list opens outside the trigger, not with the selected row covering
 /// it. The same native host serves every WBSelect while retaining popup AX and
 /// model bindings. It never changes the document's width or scroll position.
@@ -707,14 +853,8 @@ struct ClickablePlainButtonStyle: ButtonStyle {
         isReleasedWhenClosed = false; isOpaque = false; backgroundColor = .clear; hasShadow = true
         appearance = NSAppearance(named: anchor.interfaceLight ? .aqua : .darkAqua)
         level = .popUpMenu; animationBehavior = .none; hidesOnDeactivate = true
-        let surface = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
-        surface.wantsLayer = true
-        let material = NSHostingView(rootView: WorkbenchMaterialSurface(kind: .panel, radius: 10, behindWindow: true)
-            .workbenchThemeEnvironment(theme: anchor.workbenchTheme, opacity: anchor.interfaceOpacity, appearance: anchor.interfaceLight ? .light : .dark))
-        material.frame = surface.bounds; material.autoresizingMask = [.width, .height]
-        surface.addSubview(material)
-        surface.layer?.cornerRadius = 10
-        surface.layer?.masksToBounds = true
+        let surface = WBPopupSurface.view(size: CGSize(width: width, height: height), theme: anchor.workbenchTheme,
+            opacity: anchor.interfaceOpacity, light: anchor.interfaceLight)
         scroller.frame = surface.bounds.insetBy(dx: 4, dy: 4)
         scroller.hasVerticalScroller = true; scroller.scrollerStyle = .overlay; scroller.autohidesScrollers = true
         scroller.drawsBackground = false; scroller.borderType = .noBorder
@@ -737,9 +877,7 @@ struct ClickablePlainButtonStyle: ButtonStyle {
         guard let anchor, let parent = anchor.window else { return }
         let trigger = parent.convertToScreen(anchor.convert(anchor.bounds, to: nil))
         let visible = (parent.screen ?? NSScreen.main)?.visibleFrame ?? parent.frame
-        let below = trigger.minY - 5 - frame.height
-        let originY = below >= visible.minY + 6 ? below : min(visible.maxY - frame.height - 6, trigger.maxY + 5)
-        setFrameOrigin(NSPoint(x: min(max(visible.minX + 6, trigger.minX), visible.maxX - frame.width - 6), y: max(visible.minY + 6, originY)))
+        setFrameOrigin(WBPopupSurface.origin(trigger: trigger, size: frame.size, visible: visible))
         parent.addChildWindow(self, ordered: .above); makeKeyAndOrderFront(nil)
         setCurrent(current)
         if rows.indices.contains(current) { list.scrollToVisible(rows[current].frame) }

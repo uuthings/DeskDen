@@ -150,6 +150,7 @@ private struct DesktopWidgetView: View {
     var open: (WorkbenchRoute) -> Void
     var update: (DesktopCardPreference) -> Void
     var moved: () -> Void
+    @State private var showingMenu = false
     private var palette: ThemePalette { ThemePalette(theme: theme, opacity: opacity, light: light) }
     var body: some View {
         VStack(alignment: .leading, spacing: 15) {
@@ -161,17 +162,20 @@ private struct DesktopWidgetView: View {
                     if card.locked { Image(systemName: "lock.fill").font(.system(size: 9)).foregroundStyle(palette.muted) }
                     Spacer(minLength: 0)
                 }.overlay(DesktopWidgetDragHandle(enabled: !card.locked && !card.clickThrough, ended: moved))
-                Menu {
-                    Button("组件设置…") { open(.cards) }
-                    Divider()
-                    Button(card.floating ? "融入桌面" : "悬浮置顶") { change { $0.floating.toggle() } }
-                    Button(card.locked ? "解锁位置" : "锁定位置") { change { $0.locked.toggle() } }
-                    Button("开启鼠标穿透") { change { $0.clickThrough = true } }
-                    Divider()
-                    Button("隐藏组件") { change { $0.visible = false } }
-                } label: { Image(systemName: "ellipsis").frame(width: 18, height: 18) }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                Button { showingMenu.toggle() } label: { Image(systemName: "ellipsis").frame(width: 18, height: 18) }
+                .buttonStyle(ClickablePlainButtonStyle())
                 .help("\(card.id.title)设置").accessibilityLabel("\(card.id.title)设置")
+                .workbenchPopover(isPresented: $showingMenu, width: 180, alignment: .trailing) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        menuAction("组件设置") { open(.cards) }
+                        Divider().padding(.vertical, 3)
+                        menuAction(card.floating ? "融入桌面" : "悬浮置顶") { change { $0.floating.toggle() } }
+                        menuAction(card.locked ? "解锁位置" : "锁定位置") { change { $0.locked.toggle() } }
+                        menuAction("开启鼠标穿透") { change { $0.clickThrough = true } }
+                        Divider().padding(.vertical, 3)
+                        menuAction("隐藏组件") { change { $0.visible = false } }
+                    }.padding(6)
+                }
             }
             Button { open(card.id == .ai ? .ai : card.id == .today ? .calendar : .device) } label: {
                 DesktopCardContent(card: card, device: device, calendar: calendar, ai: ai)
@@ -188,6 +192,11 @@ private struct DesktopWidgetView: View {
         .environment(\.colorScheme, light ? .light : .dark)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("方寸\(card.id.title)桌面组件")
+    }
+    private func menuAction(_ title: String, action: @escaping () -> Void) -> some View {
+        Button { showingMenu = false; action() } label: {
+            Text(title).font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8).frame(height: 28)
+        }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 6, drawsSelection: false, showsBorder: false))
     }
     private func change(_ edit: (inout DesktopCardPreference) -> Void) { var copy = card; edit(&copy); update(copy) }
 }

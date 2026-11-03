@@ -82,6 +82,9 @@ import LauncherCore
 
             check(press("fc.home.appearance.toggle", in: host), "the actual header appearance control accepts an AX press")
             check(await settle(window) {
+                window.contentView?.subviews.contains(where: { $0 is WorkbenchAppearanceTransition }) != true
+            }, "the theme transition releases its snapshot without leaving an input-blocking overlay")
+            check(await settle(window) {
                 !model.light && model.appearance == .dark
                     && window.appearance?.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
             }, "the header switches the real workbench and native window into dark appearance")
@@ -93,17 +96,31 @@ import LauncherCore
             check(press("fc.home.appearance.toggle", in: host), "the same header control returns to light appearance")
             check(await settle(window) { model.light && model.appearance == .light },
                   "light appearance is restored without replacing the window or Home data")
+            _ = await settle(window) { window.contentView?.subviews.contains(where: { $0 is WorkbenchAppearanceTransition }) != true }
             check(try model.owner?.store.load()?.settings.workbenchAppearance == .light,
                   "the restored light choice is also persisted")
 
-            if let account = objects(in: host).compactMap({ $0 as? WorkbenchFluidAccountMenuButton }).first {
-                let menu = account.makeAccountMenu()
-                check(menu.items.allSatisfy { $0.action == nil && !$0.isEnabled }
-                      && menu.items.contains { $0.title == NSFullUserName() },
-                      "the account menu identifies the local account without unrelated window or app-exit commands")
-                check(menu.items.allSatisfy { $0.submenu == nil } && !model.confirmingQuit && !model.quitting,
-                      "inspecting the compact native menu neither creates nested menus nor starts an exit")
-            } else { check(false, "the mounted account control exposes its native arrowless menu") }
+            check(press("workbench-local-account", in: host), "the same-size account control opens its shared arrowless surface")
+            let accountMounted = await settle(window) {
+                NSApp.windows.contains { candidate in
+                    candidate.isVisible && candidate.contentView.map { element("workbench-account-menu", in: $0) != nil } == true
+                }
+            }
+            if accountMounted, let accountHost = NSApp.windows.filter(\.isVisible).compactMap(\.contentView).first(where: { element("workbench-account-menu", in: $0) != nil }),
+               let account = element("workbench-account-menu", in: accountHost) {
+                let content = objects(in: accountHost)
+                let strings = content.flatMap { [string("accessibilityValue", of: $0), string("accessibilityLabel", of: $0)].compactMap { $0 } }
+                check(strings.contains(NSFullUserName().isEmpty ? NSUserName() : NSFullUserName())
+                      && !content.contains { string("accessibilityRole", of: $0) == NSAccessibility.Role.button.rawValue },
+                      "the shared account surface only identifies the local account without window or app-exit commands")
+                check(rect(account) != nil && !model.confirmingQuit && !model.quitting,
+                      "opening the account surface preserves the running app and ordinary window")
+                try NativeUIFixtureAccessibility.saveView(accountHost, name: "home-fluid-account-popup.png")
+            } else { check(false, "the account content is mounted in a shared arrowless panel") }
+            _ = press("workbench-local-account", in: host)
+            _ = await settle(window) {
+                !NSApp.windows.contains { $0.isVisible && $0.contentView.map { element("workbench-account-menu", in: $0) != nil } == true }
+            }
 
             let initialMonth = model.calendar.displayCalendar.component(.month, from: model.calendar.displayedMonth)
             check(press("fc.home.calendar.previous", in: host), "the mounted previous-month button accepts an AX press")

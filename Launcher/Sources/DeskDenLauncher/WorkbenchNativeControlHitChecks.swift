@@ -216,23 +216,121 @@ import LauncherCore
             checks.append((systemCursorMatches(.pointingHand), "restoring default hand updates the visible hovered button immediately"))
             let topNumber = NSWindow.windowNumber(at: NSEvent.mouseLocation, belowWindowWithWindowNumber: 0)
             print("DETAIL stationary pointer: inside=\(region.containsPointer) target=\(window.windowNumber) top=\(topNumber) screen=\(NSEvent.mouseLocation) local=\(window.mouseLocationOutsideOfEventStream) targetRect=\(rect) windows=\(NSApp.windows.filter { $0.isVisible }.map { "\($0.windowNumber):\(type(of: $0)):\($0.frame):level=\($0.level.rawValue)" })")
-            let regionIDs = region.trackingAreas.map(ObjectIdentifier.init)
+            region.updateTrackingAreas()
+            let regionIDs = pointerTrackingIDs(region)
             var stableCursor = true
-            for _ in 0..<24 {
+            for sample in 0..<24 {
                 region.updateTrackingAreas()
                 window.invalidateCursorRects(for: region)
                 host.layoutSubtreeIfNeeded()
                 try? await Task.sleep(for: .milliseconds(25))
-                stableCursor = stableCursor && systemCursorMatches(.pointingHand)
+                let isHand = systemCursorMatches(.pointingHand)
+                if !isHand {
+                    print("DETAIL stationary cursor mismatch sample=\(sample) arrow=\(systemCursorMatches(.arrow)) inside=\(region.containsPointer) top=\(NSWindow.windowNumber(at: NSEvent.mouseLocation, belowWindowWithWindowNumber: 0)) target=\(window.windowNumber) pointer=\(NSEvent.mouseLocation) ownedTrackingCount=\(pointerTrackingIDs(region).count)")
+                }
+                stableCursor = stableCursor && isHand
             }
-            checks.append((stableCursor && region.trackingAreas.map(ObjectIdentifier.init) == regionIDs,
-                           "a stationary hand survives repeated layout and cursor refresh without replacing its tracking region"))
+            checks.append((stableCursor, "a stationary system hand survives repeated layout and cursor refresh"))
+            checks.append((regionIDs.count == 1 && pointerTrackingIDs(region) == regionIDs,
+                           "repeated layout preserves the owned pointer tracking area independently of AppKit tooltip/cursor areas"))
         }
         await movePointer(to: NSPoint(x: 12, y: 12), in: window)
         checks.append((!systemCursorMatches(.pointingHand), "leaving a button clears the hand instead of retaining a stale cursor"))
         if let originalPoint { postPointer(at: originalPoint) }
         try? await Task.sleep(for: .milliseconds(100))
         checks += await anchoredChoiceChecks()
+        checks += navigationInputChecks()
+        return checks
+    }
+    /// Exercise the production input surface with AppKit events in an unshown
+    /// window. Its real cursor appearance is checked separately above; this
+    /// matrix catches route changes caused by animated geometry and hand jitter.
+    private static func navigationInputChecks() -> [(Bool, String)] {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 90),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 90))
+        let input = WorkbenchFluidNavigationInputView(frame: NSRect(x: 31, y: 24, width: 358, height: 32))
+        root.addSubview(input); window.contentView = root
+        defer {
+            input.onHover = nil; input.onPress = nil; input.onActivate = nil
+            window.contentView = nil; window.close()
+        }
+        input.routes = [.overview, .device, .cleaning, .calendar, .ai, .network, .vault]
+        var hovered: WorkbenchRoute?, activated: [WorkbenchRoute] = [], presses: [WorkbenchRoute?] = []
+        var hoverChanges = 0
+        input.onHover = { route in hovered = route; hoverChanges += 1; input.expanded = route }
+        input.onPress = { presses.append($0) }
+        input.onActivate = { route in activated.append(route); input.selected = route }
+        func event(_ type: NSEvent.EventType, _ x: CGFloat, _ y: CGFloat = 16) -> NSEvent {
+            let point = input.convert(NSPoint(x: x, y: y), to: nil)
+            if [.mouseEntered, .mouseExited, .cursorUpdate].contains(type) {
+                return NSEvent.enterExitEvent(with: type, location: point, modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                    context: nil, eventNumber: 1, trackingNumber: 0, userData: nil)!
+            }
+            return pointerEvent(type, point: point, window: window)!
+        }
+        func move(_ x: CGFloat) { input.mouseMoved(with: event(.mouseMoved, x)) }
+        func click(_ x: CGFloat) {
+            input.mouseDown(with: event(.leftMouseDown, x)); input.mouseUp(with: event(.leftMouseUp, x))
+        }
+        func reset() {
+            input.mouseExited(with: event(.mouseExited, -1))
+            input.selected = .overview; input.expanded = nil
+            activated = []; presses = []; hoverChanges = 0
+        }
+        var checks: [(Bool, String)] = []
+        let hitPoint = input.convert(NSPoint(x: 124, y: 16), to: root)
+        checks.append((root.hitTest(hitPoint) === input && !input.acceptsFirstResponder,
+                       "navigation owns its fixed pointer surface without taking keyboard focus from the underlying buttons"))
+        input.updateTrackingAreas()
+        let tracking = pointerTrackingIDs(input)
+        input.mouseEntered(with: event(.mouseEntered, 124))
+        for _ in 0..<12 {
+            input.updateTrackingAreas(); window.invalidateCursorRects(for: input)
+            input.cursorUpdate(with: event(.cursorUpdate, 124)); move(124)
+        }
+        checks.append((hovered == .device && hoverChanges == 1 && tracking.count == 1 && pointerTrackingIDs(input) == tracking,
+                       "stationary hover keeps one route and one tracking region through repeated layout/cursor refresh"))
+        move(124.5); click(124.5)
+        checks.append((hovered == .device && activated == [.device] && presses.count == 2 && presses[0] == .device && presses[1] == nil,
+                       "light movement while a label expands clicks the entered navigation route exactly once"))
+
+        reset(); input.mouseEntered(with: event(.mouseEntered, 280)); move(315); click(315)
+        move(315.5); click(315.5)
+        checks.append((hovered == .network && activated == [.network, .network],
+                       "selecting a wide hovered capsule and recentering the strip cannot turn hand jitter into an adjacent route"))
+        move(323); click(323)
+        checks.append((hovered == .vault && activated.last == .vault,
+                       "deliberate movement across the neighboring capsule leaves the jitter guard and selects that route"))
+        input.mouseExited(with: event(.mouseExited, 370))
+        checks.append((hovered == nil && input.expanded == nil && input.toolTip == nil,
+                       "leaving the navigation resets hover, expansion and tooltip intent"))
+        input.selected = .overview
+        input.mouseEntered(with: event(.mouseEntered, 163)); click(163)
+        checks.append((hovered == .cleaning && activated.last == .cleaning,
+                       "reentering after a reset resolves the new route rather than reusing a stale target"))
+
+        reset(); input.mouseEntered(with: event(.mouseEntered, 124))
+        move(184); click(184)
+        move(78); click(78)
+        checks.append((activated == [.cleaning, .device],
+                       "crossing moving navigation capsules in both directions activates their actual destination"))
+        reset(); move(6); click(6); move(350); click(350)
+        checks.append((activated.isEmpty && hovered == nil,
+                       "empty margins in the fixed-width strip cannot activate its first or last navigation item"))
+        reset(); move(280)
+        input.mouseDown(with: event(.leftMouseDown, 280))
+        input.mouseDragged(with: event(.leftMouseDragged, 300))
+        input.mouseUp(with: event(.leftMouseUp, 300))
+        checks.append((activated.isEmpty && presses.count == 3 && presses[2] == nil,
+                       "dragging across the strip cancels the pending navigation click and pressed appearance"))
+        input.mouseDown(with: event(.leftMouseDown, 280))
+        input.mouseUp(with: event(.leftMouseUp, 280, -3))
+        checks.append((activated.isEmpty, "releasing outside the strip does not activate a captured navigation route"))
+        input.enabled = false
+        checks.append((input.hitTest(hitPoint) == nil, "a disabled navigation input surface does not intercept pointer events"))
         return checks
     }
     /// The production dropdown keeps NSPopUpButton's selected-value binding,
@@ -352,6 +450,13 @@ import LauncherCore
     private static func systemCursorMatches(_ expected: NSCursor) -> Bool {
         guard let actual = NSCursor.currentSystem else { return false }
         return actual.hotSpot == expected.hotSpot && actual.image.tiffRepresentation == expected.image.tiffRepresentation
+    }
+    /// AppKit adds transient tracking areas for tooltips and cursor rectangles.
+    /// Only the region owned by our hover implementation must retain identity.
+    private static func pointerTrackingIDs(_ view: ClickableCursorView) -> [ObjectIdentifier] {
+        view.trackingAreas.filter {
+            ($0.owner as? NSView) === view && $0.options.contains(.mouseMoved) && $0.options.contains(.cursorUpdate)
+        }.map(ObjectIdentifier.init)
     }
     private static func pointerEvent(_ type: NSEvent.EventType, point: NSPoint, window: NSWindow) -> NSEvent? {
         NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,

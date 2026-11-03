@@ -8,9 +8,9 @@ struct WorkbenchFluidNavigation: View {
     @ObservedObject var model: WorkbenchAppModel
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @State private var hoveredRoute: WorkbenchRoute?
+    @State private var pressedRoute: WorkbenchRoute?
     @State private var hoverTask: Task<Void, Never>?
     @FocusState private var focusedRoute: WorkbenchRoute?
-    @FocusState private var brandFocused: Bool
     private let routes: [WorkbenchRoute] = [.overview, .device, .cleaning, .calendar, .ai, .network, .vault]
     private var motion: Animation? { FluidNavigationMotion.transition(disabled: model.reduceMotion || systemReduceMotion) }
 
@@ -26,9 +26,13 @@ struct WorkbenchFluidNavigation: View {
                     }.accessibilityIdentifier("fc.home.appearance.toggle")
                         .accessibilityValue(model.light ? "浅色" : "深色")
                     WorkbenchFluidRoundButton(symbol: "gearshape", title: "设置", selected: model.route == .settings, suppressMotion: model.reduceMotion) {
-                        model.navigate(.settings)
+                        model.selectModule(.settings)
                     }.accessibilityIdentifier("navigation-settings")
                     WorkbenchFluidAccountButton(model: model).frame(width: 32, height: 32)
+                    WorkbenchFluidRoundButton(symbol: "xmark", title: "关闭窗口", suppressMotion: model.reduceMotion) {
+                        model.closeWindow?()
+                    }.accessibilityIdentifier("window-close")
+                        .accessibilityHint("收起主窗口，后台继续运行")
                 }
             }
             HStack(spacing: 7) {
@@ -37,7 +41,14 @@ struct WorkbenchFluidNavigation: View {
                 .animation(motion, value: hoveredRoute)
                 .animation(motion, value: focusedRoute)
                 .animation(motion, value: model.route)
-                .onHover { inside in if !inside { finishHover() } }
+                .overlay {
+                    WorkbenchFluidNavigationInput(routes: routes, selected: model.route,
+                        expanded: hoveredRoute ?? focusedRoute,
+                        hover: { route in
+                            if let route { trackHover(route) } else { finishHover() }
+                        }, press: { pressedRoute = $0 }, activate: { _ = model.selectModule($0) })
+                        .accessibilityHidden(true)
+                }
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("主导航")
                 .accessibilityIdentifier("workbench-top-navigation")
@@ -47,27 +58,19 @@ struct WorkbenchFluidNavigation: View {
     }
 
     private var brand: some View {
-        Button { model.brandMenuPresented.toggle() } label: {
-            HStack(spacing: 7) {
-                WorkbenchFluidDeskGlyph().stroke(style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
-                    .frame(width: 20, height: 20).accessibilityHidden(true)
-                Text("DeskDen").font(.system(size: 14, weight: .medium)).tracking(0.25)
-            }.foregroundStyle(.white).padding(.vertical, 3)
-                .contentShape(RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.white.opacity(brandFocused ? 0.65 : 0), lineWidth: 1).padding(-3))
-        }.buttonStyle(ClickablePlainButtonStyle()).focused($brandFocused).focusEffectDisabled()
-            .help("DeskDen 菜单").accessibilityLabel("DeskDen 菜单").accessibilityIdentifier("window-brand")
-            .popover(isPresented: $model.brandMenuPresented, arrowEdge: .top) {
-                WorkbenchFluidBrandMenu(model: model)
-            }
+        HStack(spacing: 7) {
+            WorkbenchFluidDeskGlyph().stroke(style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
+                .frame(width: 20, height: 20).accessibilityHidden(true)
+            Text("DeskDen").font(.system(size: 14, weight: .medium)).tracking(0.25)
+        }.foregroundStyle(.white).padding(.vertical, 3)
+            .accessibilityElement(children: .ignore).accessibilityLabel("DeskDen")
+            .accessibilityIdentifier("window-brand")
     }
 
     private func navigation(_ route: WorkbenchRoute) -> some View {
         let selected = model.route == route
         let expanded = selected || (hoveredRoute ?? focusedRoute) == route
-        return Button {
-            if route == .ai { model.openUsageOverview() } else { model.navigate(route) }
-        } label: {
+        return Button { model.selectModule(route) } label: {
             HStack(spacing: 0) {
                 if route == .ai {
                     FluidUsageNavigationGlyph().stroke(style: StrokeStyle(lineWidth: 1.1, lineCap: .round))
@@ -83,8 +86,9 @@ struct WorkbenchFluidNavigation: View {
                 .clipShape(Capsule())
                 .shadow(color: FluidNavigationColors.shadow.opacity(expanded ? 0.05 : 0), radius: 2, y: 1)
                 .contentShape(Capsule())
-        }.buttonStyle(FluidNavigationButtonStyle(suppressMotion: model.reduceMotion)).focused($focusedRoute, equals: route).focusEffectDisabled()
-            .onHover { inside in trackHover(route, inside: inside) }
+                .opacity(pressedRoute == route ? 0.82 : 1)
+                .animation(model.reduceMotion || systemReduceMotion ? nil : .easeOut(duration: 0.16), value: pressedRoute == route)
+        }.buttonStyle(FluidNavigationButtonStyle(suppressMotion: model.reduceMotion, managesCursor: false)).focused($focusedRoute, equals: route).focusEffectDisabled()
             .accessibilityLabel(route.title)
             .accessibilityValue(selected ? "当前页面" : "")
             .accessibilityAddTraits(selected ? .isSelected : [])
@@ -106,8 +110,7 @@ struct WorkbenchFluidNavigation: View {
 
     // Keep the expanded target until the pointer leaves the whole navigation
     // region. An animated capsule edge moving away is not a user hover exit.
-    private func trackHover(_ route: WorkbenchRoute, inside: Bool) {
-        guard inside else { return }
+    private func trackHover(_ route: WorkbenchRoute) {
         hoverTask?.cancel(); hoverTask = nil
         hoveredRoute = route
     }
@@ -120,7 +123,121 @@ struct WorkbenchFluidNavigation: View {
         }
     }
     private func resetHover() {
-        hoverTask?.cancel(); hoverTask = nil; hoveredRoute = nil
+        hoverTask?.cancel(); hoverTask = nil; hoveredRoute = nil; pressedRoute = nil
+    }
+}
+
+/// One fixed native input surface owns pointer tracking for the complete strip.
+/// The SwiftUI capsules below it may animate without moving cursor rectangles or
+/// generating a new hover target. Their Buttons retain keyboard and AX actions.
+private struct WorkbenchFluidNavigationInput: NSViewRepresentable {
+    let routes: [WorkbenchRoute]
+    let selected: WorkbenchRoute
+    let expanded: WorkbenchRoute?
+    let hover: (WorkbenchRoute?) -> Void
+    let press: (WorkbenchRoute?) -> Void
+    let activate: (WorkbenchRoute) -> Void
+
+    func makeNSView(context: Context) -> WorkbenchFluidNavigationInputView {
+        WorkbenchFluidNavigationInputView(frame: .zero)
+    }
+    func updateNSView(_ view: WorkbenchFluidNavigationInputView, context: Context) {
+        view.routes = routes; view.selected = selected; view.expanded = expanded
+        view.onHover = hover; view.onPress = press; view.onActivate = activate
+    }
+}
+
+final class WorkbenchFluidNavigationInputView: ClickableCursorView {
+    var routes: [WorkbenchRoute] = []
+    var selected: WorkbenchRoute = .overview { didSet { if oldValue != selected { preservePointerIntent() } } }
+    var expanded: WorkbenchRoute? { didSet { if oldValue != expanded { preservePointerIntent() } } }
+    var onHover: ((WorkbenchRoute?) -> Void)?
+    var onPress: ((WorkbenchRoute?) -> Void)?
+    var onActivate: ((WorkbenchRoute) -> Void)?
+    private var trackedRoute: WorkbenchRoute?
+    private var trackedPoint: CGPoint?
+    private var intentAnchor: CGPoint?
+    private var pressed: (route: WorkbenchRoute, point: CGPoint)?
+
+    override var mouseDownCanMoveWindow: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard enabled, !isHiddenOrHasHiddenAncestor,
+              bounds.contains(convert(point, from: superview)) else { return nil }
+        return self
+    }
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        updateTarget(at: convert(event.locationInWindow, from: nil))
+    }
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        let point = convert(event.locationInWindow, from: nil)
+        // A layout/cursor refresh at the same location is not new user intent.
+        if trackedPoint.map({ hypot(point.x - $0.x, point.y - $0.y) > 0.25 }) ?? true {
+            updateTarget(at: point)
+        }
+    }
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        guard !containsPointer else { return }
+        trackedRoute = nil; trackedPoint = nil; intentAnchor = nil; toolTip = nil
+        onHover?(nil)
+    }
+    override func mouseDown(with event: NSEvent) {
+        pressed = nil
+        let point = convert(event.locationInWindow, from: nil)
+        // Preserve the route that the physical pointer entered while its label
+        // is still expanding, instead of letting the moving capsule choose it.
+        let stationary = trackedPoint.map { hypot(point.x - $0.x, point.y - $0.y) <= 1 } == true
+        if let route = stationary ? trackedRoute : route(at: point) {
+            pressed = (route, point); onPress?(route)
+        }
+    }
+    override func mouseDragged(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        if let pressed, hypot(point.x - pressed.point.x, point.y - pressed.point.y) > 4 {
+            self.pressed = nil; onPress?(nil)
+        }
+    }
+    override func mouseUp(with event: NSEvent) {
+        let press = pressed; pressed = nil; onPress?(nil)
+        let point = convert(event.locationInWindow, from: nil)
+        guard let press, bounds.contains(point),
+              hypot(point.x - press.point.x, point.y - press.point.y) <= 4 else { return }
+        onActivate?(press.route)
+    }
+    private func updateTarget(at point: CGPoint) {
+        trackedPoint = point
+        // Selecting the hovered item can recenter the strip by 23 points. Keep
+        // its existing intent through ordinary hand jitter, but do not enlarge
+        // its hit rectangle over an adjacent visible button.
+        if trackedRoute != nil, let intentAnchor,
+           hypot(point.x - intentAnchor.x, point.y - intentAnchor.y) <= 4 { return }
+        intentAnchor = nil
+        guard let route = route(at: point) else {
+            if trackedRoute != nil { trackedRoute = nil; toolTip = nil; onHover?(nil) }
+            return
+        }
+        guard trackedRoute != route else { return }
+        trackedRoute = route; toolTip = route.title
+        onHover?(route)
+    }
+    private func preservePointerIntent() {
+        if trackedRoute != nil { intentAnchor = trackedPoint }
+    }
+    private func route(at point: CGPoint) -> WorkbenchRoute? {
+        guard bounds.contains(point), !routes.isEmpty else { return nil }
+        let widths = routes.map { $0 == selected || $0 == expanded ? CGFloat(78) : 32 }
+        let total = widths.reduce(0, +) + CGFloat(max(0, routes.count - 1)) * 7
+        var x = bounds.midX - total / 2
+        guard point.x >= x, point.x <= x + total else { return nil }
+        for (index, route) in routes.enumerated() {
+            let width = widths[index]
+            if point.x <= x + width + 3.5 || index == routes.count - 1 { return route }
+            x += width + 7
+        }
+        return nil
     }
 }
 
@@ -185,9 +302,9 @@ private struct WorkbenchFluidRoundButton: View {
                     .id(symbol).transition(.opacity)
             }
                 .frame(width: 32, height: 32)
-                .foregroundStyle(engaged ? FluidNavigationColors.ink : .white)
-                .background(Circle().fill(Color.white.opacity(engaged ? 0.94 : 0.03)))
-                .overlay(Circle().strokeBorder(Color.white.opacity(engaged ? 1 : 0.31), lineWidth: 1))
+                .foregroundStyle(selected ? FluidNavigationColors.ink : .white.opacity(engaged ? 1 : 0.88))
+                .background(Circle().fill(Color.white.opacity(selected ? 0.94 : engaged ? 0.14 : 0.028)))
+                .overlay(Circle().strokeBorder(Color.white.opacity(selected ? 1 : engaged ? 0.65 : 0.31), lineWidth: 1))
                 .contentShape(Circle())
         }.buttonStyle(FluidNavigationButtonStyle(suppressMotion: suppressMotion)).focused($focused).focusEffectDisabled().onHover { hovered = $0 }
             .animation(motion, value: engaged)
@@ -204,51 +321,15 @@ private enum FluidNavigationMotion {
 
 private struct FluidNavigationButtonStyle: ButtonStyle {
     var suppressMotion: Bool
+    var managesCursor = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label.contentShape(Rectangle()).clickableCursor()
+        Group {
+            if managesCursor { configuration.label.contentShape(Rectangle()).clickableCursor() }
+            else { configuration.label.contentShape(Rectangle()) }
+        }
             .opacity(configuration.isPressed ? 0.82 : 1)
             .animation(reduceMotion || suppressMotion ? nil : .easeOut(duration: 0.16), value: configuration.isPressed)
-    }
-}
-
-private struct WorkbenchFluidBrandMenu: View {
-    @ObservedObject var model: WorkbenchAppModel
-    private var version: String { "v" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—") }
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(alignment: .firstTextBaseline, spacing: 7) {
-                Text("DeskDen").font(.system(size: 14, weight: .medium))
-                Text(version).font(.system(size: 11)).foregroundStyle(model.light ? FluidNavigationColors.secondary : Color.white.opacity(0.64))
-            }.padding(.horizontal, 10).padding(.vertical, 9)
-            Divider().padding(.vertical, 3)
-            if model.isTopEntryPresentation { row("留在窗口", symbol: "macwindow", identifier: "window-keep") { model.keepInOrdinaryWindow?() } }
-            row("最小化窗口", symbol: "minus", identifier: "window-minimize") { model.minimizeWindow?() }
-            row(model.isFullScreen ? "返回窗口" : "进入全屏", symbol: model.isFullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right", identifier: "window-fullscreen") { model.toggleFullScreen?() }
-            row("关闭窗口", symbol: "xmark", identifier: "window-close") { model.closeWindow?() }
-            Divider().padding(.vertical, 3)
-            row("检查更新", symbol: "arrow.down.to.line", identifier: "window-check-updates") { model.owner?.updates.checkForUpdates() }
-            row("设置", symbol: "gearshape", identifier: "window-open-settings") { model.navigate(.settings) }
-            // Keep an escape hatch when the user hides the menu bar item.
-            if !model.preferences.menuBarVisible {
-                Divider().padding(.vertical, 3)
-                row("退出 DeskDen", symbol: "power", identifier: "window-quit") { _ = model.requestQuit() }
-            }
-        }.padding(7).frame(width: 206).foregroundStyle(model.light ? FluidNavigationColors.ink : .white)
-            .workbenchThemeEnvironment(theme: model.theme, opacity: model.opacity, backgroundMotion: false, appearance: model.light ? .light : .dark)
-            .accessibilityElement(children: .contain).accessibilityIdentifier("workbench-brand-menu")
-    }
-    private func row(_ title: String, symbol: String, identifier: String, action: @escaping @MainActor () -> Void) -> some View {
-        Button {
-            model.brandMenuPresented = false
-            DispatchQueue.main.async { action() }
-        } label: {
-            HStack(spacing: 9) {
-                Image(systemName: symbol).font(.system(size: 13)).frame(width: 18).accessibilityHidden(true)
-                Text(title).font(.system(size: 12))
-                Spacer(minLength: 0)
-            }.padding(.horizontal, 10).frame(height: 30).contentShape(RoundedRectangle(cornerRadius: 7))
-        }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 7)).accessibilityIdentifier(identifier)
     }
 }
 
@@ -298,87 +379,28 @@ private struct WorkbenchFluidDeskGlyph: Shape {
     }
 }
 
-private struct WorkbenchFluidAccountButton: NSViewRepresentable {
+private struct WorkbenchFluidAccountButton: View {
     @ObservedObject var model: WorkbenchAppModel
-    @Environment(\.isEnabled) private var enabled
-    func makeNSView(context: Context) -> WorkbenchFluidAccountMenuButton {
-        WorkbenchFluidAccountMenuButton(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
-    }
-    func updateNSView(_ button: WorkbenchFluidAccountMenuButton, context: Context) {
-        button.model = model; button.isEnabled = enabled
-        button.appearance = NSAppearance(named: model.light ? .aqua : .darkAqua)
-    }
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: WorkbenchFluidAccountMenuButton, context: Context) -> CGSize? {
-        CGSize(width: 32, height: 32)
-    }
-}
-
-/// A native menu supplies keyboard navigation, outside-click dismissal and a
-/// right-aligned anchor without the speech-bubble arrow of an NSPopover.
-@MainActor final class WorkbenchFluidAccountMenuButton: ClickableButton {
-    weak var model: WorkbenchAppModel?
-    private(set) var activeMenu: NSMenu?
-    private var hoverArea: NSTrackingArea?
-    private var hovering = false
-    override var isFlipped: Bool { true }
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        isBordered = false; title = ""; focusRingType = .none
-        target = self; action = #selector(openAccountMenu)
-        userInterfaceLayoutDirection = .rightToLeft
-        cell?.userInterfaceLayoutDirection = .rightToLeft
-        setAccessibilityRole(.button)
-        setAccessibilityLabel("本机账户")
-        setAccessibilityIdentifier("workbench-local-account")
-        toolTip = "本机账户"
-    }
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let hoverArea { removeTrackingArea(hoverArea) }
-        let area = NSTrackingArea(rect: .zero, options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited], owner: self, userInfo: nil)
-        addTrackingArea(area); hoverArea = area
-    }
-    override func mouseEntered(with event: NSEvent) { hovering = isEnabled; needsDisplay = true }
-    override func mouseExited(with event: NSEvent) { hovering = false; needsDisplay = true }
-    override func highlight(_ flag: Bool) { super.highlight(flag); needsDisplay = true }
-    override func becomeFirstResponder() -> Bool { let value = super.becomeFirstResponder(); needsDisplay = true; return value }
-    override func resignFirstResponder() -> Bool { let value = super.resignFirstResponder(); needsDisplay = true; return value }
-    override func draw(_ dirtyRect: NSRect) {
-        let focused = window?.firstResponder === self
-        let engaged = hovering || isHighlighted || focused || activeMenu != nil
-        let rim = NSBezierPath(ovalIn: bounds.insetBy(dx: 0.65, dy: 0.65))
-        NSColor.white.withAlphaComponent(engaged ? 0.17 : 0.07).setFill(); rim.fill()
-        NSColor.white.withAlphaComponent(engaged ? 0.88 : 0.64).setStroke(); rim.lineWidth = 1.1; rim.stroke()
-        let ink = NSColor.white.withAlphaComponent(isEnabled ? 0.96 : 0.4)
-        let head = NSBezierPath(ovalIn: NSRect(x: bounds.midX - 3.15, y: 7.1, width: 6.3, height: 6.3))
-        ink.setStroke(); head.lineWidth = 1.3; head.stroke()
-        let shoulders = NSBezierPath()
-        shoulders.move(to: NSPoint(x: bounds.midX - 7, y: 24.3))
-        shoulders.curve(to: NSPoint(x: bounds.midX, y: 16.7), controlPoint1: NSPoint(x: bounds.midX - 7, y: 19.5), controlPoint2: NSPoint(x: bounds.midX - 4.1, y: 16.7))
-        shoulders.curve(to: NSPoint(x: bounds.midX + 7, y: 24.3), controlPoint1: NSPoint(x: bounds.midX + 4.1, y: 16.7), controlPoint2: NSPoint(x: bounds.midX + 7, y: 19.5))
-        shoulders.lineWidth = 1.3; shoulders.lineCapStyle = .round; shoulders.stroke()
-    }
-    func makeAccountMenu() -> NSMenu {
-        let menu = NSMenu(title: "本机账户")
-        menu.autoenablesItems = false; menu.font = .systemFont(ofSize: 12)
-        menu.minimumWidth = 156
-        let fullName = NSFullUserName().isEmpty ? NSUserName() : NSFullUserName()
-        let name = fullName.count > 22 ? String(fullName.prefix(21)) + "…" : fullName
-        let account = NSMenuItem(title: name, action: nil, keyEquivalent: "")
-        account.isEnabled = false; account.toolTip = fullName + " · 本机账户"
-        menu.addItem(account)
-        let description = NSMenuItem(title: "当前 macOS 账户", action: nil, keyEquivalent: "")
-        description.isEnabled = false
-        menu.addItem(description)
-        return menu
-    }
-    @objc private func openAccountMenu() {
-        guard isEnabled, window != nil, model?.quitting == false else { return }
-        let menu = makeAccountMenu()
-        activeMenu = menu; highlight(true)
-        defer { activeMenu = nil; highlight(false) }
-        menu.popUp(positioning: nil, at: NSPoint(x: bounds.maxX, y: bounds.maxY + 7), in: self)
+    @State private var presented = false
+    private var accountName: String { NSFullUserName().isEmpty ? NSUserName() : NSFullUserName() }
+    var body: some View {
+        WorkbenchFluidRoundButton(symbol: "person", title: "本机账户", selected: presented, suppressMotion: model.reduceMotion) {
+            presented.toggle()
+        }.accessibilityIdentifier("workbench-local-account")
+            .workbenchPopover(isPresented: $presented, width: 240, alignment: .trailing) {
+                HStack(spacing: 11) {
+                    Image(systemName: "person.crop.circle").font(.system(size: 28, weight: .light))
+                        .foregroundStyle(model.light ? FluidNavigationColors.secondary : Color.white.opacity(0.72))
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(accountName).font(.system(size: 13, weight: .medium)).lineLimit(2)
+                        Text("当前 macOS 账户").font(.system(size: 11))
+                            .foregroundStyle(model.light ? FluidNavigationColors.secondary : Color.white.opacity(0.64))
+                    }
+                    Spacer(minLength: 0)
+                }.foregroundStyle(model.light ? FluidNavigationColors.ink : .white).padding(14)
+                    .accessibilityElement(children: .contain).accessibilityIdentifier("workbench-account-menu")
+            }
     }
 }
 

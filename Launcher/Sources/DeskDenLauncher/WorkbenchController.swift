@@ -124,6 +124,56 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         if destination == .cards { settingsTab = .widgets }
         route=next;updateSamplingVisibility()
     }
+    /// A primary-navigation selection is a fresh module entry. Internal links
+    /// keep using navigate(_:), so a requested detail and its back target survive.
+    @discardableResult func selectModule(_ destination:WorkbenchRoute) -> Bool {
+        guard !quitting else {return false}
+        let next:WorkbenchRoute = destination == .cards ? .settings:destination
+        modals.prune()
+        // Check the underlying editor bindings too: a click can arrive before
+        // SwiftUI has registered the corresponding shared modal presentation.
+        guard !modals.isPresented, !usagePresentation.blocksNavigation,
+              calendar.editor == nil, ai.dialog == nil, !ai.confirmDiscardPrice,
+              vault.sheet == nil, cleaning.dialog == nil else {revealWindow?();return false}
+        if let sheet=hostWindow?.attachedSheet {
+            hostWindow?.makeKeyAndOrderFront(nil);sheet.makeKeyAndOrderFront(nil);return false
+        }
+        if (route == .ai || next == .ai), ai.destination == .prices, ai.hasUnsavedPriceChanges {
+            if route != .ai {navigate(.ai)}
+            message="价格设置尚未保存，请先保存更改，或使用返回按钮取消编辑。"
+            revealWindow?();return false
+        }
+        if (route == .cleaning || next == .cleaning), cleaning.screen == .scope,
+           cleaning.draftScope != cleaning.scopeChoice || (cleaning.draftScope == .custom && cleaning.draftDirectories != cleaning.customDirectories) {
+            if route != .cleaning {navigate(.cleaning)}
+            message="扫描范围尚未保存，请先应用更改或取消编辑。"
+            revealWindow?();return false
+        }
+        navigate(destination)
+        guard route == next else {return false}
+        switch next {
+        case .device:
+            readingReturnRoute=nil;deviceDetail=nil
+        case .cleaning:
+            // Keep the live progress page while a scan/transaction is running.
+            // Completed results, selections and filters remain available in memory.
+            if !cleaning.isBusy {
+                if cleaning.screen == .scope {cleaning.cancelScope()}
+                cleaning.closeDetail();cleaning.goHome()
+            }
+        case .calendar:
+            calendar.showSources=false;calendar.sourcesReturnToPrivacy=false
+            calendar.showReminderList=false
+        case .ai:
+            ai.showOverview();usagePresentation.selectedSourceID=nil;usagePresentation.selectedAPIID=nil
+        case .vault:
+            vault.showingProtection=false;vault.protectionFromSettings=false
+        case .settings:
+            settingsTab=destination == .cards ? .widgets:.general;launcherSection=0
+        case .overview,.network,.cards:break
+        }
+        return true
+    }
     func openContextSettings() {
         modals.prune()
         guard !modals.isPresented, !usagePresentation.blocksNavigation, hostWindow?.attachedSheet == nil else {revealWindow?();return}
@@ -199,8 +249,13 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     }
     func changeLight(_ value:Bool) {changeAppearance(value ? .light:.dark)}
     func changeAppearance(_ value:LauncherAppearance) {
-        guard let owner,owner.updateSettings({$0.workbenchAppearance=value;$0.lightAppearance=value == .light}) else {message=owner?.lastSaveError;return}
+        guard value != appearance else { return }
+        let transition = WorkbenchAppearanceTransition.capture(hostWindow, reduceMotion: reduceMotion)
+        guard let owner,owner.updateSettings({$0.workbenchAppearance=value;$0.lightAppearance=value == .light}) else {
+            transition?.removeFromSuperview();message=owner?.lastSaveError;return
+        }
         owner.render();syncAppearance()
+        transition?.finish()
     }
     func changeTheme(_ value:LauncherTheme) {
         guard let owner,owner.updateSettings({$0.workbenchTheme=value;$0.workbenchAppearance = .dark;$0.lightAppearance=false}) else {message=owner?.lastSaveError;return}
