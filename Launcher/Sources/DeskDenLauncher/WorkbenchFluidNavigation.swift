@@ -21,10 +21,7 @@ struct WorkbenchFluidNavigation: View {
                 if let owner = model.owner { WorkbenchFluidUpdateEntry(updates: owner.updates) }
                 Spacer(minLength: 0)
                 HStack(spacing: 11) {
-                    WorkbenchFluidRoundButton(symbol: model.light ? "moon" : "sun.max", title: model.light ? "切换深色模式" : "切换浅色模式", suppressMotion: model.reduceMotion) {
-                        model.changeLight(!model.light)
-                    }.accessibilityIdentifier("fc.home.appearance.toggle")
-                        .accessibilityValue(model.light ? "浅色" : "深色")
+                    WorkbenchFluidAppearanceButton(model: model)
                     WorkbenchFluidRoundButton(symbol: "gearshape", title: "设置", selected: model.route == .settings, suppressMotion: model.reduceMotion) {
                         model.selectModule(.settings)
                     }.accessibilityIdentifier("navigation-settings")
@@ -284,6 +281,83 @@ private struct WorkbenchFluidSettingsTab: View {
     }
 }
 
+/// The native Button keeps a fixed hit/focus frame while its two-sided face
+/// turns. There is no delayed state change or queued completion: a second click
+/// immediately reverses the presentation toward the current appearance.
+private struct WorkbenchFluidAppearanceButton: View {
+    @ObservedObject var model: WorkbenchAppModel
+    @State private var hovered = false
+    @FocusState private var focused: Bool
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    private var disableMotion: Bool { model.reduceMotion || systemReduceMotion }
+    private var title: String { model.light ? "切换深色模式" : "切换浅色模式" }
+    private var angle: Double { model.light ? 0 : 180 }
+
+    var body: some View {
+        Button { model.changeLight(!model.light) } label: {
+            ZStack {
+                if disableMotion {
+                    // A separate static branch also stops a turn immediately
+                    // if Reduce Motion is enabled while it is in flight.
+                    WorkbenchFluidAppearanceFace(angle: angle, highlighted: hovered || focused)
+                        .transaction { $0.animation = nil }
+                } else {
+                    WorkbenchFluidAppearanceFace(angle: angle, highlighted: hovered || focused)
+                        .animation(.timingCurve(0.35, 0, 0.20, 1, duration: 0.34), value: model.light)
+                }
+            }.frame(width: 32, height: 32).contentShape(Circle())
+                .background(WorkbenchAppearanceLiveRegion().accessibilityHidden(true))
+        }.buttonStyle(FluidNavigationButtonStyle(suppressMotion: disableMotion))
+            .focused($focused).focusEffectDisabled().onHover { hovered = $0 }
+            .animation(FluidNavigationMotion.transition(disabled: disableMotion), value: hovered || focused)
+            .accessibilityLabel(title).accessibilityValue(model.light ? "浅色" : "深色")
+            .accessibilityIdentifier("fc.home.appearance.toggle").help(title)
+    }
+}
+
+private struct WorkbenchFluidAppearanceFace: View, @MainActor Animatable {
+    var angle: Double
+    let highlighted: Bool
+    var animatableData: Double {
+        get { angle }
+        set { angle = newValue }
+    }
+    var body: some View {
+        let front = angle < 90
+        Image(systemName: front ? "moon" : "sun.max")
+            .font(.system(size: 15, weight: .regular))
+            .foregroundStyle(Color.white.opacity(highlighted ? 1 : 0.88))
+            .frame(width: 32, height: 32)
+            .background { FluidNavigationRoundSurface(highlighted: highlighted, selected: false) }
+            // Change faces only at the edge; subtracting the half turn keeps
+            // the back icon readable instead of displaying a mirrored glyph.
+            .rotation3DEffect(.degrees(front ? angle : angle - 180),
+                axis: (x: 0, y: 1, z: 0), anchor: .center, perspective: 0.28)
+            .accessibilityHidden(true)
+    }
+}
+
+/// The same thin, softly lit surface is shared by all circular header actions.
+/// Hover changes light within the existing circle; neither bounds nor scale move.
+private struct FluidNavigationRoundSurface: View {
+    let highlighted: Bool
+    let selected: Bool
+    var body: some View {
+        Circle()
+            .fill(LinearGradient(colors: [
+                Color.white.opacity(selected ? 0.96 : highlighted ? 0.15 : 0.045),
+                Color.white.opacity(selected ? 0.91 : highlighted ? 0.055 : 0.018)
+            ], startPoint: .topLeading, endPoint: .bottomTrailing))
+            .overlay {
+                Circle().strokeBorder(LinearGradient(colors: [
+                    Color.white.opacity(selected ? 1 : highlighted ? 0.47 : 0.35),
+                    Color.white.opacity(selected ? 0.85 : highlighted ? 0.23 : 0.20)
+                ], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1)
+            }
+            .shadow(color: Color.white.opacity(highlighted && !selected ? 0.055 : 0), radius: 4)
+    }
+}
+
 private struct WorkbenchFluidRoundButton: View {
     let symbol: String
     let title: String
@@ -303,8 +377,7 @@ private struct WorkbenchFluidRoundButton: View {
             }
                 .frame(width: 32, height: 32)
                 .foregroundStyle(selected ? FluidNavigationColors.ink : .white.opacity(engaged ? 1 : 0.88))
-                .background(Circle().fill(Color.white.opacity(selected ? 0.94 : engaged ? 0.14 : 0.028)))
-                .overlay(Circle().strokeBorder(Color.white.opacity(selected ? 1 : engaged ? 0.65 : 0.31), lineWidth: 1))
+                .background { FluidNavigationRoundSurface(highlighted: engaged, selected: selected) }
                 .contentShape(Circle())
         }.buttonStyle(FluidNavigationButtonStyle(suppressMotion: suppressMotion)).focused($focused).focusEffectDisabled().onHover { hovered = $0 }
             .animation(motion, value: engaged)

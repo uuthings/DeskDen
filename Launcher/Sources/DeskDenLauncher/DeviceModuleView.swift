@@ -143,6 +143,8 @@ struct DeviceModuleView: View {
             case .processes: processesDetail
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
+            .environment(\.workbenchControlBorders, card != .processes)
+            .focusEffectDisabled(card == .processes)
     }
     private func detailDescription(_ card: DeviceCardID) -> String {
         switch card {

@@ -60,41 +60,8 @@ public enum DeviceProcessExplorer {
 
     public static func groups(_ processes: [DeviceProcess], grouped: Bool, filter: DeviceProcessFilter,
                               query: String, sort: DeviceProcessSort, ascending: Bool) -> [DeviceProcessGroup] {
-        var buckets: [String: [DeviceProcess]] = [:]
-        for process in processes {
-            let key = grouped ? process.application.map { "app:" + $0.key } ?? "pid:" + process.identity : "pid:" + process.identity
-            buckets[key, default: []].append(process)
-        }
-        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let values = buckets.map { key, members in
-            let application = grouped ? members.first?.application : nil
-            return DeviceProcessGroup(id: key, name: application?.name ?? members[0].name,
-                                      application: application, processes: members.sorted { $0.pid < $1.pid })
-        }.filter { group in
-            let match: Bool
-            switch filter {
-            case .all: match = true
-            case .applications: match = group.processes.contains { $0.application != nil }
-            case .background: match = group.processes.allSatisfy { $0.application == nil }
-            case .highCPU: match = group.cpuPercent.map { $0 >= DeviceProcessFilter.highCPUThreshold } ?? false
-            case .highMemory: match = group.residentBytes >= DeviceProcessFilter.highMemoryThreshold
-            }
-            return match && (term.isEmpty || group.name.localizedStandardContains(term) || group.processes.contains { $0.name.localizedStandardContains(term) || String($0.pid).contains(term) })
-        }
-        return values.sorted { a, b in
-            switch sort {
-            case .cpu:
-                if a.cpuPercent != b.cpuPercent { return ascending ? (a.cpuPercent ?? -1) < (b.cpuPercent ?? -1) : (a.cpuPercent ?? -1) > (b.cpuPercent ?? -1) }
-            case .memory:
-                if a.residentBytes != b.residentBytes { return ascending ? a.residentBytes < b.residentBytes : a.residentBytes > b.residentBytes }
-            case .name:
-                if a.name != b.name { return ascending ? a.name.localizedStandardCompare(b.name) == .orderedAscending : a.name.localizedStandardCompare(b.name) == .orderedDescending }
-            case .pid:
-                let pa = a.processes.map(\.pid).min() ?? 0, pb = b.processes.map(\.pid).min() ?? 0
-                if pa != pb { return ascending ? pa < pb : pa > pb }
-            }
-            return a.id < b.id
-        }
+        DeviceProcessProjection(processes, grouped: grouped).presentation(
+            filter: filter, query: query, sort: sort, ascending: ascending).rows
     }
 
     /// Live values keep their row positions. New identities append; explicit sort changes reset the order.

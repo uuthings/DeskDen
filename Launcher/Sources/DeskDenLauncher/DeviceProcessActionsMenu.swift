@@ -5,13 +5,16 @@ import LauncherCore
 /// Presentation follows the same policy used by the execution service. It never
 /// substitutes a menu decision for the identity checks performed after consent.
 struct DeviceProcessActionAvailability {
+    // The running app's canonical bundle path does not change between rows.
+    // Resolving it repeatedly performs filesystem work during table rendering.
+    static let currentApplicationPath = Bundle.main.bundleURL.resolvingSymlinksInPath().path
     let canQuit: Bool
     let canForce: Bool
     let protection: DeviceProcessProtectionInfo?
 
     init(name: String, members: [DeviceProcess], wholeApplication: Bool, memoryFocused: Bool,
          currentUID: UInt32 = getuid(), currentPID: Int32 = getpid(),
-         currentApplicationPath: String? = Bundle.main.bundleURL.resolvingSymlinksInPath().path) {
+         currentApplicationPath: String? = DeviceProcessActionAvailability.currentApplicationPath) {
         func allowed(_ process: DeviceProcess) -> Bool {
             DeviceProcessActions.isAllowed(process, currentUID: currentUID, currentPID: currentPID,
                                            currentApplicationPath: currentApplicationPath)
@@ -115,7 +118,7 @@ struct DeviceProcessActionsMenu: NSViewRepresentable {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        isBordered = false; imagePosition = .imageOnly
+        isBordered = false; focusRingType = .none; cell?.focusRingType = .none; imagePosition = .imageOnly
         image = NSImage(systemSymbolName: "ellipsis", accessibilityDescription: nil)
         symbolConfiguration = .init(pointSize: 12, weight: .regular)
         title = ""; target = self; action = #selector(openActionsMenu)
@@ -138,12 +141,17 @@ struct DeviceProcessActionsMenu: NSViewRepresentable {
     override func mouseEntered(with event: NSEvent) { hovering = isEnabled; needsDisplay = true }
     override func mouseExited(with event: NSEvent) { hovering = false; needsDisplay = true }
     override func highlight(_ flag: Bool) { super.highlight(flag); needsDisplay = true }
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder(); needsDisplay = true; return accepted
+    }
+    override func resignFirstResponder() -> Bool {
+        let accepted = super.resignFirstResponder(); needsDisplay = true; return accepted
+    }
     override func draw(_ dirtyRect: NSRect) {
-        let active = isEnabled && hovering, pressed = isEnabled && isHighlighted
+        let active = isEnabled && (hovering || window?.firstResponder === self), pressed = isEnabled && isHighlighted
         if active || pressed {
             let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 7, yRadius: 7)
             palette.nsAccent.withAlphaComponent(pressed ? 0.25 : 0.15).setFill(); shape.fill()
-            palette.nsAccent.withAlphaComponent(pressed ? 0.66 : 0.44).setStroke(); shape.lineWidth = 1; shape.stroke()
         }
         let color = (active || pressed ? palette.nsText : contentTintColor ?? palette.nsSecondary).withAlphaComponent(isEnabled ? 1 : 0.4)
         drawSymbol("ellipsis", in: NSRect(x: bounds.midX - 6, y: bounds.midY - 6, width: 12, height: 12), color: color)

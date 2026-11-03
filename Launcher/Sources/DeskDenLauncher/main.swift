@@ -14,7 +14,7 @@ let application = NSApplication.shared
         FileHandle.standardError.write(Data("Unable to query the native UI check process accessibility bridge\n".utf8)); exit(2)
     }
 }
-if !CommandLine.arguments.contains("--module-navigation-check"), !CommandLine.arguments.contains("--window-menu-check"), !CommandLine.arguments.contains("--update-interface-check"), !CommandLine.arguments.contains("--update-calendar-check"), !CommandLine.arguments.contains("--calendar-deadline-editor-check"), !CommandLine.arguments.contains("--calendar-layout-check"), !CommandLine.arguments.contains("--home-resize-check"), !CommandLine.arguments.contains("--home-fluid-check"), !CommandLine.arguments.contains("--home-feedback-check"), !CommandLine.arguments.contains("--top-entry-check"), !CommandLine.arguments.contains("--usage-ui-check"), !CommandLine.arguments.contains("--mini-data-check"), !CommandLine.arguments.contains("--mini-appearance-check"), !CommandLine.arguments.contains("--mini-drag-check"), !CommandLine.arguments.contains("--mini-activation-check"), !CommandLine.arguments.contains("--interaction-feedback-check"), !CommandLine.arguments.contains("--context-model-check"), !CommandLine.arguments.contains("--appearance-check"), !CommandLine.arguments.contains("--shortcut-responder-check"), !CommandLine.arguments.contains("--pointer-check"), !CommandLine.arguments.contains("--space-cleaning-system-trash-check"), !CommandLine.arguments.contains("--space-cleaning-model-check"), !CommandLine.arguments.contains("--space-cleaning-check"), !CommandLine.arguments.contains("--self-check"), !CommandLine.arguments.contains("--device-check"), !CommandLine.arguments.contains("--form-check"), !CommandLine.arguments.contains("--vault-signing-check"), let identifier = Bundle.main.bundleIdentifier,
+if !CommandLine.arguments.contains("--process-presentation-check"), !CommandLine.arguments.contains("--module-navigation-check"), !CommandLine.arguments.contains("--window-menu-check"), !CommandLine.arguments.contains("--update-interface-check"), !CommandLine.arguments.contains("--update-calendar-check"), !CommandLine.arguments.contains("--calendar-deadline-editor-check"), !CommandLine.arguments.contains("--calendar-layout-check"), !CommandLine.arguments.contains("--home-resize-check"), !CommandLine.arguments.contains("--home-fluid-check"), !CommandLine.arguments.contains("--home-feedback-check"), !CommandLine.arguments.contains("--top-entry-check"), !CommandLine.arguments.contains("--usage-ui-check"), !CommandLine.arguments.contains("--mini-data-check"), !CommandLine.arguments.contains("--mini-appearance-check"), !CommandLine.arguments.contains("--mini-drag-check"), !CommandLine.arguments.contains("--mini-activation-check"), !CommandLine.arguments.contains("--interaction-feedback-check"), !CommandLine.arguments.contains("--context-model-check"), !CommandLine.arguments.contains("--appearance-check"), !CommandLine.arguments.contains("--shortcut-responder-check"), !CommandLine.arguments.contains("--pointer-check"), !CommandLine.arguments.contains("--space-cleaning-system-trash-check"), !CommandLine.arguments.contains("--space-cleaning-model-check"), !CommandLine.arguments.contains("--space-cleaning-check"), !CommandLine.arguments.contains("--self-check"), !CommandLine.arguments.contains("--device-check"), !CommandLine.arguments.contains("--form-check"), !CommandLine.arguments.contains("--vault-signing-check"), let identifier = Bundle.main.bundleIdentifier,
    NSRunningApplication.runningApplications(withBundleIdentifier:identifier).contains(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) {
     DistributedNotificationCenter.default().postNotificationName(Notification.Name(CommandLine.arguments.contains("--launcher") ? "local.deskden.launcher.show":"local.deskden.workbench.show"),object:nil,userInfo:nil,deliverImmediately:true)
     exit(0)
@@ -61,6 +61,14 @@ if CommandLine.arguments.contains("--window-menu-check") {
         await prepareNativeCheckWindows()
         let result = await WorkbenchTopEntryChecks.runMiniActivation()
         print("Mini activation checks: \(result.count) checks, \(result.failures) failures")
+        exit(result.count > 0 && result.failures == 0 ? 0 : 1)
+    }
+    application.run()
+} else if CommandLine.arguments.contains("--process-presentation-check") {
+    // Pure presentation/model checks: no window or real process operations.
+    Task {
+        let result = await DeviceProcessPresentationChecks.run()
+        print("Process presentation checks: \(result.count) checks, \(result.failures) failures")
         exit(result.count > 0 && result.failures == 0 ? 0 : 1)
     }
     application.run()

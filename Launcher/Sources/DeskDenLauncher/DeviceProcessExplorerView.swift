@@ -13,8 +13,7 @@ struct DeviceProcessExplorerView: View {
     var leave: () -> Void = {}
     var memoryFocused = false
     @Environment(\.workbenchPalette) private var palette
-    @State private var appliedSort: DeviceProcessSort = .cpu
-    @State private var appliedAscending = false
+    @StateObject private var presentation = DeviceProcessPresentationModel()
     @State private var contentWidth: CGFloat = 864
     private var pidWidth: CGFloat { memoryFocused ? (contentWidth < 800 ? 48 : 64) : 62 }
     private var memoryWidth: CGFloat { memoryFocused ? (contentWidth < 800 ? 72 : 88) : 65 }
@@ -23,22 +22,19 @@ struct DeviceProcessExplorerView: View {
     @State private var filter: DeviceProcessFilter = .all
     @State private var grouped = true
     @State private var expandedGroups = Set<String>()
-    @State private var order: [String] = []
     @State private var actionRequest: DeviceProcessActionRequest?
     @State private var actionMessage: String?
     @State private var actionFailed = false
     @State private var processProtection: DeviceProcessProtectionInfo?
 
-    private var candidates: [DeviceProcessGroup] {
-        DeviceProcessExplorer.groups(processes, grouped: grouped, filter: filter, query: query, sort: appliedSort, ascending: appliedAscending)
-    }
-    private var results: [DeviceProcessGroup] {
-        let values = candidates, lookup = Dictionary(uniqueKeysWithValues: values.map { ($0.id, $0) })
-        return DeviceProcessExplorer.stableOrder(values.map(\.id), previous: order).compactMap { lookup[$0] }
-    }
+    private var results: [DeviceProcessGroup] { presentation.snapshot.rows }
+    private var displayedGrouped: Bool { presentation.snapshot.grouped }
     private var hasFilter: Bool { filter != .all || !query.isEmpty }
     private var viewportKey: String { "\(filter.rawValue)|\(query)|\(grouped)" }
-    private var matchingCount: Int { results.reduce(0) { $0 + $1.processes.count } }
+    private var presentationKey: DeviceProcessPresentationKey {
+        .init(processes: processes, grouped: grouped, filter: filter, query: query, sort: sort, ascending: ascending)
+    }
+    private var matchingCount: Int { presentation.snapshot.matchingCount }
 
     var body: some View {
         GeometryReader { geometry in
@@ -54,10 +50,10 @@ struct DeviceProcessExplorerView: View {
         }
         .onAppear {
             if memoryFocused { sort = .memory; ascending = false }
-            appliedSort = sort; appliedAscending = ascending; reorder()
         }
-        .onChange(of: viewportKey) { _, _ in reorder() }
-        .onChange(of: candidates.map(\.id)) { _, ids in order = DeviceProcessExplorer.stableOrder(ids, previous: order) }
+        .onChange(of: presentationKey, initial: true) { _, _ in refreshPresentation() }
+        .environment(\.workbenchControlBorders, false)
+        .focusEffectDisabled()
         .workbenchModal(item: $actionRequest) { request in
             DeviceProcessActionDialog(request: request, memoryFocused: memoryFocused,
                                       dismiss: { actionRequest = nil },
@@ -76,8 +72,11 @@ struct DeviceProcessExplorerView: View {
             } actions: { Spacer(); Button("知道了") { processProtection = nil }.buttonStyle(WBButtonStyle(primary: true)) }
         }
     }
-    private func reorder() { order = candidates.map(\.id) }
-    private func applySort() { appliedSort = sort; appliedAscending = ascending; reorder() }
+    private func refreshPresentation(forceReorder: Bool = false) {
+        presentation.update(processes: processes, grouped: grouped, filter: filter,
+                            query: query, sort: sort, ascending: ascending, forceReorder: forceReorder)
+    }
+    private func applySort() { refreshPresentation(forceReorder: true) }
     private func perform(_ request: DeviceProcessActionRequest) {
         switch DeviceProcessActionService.perform(request) {
         case .success(let message): actionMessage = message; actionFailed = false
@@ -99,24 +98,24 @@ struct DeviceProcessExplorerView: View {
         }.padding(10).frame(maxWidth: .infinity, alignment: .topLeading).background(DeviceCardSurface())
     }
     private func filterButton(_ value: DeviceProcessFilter, title: String, subtitle: String) -> some View {
-        let groups = DeviceProcessExplorer.groups(processes, grouped: grouped, filter: value, query: "", sort: appliedSort, ascending: appliedAscending)
-        let processCount = groups.reduce(0) { $0 + $1.processes.count }
+        let counts = presentation.snapshot.counts[value]
+        let groupCount = counts?.groupCount ?? 0, processCount = counts?.processCount ?? 0
         return Button { filter = value } label: {
             HStack(spacing: 7) {
                 Text(title).lineLimit(1)
                 Spacer(minLength: 1)
-                Text(grouped ? "\(groups.count) 组" : "\(processCount) 项").monospacedDigit().foregroundStyle(palette.muted).fixedSize()
+                Text(displayedGrouped ? "\(groupCount) 组" : "\(processCount) 项").monospacedDigit().foregroundStyle(palette.muted).fixedSize()
             }.font(.system(size: 11)).padding(.horizontal, 8).frame(height: 36)
                 .background(filter == value ? palette.soft : Color.clear, in: RoundedRectangle(cornerRadius: 6))
         }.buttonStyle(WBSelectableButtonStyle(selected: filter == value, cornerRadius: 6, drawsSelection: false, showsBorder: false)).foregroundStyle(filter == value ? palette.text : palette.secondary)
-            .accessibilityLabel("\(title)，\(grouped ? "\(groups.count) 组，包含" : "")\(processCount) 个进程，\(subtitle)")
+            .accessibilityLabel("\(title)，\(displayedGrouped ? "\(groupCount) 组，包含" : "")\(processCount) 个进程，\(subtitle)")
             .accessibilityValue(filter == value ? "已选择" : "").accessibilityIdentifier("process-filter-\(value.rawValue)").help(subtitle)
     }
 
     private var resultCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             if memoryFocused {
-                HStack { Text("哪些应用正在使用内存").font(.system(size: 12, weight: .medium)); Spacer(); Text("\(results.count) \(grouped ? "个应用与进程组" : "个进程")").font(.system(size: 11)).foregroundStyle(palette.muted) }.padding(.bottom, 12)
+                HStack { Text("哪些应用正在使用内存").font(.system(size: 12, weight: .medium)); Spacer(); Text("\(results.count) \(displayedGrouped ? "个应用与进程组" : "个进程")").font(.system(size: 11)).foregroundStyle(palette.muted) }.padding(.bottom, 12)
             }
             HStack(spacing: 8) {
                 if memoryFocused {
@@ -127,9 +126,9 @@ struct DeviceProcessExplorerView: View {
                     TextField(memoryFocused ? "搜索应用或 PID" : "搜索名称或 PID", text: $query).textFieldStyle(.plain).onExitCommand { if query.isEmpty { leave() } else { query = "" } }.accessibilityIdentifier("process-search")
                     if !query.isEmpty { Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(WBIconButtonStyle(size: 28)).accessibilityLabel("清除进程搜索") }
                 }.font(.system(size: 12)).padding(.horizontal, 10).frame(minWidth: 120, maxWidth: .infinity).frame(height: 32).background(WorkbenchMaterialSurface(kind: .control, radius: 8))
-                Button { grouped.toggle() } label: { Label(memoryFocused ? (grouped ? "按应用聚合" : "逐个进程") : (grouped ? "按应用" : "全部展开"), systemImage: grouped ? "square.3.layers.3d" : "list.bullet") }.buttonStyle(WBButtonStyle(compact: true)).accessibilityLabel("按应用聚合").accessibilityIdentifier("process-group-toggle")
-                WBSelect("排序", selection: sortSelection, options: memoryFocused ? [(.memory, "内存占用"), (.name, "名称")] : [(.cpu, "CPU 占用"), (.memory, "内存占用"), (.name, "名称"), (.pid, "PID")]).frame(width: 108)
-                if memoryFocused { Button("重新排序", action: applySort).buttonStyle(WBButtonStyle(compact: true)).help("按所选方式重新排序；实时读数更新保持既有顺序") }
+                groupingControl
+                WBSelect("排序", selection: sortSelection, options: memoryFocused ? [(.memory, "内存占用"), (.name, "名称")] : [(.cpu, "CPU 占用"), (.memory, "内存占用"), (.name, "名称"), (.pid, "PID")]).frame(width: 112).accessibilityIdentifier("process-sort")
+                if memoryFocused { Button("重新排序", action: applySort).buttonStyle(WBButtonStyle()).help("按最新读数重新排序；自动读数更新保持行位置") }
             }.padding(memoryFocused ? 0 : 12).padding(.bottom, memoryFocused ? 12 : 0).overlay(alignment: .bottom) { if !memoryFocused { palette.line.frame(height: 1) } }
             tableHeader
             ScrollViewReader { reader in
@@ -137,7 +136,7 @@ struct DeviceProcessExplorerView: View {
                     LazyVStack(spacing: 0) {
                         Color.clear.frame(height: 0).id("process-list-top")
                         ForEach(results) { group in
-                            if grouped && group.application != nil {
+                            if displayedGrouped && group.application != nil {
                                 groupRow(group)
                                 if expandedGroups.contains(group.id) || !query.isEmpty { ForEach(group.processes, id: \.identity) { process in processRow(process, child: true) } }
                             } else if let process = group.processes.first { processRow(process, child: false) }
@@ -155,11 +154,11 @@ struct DeviceProcessExplorerView: View {
                     .onChange(of: viewportKey) { _, _ in reader.scrollTo("process-list-top", anchor: .top) }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
             if memoryFocused {
-                Text("读数刷新保持顺序，点「重新排序」才应用新顺序。可操作的应用可在确认后退出。")
+                Text("读数更新保持顺序；切换排序立即生效。可操作的应用可在确认后退出。")
                     .font(.system(size: 11)).foregroundStyle(palette.muted).padding(.top, 10)
             } else {
                 HStack(spacing: 6) {
-                    Text((grouped ? "\(results.count) 组 · 含 \(matchingCount) 个进程" : "\(matchingCount) 个进程") + " · 共 \(processes.count) 项").monospacedDigit().help("已读取 \(processes.count) / \(max(systemCount, processes.count)) 项；未读取 \(max(0, systemCount - processes.count)) 项")
+                    Text((displayedGrouped ? "\(results.count) 组 · 含 \(matchingCount) 个进程" : "\(matchingCount) 个进程") + " · 共 \(presentation.snapshot.totalCount) 项").monospacedDigit().help("已读取 \(processes.count) / \(max(systemCount, processes.count)) 项；未读取 \(max(0, systemCount - processes.count)) 项")
                     Spacer(minLength: 0); Button("重新排序", action: applySort).buttonStyle(WBQuietButtonStyle())
                 }.font(.system(size: 11)).foregroundStyle(palette.secondary).padding(.horizontal, 13).frame(height: 34).overlay(alignment: .top) { palette.line.frame(height: 1) }
             }
@@ -171,6 +170,25 @@ struct DeviceProcessExplorerView: View {
                 }.padding(12)
             }
         }.padding(memoryFocused ? EdgeInsets(top: 14, leading: 14, bottom: 10, trailing: 14) : EdgeInsets()).frame(maxWidth: .infinity, maxHeight: .infinity).background(DeviceCardSurface()).foregroundStyle(palette.text)
+    }
+    private var groupingControl: some View {
+        HStack(spacing: 2) {
+            groupingOption("按应用", value: true)
+            groupingOption("按进程", value: false)
+        }.padding(3).frame(height: 32)
+            .background(palette.control, in: RoundedRectangle(cornerRadius: 8))
+            .accessibilityElement(children: .contain).accessibilityLabel("进程显示方式")
+    }
+    private func groupingOption(_ title: String, value: Bool) -> some View {
+        Button { grouped = value } label: {
+            Text(title).font(.system(size: 11, weight: grouped == value ? .medium : .regular))
+                .foregroundStyle(grouped == value ? palette.text : palette.secondary)
+                .frame(width: 52, height: 26)
+                .background(grouped == value ? palette.soft : .clear, in: RoundedRectangle(cornerRadius: 6))
+        }.buttonStyle(WBSelectableButtonStyle(selected: grouped == value, cornerRadius: 6, drawsSelection: false, showsBorder: false))
+            .accessibilityIdentifier(value ? "process-mode-applications" : "process-mode-processes")
+            .accessibilityLabel(title).accessibilityValue(grouped == value ? "已选择" : "")
+            .help(value ? "按真实应用归属聚合；点击应用名称展开其进程" : "每个进程单独一行，不按应用分组")
     }
     private func memoryFilter(_ title: String, _ value: DeviceProcessFilter) -> some View {
         Button(title) { filter = value }.buttonStyle(WBButtonStyle(compact: true)).foregroundStyle(filter == value ? palette.accent : palette.secondary)
@@ -274,7 +292,7 @@ struct DeviceProcessExplorerView: View {
         } label: {
             HStack(spacing: 3) {
                 Text(title)
-
+                if sort == value { Image(systemName: ascending ? "chevron.up" : "chevron.down").font(.system(size: 8, weight: .medium)) }
             }
         }.buttonStyle(WBTextActionButtonStyle()).accessibilityLabel("按\(title)排序")
             .accessibilityValue(sort == value ? (ascending ? "升序" : "降序") : "")

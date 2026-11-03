@@ -2,29 +2,83 @@ import AppKit
 import SwiftUI
 import LauncherCore
 
+/// Registers only the independently animated header control, without searching
+/// the accessibility tree or attaching another mouse-tracking surface.
+struct WorkbenchAppearanceLiveRegion: NSViewRepresentable {
+    func makeNSView(context: Context) -> WorkbenchAppearanceLiveRegionView {
+        WorkbenchAppearanceLiveRegionView(frame: .zero)
+    }
+    func updateNSView(_ view: WorkbenchAppearanceLiveRegionView, context: Context) {}
+}
+
+@MainActor final class WorkbenchAppearanceLiveRegionView: NSView {
+    private static let registered = NSHashTable<WorkbenchAppearanceLiveRegionView>.weakObjects()
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setAccessibilityElement(false)
+        Self.registered.add(self)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    static func regions(in content: NSView) -> [WorkbenchAppearanceLiveRegionView] {
+        registered.allObjects.filter {
+            $0.window === content.window && $0.isDescendant(of: content) && !$0.isHiddenOrHasHiddenAncestor
+                && $0.bounds.width > 0 && $0.bounds.height > 0
+        }
+    }
+}
+
 /// Blend a cached presentation over the live view. Data, focus and navigation
 /// remain in one view tree; only the compositor animates during theme changes.
 @MainActor final class WorkbenchAppearanceTransition: NSView {
     static let duration: TimeInterval = 0.34
+    private(set) var liveRegionFrames: [CGRect] = []
     static func capture(_ window: NSWindow?, reduceMotion: Bool) -> WorkbenchAppearanceTransition? {
+        guard let window, let content = window.contentView else { return nil }
+        // A quick second toggle must sample the live scene, not the fading
+        // screenshot from its preceding toggle. This also clears an in-flight
+        // fade when Reduce Motion is enabled before the next appearance change.
+        content.subviews.compactMap { $0 as? WorkbenchAppearanceTransition }.forEach {
+            $0.layer?.removeAllAnimations(); $0.removeFromSuperview()
+        }
         guard !reduceMotion, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
-              let window, window.isVisible, let content = window.contentView,
+              window.isVisible,
               let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { return nil }
         content.cacheDisplay(in: content.bounds, to: bitmap)
         guard let image = bitmap.cgImage else { return nil }
-        content.subviews.compactMap { $0 as? WorkbenchAppearanceTransition }.forEach { $0.removeFromSuperview() }
         let overlay = WorkbenchAppearanceTransition(frame: content.bounds)
         overlay.autoresizingMask = [.width, .height]; overlay.wantsLayer = true
         overlay.layer?.contents = image; overlay.layer?.contentsGravity = .resize
         overlay.layer?.contentsScale = window.backingScaleFactor
         overlay.setAccessibilityElement(false)
         content.addSubview(overlay, positioned: .above, relativeTo: nil)
+        overlay.updateLiveRegionMask()
         return overlay
     }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func layout() {
+        super.layout()
+        updateLiveRegionMask()
+    }
+    private func updateLiveRegionMask() {
+        guard let content = superview, let layer else { return }
+        liveRegionFrames = WorkbenchAppearanceLiveRegionView.regions(in: content).map {
+            $0.convert($0.bounds, to: self).insetBy(dx: -2, dy: -2).intersection(bounds)
+        }.filter { !$0.isEmpty }
+        guard !liveRegionFrames.isEmpty else { layer.mask = nil; return }
+        let path = CGMutablePath()
+        path.addRect(bounds)
+        liveRegionFrames.forEach { path.addEllipse(in: $0) }
+        let mask = CAShapeLayer()
+        mask.frame = bounds; mask.path = path; mask.fillRule = .evenOdd
+        mask.fillColor = NSColor.black.cgColor
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        layer.mask = mask
+        CATransaction.commit()
+    }
     func finish() {
         DispatchQueue.main.async { [weak self] in
-            guard let self, let layer = self.layer else { return }
+            guard let self, self.superview != nil, let layer = self.layer else { return }
             self.superview?.layoutSubtreeIfNeeded()
             CATransaction.begin()
             CATransaction.setCompletionBlock { [weak self] in self?.removeFromSuperview() }

@@ -66,6 +66,14 @@ import LauncherCore
                       && navFrames.count == 7 && (navFrames.map(\.midY).max() ?? 0) - (navFrames.map(\.midY).min() ?? 0) < 2
                       && element("workbench-sidebar", in: host) == nil,
                       "seven real top-navigation buttons share one row without the old sidebar in \(sample.2)")
+                let liveRegions = WorkbenchAppearanceLiveRegionView.regions(in: host)
+                let liveFrame = liveRegions.first.map { window.convertToScreen($0.convert($0.bounds, to: nil)) }
+                let themeFrame = frame("fc.home.appearance.toggle", in: host)
+                check(liveRegions.count == 1 && liveFrame.map { anchor in
+                    themeFrame.map { abs(anchor.midX - $0.midX) < 0.5 && abs(anchor.midY - $0.midY) < 0.5
+                        && abs(anchor.width - 32) < 0.5 && abs(anchor.height - 32) < 0.5 } == true
+                } == true && liveRegions.first?.hitTest(.zero) == nil,
+                      "the theme flip has a noninteractive 32-point native anchor aligned with its real button in \(sample.2)")
                 check(["home-welcome", "home-date-time", "home-weather"].allSatisfy { id in
                     frame(id, in: host).map { visible($0, window: window, host: host) } == true
                 }, "welcome, date/time and weather remain visible in \(sample.2)")
@@ -80,7 +88,29 @@ import LauncherCore
                 print("DETAIL fluid Home \(sample.2) device=\(String(describing: frame("home-device-detail", in: host))) month=\(String(describing: frame("fc.home.calendar", in: host))) disk=\(String(describing: frame("home-open-cleaning", in: host))) network=\(String(describing: frame("home-network-detail", in: host))) reminders=\(String(describing: frame("fc.home.reminders", in: host)))")
             }
 
-            check(press("fc.home.appearance.toggle", in: host), "the actual header appearance control accepts an AX press")
+            let appearanceControl = element("fc.home.appearance.toggle", in: host)
+            check(appearanceControl.map(performPress) == true, "the actual header appearance control accepts an AX press")
+            if !model.reduceMotion && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+                let mounted = await settle(window) {
+                    window.contentView?.subviews.contains(where: { $0 is WorkbenchAppearanceTransition }) == true
+                }
+                if mounted, let overlay = window.contentView?.subviews.compactMap({ $0 as? WorkbenchAppearanceTransition }).first,
+                   let live = WorkbenchAppearanceLiveRegionView.regions(in: host).first,
+                   let mask = overlay.layer?.mask as? CAShapeLayer, let path = mask.path {
+                    let liveRect = live.convert(live.bounds, to: overlay).insetBy(dx: -2, dy: -2)
+                    let center = CGPoint(x: liveRect.midX, y: liveRect.midY)
+                    check(overlay.liveRegionFrames.count == 1 && overlay.liveRegionFrames.first == liveRect
+                          && mask.fillRule == .evenOdd && !path.contains(center, using: .evenOdd)
+                          && path.contains(CGPoint(x: 2, y: 2), using: .evenOdd) && overlay.hitTest(.zero) == nil,
+                          "the scene snapshot leaves the flipping button plus a two-point rim live while retaining the rest of the scene")
+                    let reversed = appearanceControl.map(performPress) == true
+                    let oldDetached = overlay.superview == nil
+                    let latestDark = appearanceControl.map(performPress) == true
+                    check(reversed && latestDark && oldDetached && !model.light
+                          && window.contentView?.subviews.filter({ $0 is WorkbenchAppearanceTransition }).count == 1,
+                          "rapid theme presses immediately reverse state and replace the snapshot instead of queueing or stacking transitions")
+                } else { check(false, "the theme change mounts a masked snapshot around its live flip control") }
+            }
             check(await settle(window) {
                 window.contentView?.subviews.contains(where: { $0 is WorkbenchAppearanceTransition }) != true
             }, "the theme transition releases its snapshot without leaving an input-blocking overlay")
@@ -99,6 +129,23 @@ import LauncherCore
             _ = await settle(window) { window.contentView?.subviews.contains(where: { $0 is WorkbenchAppearanceTransition }) != true }
             check(try model.owner?.store.load()?.settings.workbenchAppearance == .light,
                   "the restored light choice is also persisted")
+            if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+               let original = WorkbenchAppearanceTransition.capture(window, reduceMotion: false),
+               let originalContents = original.layer?.contents {
+                let originalSample = snapshotCenter(originalContents as! CGImage)
+                // Poison only the disposable screenshot, then immediately
+                // recapture before returning to the run loop. A stale overlay
+                // included in the next cache would produce magenta pixels.
+                original.layer?.contents = nil; original.layer?.backgroundColor = NSColor.magenta.cgColor
+                let replacement = WorkbenchAppearanceTransition.capture(window, reduceMotion: false)
+                let replacementSample = replacement?.layer?.contents.flatMap { snapshotCenter($0 as! CGImage) }
+                check(original.superview == nil && originalSample != nil && originalSample == replacementSample,
+                      "recapturing samples the live scene after removing the preceding snapshot rather than baking its pixels into the next fade")
+                let skipped = WorkbenchAppearanceTransition.capture(window, reduceMotion: true)
+                check(skipped == nil && replacement?.superview == nil
+                      && window.contentView?.subviews.contains(where: { $0 is WorkbenchAppearanceTransition }) != true,
+                      "Reduce Motion immediately clears an in-flight snapshot and starts no replacement animation")
+            }
 
             check(press("workbench-local-account", in: host), "the same-size account control opens its shared arrowless surface")
             let accountMounted = await settle(window) {
@@ -333,6 +380,11 @@ import LauncherCore
         guard object.responds(to: NSSelectorFromString("accessibilityFrame")), let value = object.value(forKey: "accessibilityFrame") as? NSValue else { return nil }
         let rect = value.rectValue
         return rect.width > 0 && rect.height > 0 && rect.width.isFinite && rect.height.isFinite ? rect : nil
+    }
+    private static func snapshotCenter(_ image: CGImage) -> [Int]? {
+        let bitmap = NSBitmapImageRep(cgImage: image)
+        guard let color = bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh / 2)?.usingColorSpace(.deviceRGB) else { return nil }
+        return [color.redComponent, color.greenComponent, color.blueComponent].map { Int(($0 * 255).rounded()) }
     }
     private static func element(_ id: String, in host: NSView) -> NSObject? {
         objects(in: host).filter { identifier($0) == id && rect($0) != nil }.max { (rect($0)?.width ?? 0) < (rect($1)?.width ?? 0) }

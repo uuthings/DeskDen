@@ -6,8 +6,13 @@ import SwiftUI
 private struct WorkbenchScaleKey: EnvironmentKey { static let defaultValue: CGFloat = 1 }
 private struct WorkbenchContentHeightKey: EnvironmentKey { static let defaultValue: CGFloat = 0 }
 private struct WorkbenchDeviceExpandedKey: EnvironmentKey { static let defaultValue = false }
+private struct WorkbenchControlBordersKey: EnvironmentKey { static let defaultValue = true }
 private struct WorkbenchOnBackdropKey: EnvironmentKey { static let defaultValue = false }
 extension EnvironmentValues {
+    var workbenchControlBorders: Bool {
+        get { self[WorkbenchControlBordersKey.self] }
+        set { self[WorkbenchControlBordersKey.self] = newValue }
+    }
     var workbenchOnBackdrop: Bool {
         get { self[WorkbenchOnBackdropKey.self] }
         set { self[WorkbenchOnBackdropKey.self] = newValue }
@@ -55,6 +60,7 @@ struct WBSelect<Value: Hashable>: NSViewRepresentable {
     @Environment(\.workbenchTheme) private var theme
     @Environment(\.workbenchOpacity) private var opacity
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.workbenchControlBorders) private var showsBorder
 
     init(_ title: String, selection: Binding<Value>, options: [(value: Value, title: String)]) {
         self.title = title; self._selection = selection; self.options = options
@@ -67,6 +73,7 @@ struct WBSelect<Value: Hashable>: NSViewRepresentable {
         button.font = .systemFont(ofSize: 12)
         button.controlSize = .regular
         button.autoenablesItems = false
+        button.focusRingType = .none; button.cell?.focusRingType = .none
         button.target = context.coordinator
         button.action = #selector(Coordinator.changed(_:))
         button.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -97,6 +104,7 @@ struct WBSelect<Value: Hashable>: NSViewRepresentable {
         button.workbenchTheme = theme
         button.interfaceOpacity = opacity
         button.interfaceLight = colorScheme == .light
+        button.showsBorder = showsBorder
         button.setAccessibilityLabel(title)
         button.setAccessibilityValue(selectionIndex.map { options[$0].title } ?? "未选择")
         button.toolTip = title
@@ -146,6 +154,7 @@ class WBPopUpButton: ClickablePopUpButton {
     var workbenchTheme: LauncherTheme = .arWorld
     var interfaceOpacity: Double = 0.70
     var interfaceLight = false
+    var showsBorder = true
     private var hovering = false
     private var hoverArea: NSTrackingArea?
     override var isEnabled: Bool {
@@ -160,6 +169,12 @@ class WBPopUpButton: ClickablePopUpButton {
     override func mouseEntered(with event: NSEvent) { hovering = isEnabled; needsDisplay = true }
     override func mouseExited(with event: NSEvent) { hovering = false; needsDisplay = true }
     override func highlight(_ flag: Bool) { super.highlight(flag); needsDisplay = true }
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder(); needsDisplay = true; return accepted
+    }
+    override func resignFirstResponder() -> Bool {
+        let accepted = super.resignFirstResponder(); needsDisplay = true; return accepted
+    }
     override var isFlipped: Bool { true }
     // The stock popup cell adds optical alignment insets around its small bezel.
     // Our custom surface already occupies the full shared 32-point control frame.
@@ -172,10 +187,12 @@ class WBPopUpButton: ClickablePopUpButton {
         let path = NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8)
         let palette = ThemePalette(theme: workbenchTheme, opacity: interfaceOpacity, light: interfaceLight)
         NSColor(palette.control).setFill(); path.fill()
-        let active = isEnabled && hovering, pressed = isEnabled && isHighlighted
+        let active = isEnabled && (hovering || window?.firstResponder === self || choicePanel != nil), pressed = isEnabled && isHighlighted
         if active || pressed { palette.nsAccent.withAlphaComponent(pressed ? 0.25 : 0.15).setFill(); path.fill() }
-        (active || pressed ? palette.nsAccent.withAlphaComponent(pressed ? 0.66 : 0.48) : NSColor(palette.controlBorder)).setStroke()
-        path.lineWidth = 1; path.stroke()
+        if showsBorder {
+            (active || pressed ? palette.nsAccent.withAlphaComponent(pressed ? 0.66 : 0.48) : NSColor(palette.controlBorder)).setStroke()
+            path.lineWidth = 1; path.stroke()
+        }
         let color = palette.nsText.withAlphaComponent(isEnabled ? 1 : 0.4)
         drawText(titleOfSelectedItem ?? "", in: NSRect(x: 10, y: (bounds.height - 16) / 2, width: bounds.width - 34, height: 16), size: 12, color: color)
         drawSymbol("chevron.down", in: NSRect(x: bounds.width - 20, y: (bounds.height - 10) / 2, width: 10, height: 10), color: color.withAlphaComponent(isEnabled ? 0.7 : 0.35))
@@ -289,6 +306,7 @@ struct WBProgress:View {
     }
 }
 struct WBButtonStyle: ButtonStyle {
+    @Environment(\.workbenchControlBorders) private var showsBorder
     var primary = false
     var destructive = false
     var compact = false
@@ -309,7 +327,7 @@ struct WBButtonStyle: ButtonStyle {
             .foregroundStyle(primary ? palette.primaryText : destructive ? palette.critical : hovered ? palette.text : palette.secondary)
             .background(shape.fill(primary ? palette.primary : palette.control))
             .overlay(shape.fill(primary ? Color.black.opacity(pressed ? 0.22 : hovered ? 0.12 : 0) : tone.opacity(pressed ? 0.25 : hovered ? 0.15 : 0)).allowsHitTesting(false))
-            .overlay(shape.strokeBorder(primary ? (hovered || pressed ? palette.primaryText.opacity(0.35) : palette.primary.opacity(0.50)) : hovered || pressed ? tone.opacity(pressed ? 0.66 : 0.48) : palette.controlBorder, lineWidth: 1).allowsHitTesting(false))
+            .overlay(shape.strokeBorder(primary ? (hovered || pressed ? palette.primaryText.opacity(0.35) : palette.primary.opacity(0.50)) : hovered || pressed ? tone.opacity(pressed ? 0.66 : 0.48) : palette.controlBorder, lineWidth: showsBorder ? 1 : 0).allowsHitTesting(false))
             .contentShape(shape).opacity(enabled ? 1 : 0.4)
             .onHover { hovering = $0 }.clickableCursor()
     }
@@ -363,11 +381,12 @@ struct WBTextActionButtonStyle: ButtonStyle {
 /// The visual surface shared by actual detail icon buttons and a detail icon
 /// inside an already-clickable card. This view does not receive mouse events.
 struct WBIconFeedbackSurface: View {
+    @Environment(\.workbenchControlBorders) private var showsBorder
     var hovering: Bool
     var pressed = false
     @Environment(\.workbenchPalette) private var palette
     var body: some View {
-        WBInteractionOverlay(tint: palette.accent, cornerRadius: 7, hovering: hovering, pressed: pressed)
+        WBInteractionOverlay(tint: palette.accent, cornerRadius: 7, hovering: hovering, pressed: pressed, showsBorder: showsBorder)
     }
 }
 /// For navigation and segmented choices. Geometry and label colors belong to

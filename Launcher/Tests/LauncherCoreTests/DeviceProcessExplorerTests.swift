@@ -104,4 +104,70 @@ final class DeviceProcessExplorerTests: XCTestCase {
         XCTAssertEqual(flat.first?.processes.first?.pid, 43)
     }
 
+    func testProjectionSharesAggregatedCountsWhileSearchingWithinOneGroup() {
+        let values = [process(21, "Browser", cpu: 3, bytes: 300 * 1_024 * 1_024, app: app, main: true),
+                      process(32, "Renderer", cpu: 3, bytes: 250 * 1_024 * 1_024, app: app),
+                      process(43, "Independent", cpu: 1, bytes: 600 * 1_024 * 1_024)]
+        let projection = DeviceProcessProjection(values, grouped: true)
+        let visible = projection.presentation(filter: .all, query: "32", sort: .cpu, ascending: false)
+        XCTAssertEqual(visible.rows.map(\.name), ["Browser"])
+        XCTAssertEqual(visible.matchingCount, 2)
+        XCTAssertEqual(visible.totalCount, 3)
+        XCTAssertEqual(visible.counts[.all], .init(groupCount: 2, processCount: 3))
+        XCTAssertEqual(visible.counts[.applications], .init(groupCount: 1, processCount: 2))
+        XCTAssertEqual(visible.counts[.background], .init(groupCount: 1, processCount: 1))
+        XCTAssertEqual(visible.counts[.highCPU], .init(groupCount: 1, processCount: 2))
+        XCTAssertEqual(visible.counts[.highMemory], .init(groupCount: 2, processCount: 3))
+        let flat = DeviceProcessProjection(values, grouped: false).presentation(filter: .highCPU, query: "", sort: .cpu, ascending: false)
+        XCTAssertTrue(flat.rows.isEmpty)
+        XCTAssertEqual(flat.counts[.applications], .init(groupCount: 2, processCount: 2))
+        XCTAssertFalse(flat.grouped)
+    }
+
+    func testProjectionUpdatesReadingsWithoutMovingRowsAndExplicitSortUsesLatestValues() {
+        let before = [process(21, "First", cpu: 9), process(32, "Second", cpu: 2)]
+        let initial = DeviceProcessProjection(before, grouped: false).presentation(filter: .all, query: "", sort: .cpu, ascending: false)
+        let after = [process(21, "First", cpu: 1), process(32, "Second", cpu: 90), process(43, "New", cpu: 10)]
+        let projection = DeviceProcessProjection(after, grouped: false)
+        let retained = projection.presentation(filter: .all, query: "", sort: .cpu, ascending: false, previousOrder: initial.rows.map(\.id))
+        XCTAssertEqual(retained.rows.map(\.name), ["First", "Second", "New"])
+        XCTAssertEqual(retained.rows.map(\.cpuPercent), [1, 90, 10])
+        let reordered = projection.presentation(filter: .all, query: "", sort: .cpu, ascending: false)
+        XCTAssertEqual(reordered.rows.map(\.name), ["Second", "New", "First"])
+        let reusedPID = DeviceProcessProjection([process(21, "New identity", cpu: 100, started: 2), after[1]], grouped: false)
+            .presentation(filter: .all, query: "", sort: .cpu, ascending: false, previousOrder: initial.rows.map(\.id))
+        XCTAssertEqual(reusedPID.rows.map(\.name), ["Second", "New identity"])
+    }
+
+    func testProjectionKeepsUnavailableCPUMissingAndSaturatesMemoryAggregation() {
+        let values = [process(21, "Browser", cpu: .nan, bytes: .max, app: app),
+                      process(32, "Renderer", cpu: 1, bytes: 1, app: app)]
+        let projection = DeviceProcessProjection(values, grouped: true)
+        let visible = projection.presentation(filter: .all, query: "", sort: .cpu, ascending: false)
+        XCTAssertNil(visible.rows.first?.cpuPercent)
+        XCTAssertEqual(visible.rows.first?.residentBytes, .max)
+        XCTAssertEqual(projection.counts[.highCPU]?.groupCount, 0)
+        XCTAssertEqual(projection.counts[.highMemory]?.groupCount, 1)
+    }
+
+    func testLargeProjectionPreservesAllMembersAndIndependentRowsAcrossRepeatedQueries() {
+        let values: [DeviceProcess] = (1...1_324).map { index in
+            let owner: DeviceProcessApplication? = index <= 400 ? self.app : nil
+            return process(Int32(index + 10), "Worker \(index)", cpu: Double(index % 11),
+                           bytes: UInt64(index) * 1_024, app: owner)
+        }
+        let projection = DeviceProcessProjection(values, grouped: true)
+        let all = projection.presentation(filter: .all, query: "", sort: .memory, ascending: false)
+        XCTAssertEqual(all.rows.count, 925)
+        XCTAssertEqual(all.matchingCount, 1_324)
+        XCTAssertEqual(all.rows.flatMap(\.processes).map(\.identity).count, Set(values.map(\.identity)).count)
+        let application = projection.presentation(filter: .applications, query: "Worker 100", sort: .name, ascending: true)
+        XCTAssertEqual(application.rows.count, 1)
+        XCTAssertEqual(application.matchingCount, 400)
+        let background = projection.presentation(filter: .background, query: "", sort: .pid, ascending: true)
+        XCTAssertEqual(background.rows.count, 924)
+        XCTAssertEqual(background.rows.first?.processes.first?.pid, 411)
+        XCTAssertEqual(background.rows.last?.processes.first?.pid, 1_334)
+    }
+
 }
