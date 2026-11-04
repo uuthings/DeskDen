@@ -624,6 +624,17 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
             return order == .orderedSame ? $0.id < $1.id : order == .orderedAscending
         }
     }
+    private func searchIndexDependenciesChanged(in candidate:LauncherConfiguration) -> Bool {
+        // Keep this list aligned with rebuildIndex(). Catalog discovery rebuilds
+        // separately when applications change; visual settings do not affect it.
+        candidate.bindings != configuration.bindings
+            || candidate.addedApplications != configuration.addedApplications
+            || candidate.hiddenApplications != configuration.hiddenApplications
+            || candidate.applicationOrder != configuration.applicationOrder
+            || candidate.applicationMetadata != configuration.applicationMetadata
+            || candidate.starredApplications != configuration.starredApplications
+            || candidate.settings.appSort != configuration.settings.appSort
+    }
     func refreshApplications(force:Bool = false) {
         if scanning { if force { scanAgain = true }; return }
         guard force || Date().timeIntervalSince(lastScan)>30 else { return }
@@ -739,11 +750,13 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
         }
         do {
             let previousSettings = configuration.settings
+            let indexChanged = searchIndexDependenciesChanged(in:candidate)
             try store.save(candidate); configuration = candidate; storageProblem = nil
             applyPanelSettings(previous:previousSettings)
             if mainChanged { hotKeyProblem = nil }
             if shortcutsChanged { bindingHotKeyProblem = nil }
-            rebuildIndex(); NotificationCenter.default.post(name:.deskdenConfigurationChanged,object:self); return true
+            if indexChanged { rebuildIndex() }
+            NotificationCenter.default.post(name:.deskdenConfigurationChanged,object:self); return true
         } catch {
             let rollback = shortcutsChanged ? restoreHotKeys(mainShortcut:previousMain,bindings:previousShortcuts) : ""
             lastSaveError = "保存失败，修改仍保留在当前编辑中。\(error.localizedDescription)" + rollback
@@ -831,6 +844,13 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
         case .applications: setSearch(text:textMode)
         case .page(let delta): changePage(delta)
         }
+    }
+
+    func refreshLauncherAppearance() {
+        // show() always renders before bringing the panel forward. Avoid tearing
+        // down a hidden launcher's tiles while the workbench theme is animating.
+        guard panel?.isVisible == true else { return }
+        render()
     }
 
     func render() {

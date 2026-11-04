@@ -6,6 +6,8 @@ import LauncherCore
     static func run() async ->(count:Int,failures:Int) {
         var count=0,failures=0
         func check(_ value:Bool,_ message:String){count += 1;if !value {failures += 1};print("\(value ? "PASS":"FAIL") \(message)")}
+        let indexChecks=checkSearchIndexPersistence()
+        count += indexChecks.count;failures += indexChecks.failures
         let directory=FileManager.default.temporaryDirectory.appendingPathComponent("deskden-launcher-presentation-\(UUID().uuidString)")
         let owner=LauncherController(dataDirectory:directory)
         owner.configurePanel();owner.scanning=true
@@ -70,6 +72,93 @@ import LauncherCore
         owner.closeOverlay(render:false)
         let interactions=checkWorkbenchInteraction(owner:owner,directory:directory)
         count += interactions.count;failures += interactions.failures
+        return(count,failures)
+    }
+    /// Saves only isolated fixture data. No catalog scan, shown window, global
+    /// shortcut, real application launch or account service is needed.
+    static func checkSearchIndexPersistence()->(count:Int,failures:Int) {
+        var count=0,failures=0
+        func check(_ value:Bool,_ message:String){count += 1;if !value {failures += 1};print("\(value ? "PASS":"FAIL") launcher index save: \(message)")}
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent("deskden-launcher-index-\(UUID().uuidString)")
+        let owner=LauncherController(dataDirectory:directory)
+        owner.configuration.settings.workbenchHotKey=nil
+        owner.configurePanel();owner.scanning=true
+        defer {owner.panel.orderOut(nil);owner.toastTask?.cancel();owner.hotKey.unregister();owner.bindingHotKeys.unregister();try? FileManager.default.removeItem(at:directory)}
+        let alpha=LaunchTarget(kind:.app,name:"Alpha",location:directory.appendingPathComponent("Alpha.app").path)
+        let beta=LaunchTarget(kind:.app,name:"Beta",location:directory.appendingPathComponent("Beta.app").path)
+        let zulu=LaunchTarget(kind:.app,name:"Zulu",location:directory.appendingPathComponent("Zulu.app").path)
+        let bound=LaunchTarget(kind:.web,name:"Bound fixture",location:"https://example.invalid/original")
+        owner.applications=[zulu,alpha]
+        owner.configuration.bindings["A"]=KeyBinding(target:bound,alias:"Original alias")
+        do {
+            try owner.store.save(owner.configuration)
+            owner.rebuildIndex()
+            // A result-only sentinel detects a rebuild without adding production
+            // counters or relying on timing. It must survive a visual-only save.
+            let sentinel=SearchEntry(target:LaunchTarget(kind:.web,name:"Cached index sentinel",location:"https://example.invalid/index-sentinel"))
+            owner.appIndex.append(sentinel);owner.searchIndex.append(sentinel)
+            let applicationIDs=owner.appIndex.map(\.id),searchTitles=owner.searchIndex.map(\.title)
+            let savedAppearance=owner.updateSettings{$0.workbenchAppearance = .light;$0.lightAppearance=true}
+            let persistedAppearance=try owner.store.load()?.settings.workbenchAppearance
+            check(savedAppearance && owner.appIndex.map(\.id) == applicationIDs && owner.searchIndex.map(\.title) == searchTitles
+                  && persistedAppearance == .light,
+                  "theme-only saves persist the choice while retaining both existing indexes")
+            let childViews=owner.content.subviews
+            owner.refreshLauncherAppearance()
+            check(!owner.panel.isVisible && owner.content.subviews.elementsEqual(childViews,by:{$0 === $1}),
+                  "refreshing a hidden launcher's appearance preserves its view tree")
+            owner.rebuildIndex()
+
+            var candidate=owner.configuration
+            candidate.bindings["A"]?.alias="Renamed bookmark"
+            let renamed=owner.save(candidate)
+            check(renamed && owner.searchIndex.contains{$0.key == "A" && $0.title == "Renamed bookmark"}
+                  && SearchEngine.search(owner.searchIndex,query:"Renamed bookmark").contains{$0.id == bound.id},
+                  "changing a binding alias refreshes its displayed and searchable name")
+            let replacement=LaunchTarget(kind:.web,name:"Replacement target",location:"https://example.invalid/replacement")
+            candidate=owner.configuration;candidate.bindings["A"]=KeyBinding(target:replacement)
+            let replaced=owner.save(candidate)
+            check(replaced && owner.searchIndex.contains{$0.id == replacement.id} && !owner.searchIndex.contains{$0.id == bound.id},
+                  "changing a bound target removes the old search destination")
+
+            candidate=owner.configuration;candidate.addedApplications=[beta]
+            let added=owner.save(candidate)
+            check(added && owner.appIndex.map(\.id) == [alpha.id,beta.id,zulu.id] && owner.searchIndex.contains{$0.id == beta.id},
+                  "adding an application updates both application and query results")
+            candidate=owner.configuration;candidate.hiddenApplications=[alpha.id]
+            let hidden=owner.save(candidate)
+            check(hidden && !owner.appIndex.contains{$0.id == alpha.id} && !owner.searchIndex.contains{$0.id == alpha.id},
+                  "hiding an application removes it from both indexes")
+            candidate=owner.configuration;candidate.hiddenApplications=[]
+            let restored=owner.save(candidate)
+            check(restored && owner.appIndex.first?.id == alpha.id && owner.searchIndex.contains{$0.id == alpha.id},
+                  "restoring a hidden application restores its search entry")
+            candidate=owner.configuration;candidate.starredApplications=[zulu.id]
+            let starred=owner.save(candidate)
+            check(starred && owner.appIndex.first?.id == zulu.id && owner.searchIndex.first?.id == zulu.id,
+                  "starring an application updates ordering in both indexes")
+            candidate=owner.configuration;candidate.starredApplications=[]
+            let unstarred=owner.save(candidate)
+            check(unstarred && owner.appIndex.first?.id == alpha.id,
+                  "removing a star restores the selected name ordering")
+            let sorted=owner.updateSettings{$0.appSort = .nameDescending}
+            check(sorted && owner.appIndex.map(\.id) == [zulu.id,beta.id,alpha.id],
+                  "changing the sorting preference immediately reorders applications")
+            _=owner.updateSettings{$0.appSort = .custom}
+            candidate=owner.configuration;candidate.applicationOrder=[beta.id,alpha.id,zulu.id]
+            let reordered=owner.save(candidate)
+            check(reordered && owner.appIndex.map(\.id) == [beta.id,alpha.id,zulu.id],
+                  "changing only the custom order refreshes the application ranking")
+            candidate=owner.configuration;candidate.settings.appSort = .usedNewest
+            for (index,target) in [alpha,beta,zulu].enumerated() {
+                candidate.applicationMetadata[target.id]=ApplicationMetadata(addedAt:Date(timeIntervalSince1970:0),lastUsedAt:Date(timeIntervalSince1970:Double(index+1)))
+            }
+            let metadataSetup=owner.save(candidate)
+            candidate=owner.configuration;candidate.applicationMetadata[alpha.id]?.lastUsedAt=Date(timeIntervalSince1970:4)
+            let metadataChanged=owner.save(candidate)
+            check(metadataSetup && metadataChanged && owner.appIndex.first?.id == alpha.id && owner.searchIndex.first?.id == alpha.id,
+                  "changing only usage metadata refreshes the selected recency order")
+        } catch {check(false,"isolated configuration storage is available: \(error)")}
         return(count,failures)
     }
     private static func checkHoverFeedback(owner:LauncherController) async ->(count:Int,failures:Int) {

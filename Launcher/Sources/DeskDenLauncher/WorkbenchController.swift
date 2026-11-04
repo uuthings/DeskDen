@@ -263,12 +263,11 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     func changeLight(_ value:Bool) {changeAppearance(value ? .light:.dark)}
     func changeAppearance(_ value:LauncherAppearance) {
         guard value != appearance else { return }
-        let transition = WorkbenchAppearanceTransition.capture(hostWindow, reduceMotion: reduceMotion)
+        let transition = WorkbenchAppearanceTransition.begin(hostWindow, reduceMotion: reduceMotion)
         guard let owner,owner.updateSettings({$0.workbenchAppearance=value;$0.lightAppearance=value == .light}) else {
-            transition?.removeFromSuperview();message=owner?.lastSaveError;return
+            transition?.removeAnimation(forKey: WorkbenchAppearanceTransition.key);message=owner?.lastSaveError;return
         }
-        owner.render();syncAppearance()
-        transition?.finish()
+        syncAppearance();owner.refreshLauncherAppearance()
     }
     func changeTheme(_ value:LauncherTheme) {
         guard let owner,owner.updateSettings({$0.workbenchTheme=value;$0.workbenchAppearance = .dark;$0.lightAppearance=false}) else {message=owner?.lastSaveError;return}

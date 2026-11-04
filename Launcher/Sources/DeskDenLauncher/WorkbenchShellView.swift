@@ -68,6 +68,30 @@ private struct WorkbenchPageCanvas: ViewModifier {
 /// the entire page when the window grows; useful content receives the extra space.
 struct WorkbenchRootView: View {
     @ObservedObject var model: WorkbenchAppModel
+    private var blocked: Bool { model.modals.isPresented || model.confirmingQuit || model.quitting }
+    var body: some View {
+        ZStack(alignment: .top) {
+            WorkbenchAppearanceScene(model: model)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            WorkbenchFluidNavigation(model: model)
+                .frame(height: 58).padding(1)
+                .blur(radius: blocked ? 8 : 0)
+                .disabled(blocked)
+                .allowsHitTesting(!blocked)
+                .accessibilityHidden(blocked)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("workbench-chrome")
+        }
+        .workbenchThemeEnvironment(theme: model.theme, opacity: model.opacity, backgroundMotion: false, appearance: model.appearance)
+        .tint(ThemePalette(light: model.light).accent).controlSize(.regular)
+        .font(.system(size: 12))
+        .ignoresSafeArea(.container, edges: .top)
+        .onExitCommand { model.cancelPresentedInteraction() }
+    }
+}
+
+struct WorkbenchSceneView: View {
+    @ObservedObject var model: WorkbenchAppModel
     private var home: Bool { model.route == .overview }
     private var palette: ThemePalette { ThemePalette(light: model.light) }
     private var windowRadius: CGFloat { model.isFullScreen ? 0 : 16 }
@@ -81,9 +105,9 @@ struct WorkbenchRootView: View {
             ZStack(alignment: .topLeading) {
                 WorkbenchFluidBackground()
                 VStack(spacing: 0) {
-                    WorkbenchFluidNavigation(model: model).frame(height: chromeHeight)
-                        .accessibilityElement(children: .contain)
-                        .accessibilityIdentifier("workbench-chrome")
+                    // Navigation is a live sibling of the fading scene. This
+                    // reserves exactly the same layout space without duplicating it.
+                    Color.clear.frame(height: chromeHeight).accessibilityHidden(true)
                     if model.route == .settings {
                         WorkbenchFluidSettingsNavigation(model: model).frame(height: settingsHeight)
                     }

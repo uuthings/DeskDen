@@ -147,6 +147,7 @@ private struct WorkbenchFluidNavigationInput: NSViewRepresentable {
         WorkbenchFluidNavigationInputView(frame: .zero)
     }
     func updateNSView(_ view: WorkbenchFluidNavigationInputView, context: Context) {
+        view.enabled = context.environment.isEnabled
         view.routes = routes; view.selected = selected; view.expanded = expanded
         view.onHover = hover; view.onPress = press; view.onActivate = activate
     }

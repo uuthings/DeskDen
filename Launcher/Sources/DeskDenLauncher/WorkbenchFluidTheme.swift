@@ -28,66 +28,53 @@ struct WorkbenchAppearanceLiveRegion: NSViewRepresentable {
     }
 }
 
-/// Blend a cached presentation over the live view. Data, focus and navigation
-/// remain in one view tree; only the compositor animates during theme changes.
-@MainActor final class WorkbenchAppearanceTransition: NSView {
+/// A stable native boundary lets Core Animation cross-fade its already
+/// composited scene. It never redraws SwiftUI into a CPU bitmap. Navigation
+/// lives outside this layer, so the theme control flips independently.
+struct WorkbenchAppearanceScene: NSViewRepresentable {
+    let model: WorkbenchAppModel
+    func makeNSView(context: Context) -> WorkbenchAppearanceSceneView {
+        WorkbenchAppearanceSceneView(model: model)
+    }
+    func updateNSView(_ view: WorkbenchAppearanceSceneView, context: Context) {}
+}
+
+@MainActor final class WorkbenchAppearanceSceneView: NSHostingView<AnyView> {
+    private static let registered = NSHashTable<WorkbenchAppearanceSceneView>.weakObjects()
+    init(model: WorkbenchAppModel) {
+        super.init(rootView: AnyView(WorkbenchSceneView(model: model).nativeCheckAccessibility()))
+        wantsLayer = true
+        sizingOptions = []
+        Self.registered.add(self)
+    }
+    @MainActor required init(rootView: AnyView) { fatalError("init(rootView:) has not been implemented") }
+    @MainActor required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    static func scene(in window: NSWindow) -> WorkbenchAppearanceSceneView? {
+        registered.allObjects.first { $0.window === window && !$0.isHiddenOrHasHiddenAncestor }
+    }
+}
+
+@MainActor enum WorkbenchAppearanceTransition {
     static let duration: TimeInterval = 0.34
-    private(set) var liveRegionFrames: [CGRect] = []
-    static func capture(_ window: NSWindow?, reduceMotion: Bool) -> WorkbenchAppearanceTransition? {
-        guard let window, let content = window.contentView else { return nil }
-        // A quick second toggle must sample the live scene, not the fading
-        // screenshot from its preceding toggle. This also clears an in-flight
-        // fade when Reduce Motion is enabled before the next appearance change.
-        content.subviews.compactMap { $0 as? WorkbenchAppearanceTransition }.forEach {
-            $0.layer?.removeAllAnimations(); $0.removeFromSuperview()
-        }
+    // Core Animation stores every CATransition under this reserved key,
+    // regardless of the key passed to add(_:forKey:).
+    static let key = kCATransition
+    static func begin(_ window: NSWindow?, reduceMotion: Bool) -> CALayer? {
+        guard let window, let layer = WorkbenchAppearanceSceneView.scene(in: window)?.layer else { return nil }
+        // Replace rather than queue transitions. Reduced Motion also cancels
+        // an existing fade, including one started before the setting changed.
+        layer.removeAnimation(forKey: key)
         guard !reduceMotion, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
-              window.isVisible,
-              let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { return nil }
-        content.cacheDisplay(in: content.bounds, to: bitmap)
-        guard let image = bitmap.cgImage else { return nil }
-        let overlay = WorkbenchAppearanceTransition(frame: content.bounds)
-        overlay.autoresizingMask = [.width, .height]; overlay.wantsLayer = true
-        overlay.layer?.contents = image; overlay.layer?.contentsGravity = .resize
-        overlay.layer?.contentsScale = window.backingScaleFactor
-        overlay.setAccessibilityElement(false)
-        content.addSubview(overlay, positioned: .above, relativeTo: nil)
-        overlay.updateLiveRegionMask()
-        return overlay
+              window.isVisible else { return nil }
+        let fade = CATransition()
+        fade.type = .fade
+        fade.duration = duration
+        fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        layer.add(fade, forKey: key)
+        return layer
     }
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-    override func layout() {
-        super.layout()
-        updateLiveRegionMask()
-    }
-    private func updateLiveRegionMask() {
-        guard let content = superview, let layer else { return }
-        liveRegionFrames = WorkbenchAppearanceLiveRegionView.regions(in: content).map {
-            $0.convert($0.bounds, to: self).insetBy(dx: -2, dy: -2).intersection(bounds)
-        }.filter { !$0.isEmpty }
-        guard !liveRegionFrames.isEmpty else { layer.mask = nil; return }
-        let path = CGMutablePath()
-        path.addRect(bounds)
-        liveRegionFrames.forEach { path.addEllipse(in: $0) }
-        let mask = CAShapeLayer()
-        mask.frame = bounds; mask.path = path; mask.fillRule = .evenOdd
-        mask.fillColor = NSColor.black.cgColor
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        layer.mask = mask
-        CATransaction.commit()
-    }
-    func finish() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.superview != nil, let layer = self.layer else { return }
-            self.superview?.layoutSubtreeIfNeeded()
-            CATransaction.begin()
-            CATransaction.setCompletionBlock { [weak self] in self?.removeFromSuperview() }
-            let fade = CABasicAnimation(keyPath: "opacity")
-            fade.fromValue = 1; fade.toValue = 0; fade.duration = Self.duration
-            fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            layer.opacity = 0; layer.add(fade, forKey: "appearanceTransition")
-            CATransaction.commit()
-        }
+    static func isRunning(in window: NSWindow) -> Bool {
+        WorkbenchAppearanceSceneView.scene(in: window)?.layer?.animation(forKey: key) != nil
     }
 }
 

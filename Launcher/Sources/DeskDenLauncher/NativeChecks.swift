@@ -4,6 +4,11 @@ import LauncherCore
 @MainActor
 enum NativeChecks {
     static func run() async -> Int {
+        if CommandLine.arguments.contains("--launcher-index-only") {
+            let result=LauncherPresentationNativeChecks.checkSearchIndexPersistence()
+            print("Launcher index checks: \(result.count) checks, \(result.failures) failures")
+            return result.failures
+        }
         var failures = 0, count = 0
         func check(_ condition:Bool,_ name:String) { count += 1; if !condition { failures += 1 }; print("\(condition ? "PASS" : "FAIL") \(name)") }
         let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("deskden-native-checks-\(UUID().uuidString)")
