@@ -38,7 +38,9 @@ import LauncherCore
             // This hosts the complete module, including its page header and footer.
             // The 690/732-point fixtures additionally account for the production
             // window chrome and its asymmetric page gutters at 1120×758/1260×800.
-            for size in [NSSize(width: 1120, height: 690), NSSize(width: 1120, height: 700),
+            // 1040 points leaves about 639 points inside the configuration card,
+            // just below its three-column range layout; 1120 covers the other side.
+            for size in [NSSize(width: 1040, height: 690), NSSize(width: 1120, height: 690), NSSize(width: 1120, height: 700),
                          NSSize(width: 1260, height: 732), NSSize(width: 1260, height: 742),
                          NSSize(width: 900, height: 562), NSSize(width: 1440, height: 860), NSSize(width: 1600, height: 1000)] {
                 window.setContentSize(size)
@@ -60,6 +62,29 @@ import LauncherCore
                   "dark preparation keeps the same fixed action geometry")
             try await capture(host, "cleanup-home-dark.png")
             host.rootView = fixture(model: model, light: true)
+            _ = await settle(window) { frame("space-cleaning-scope-tile-documents", host) != nil }
+            let regularSize = host.bounds.size
+            for size in [NSSize(width: 1120, height: 690), NSSize(width: 1260, height: 732)] {
+                window.setContentSize(size)
+                _ = await settle(window) { frame("space-cleaning-mode-largeFiles", host) != nil }
+                check(click("space-cleaning-mode-largeFiles", host),
+                      "\(Int(size.width))-point preparation opens large-file mode through its real button")
+                check(await settle(window) { model.scanMode == .largeFiles && frame("space-cleaning-large-file-options", host) != nil },
+                      "\(Int(size.width))-point preparation mounts the large-file settings")
+                let geometry = preparationGeometryChecks(host, window: window, allowsVerticalScrolling: false,
+                    additionalConfigurationIDs: ["space-cleaning-large-file-options", "space-cleaning-preset-100",
+                        "space-cleaning-preset-500", "space-cleaning-preset-1gb", "space-cleaning-minimum-size",
+                        "space-cleaning-maximum-size", "space-cleaning-size-unit"])
+                count += geometry.count; failures += geometry.failures
+                try await capture(host, "cleanup-home-large-files-\(Int(size.width))x\(Int(size.height))-light.png")
+                check(click("space-cleaning-mode-cleanup", host),
+                      "\(Int(size.width))-point preparation restores regular mode through its real button")
+                check(await settle(window) { model.scanMode == .cleanup && frame("space-cleaning-large-file-options", host) == nil },
+                      "\(Int(size.width))-point preparation removes large-file options after returning to regular mode")
+            }
+            // Keep later interaction checks independent if a mode click failed.
+            model.selectScanMode(.cleanup)
+            window.setContentSize(regularSize)
             _ = await settle(window) { frame("space-cleaning-scope-tile-documents", host) != nil }
             let originalGroups = model.selectedScopeGroups
             check(click("space-cleaning-scope-tile-documents", host), "a real pointer press opens the document range explanation")
@@ -164,7 +189,8 @@ import LauncherCore
         return (count + capacities.count, failures + capacities.failures)
     }
 
-    private static func preparationGeometryChecks(_ host: NSView, window: NSWindow, allowsVerticalScrolling: Bool) -> (count: Int, failures: Int) {
+    private static func preparationGeometryChecks(_ host: NSView, window: NSWindow, allowsVerticalScrolling: Bool,
+                                                  additionalConfigurationIDs: [String] = []) -> (count: Int, failures: Int) {
         var count = 0, failures = 0
         let variant = "\(Int(host.bounds.width))×\(Int(host.bounds.height))-point preparation"
         func check(_ condition: Bool, _ label: String) {
@@ -190,6 +216,7 @@ import LauncherCore
             + CleaningScopeGroup.allCases.map { "space-cleaning-scope-tile-" + $0.rawValue }
             + ["space-cleaning-scope-global", "space-cleaning-scope-custom", "space-cleaning-scope-detail",
                "space-cleaning-scope-detail-title", "space-cleaning-scope-detail-inclusion"]
+            + additionalConfigurationIDs
         func contained(_ identifiers: [String], in area: NSRect, clips: [NSRect], vertically: Bool) -> Bool {
             identifiers.allSatisfy { identifier in
                 guard let rect = frame(identifier, host) else {
