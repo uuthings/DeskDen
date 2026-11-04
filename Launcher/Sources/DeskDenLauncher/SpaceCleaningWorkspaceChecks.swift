@@ -35,7 +35,12 @@ import LauncherCore
             check(await NativeUIFixtureWindow.prepare(window: window, until: { frame("space-cleaning-start", host) != nil }),
                   "production cleaning preparation mounts with its real controls")
             check(model.items.isEmpty && !model.isBusy, "preparation never starts a scan implicitly")
-            for size in [NSSize(width: 1120, height: 700), NSSize(width: 900, height: 562), NSSize(width: 1440, height: 860), NSSize(width: 1600, height: 1000)] {
+            // This hosts the complete module, including its page header and footer.
+            // The 690/732-point fixtures additionally account for the production
+            // window chrome and its asymmetric page gutters at 1120×758/1260×800.
+            for size in [NSSize(width: 1120, height: 690), NSSize(width: 1120, height: 700),
+                         NSSize(width: 1260, height: 732), NSSize(width: 1260, height: 742),
+                         NSSize(width: 900, height: 562), NSSize(width: 1440, height: 860), NSSize(width: 1600, height: 1000)] {
                 window.setContentSize(size)
                 _ = await settle(window) { frame("space-cleaning-start", host) != nil }
                 let volume = frame("space-cleaning-volume-card", host)
@@ -43,7 +48,10 @@ import LauncherCore
                 check(volume != nil && start != nil && volume!.maxX < start!.minX,
                       "\(Int(size.width))-point preparation keeps disk and scan configuration in separate columns")
                 check(start.map { window.frame.contains($0) } == true, "\(Int(size.width))-point preparation keeps the scan action visible")
-                try await capture(host, "cleanup-home-\(Int(size.width))-light.png")
+                let geometry = preparationGeometryChecks(host, window: window, allowsVerticalScrolling: size.height == 562)
+                count += geometry.count; failures += geometry.failures
+                let captureSize = [690, 732].contains(Int(size.height)) ? "\(Int(size.width))x\(Int(size.height))" : "\(Int(size.width))"
+                try await capture(host, "cleanup-home-\(captureSize)-light.png")
             }
             try await capture(host, "cleanup-home-light.png")
             host.rootView = fixture(model: model, light: false)
@@ -154,6 +162,96 @@ import LauncherCore
         } catch { check(false, "workspace fixture: \(error)") }
         let capacities = await capacityFixtureChecks()
         return (count + capacities.count, failures + capacities.failures)
+    }
+
+    private static func preparationGeometryChecks(_ host: NSView, window: NSWindow, allowsVerticalScrolling: Bool) -> (count: Int, failures: Int) {
+        var count = 0, failures = 0
+        let variant = "\(Int(host.bounds.width))×\(Int(host.bounds.height))-point preparation"
+        func check(_ condition: Bool, _ label: String) {
+            count += 1; if !condition { failures += 1 }
+            print("\(condition ? "PASS" : "FAIL") \(variant) \(label)")
+        }
+        guard let volume = frame("space-cleaning-volume-card", host),
+              let configuration = frame("space-cleaning-configuration-card", host) else {
+            check(false, "mounts both complete card surfaces for viewport measurements")
+            return (count, failures)
+        }
+        let viewport = window.convertToScreen(host.convert(host.bounds, to: nil))
+        let scrolls = visibleScrollViews(in: host)
+        let clips = scrolls.map { window.convertToScreen($0.contentView.convert($0.contentView.bounds, to: nil)) }
+        let leftClips = clips.filter { volume.insetBy(dx: -1, dy: -1).contains($0) && $0.width > volume.width * 0.7 }
+        let rightClips = clips.filter { configuration.insetBy(dx: -1, dy: -1).contains($0) && $0.width > configuration.width * 0.7 }
+        let capacityIDs = ["space-cleaning-home-heading", "space-cleaning-disk-occupancy",
+                           "space-cleaning-disk-available-breakdown", "space-cleaning-disk-capacity-note", "space-cleaning-disk-updated-at"]
+            + ["total", "used", "free", "reclaimable", "available"].flatMap { row in
+                ["label", "value", "unit"].map { "space-cleaning-disk-" + row + "-" + $0 }
+            }
+        let configurationIDs = SpaceCleaningScanMode.allCases.map { "space-cleaning-mode-" + $0.rawValue }
+            + CleaningScopeGroup.allCases.map { "space-cleaning-scope-tile-" + $0.rawValue }
+            + ["space-cleaning-scope-global", "space-cleaning-scope-custom", "space-cleaning-scope-detail",
+               "space-cleaning-scope-detail-title", "space-cleaning-scope-detail-inclusion"]
+        func contained(_ identifiers: [String], in area: NSRect, clips: [NSRect], vertically: Bool) -> Bool {
+            identifiers.allSatisfy { identifier in
+                guard let rect = frame(identifier, host) else {
+                    print("DETAIL \(variant) missing content=\(identifier)")
+                    return false
+                }
+                let regions = [area, viewport] + clips
+                let fits = regions.allSatisfy { region in
+                    rect.minX >= region.minX - 1 && rect.maxX <= region.maxX + 1
+                        && (!vertically || (rect.minY >= region.minY - 1 && rect.maxY <= region.maxY + 1))
+                }
+                if !fits { print("DETAIL \(variant) clipped content=\(identifier) frame=\(rect) card=\(area) clips=\(clips)") }
+                return fits
+            }
+        }
+        check(viewport.insetBy(dx: -1, dy: -1).contains(volume) && viewport.insetBy(dx: -1, dy: -1).contains(configuration)
+                && volume.maxX < configuration.minX,
+              "keeps both cards inside the module viewport without overlap")
+        check(contained(["space-cleaning-home-actions", "space-cleaning-start"], in: configuration, clips: [], vertically: true)
+                && contained(["space-cleaning-rules-link"], in: viewport, clips: [], vertically: true),
+              "keeps the complete scan footer and page rules action visible")
+        check(!scrolls.isEmpty && scrolls.allSatisfy {
+            guard let document = $0.documentView else { return false }
+            return document.bounds.width <= $0.contentView.bounds.width + 1
+        }, "has no horizontal scroll range in any actual scroll document")
+        if allowsVerticalScrolling {
+            // The deliberately short window may scroll, but must preserve all
+            // mounted content widths and the fixed action. Lazy range rows
+            // below this viewport need not have accessibility elements yet.
+            let mountedConfigurationIDs = configurationIDs.filter { frame($0, host) != nil }
+            check(contained(capacityIDs, in: volume, clips: leftClips, vertically: false)
+                    && !mountedConfigurationIDs.isEmpty
+                    && contained(mountedConfigurationIDs, in: configuration, clips: rightClips, vertically: false),
+                  "keeps narrow-window content within its card widths while allowing vertical scrolling")
+        } else {
+            check(scrolls.allSatisfy {
+                guard let document = $0.documentView else { return false }
+                return document.bounds.height <= $0.contentView.bounds.height + 1
+            }, "fits every actual scroll document vertically without a hidden scroll range")
+            check(contained(capacityIDs, in: volume, clips: leftClips, vertically: true),
+                  "shows every capacity row, composition, explanation and update inside the left card viewport")
+            check(contained(configurationIDs, in: configuration, clips: rightClips, vertically: true),
+                  "shows both scan modes, all six ranges and the complete explanation inside the right card viewport")
+        }
+        for (scroll, clip) in zip(scrolls, clips) {
+            let region = volume.insetBy(dx: -1, dy: -1).contains(clip) ? "capacity" : configuration.insetBy(dx: -1, dy: -1).contains(clip) ? "configuration" : "page"
+            print("DETAIL \(variant) \(region) document=\(String(describing: scroll.documentView?.bounds)) clip=\(scroll.contentView.bounds) screen=\(clip)")
+        }
+        return (count, failures)
+    }
+
+    private static func visibleScrollViews(in root: NSView) -> [NSScrollView] {
+        var pending = [root], result: [NSScrollView] = []
+        while let view = pending.popLast() {
+            pending.append(contentsOf: view.subviews)
+            if let scroll = view as? NSScrollView, scroll.window === root.window,
+               !scroll.isHiddenOrHasHiddenAncestor, scroll.documentView != nil,
+               scroll.contentView.bounds.width > 0, scroll.contentView.bounds.height > 0 {
+                result.append(scroll)
+            }
+        }
+        return result
     }
 
     private static func capacityFixtureChecks() async -> (count: Int, failures: Int) {

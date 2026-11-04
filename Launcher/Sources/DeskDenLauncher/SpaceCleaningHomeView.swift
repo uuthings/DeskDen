@@ -18,6 +18,9 @@ struct SpaceCleaningHomeView: View {
     private var selectedRangeCount: Int { scope == .global ? CleaningScopeGroup.allCases.count : chosenGroups.count + locations.count }
     private var scopeIsEmpty: Bool { scope == .custom && chosenGroups.isEmpty && locations.isEmpty }
     private var columnHeight: CGFloat { max(420, height - (hasPreviousResults ? 132 : 0)) }
+    private var compact: Bool { width >= 760 && columnHeight < 680 }
+    private var denseOptions: Bool { compact && model.scanMode == .largeFiles }
+    private var sectionSpacing: CGFloat { denseOptions ? 8 : compact ? 12 : 16 }
     private var leftWidth: CGFloat {
         let fraction: CGFloat = width >= 1152 ? 0.84 / 2.84 : width <= 802 ? 0.8 / 1.8 : 0.94 / 2.94
         return max(width >= 1152 ? 310 : 276, (width - 12) * fraction)
@@ -51,22 +54,22 @@ struct SpaceCleaningHomeView: View {
     }
 
     private func configuration(width: CGFloat) -> some View {
-        let inset: CGFloat = self.width >= 1152 ? 20 : 18
+        let inset: CGFloat = compact ? 14 : self.width >= 1152 ? 20 : 18
         let contentWidth = max(0, width - inset * 2)
         return SpaceCleaningSurface {
             GeometryReader { geometry in
                 WorkbenchScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        VStack(alignment: .leading, spacing: compact ? 8 : 10) {
                             Text("扫描方式").font(.system(size: 14, weight: .semibold))
                             modeChoices(width: contentWidth)
                             if model.scanMode == .largeFiles { largeFileControls }
                         }
-                        Spacer(minLength: 0)
+                        Spacer(minLength: sectionSpacing)
                         scopeControls(width: contentWidth)
-                        Spacer(minLength: 0)
+                        Spacer(minLength: sectionSpacing)
                         scopeDetails
-                        if scope == .custom { selectedLocations(width: contentWidth) }
+                        if scope == .custom { selectedLocations(width: contentWidth).padding(.top, sectionSpacing) }
                     }
                     .frame(maxWidth: .infinity, minHeight: max(0, geometry.size.height - inset * 2), alignment: .topLeading)
                     .padding(inset)
@@ -80,14 +83,15 @@ struct SpaceCleaningHomeView: View {
         let columns = width >= 440 ? 2 : 1
         return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: columns), spacing: 10) {
             ForEach(SpaceCleaningScanMode.allCases, id: \.self) { mode in
-                SpaceCleaningModeChoice(mode: mode, selected: model.scanMode == mode) { model.selectScanMode(mode) }
+                SpaceCleaningModeChoice(mode: mode, selected: model.scanMode == mode,
+                                        height: denseOptions ? 60 : compact ? 64 : 76) { model.selectScanMode(mode) }
                     .disabled(model.isBusy || editingScope)
             }
         }
     }
 
     private func scopeControls(width: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: compact ? 8 : 12) {
             ViewThatFits(in: .horizontal) {
                 HStack { scopeHeading; Spacer(minLength: 8); scopeChoices }
                 VStack(alignment: .leading, spacing: 8) { scopeHeading; scopeChoices }
@@ -96,6 +100,7 @@ struct SpaceCleaningHomeView: View {
                 ForEach(CleaningScopeGroup.allCases) { group in
                     SpaceCleaningScopeTile(group: group, active: activeRange == group, custom: scope == .custom,
                                            included: model.includesScopeGroup(group, draft: editingScope),
+                                           height: denseOptions ? 52 : compact ? 60 : 76,
                                            open: { activeRange = group }, toggle: { toggleRange(group) })
                         .disabled(model.isBusy)
                 }
@@ -137,7 +142,8 @@ struct SpaceCleaningHomeView: View {
     private var scopeDetails: some View {
         SpaceCleaningScopeDetail(group: activeRange,
                                  included: model.includesScopeGroup(activeRange, draft: editingScope),
-                                 sizeDescription: model.scanMode == .largeFiles ? largeFileDescription : nil)
+                                 sizeDescription: model.scanMode == .largeFiles ? largeFileDescription : nil,
+                                 compact: compact)
     }
     private var largeFileDescription: String {
         let minimum = model.minimumFileSize.isEmpty ? "100" : model.minimumFileSize
@@ -307,6 +313,7 @@ struct SpaceCleaningHomeView: View {
 private struct SpaceCleaningModeChoice: View {
     let mode: SpaceCleaningScanMode
     let selected: Bool
+    let height: CGFloat
     let action: () -> Void
     @Environment(\.workbenchPalette) private var palette
 
@@ -322,7 +329,7 @@ private struct SpaceCleaningModeChoice: View {
                 }.frame(maxWidth: .infinity, alignment: .leading)
                 Image(systemName: selected ? "largecircle.fill.circle" : "circle")
                     .font(.system(size: 13)).foregroundStyle(selected ? palette.accent : palette.secondary).frame(width: 14)
-            }.padding(.horizontal, 14).frame(height: 76)
+            }.padding(.horizontal, 14).frame(height: height)
                 .background {
                     WorkbenchMaterialSurface(kind: .control, radius: 10)
                     if selected { RoundedRectangle(cornerRadius: 10).fill(palette.navSelected) }
@@ -340,6 +347,7 @@ private struct SpaceCleaningScopeTile: View {
     let active: Bool
     let custom: Bool
     let included: Bool
+    let height: CGFloat
     let open: () -> Void
     let toggle: () -> Void
     @Environment(\.workbenchPalette) private var palette
@@ -357,7 +365,7 @@ private struct SpaceCleaningScopeTile: View {
                     if !custom {
                         Image(systemName: "chevron.right").font(.system(size: 12)).foregroundStyle(palette.secondary).frame(width: 14)
                     }
-                }.padding(.leading, 12).padding(.trailing, custom ? 0 : 12).frame(height: 76).contentShape(Rectangle())
+                }.padding(.leading, 12).padding(.trailing, custom ? 0 : 12).frame(height: height).contentShape(Rectangle())
             }.buttonStyle(ClickablePlainButtonStyle())
                 .accessibilityLabel(group.title + "，查看范围说明")
                 .accessibilityValue(active ? "正在查看" : "未查看")
@@ -366,7 +374,7 @@ private struct SpaceCleaningScopeTile: View {
                 Button(action: toggle) {
                     Image(systemName: included ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 17)).foregroundStyle(included ? palette.accent : palette.secondary)
-                        .frame(width: 32, height: 76).contentShape(Rectangle())
+                        .frame(width: 32, height: height).contentShape(Rectangle())
                 }.buttonStyle(ClickablePlainButtonStyle()).padding(.trailing, 5)
                     .accessibilityLabel("扫描" + group.title).accessibilityValue(included ? "已包含" : "未包含")
                     .accessibilityIdentifier("space-cleaning-scope-toggle-" + group.rawValue)
@@ -385,10 +393,11 @@ private struct SpaceCleaningScopeDetail: View {
     let group: CleaningScopeGroup
     let included: Bool
     let sizeDescription: String?
+    let compact: Bool
     @Environment(\.workbenchPalette) private var palette
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: compact ? 6 : 8) {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 7) { title; Spacer(minLength: 8); inclusion }
                 VStack(alignment: .leading, spacing: 5) { title; inclusion }
@@ -400,7 +409,7 @@ private struct SpaceCleaningScopeDetail: View {
             }
             detailRow("检查内容", text: (sizeDescription ?? "") + group.content)
             detailRow("处理提示", text: group.impact)
-        }.padding(14).frame(maxWidth: .infinity, minHeight: 114, alignment: .topLeading)
+        }.padding(compact ? 12 : 14).frame(maxWidth: .infinity, minHeight: compact ? 100 : 114, alignment: .topLeading)
             .background(RoundedRectangle(cornerRadius: 10).fill(palette.soft))
             .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-scope-detail")
     }
@@ -487,18 +496,20 @@ struct SpaceCleaningCapacityCard: View {
     var body: some View {
         SpaceCleaningSurface {
             GeometryReader { geometry in
+                let compact = geometry.size.height < 680
+                let inset: CGFloat = compact ? 14 : 18
                 WorkbenchScrollView {
-                    capacityContent
-                        .frame(minHeight: max(644, geometry.size.height - 36), alignment: .topLeading)
-                        .padding(18)
+                    capacityContent(compact: compact)
+                        .frame(minHeight: max(0, geometry.size.height - inset * 2), alignment: .topLeading)
+                        .padding(inset)
                 }.scrollBounceBehavior(.basedOnSize)
             }
         }.foregroundStyle(palette.text)
             .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-volume-card")
     }
 
-    private var capacityContent: some View {
-        VStack(alignment: .leading, spacing: 18) {
+    private func capacityContent(compact: Bool) -> some View {
+        VStack(alignment: .leading, spacing: compact ? 10 : 18) {
             HStack(spacing: 10) {
                 Image(systemName: "internaldrive").font(.system(size: 24, weight: .regular)).foregroundStyle(palette.accent)
                 VStack(alignment: .leading, spacing: 3) {
@@ -508,10 +519,10 @@ struct SpaceCleaningCapacityCard: View {
                 }
             }
             SpaceCleaningCapacityLine(title: "总容量", bytes: validTotal, tint: nil, identifier: "total", numberSize: 17)
-            capacity
-            availableBreakdown
+            capacity(compact: compact)
+            availableBreakdown(compact: compact)
             Text(note).font(.system(size: 11)).foregroundStyle(palette.secondary).lineSpacing(3)
-                .fixedSize(horizontal: false, vertical: true).padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true).padding(compact ? 10 : 12).frame(maxWidth: .infinity, alignment: .leading)
                 .background(RoundedRectangle(cornerRadius: 9).fill(palette.soft))
                 .accessibilityIdentifier("space-cleaning-disk-capacity-note")
             HStack(spacing: 8) {
@@ -523,7 +534,7 @@ struct SpaceCleaningCapacityCard: View {
         }
     }
 
-    private var capacity: some View {
+    private func capacity(compact: Bool) -> some View {
         GeometryReader { geometry in
             let barWidth = max(52, min(78, geometry.size.width - 176))
             HStack(alignment: .center, spacing: 12) {
@@ -534,9 +545,9 @@ struct SpaceCleaningCapacityCard: View {
                     SpaceCleaningCapacityLine(title: "立即空闲", bytes: validFree, tint: freeTint, identifier: "free")
                     Spacer(minLength: 12)
                     SpaceCleaningCapacityLine(title: "系统按需回收", bytes: validReclaimable, tint: reclaimTint, identifier: "reclaimable")
-                }.frame(maxWidth: .infinity).frame(height: 218)
+                }.frame(maxWidth: .infinity).frame(height: min(compact ? 144 : 218, geometry.size.height))
             }.frame(width: geometry.size.width, height: geometry.size.height)
-        }.frame(minHeight: 242, maxHeight: .infinity)
+        }.frame(minHeight: compact ? 144 : 242, maxHeight: .infinity)
     }
     private var column: some View {
         GeometryReader { geometry in
@@ -577,8 +588,8 @@ struct SpaceCleaningCapacityCard: View {
             Text(percent == nil ? "暂无读数" : "空间已用").font(.system(size: 11)).lineLimit(1)
         }.foregroundStyle(usedInk)
     }
-    private var availableBreakdown: some View {
-        VStack(alignment: .leading, spacing: 12) {
+    private func availableBreakdown(compact: Bool) -> some View {
+        VStack(alignment: .leading, spacing: compact ? 8 : 12) {
             SpaceCleaningCapacityLine(title: "当前可用空间", bytes: validAvailable, tint: nil, identifier: "available", numberSize: 21)
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
@@ -599,7 +610,7 @@ struct SpaceCleaningCapacityCard: View {
                 Spacer(minLength: 0)
                 legend(validReclaimable == nil ? "回收估算未提供" : "按需回收估算", tint: reclaimTint)
             }
-        }.padding(.top, 12)
+        }.padding(.top, compact ? 4 : 12)
     }
     private func legend(_ title: String, tint: Color) -> some View {
         HStack(spacing: 5) { Circle().fill(tint).frame(width: 6, height: 6); Text(title) }
