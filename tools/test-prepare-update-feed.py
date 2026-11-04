@@ -32,6 +32,9 @@ class ExportPreparationTests(unittest.TestCase):
         return PREPARATION['verify_exported_app'](self.app, self.info, runner=run, read_output=output)
 
     def test_current_metadata_and_identity_are_accepted(self):
+        self.assertIs(self.info['SUEnableAutomaticChecks'], True)
+        self.assertIs(self.info['SUAutomaticallyUpdate'], False)
+        self.assertIs(self.info['SUAllowsAutomaticUpdates'], False)
         self.assertEqual(PREPARATION['exported_metadata_errors'](self.info, self.info), [])
         receipt = self.verify()
         self.assertEqual(receipt['architectures'], ['arm64', 'x86_64'])
@@ -51,9 +54,9 @@ class ExportPreparationTests(unittest.TestCase):
             with self.subTest(missing=key):
                 self.assertTrue(PREPARATION['exported_metadata_errors'](changed, self.info))
 
-    def test_unsafe_export_is_rejected_even_if_source_were_also_changed(self):
+    def test_out_of_policy_export_is_rejected_even_if_source_were_also_changed(self):
         for key, value in [('SUAutomaticallyUpdate', True), ('SUAllowsAutomaticUpdates', True),
-                           ('SUSendProfileInfo', True), ('SUEnableAutomaticChecks', True),
+                           ('SUSendProfileInfo', True), ('SUEnableAutomaticChecks', False),
                            ('SUScheduledCheckInterval', 60), ('SURequireSignedFeed', False),
                            ('SUVerifyUpdateBeforeExtraction', False), ('SUFeedURL', 'http://example.invalid/feed')]:
             changed = deepcopy(self.info); changed[key] = value

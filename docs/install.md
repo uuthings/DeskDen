@@ -4,7 +4,7 @@ DeskDen（方寸）要求 **macOS 14 或更高版本**。正式下载包同时�
 
 ## 首次安装
 
-1. 下载 [DeskDen 0.4.0 DMG](https://updates.uuthings.com/deskden/macos/releases/0.4.0-5/DeskDen-0.4.0-macos-universal.dmg)；备用下载见 [v0.4.0 GitHub Release](https://github.com/uuthings/DeskDen/releases/tag/v0.4.0)，历史版本保留在 [GitHub Releases](https://github.com/uuthings/DeskDen/releases)。两端正式安装包的文件内容和校验值相同。`Source code` 压缩包是源码，不是安装包。
+1. 下载 [DeskDen 0.5.0 DMG](https://updates.uuthings.com/deskden/macos/releases/0.5.0-6/DeskDen-0.5.0-macos-universal.dmg)；备用下载见 [v0.5.0 GitHub Release](https://github.com/uuthings/DeskDen/releases/tag/v0.5.0)，历史版本保留在 [GitHub Releases](https://github.com/uuthings/DeskDen/releases)。两端正式安装包的文件内容和校验值相同。`Source code` 压缩包是源码，不是安装包。
 2. 打开 DMG 后将「方寸.app」拖入「应用程序」，再打开 App。该版本的签名与公证状态见 Release 说明；系统首次打开时仍可能要求确认。
 3. 新配置默认使用 `⌥ D` 呼出启动器，`⌥ F` 打开工作台。也可以从状态栏或顶部入口进入。关闭窗口仅收起界面，后台继续运行；彻底退出通过方寸菜单确认。
 
@@ -26,11 +26,11 @@ DeskDen（方寸）要求 **macOS 14 或更高版本**。正式下载包同时�
 
 ## 后续更新
 
-在「设置 → 通用 → 软件更新」点击「检查更新」，也可从方寸菜单检查。默认每日自动检查，已有明确关闭选择会保留。有新版本时，主窗口左下角显示更新入口；点击查看说明，再选择下载。下载完成后由你确认安装并重启；普通退出不会代替安装确认。后台检查失败不会弹窗打扰，主动查看时会显示原因，不会当作「已是最新版本」。
+在「设置 → 通用 → 软件更新」点击「检查更新」，也可从方寸菜单检查。默认每日自动检查，已有明确关闭选择会保留。有新版本时，主窗口顶部品牌旁显示更新入口；点击查看说明，再选择下载。下载完成后由你确认安装并重启；普通退出不会代替安装确认。后台检查失败不会弹窗打扰，主动查看时会显示原因，不会当作「已是最新版本」。
 
 ## 校验下载
 
-下载本版 [SHA256SUMS.txt](https://updates.uuthings.com/deskden/macos/releases/0.4.0-5/SHA256SUMS.txt)，也可从对应 GitHub Release 获取同一份校验文件，在下载目录执行：
+下载本版 [SHA256SUMS.txt](https://updates.uuthings.com/deskden/macos/releases/0.5.0-6/SHA256SUMS.txt)，也可从对应 GitHub Release 获取同一份校验文件，在下载目录执行：
 
 ```sh
 shasum -a 256 -c SHA256SUMS.txt --ignore-missing

@@ -2,7 +2,7 @@
 
 常用之物，皆在方寸之间。方寸是一款原生 macOS 应用，把启动器、设备信息、空间清理、日历与提醒、用量与额度和私密资料放进同一个界面。
 
-当前版本为 **0.4.0**。下载 [DMG 安装包](https://updates.uuthings.com/deskden/macos/releases/0.4.0-5/DeskDen-0.4.0-macos-universal.dmg)及[校验文件](https://updates.uuthings.com/deskden/macos/releases/0.4.0-5/SHA256SUMS.txt)；[v0.4.0 Release](https://github.com/uuthings/DeskDen/releases/tag/v0.4.0) 提供同一安装包的备用下载与版本说明。首次安装与旧版升级请先阅读 [安装指南](docs/install.md)。GitHub 的源码压缩包不能直接作为 App 安装。
+当前版本为 **0.5.0**。下载 [DMG 安装包](https://updates.uuthings.com/deskden/macos/releases/0.5.0-6/DeskDen-0.5.0-macos-universal.dmg)及[校验文件](https://updates.uuthings.com/deskden/macos/releases/0.5.0-6/SHA256SUMS.txt)；[v0.5.0 Release](https://github.com/uuthings/DeskDen/releases/tag/v0.5.0) 提供同一安装包的备用下载与版本说明。首次安装与旧版升级请先阅读 [安装指南](docs/install.md)。GitHub 的源码压缩包不能直接作为 App 安装。
 
 ## 主要功能
 
@@ -11,11 +11,11 @@
 - 日历与提醒：查看选中日期与未来七天的安排，集中管理长期待办；支持按日期或天数设置期限，并配置周末、节假日和调休的计算方式。系统日历与提醒事项在授权后接入。
 - 用量与额度：独立 AI 和服务流量卡片，支持 Codex、Claude、IPRoyal 与搬瓦工；本机 Token 记录归入 AI 分类。网络监控保留实时网速与单独的周期预算。
 - 私密空间：独立密码加密、自动锁定、加密备份、文字格式与完整分类管理；正确签名授权的构建可选用 Touch ID。
-- 外观与桌面组件：青碧晨雾、月白云海、暖霞悬山、AR 世界与雷霆机舱主题，以及界面不透明度和组件管理。
+- 外观与桌面组件：青蓝琥珀浅色与墨金深色背景，统一的半透明卡片、顶部导航和明暗切换；Mini 与桌面组件沿用相同材质。
 - 统一图标：应用与浏览器连接器使用浅色桌面图标。
-- 软件更新：默认手动检查，可选择每日自动检查；下载与安装仍需确认。
+- 软件更新：默认每日自动检查，已有明确关闭选择会保留；下载与安装仍需确认。
 
-工作台显示时提供程序坞与应用切换入口；关闭界面后继续后台运行，可从状态栏或快捷键重新打开。最小化与关闭分别处理；顶栏与侧栏尺度保持一致，内容随窗口空间重排。
+工作台显示时提供程序坞与应用切换入口；关闭界面后继续后台运行，可从状态栏或快捷键重新打开。顶部导航与内容间距保持一致，内容随窗口空间重排；启动器可独立呼出。
 
 ## 要求与构建
 
