@@ -9,6 +9,36 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
         <description>Official signed software updates for DeskDen.</description>
         <language>zh-CN</language>
         <item>
+            <title>0.5.0</title>
+            <pubDate>Wed, 04 Nov 2026 05:29:29 GMT</pubDate>
+            <sparkle:version>6</sparkle:version>
+            <sparkle:shortVersionString>0.5.0</sparkle:shortVersionString>
+            <sparkle:fullReleaseNotesLink>https://github.com/uuthings/DeskDen/releases/tag/v0.5.0</sparkle:fullReleaseNotesLink>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="plain-text"><![CDATA[全新工作台
+统一首页、顶部导航和各模块的浅色与墨金深色材质，优化导航悬停、主题翻转和切换响应。
+
+空间清理
+重做容量分层、扫描范围及进度展示，采用列表与详情分栏，处理记录支持搜索并查看项目和大小。
+
+Mini 与交互
+支持整卡拖动、最多四列和服务额度卡片，修复网络趋势依赖主窗口、卡片跳转及首次窗口前置。
+
+额度与时间
+百分比向下取整，与进度条颜色保持一致；显示重置倒计时和相对更新时间，详情保留日期、城市与时区。
+
+Claude 会员额度
+通过官方原生 Claude Code 的会员登录查询五小时及每周额度，区分会员与 API 身份并保留最近有效读数。相关接口仍属实验能力；仅登录 Claude 桌面 App 或使用 Console/API 身份不能提供会员额度。
+
+日常操作
+改进进程列表、控件边框、日历权限提示及来源折叠；默认每日检查更新，下载与安装由你决定。
+
+旧版升级提示
+从 0.3.0 或更早版本升级前，请在旧版导出并另存私密空间加密备份。迁移后继续使用新版，按安装指南重新开启 Touch ID、系统权限和 IPRoyal 本机连接。
+]]></description>
+            <enclosure url="https://updates.uuthings.com/deskden/macos/releases/0.5.0-6/DeskDen-0.5.0-macos-universal.zip" length="29750815" type="application/octet-stream" sparkle:edSignature="QsU5LkRZpoFjSGIjGxrpzVLInxzcWaFRiyuTy+mbBcCS/T8Ss3Dbb6YIE1ToLdmK+Ln4FTrsTIiBhqb+Sa8CAQ=="/>
+        </item>
+        <item>
             <title>0.4.0</title>
             <pubDate>Fri, 30 Oct 2026 06:50:48 +0000</pubDate>
             <sparkle:version>5</sparkle:version>
@@ -75,6 +105,6 @@ IPRoyal 连接器需另行安装并保持官方控制台登录。服务额度存
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: J+MPYDgiimCQo0fUkLxKuEhxpyQZnxRqqUBDPfFyJ37XDCfNRd/qoGQcg0xKztjOnUJtSJYlZ1zl8nl8WeiCBA==
-length: 5652
+edSignature: ONhzCcAyQjV/biyRck0RHJYS+n4rvFvkkh5XSpG9J+tz0TneQBbIbu0LUR7m/mBoN+uAlp4nhPF9kItJZCvTCg==
+length: 7703
 -->
