@@ -226,12 +226,12 @@ struct WorkbenchHomeStorageCard: View {
             .contentShape(RoundedRectangle(cornerRadius: 15))
         }
         .buttonStyle(WorkbenchHomeCardButtonStyle())
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("home-open-cleaning")
         .accessibilityLabel("打开空间清理")
         .accessibilityValue("磁盘已用 " + DeviceFormat.storage(used) + " / " + DeviceFormat.storage(total)
             + "，" + UsagePercentage.text(percent) + "，可用 " + DeviceFormat.storage(available)
             + "，立即可用 " + DeviceFormat.storage(immediatelyFree) + "，系统可回收估算 " + DeviceFormat.storage(reclaimable))
+        .accessibilityIdentifier("home-open-cleaning")
+        .accessibilityElement(children: .contain)
         .help("可用空间包含 macOS 可按需回收的估算。系统可回收不是方寸建议删除的文件；整理项占用仅来自已完成扫描，实际释放量以系统读数为准。")
     }
     private var capacityBar: some View {
@@ -310,11 +310,11 @@ struct WorkbenchHomeNetworkCard: View {
             .contentShape(RoundedRectangle(cornerRadius: 15))
         }
         .buttonStyle(WorkbenchHomeCardButtonStyle())
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("home-network-detail")
         .accessibilityLabel("查看网络监控")
         .accessibilityValue("本机全部流量，下载 " + DeviceFormat.rate(network.downloadBytesPerSecond)
             + "，上传 " + DeviceFormat.rate(network.uploadBytesPerSecond) + "，今日已记录 " + todayTraffic)
+        .accessibilityIdentifier("home-network-detail")
+        .accessibilityElement(children: .contain)
         .help("本机全部流量。曲线显示最近 60 秒实际下载与上传合计，采样缺口不补线；今日累计仅含已记录时段。")
     }
     private func rate(_ title: String, value: Double?, alignment: HorizontalAlignment) -> some View {

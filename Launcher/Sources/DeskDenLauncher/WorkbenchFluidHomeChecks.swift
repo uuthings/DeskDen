@@ -88,6 +88,30 @@ import LauncherCore
                 print("DETAIL fluid Home \(sample.2) device=\(String(describing: frame("home-device-detail", in: host))) month=\(String(describing: frame("fc.home.calendar", in: host))) disk=\(String(describing: frame("home-open-cleaning", in: host))) network=\(String(describing: frame("home-network-detail", in: host))) reminders=\(String(describing: frame("fc.home.reminders", in: host)))")
             }
 
+            for (identifier, label, destination) in [
+                ("home-device-detail", "查看设备状态", WorkbenchRoute.device),
+                ("home-open-cleaning", "打开空间清理", WorkbenchRoute.cleaning),
+                ("home-network-detail", "查看网络监控", WorkbenchRoute.network)
+            ] {
+                model.selectModule(.overview)
+                _ = await settle(window) { frame(identifier, in: host) != nil }
+                let card = element(identifier, in: host)
+                let candidates = card.map { objects(in: $0) } ?? []
+                for candidate in candidates where string("accessibilityRole", of: candidate) == NSAccessibility.Role.button.rawValue || self.identifier(candidate) == identifier {
+                    print("DETAIL Home card AX \(identifier) role=\(string("accessibilityRole", of: candidate) ?? "unknown") label=\(string("accessibilityLabel", of: candidate) ?? "") id=\(self.identifier(candidate))")
+                }
+                let action = candidates.first {
+                    string("accessibilityRole", of: $0) == NSAccessibility.Role.button.rawValue
+                        && string("accessibilityLabel", of: $0) == label
+                }
+                check(action.map(performPress) == true,
+                      "Home \(identifier) exposes a named accessible button that accepts AX press")
+                check(await settle(window) { model.route == destination },
+                      "Home \(identifier) accessible action reaches its actual \(destination.rawValue) destination")
+            }
+            model.selectModule(.overview)
+            _ = await settle(window) { frame("home-device-detail", in: host) != nil }
+
             // The fixture normally reduces motion for stable layout checks.
             // Exercise the real animated path here: otherwise the expensive
             // transition preparation (and delayed first frame) goes untested.
