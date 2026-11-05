@@ -40,6 +40,9 @@ struct SpaceCleaningKnownLocation: Sendable {
     /// Downloaded browsers and runtimes are app bundles whose relative links
     /// stay inside the item; absolute or escaping links still protect it.
     var allowsInternalLinks = false
+    /// Caches with too many files to verify one by one are measured and
+    /// verified as whole folders instead (see `SpaceCleaningBuildOutputs`).
+    var bulk = false
     var scopeTitle: String?
 
     var isDedicatedScope: Bool { granularity != .root }
@@ -65,7 +68,7 @@ enum SpaceCleaningKnownLocations {
               tools: swiftBuild),
         .init(path: "Library/Caches/Yarn", granularity: .root, category: .toolCache, title: "Yarn 下载缓存",
               reason: "Yarn 1 下载并解压过的依赖包。", impact: "下次安装依赖时会重新下载，不影响已经安装好的项目。",
-              tools: [SpaceCleaningToolActivity.yarn], cleanCommand: "yarn cache clean", allowsLockFiles: true, allowsDevelopmentNames: true),
+              tools: [SpaceCleaningToolActivity.yarn], cleanCommand: "yarn cache clean", allowsLockFiles: true, allowsDevelopmentNames: true, bulk: true),
         .init(path: ".yarn/berry/cache", granularity: .children, category: .toolCache, title: "Yarn 全局缓存",
               reason: "Yarn 2 及以上版本共享的依赖压缩包。", impact: "下次安装依赖时会重新下载；项目内的 .yarn/cache 不在此处。",
               tools: [SpaceCleaningToolActivity.yarn], cleanCommand: "yarn cache clean --all", allowsLockFiles: true, scopeTitle: "Yarn 全局缓存"),
@@ -75,7 +78,7 @@ enum SpaceCleaningKnownLocations {
         .init(path: ".cache/uv", granularity: .children, category: .toolCache, title: "uv 缓存",
               reason: "uv 下载和构建过的 Python 包。", impact: "下次创建环境或安装包时会重新下载或构建，已有虚拟环境不受影响。",
               tools: [SpaceCleaningToolActivity.uv], cleanCommand: "uv cache clean", allowsLockFiles: true, allowsDevelopmentNames: true,
-              scopeTitle: "uv 缓存"),
+              bulk: true, scopeTitle: "uv 缓存"),
         .init(path: "Library/Caches/JetBrains", granularity: .children, category: .toolCache, title: "JetBrains 缓存",
               reason: "JetBrains IDE 的缓存与索引。", impact: "IDE 下次打开项目时会重新建立索引，可能需要几分钟。",
               bundlePrefixes: ["com.jetbrains."], allowsLockFiles: true, allowsDevelopmentNames: true, scopeTitle: "JetBrains 缓存"),
@@ -84,16 +87,16 @@ enum SpaceCleaningKnownLocations {
               tools: [SpaceCleaningToolActivity.poetry], allowsLockFiles: true, scopeTitle: "Poetry 缓存"),
         .init(path: ".gradle/caches", granularity: .children, category: .toolCache, title: "Gradle 缓存",
               reason: "Gradle 下载的依赖与构建缓存。", impact: "下次构建时会重新下载依赖，首次构建会变慢。",
-              tools: [SpaceCleaningToolActivity.gradle], allowsLockFiles: true, scopeTitle: "Gradle 缓存"),
+              tools: [SpaceCleaningToolActivity.gradle], allowsLockFiles: true, bulk: true, scopeTitle: "Gradle 缓存"),
         .init(path: ".gradle/wrapper/dists", granularity: .children, category: .toolCache, title: "Gradle 发行版",
               reason: "Gradle Wrapper 下载的 Gradle 版本。", impact: "使用对应版本的项目下次构建时会重新下载。",
               tools: [SpaceCleaningToolActivity.gradle], allowsLockFiles: true, scopeTitle: "Gradle 发行版"),
         .init(path: ".cargo/registry", granularity: .children, category: .toolCache, title: "Cargo 依赖缓存",
               reason: "Cargo 下载的 crate 索引、压缩包和解压源码。", impact: "下次构建 Rust 项目时会重新下载；已安装的命令行工具不在此处。",
-              tools: [SpaceCleaningToolActivity.cargo], allowsLockFiles: true, scopeTitle: "Cargo 依赖缓存"),
+              tools: [SpaceCleaningToolActivity.cargo], allowsLockFiles: true, bulk: true, scopeTitle: "Cargo 依赖缓存"),
         .init(path: "Library/Caches/go-build", granularity: .root, category: .toolCache, title: "Go 构建缓存",
               reason: "Go 编译和测试的中间结果。", impact: "下次构建或测试 Go 项目时会重新编译，首次会变慢。",
-              tools: [SpaceCleaningToolActivity.go], cleanCommand: "go clean -cache", allowsLockFiles: true),
+              tools: [SpaceCleaningToolActivity.go], cleanCommand: "go clean -cache", allowsLockFiles: true, bulk: true),
         .init(path: "Library/Caches/CocoaPods", granularity: .root, category: .toolCache, title: "CocoaPods 缓存",
               reason: "CocoaPods 下载过的依赖与规格仓库副本。", impact: "下次执行 pod install 时会重新下载。",
               tools: [SpaceCleaningToolActivity.cocoapods], cleanCommand: "pod cache clean --all", allowsLockFiles: true, allowsDevelopmentNames: true),
@@ -135,6 +138,19 @@ enum SpaceCleaningKnownLocations {
 
     /// Dedicated scopes, scanned before the broad `Library/Caches` review.
     static var dedicatedScopes: [SpaceCleaningKnownLocation] { all.filter(\.isDedicatedScope) }
+
+    /// Known caches verified as whole folders, matched on the item's own path.
+    static func allowsBulk(_ url: URL) -> Bool {
+        let parent = url.deletingLastPathComponent()
+        return all.contains { rule in
+            guard rule.bulk else { return false }
+            switch rule.granularity {
+            case .root: return url.path.hasSuffix("/" + rule.path)
+            case .children: return parent.path.hasSuffix("/" + rule.path)
+            case .months: return false
+            }
+        }
+    }
 
     /// Items whose `node_modules`, `.git` or virtual environments are cache or
     /// assistant-output structure (unpacked packages, generated prototypes).

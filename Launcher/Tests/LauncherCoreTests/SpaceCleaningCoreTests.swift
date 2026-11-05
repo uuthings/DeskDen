@@ -625,7 +625,10 @@ final class SpaceCleaningCoreTests: XCTestCase {
             let scopes = SpaceCleaningScanner.globalScopes(context: context)
             XCTAssertTrue(scopes.allSatisfy { $0.directory.path.hasPrefix(home.path + "/") })
             let report = SpaceCleaningScanner.scan(scopes: scopes, context: context)
-            XCTAssertEqual(report.candidates.count, 9)
+            // Cleanup mode searches Developer for recognized items only, so its
+            // plain project file is not listed (large-file mode still lists files).
+            XCTAssertEqual(report.candidates.count, 8)
+            XCTAssertFalse(report.candidates.contains { $0.url.path.hasPrefix(home.appendingPathComponent("Developer").path + "/") })
             XCTAssertEqual(report.candidates.filter(\.isRecommendedForSelection).count, 1)
             XCTAssertFalse(report.candidates.filter { $0.kind == .personalFile }.contains(where: \.isRecommendedForSelection))
         }

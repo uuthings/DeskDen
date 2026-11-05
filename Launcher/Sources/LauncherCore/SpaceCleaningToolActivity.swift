@@ -36,7 +36,7 @@ public enum SpaceCleaningToolActivity {
     /// Native executables that are reported under their own names.
     static let nativeTools: Set<String> = [
         "xcodebuild", "swift", "swift-frontend", "swift-driver", "swift-build", "swift-package",
-        "clang", "clang++", "XCBBuildService", "SWBBuildService"
+        "clang", "clang++", "XCBBuildService", "SWBBuildService", "swift-test", "swift-run", "sourcekit-lsp"
     ]
     /// Native executables that map to a cache owner identity.
     private static let nativeOwners: [String: String] = [
@@ -186,6 +186,23 @@ public enum SpaceCleaningToolActivity {
             }
         }
         return result
+    }
+
+    /// Executable paths of running processes. A build output that contains a
+    /// running program (a dev server, a test host) stays protected.
+    public static func currentExecutablePaths() -> [String] {
+        let estimate = proc_listallpids(nil, 0)
+        guard estimate > 0, estimate < 1_000_000 else { return [] }
+        var identifiers = [pid_t](repeating: 0, count: Int(estimate) + 64)
+        let count = identifiers.withUnsafeMutableBytes { proc_listallpids($0.baseAddress, Int32($0.count)) }
+        guard count > 0 else { return [] }
+        var result = Set<String>()
+        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        for pid in identifiers.prefix(min(Int(count), identifiers.count)) where pid > 0 {
+            guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { continue }
+            result.insert(String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self))
+        }
+        return result.sorted()
     }
 
     private struct ArgumentReader {

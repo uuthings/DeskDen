@@ -16,11 +16,23 @@ public struct SpaceCleaningTreeProof: Codable, Equatable, Sendable {
     public var entryCount: Int
     public var logicalBytes: UInt64
     public var rootIdentity: SpaceCleaningFileIdentity
+    /// True for whole-folder proofs: identities, sizes, times and link targets
+    /// without file contents. Optional so older receipts stay readable; older
+    /// builds cannot match such a proof and therefore never act on it.
+    public var metadataOnly: Bool?
+    public static let maximumContentEntries = 100_000
+    public static let maximumMetadataEntries = 5_000_000
+    public init(sha256: String, entryCount: Int, logicalBytes: UInt64, rootIdentity: SpaceCleaningFileIdentity, metadataOnly: Bool? = nil) {
+        self.sha256 = sha256; self.entryCount = entryCount; self.logicalBytes = logicalBytes
+        self.rootIdentity = rootIdentity; self.metadataOnly = metadataOnly
+    }
     public var isValid: Bool {
-        sha256.utf8.count == 64 && sha256.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) } && (1...100_000).contains(entryCount)
+        sha256.utf8.count == 64 && sha256.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) } &&
+            (1...(metadataOnly == true ? Self.maximumMetadataEntries : Self.maximumContentEntries)).contains(entryCount)
     }
     public func matches(_ other: Self) -> Bool {
         sha256 == other.sha256 && entryCount == other.entryCount && logicalBytes == other.logicalBytes &&
+        (metadataOnly ?? false) == (other.metadataOnly ?? false) &&
         rootIdentity.matchesMovedResource(other.rootIdentity) && rootIdentity.mode == other.rootIdentity.mode
     }
 }
@@ -89,15 +101,33 @@ public enum SpaceCleaningTransaction {
               SpaceCleaningFilesystem.capture(candidate.url) == candidate.identity else {
             return finish(record, .skipped, "项目受保护、未完整扫描，或文件与父目录身份已变化。", persist)
         }
+        let bulk = candidate.isBulkVerified == true
+        let buildOutput = bulk ? SpaceCleaningBuildOutputs.kind(of: candidate.url) : nil
+        // Whole-folder verification is limited to recognized build output and
+        // the known large caches; nothing else may skip the content proof.
+        if bulk, buildOutput == nil, !(candidate.kind == .packageCache && SpaceCleaningKnownLocations.allowsBulk(candidate.url)) {
+            return finish(record, .skipped, "整体核验仅用于已识别的构建产物与大型缓存，未处理项目。", persist)
+        }
         if let reason = validatePolicy(candidate) { return finish(record, .skipped, reason, persist) }
         if let reason = validateActivity(candidate, candidate.url) { return finish(record, .skipped, reason, persist) }
         do {
-            let selected = try SpaceCleaningFilesystem.snapshot(candidate.url, expected: candidate.identity, allowRename: false, isCancelled: isCancelled)
-            // A few fixed caches and assistant outputs store unpacked packages or
-            // generated prototypes; only those paths skip this project check.
-            let knownStructure = [.packageCache, .personalFile].contains(candidate.kind) && SpaceCleaningKnownLocations.allowsProjectNames(candidate.url)
-            if !knownStructure, let reason = SpaceCleaningDevelopmentPolicy.reason(in: selected) {
-                return finish(record, .skipped, reason, persist)
+            let selected = try bulk
+                ? SpaceCleaningFilesystem.metadataSnapshot(candidate.url, expected: candidate.identity, allowRename: false, isCancelled: isCancelled)
+                : SpaceCleaningFilesystem.snapshot(candidate.url, expected: candidate.identity, allowRename: false, isCancelled: isCancelled)
+            if bulk {
+                if selected.containsReleaseContent {
+                    return finish(record, .skipped, "目录中包含安装包、Xcode 归档或发布档案，保留整个目录。", persist)
+                }
+                if buildOutput != nil, Double(selected.latestFileModification) > Date().timeIntervalSince1970 - SpaceCleaningBuildOutputs.recentWindow {
+                    return finish(record, .skipped, "最近 7 天内仍有构建或测试，已保留。", persist)
+                }
+            } else {
+                // A few fixed caches and assistant outputs store unpacked packages or
+                // generated prototypes; only those paths skip this project check.
+                let knownStructure = [.packageCache, .personalFile].contains(candidate.kind) && SpaceCleaningKnownLocations.allowsProjectNames(candidate.url)
+                if !knownStructure, let reason = SpaceCleaningDevelopmentPolicy.reason(in: selected) {
+                    return finish(record, .skipped, reason, persist)
+                }
             }
             guard !isCancelled(), SpaceCleaningFilesystem.validateAncestors(candidate),
                   SpaceCleaningFilesystem.capture(candidate.url) == candidate.identity else { throw SpaceCleaningFilesystem.Failure(message: "内容核验后项目或父目录已变化。") }
@@ -123,7 +153,17 @@ public enum SpaceCleaningTransaction {
             try SpaceCleaningFilesystem.move(candidate.url, to: record.locationURL!, expected: candidate.identity)
             record.state = .isolated; record.updatedAt = Date()
             try persist(record)
-            let isolated = try verifiedSnapshot(record, at: record.locationURL!, isCancelled: isCancelled, lease: selected.lease)
+            // A rename keeps a whole folder's objects; its identity is the check here,
+            // and the tree is walked again once it reaches the Trash.
+            let isolated: SpaceCleaningFilesystem.Snapshot
+            if bulk {
+                guard let moved = SpaceCleaningFilesystem.capture(record.locationURL!), candidate.identity.matchesMovedResource(moved) else {
+                    throw SpaceCleaningFilesystem.Failure(message: "隔离后项目身份核验未通过。")
+                }
+                isolated = selected
+            } else {
+                isolated = try verifiedSnapshot(record, at: record.locationURL!, isCancelled: isCancelled, lease: selected.lease)
+            }
             guard !isCancelled() else { return rollback(record, explanation: "已取消。", persist: persist) }
             if let reason = validateActivity(candidate, record.locationURL!) { return rollback(record, explanation: reason, persist: persist) }
             if method == .permanent {
@@ -137,7 +177,7 @@ public enum SpaceCleaningTransaction {
             // content have matched. A path returned by an API is not evidence.
             try persist(record)
             _ = try verifiedSnapshot(record, at: destination, isCancelled: { false }, lease: selected.lease)
-            record.state = .trashed; record.explanation = trashedExplanation
+            record.state = .trashed; record.explanation = bulk ? wholeFolderTrashedExplanation : trashedExplanation
             record.updatedAt = Date()
             do { try persist(record) }
             catch { return rollback(record, explanation: "移动结果未能保存。", persist: persist) }
@@ -346,11 +386,14 @@ public enum SpaceCleaningTransaction {
         record.updatedAt = Date(); return record
     }
     private static let trashedExplanation = "已移到废纸篓，完整项目身份和内容核验一致。"
+    private static let wholeFolderTrashedExplanation = "已移到废纸篓，整个文件夹的身份、文件数量、大小与修改时间核验一致。"
     private static let unavailableTrashExplanation = "暂时无法核对废纸篓中的项目，恢复入口保留；恢复或永久删除前会重新完整核验。"
     private static func verifiedSnapshot(_ record: SpaceCleaningRecord, at url: URL, isCancelled: () -> Bool,
                                          lease: SpaceCleaningFilesystem.ObjectLease? = nil) throws -> SpaceCleaningFilesystem.Snapshot {
         guard let proof = record.proof, proof.isValid else { throw SpaceCleaningFilesystem.Failure(message: "缺少原始完整内容依据，未自动处理。") }
-        let actual = try SpaceCleaningFilesystem.snapshot(url, expected: proof.rootIdentity, allowRename: true, isCancelled: isCancelled, lease: lease)
+        let actual = try proof.metadataOnly == true
+            ? SpaceCleaningFilesystem.metadataSnapshot(url, expected: proof.rootIdentity, allowRename: true, isCancelled: isCancelled, lease: lease)
+            : SpaceCleaningFilesystem.snapshot(url, expected: proof.rootIdentity, allowRename: true, isCancelled: isCancelled, lease: lease)
         guard proof.matches(actual.proof) else { throw SpaceCleaningFilesystem.Failure(message: "项目身份或完整内容与清理记录不一致。") }
         return actual
     }
@@ -366,7 +409,11 @@ public enum SpaceCleaningTransaction {
             if let reason = validateActivity() {
                 return finish(record, .needsReview, reason + " 尚未永久删除；完整项目保留在记录的隔离位置。", persist)
             }
-            try SpaceCleaningFilesystem.removeVerified(location, snapshot: snapshot, isCancelled: isCancelled)
+            if let objects = snapshot.verifiedObjects {
+                try SpaceCleaningFilesystem.removeVerifiedObjects(location, objects: objects, device: snapshot.proof.rootIdentity.device, isCancelled: isCancelled)
+            } else {
+                try SpaceCleaningFilesystem.removeVerified(location, snapshot: snapshot, isCancelled: isCancelled)
+            }
             guard SpaceCleaningFilesystem.absent(location) else { throw SpaceCleaningFilesystem.Failure(message: "项目仍存在，未确认删除完成。") }
             record.state = .deleted; record.updatedAt = Date(); record.explanation = "所选完整项目已永久删除，不提供恢复。"
             try persist(record)

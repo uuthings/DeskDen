@@ -60,6 +60,20 @@ enum SpaceCleaningFilesystem {
         var proof: SpaceCleaningTreeProof
         var nodes: [Node]
         var lease: ObjectLease
+        /// Metadata-only snapshots keep no node list: deletion checks each
+        /// object against these verified inodes instead.
+        var verifiedObjects: Set<UInt64>? = nil
+        /// Newest regular-file modification time (metadata-only snapshots).
+        var latestFileModification: Int64 = 0
+        /// Archives, installers or release folders inside (metadata-only snapshots).
+        var containsReleaseContent = false
+    }
+    /// Names that mark release or installer material inside a bulk item.
+    static func isReleaseLikeName(_ name: String, isDirectory: Bool) -> Bool {
+        let lower = name.lowercased()
+        if lower == "releasearchives" { return true }
+        let ext = (lower as NSString).pathExtension
+        return isDirectory ? ext == "xcarchive" : ["dmg", "pkg", "ipa", "xcarchive"].contains(ext)
     }
     /// Kept open across the rename/Trash operation. macOS may allow metadata
     /// lookup of a known Trash item while denying a new content open there.
@@ -311,6 +325,109 @@ enum SpaceCleaningFilesystem {
         }
         return .init(proof: .init(sha256: aggregate.finalize().map { String(format: "%02x", $0) }.joined(),
                                   entryCount: nodes.count, logicalBytes: logicalBytes, rootIdentity: initial), nodes: nodes, lease: lease)
+    }
+    /// Whole-folder verification for large rebuildable items: identities,
+    /// sizes, modification times and link targets in a fixed order, without
+    /// reading file contents. Links are recorded and never followed; hard
+    /// links are allowed. Nothing is kept per node except verified inodes.
+    static func metadataSnapshot(_ url: URL, expected: SpaceCleaningFileIdentity, allowRename: Bool,
+                                 isCancelled: () -> Bool, maximumNodes: Int = SpaceCleaningTreeProof.maximumMetadataEntries,
+                                 lease suppliedLease: ObjectLease? = nil) throws -> Snapshot {
+        guard !isCancelled() else { throw Failure(message: "操作已取消。") }
+        let parent = try Directory(url.deletingLastPathComponent())
+        guard let initial = parent.entry(url.lastPathComponent),
+              allowRename ? expected.matchesMovedResource(initial) && expected.mode == initial.mode : expected == initial,
+              parent.stillAtPath() else { throw Failure(message: "所选项目已变化。") }
+        let lease = try suppliedLease ?? ObjectLease(url, expected: initial)
+        var aggregate = SHA256(), count = 0, logicalBytes: UInt64 = 0, latest: Int64 = 0, releaseContent = false
+        var objects = Set<UInt64>()
+        func append(_ value: String) {
+            let bytes = Data(value.utf8); var length = UInt64(bytes.count).bigEndian
+            withUnsafeBytes(of: &length) { aggregate.update(bufferPointer: $0) }; aggregate.update(data: bytes)
+        }
+        func inspect(parentFD: Int32, name: String, relative: String, depth: Int) throws {
+            guard !isCancelled(), count < maximumNodes, depth <= 128 else {
+                throw Failure(message: isCancelled() ? "操作已取消。" : "整体核验达到安全上限，未处理项目。")
+            }
+            var info = stat()
+            guard name.withCString({ fstatat(parentFD, $0, &info, AT_SYMLINK_NOFOLLOW) }) == 0,
+                  info.st_size >= 0, UInt64(bitPattern: Int64(info.st_dev)) == initial.device else {
+                throw Failure(message: "项目内容已变化、无法读取或跨越其他卷。")
+            }
+            guard !isCloudPlaceholder(flags: UInt32(info.st_flags)) else {
+                throw Failure(message: "包含尚未下载到本机的云端项目，保留整个项目且不触发下载。")
+            }
+            let current = identity(info), type = info.st_mode & S_IFMT
+            count += 1; objects.insert(current.inode)
+            append(relative)
+            for number in [current.device, current.inode, current.sizeBytes, UInt64(bitPattern: current.modifiedSeconds),
+                           UInt64(bitPattern: current.modifiedNanoseconds), current.linkCount, UInt64(current.mode),
+                           UInt64(info.st_uid), UInt64(info.st_gid), UInt64(info.st_flags)] { append(String(number)) }
+            if !relative.isEmpty, isReleaseLikeName(name, isDirectory: type == S_IFDIR) { releaseContent = true }
+            if type == S_IFREG {
+                logicalBytes += current.sizeBytes; latest = max(latest, current.modifiedSeconds)
+            } else if type == S_IFDIR {
+                let descriptor = relative.isEmpty ? dup(lease.descriptor) : name.withCString { openat(parentFD, $0, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK) }
+                guard descriptor >= 0 else { throw Failure(message: "无法完整读取所选目录。") }
+                defer { close(descriptor) }
+                var opened = stat()
+                guard fstat(descriptor, &opened) == 0, identity(opened) == current,
+                      !isCloudPlaceholder(flags: UInt32(opened.st_flags)) else { throw Failure(message: "目录在读取前已被替换或尚未下载到本机。") }
+                let names = try children(descriptor)
+                for child in names {
+                    try inspect(parentFD: descriptor, name: child, relative: relative.isEmpty ? child : relative + "/" + child, depth: depth + 1)
+                }
+                var after = stat()
+                guard fstat(descriptor, &after) == 0, identity(after) == current, try children(descriptor) == names else {
+                    throw Failure(message: "目录内容正在变化，已保留。")
+                }
+            } else if type == S_IFLNK {
+                var buffer = [CChar](repeating: 0, count: 16_385)
+                let length = name.withCString { readlinkat(parentFD, $0, &buffer, 16_384) }
+                guard length >= 0, length < 16_384 else { throw Failure(message: "链接无法核验。") }
+                append("link:" + String(decoding: buffer.prefix(length).map { UInt8(bitPattern: $0) }, as: UTF8.self))
+            } else { throw Failure(message: "包含特殊文件，保留整个项目。") }
+        }
+        try inspect(parentFD: parent.descriptor, name: url.lastPathComponent, relative: "", depth: 0)
+        guard parent.stillAtPath(), parent.entry(url.lastPathComponent).map({ allowRename ? initial.matchesMovedResource($0) : $0 == initial }) == true else {
+            throw Failure(message: "核验期间项目位置已变化。")
+        }
+        let proof = SpaceCleaningTreeProof(sha256: aggregate.finalize().map { String(format: "%02x", $0) }.joined(),
+                                           entryCount: count, logicalBytes: logicalBytes, rootIdentity: initial, metadataOnly: true)
+        return .init(proof: proof, nodes: [], lease: lease, verifiedObjects: objects,
+                     latestFileModification: latest, containsReleaseContent: releaseContent)
+    }
+
+    /// Deletes a metadata-verified tree inside this operation's private
+    /// quarantine. Every object must be one verified before isolation; links
+    /// are unlinked, never followed, and nothing on another volume is touched.
+    static func removeVerifiedObjects(_ url: URL, objects: Set<UInt64>, device: UInt64, isCancelled: () -> Bool) throws {
+        let parent = try Directory(url.deletingLastPathComponent())
+        guard parent.stillAtPath() else { throw Failure(message: "隔离位置发生变化。") }
+        func remove(parentFD: Int32, name: String) throws {
+            guard !isCancelled() else { throw Failure(message: "已停止，部分内容可能已永久删除。") }
+            var info = stat()
+            guard name.withCString({ fstatat(parentFD, $0, &info, AT_SYMLINK_NOFOLLOW) }) == 0,
+                  UInt64(bitPattern: Int64(info.st_dev)) == device, !isCloudPlaceholder(flags: UInt32(info.st_flags)) else {
+                throw Failure(message: "永久删除过程中项目发生变化，已停止。")
+            }
+            guard objects.contains(UInt64(info.st_ino)) else { throw Failure(message: "发现未核验的新内容，已停止。") }
+            if info.st_mode & S_IFMT == S_IFDIR {
+                let descriptor = name.withCString { openat(parentFD, $0, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK) }
+                guard descriptor >= 0 else { throw Failure(message: "隔离目录无法读取，已停止。") }
+                defer { close(descriptor) }
+                var opened = stat()
+                guard fstat(descriptor, &opened) == 0, opened.st_ino == info.st_ino, opened.st_dev == info.st_dev else {
+                    throw Failure(message: "隔离目录身份发生变化。")
+                }
+                for child in try children(descriptor) { try remove(parentFD: descriptor, name: child) }
+                guard !isCancelled(), try children(descriptor).isEmpty,
+                      name.withCString({ unlinkat(parentFD, $0, AT_REMOVEDIR) }) == 0 else { throw Failure(message: "目录未能完整移除，保留未完成记录。") }
+            } else {
+                guard name.withCString({ unlinkat(parentFD, $0, 0) }) == 0 else { throw Failure(message: "文件未能移除，保留未完成记录。") }
+            }
+        }
+        try remove(parentFD: parent.descriptor, name: url.lastPathComponent)
     }
     private static func safeLocalLink(relative: String, target: String) -> Bool {
         var components = relative.split(separator: "/").dropLast().map(String.init)

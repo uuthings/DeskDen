@@ -57,12 +57,15 @@ public struct SpaceCleaningContext: Sendable {
     public var protectedReleaseURLs: [URL]
     public var testDeclarations: [SpaceCleaningTestDeclaration]
     public var activeToolNames: Set<String>
+    /// Executables of running processes: an item that contains one stays protected.
+    public var runningExecutablePaths: [String]
     public init(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
                 runningApplicationURLs: [URL] = [], protectedReleaseURLs: [URL] = [],
-                testDeclarations: [SpaceCleaningTestDeclaration] = [], activeToolNames: Set<String> = []) {
+                testDeclarations: [SpaceCleaningTestDeclaration] = [], activeToolNames: Set<String> = [],
+                runningExecutablePaths: [String] = []) {
         self.homeDirectory = homeDirectory; self.runningApplicationURLs = runningApplicationURLs
         self.protectedReleaseURLs = protectedReleaseURLs; self.testDeclarations = testDeclarations
-        self.activeToolNames = activeToolNames
+        self.activeToolNames = activeToolNames; self.runningExecutablePaths = runningExecutablePaths
     }
 }
 public enum SpaceCleaningScanMode: String, Codable, CaseIterable, Sendable { case cleanup, largeFiles }
@@ -74,6 +77,8 @@ public struct SpaceCleaningOptions: Equatable, Sendable {
     /// the overall work limited.
     public var maximumVerificationEntries: Int
     public var maximumDepth: Int
+    /// Entry bound for one whole-folder item (build output or large tool cache).
+    public var maximumBulkEntries = SpaceCleaningTreeProof.maximumMetadataEntries
     public var diagnosticMinimumAge: TimeInterval
     public var mode: SpaceCleaningScanMode
     public var minimumFileBytes: UInt64
@@ -113,6 +118,9 @@ public struct SpaceCleaningCandidate: Identifiable, Codable, Equatable, Sendable
     /// test browser download. It is listed with suggestions, never preselected.
     /// Optional so receipts written before or after this field stay readable.
     public var isReviewSuggestion: Bool?
+    /// Verified as one folder (identity, owner, size and file times) instead of
+    /// file by file; the transaction then uses a metadata-only proof.
+    public var isBulkVerified: Bool?
     public var canProcess: Bool { group != .protected && sizeIsComplete }
     /// Default selection requires positive reconstruction evidence, not just an
     /// age threshold or permission to delete. Personal and diagnostic files stay manual.
@@ -132,13 +140,13 @@ public struct SpaceCleaningCandidate: Identifiable, Codable, Equatable, Sendable
                 group: SpaceCleaningGroup, title: String, reason: String, impact: String,
                 logicalBytes: UInt64, allocatedBytes: UInt64, isDirectory: Bool,
                 canConfirmTestPurpose: Bool = false, treeFingerprint: String? = nil, sizeIsComplete: Bool = true,
-                isReviewSuggestion: Bool? = nil) {
+                isReviewSuggestion: Bool? = nil, isBulkVerified: Bool? = nil) {
         self.id = id; self.scopeID = scopeID; self.url = url; self.rootURL = rootURL
         self.rootIdentity = rootIdentity; self.identity = identity; self.ancestorIdentities = ancestorIdentities
         self.kind = kind; self.group = group; self.title = title; self.reason = reason; self.impact = impact
         self.logicalBytes = logicalBytes; self.allocatedBytes = allocatedBytes; self.isDirectory = isDirectory
         self.canConfirmTestPurpose = canConfirmTestPurpose; self.treeFingerprint = treeFingerprint; self.sizeIsComplete = sizeIsComplete
-        self.isReviewSuggestion = isReviewSuggestion
+        self.isReviewSuggestion = isReviewSuggestion; self.isBulkVerified = isBulkVerified
     }
 }
 public struct SpaceCleaningIssue: Identifiable, Codable, Equatable, Sendable {
@@ -282,6 +290,13 @@ public enum SpaceCleaningScanner {
         return withoutActuallyEscaping(isCancelled) { cancellation in
             let worker = Worker(context: context, options: options, now: Date(), cancelled: cancellation, progress: { _ in })
             guard worker.validRoot(candidate.rootURL), !worker.isPackage(candidate.rootURL), !worker.hasPackageAncestor(candidate.rootURL) else { return .protected }
+            if candidate.isBulkVerified == true {
+                // Whole-folder items re-check identity, rule and owners here; the
+                // transaction re-walks the tree for its metadata proof.
+                let fresh = worker.classify(candidate.url, identity: identity)
+                guard fresh.group != .protected else { return .protected }
+                return fresh.kind == candidate.kind && fresh.bulk ? .unchanged : .changed
+            }
             let scope = SpaceCleaningScope(id: candidate.scopeID, directory: candidate.rootURL)
             guard let fresh = worker.makeCandidate(candidate.url, identity: identity, scope: scope, root: candidate.rootURL,
                                                    rootIdentity: root, ancestors: candidate.ancestorIdentities) else { return .incomplete }
@@ -440,6 +455,20 @@ private final class Worker {
     }
     var pendingCandidates: [PendingCandidate] = []
     var gitWorkTreeCache: [String: Bool] = [:]
+    var buildOutputCache: [String: SpaceCleaningBuildOutputs.Kind?] = [:]
+    /// Build output recognized by its contents, outside ~/Library (whose
+    /// derived data and caches keep their own rules).
+    func buildOutputKind(_ url: URL) -> SpaceCleaningBuildOutputs.Kind? {
+        if let cached = buildOutputCache[url.path] { return cached }
+        let name = url.lastPathComponent.lowercased()
+        var result: SpaceCleaningBuildOutputs.Kind?
+        if !within(url, "Library"), name.hasSuffix(".xcresult") || name == ".build" || name == "build" || name.contains("deriveddata") ||
+            SpaceCleaningBuildOutputs.moduleCacheNames.contains(name) {
+            result = SpaceCleaningBuildOutputs.kind(of: url)
+        }
+        buildOutputCache[url.path] = result
+        return result
+    }
     private var developmentLookup = SpaceCleaningDevelopmentPolicy.Lookup()
     private func developmentReason(_ url: URL, identity: SpaceCleaningFileIdentity? = nil) -> String? {
         developmentLookup.reason(at: url, identity: identity)
@@ -452,7 +481,7 @@ private final class Worker {
         home = Scanner.canonicalURL(context.homeDirectory) ?? context.homeDirectory
         runningBundleIdentifiers = Set(context.runningApplicationURLs.compactMap { Bundle(url: $0)?.bundleIdentifier?.lowercased() })
         func resolved(_ url: URL) -> String { Scanner.canonicalURL(url)?.path ?? url.standardizedFileURL.path }
-        runningPaths = context.runningApplicationURLs.map(resolved)
+        runningPaths = context.runningApplicationURLs.map(resolved) + context.runningExecutablePaths
         homePath = home.path
         libraryCachesPath = (homePath == "/" ? "" : homePath) + "/Library/Caches"
         protectedReleasePaths = context.protectedReleaseURLs.map(resolved)
@@ -581,9 +610,19 @@ private final class Worker {
                 limit = true; issue(scope, current, .depthLimit, "已到达扫描深度上限，未展开此目录。"); continue
             }
             guard let children = readChildren(current, scope: scope) else { continue }
+            // In cleanup mode a project tree is searched for recognized items
+            // (build output, test results, environments, release folders and
+            // installers); individual source files are neither cleanup targets
+            // nor allowed to exhaust the shared discovery budget.
+            let projectTree = options.mode == .cleanup && within(current, "Developer")
             for child in children {
                 if visitedRoots.contains(where: { Scanner.contains(child.path, in: $0) }) { continue }
-                guard visit(child, scope: scope) else { break }
+                if projectTree {
+                    if !child.hasDirectoryPath, !["pkg", "dmg"].contains(child.pathExtension.lowercased()) { checked += 1; continue }
+                    guard visitProjectEntry(child, scope: scope) else { return }
+                } else {
+                    guard visit(child, scope: scope) else { break }
+                }
                 guard let identity = Scanner.captureIdentity(at: child) else { issue(scope, child, .unreadable, "文件已消失或无法读取元数据。"); continue }
                 if options.mode == .largeFiles, Scanner.isRegular(identity),
                    developmentReason(child, identity: identity) == nil, !cloudPlaceholder(child),
@@ -630,6 +669,8 @@ private final class Worker {
         var title: String? = nil
         /// Listed with suggestions while it stays reviewable; never preselected.
         var suggestion = false
+        /// Measured and later verified as one folder (see `bulkMeasure`).
+        var bulk = false
     }
     struct Measurement { var logical: UInt64 = 0; var allocated: UInt64 = 0; var fingerprint: String?; var complete = true; var unsafe = false; var releaseContent = false; var cloudContent = false; var developmentContent = false; var exceededItemBound = false; var latestModified: Int64 = 0 }
 
@@ -652,6 +693,11 @@ private final class Worker {
             // Large-file discovery does not unpack application/document packages or
             // count protected directory contents as a single large regular file.
             measurement.complete = false
+        } else if directory, classification.bulk {
+            let bulk = bulkMeasure(url, rootIdentity: identity, scope: scope)
+            measurement.logical = bulk.logical; measurement.allocated = bulk.allocated; measurement.complete = bulk.complete
+            measurement.latestModified = bulk.latestModified; measurement.releaseContent = bulk.releaseContent
+            measurement.unsafe = bulk.unsafe; measurement.cloudContent = bulk.cloudContent
         } else if directory {
             // Cache folders keep cache semantics: no package links, database and lock checks apply.
             let bundle = ["app", "xcarchive"].contains(url.pathExtension.lowercased()) && !isApplicationCacheFolder(url)
@@ -661,6 +707,20 @@ private final class Worker {
             measurement.logical = identity.sizeBytes; measurement.allocated = identity.allocatedBytes
         }
         let known = knownLocation(url)
+        if classification.bulk, classification.group == .review, measurement.complete, !measurement.releaseContent,
+           !measurement.unsafe, !measurement.cloudContent, let kind = buildOutputKind(url) {
+            let days = max(0, Int((now.timeIntervalSince1970 - Double(measurement.latestModified)) / 86_400))
+            classification.reason = SpaceCleaningBuildOutputs.reason(kind, days: days)
+            if Double(measurement.latestModified) > now.timeIntervalSince1970 - SpaceCleaningBuildOutputs.recentWindow {
+                classification.group = .protected; classification.suggestion = false
+                classification.reason += "最近 7 天内仍有构建或测试，本次保留。"
+                classification.impact = "停止使用满 7 天后再整理，避免影响正在进行的构建与测试。"
+            }
+        }
+        if classification.bulk, measurement.releaseContent, classification.group != .protected {
+            classification = .init(kind: .releaseMaterial, group: .protected, reason: "目录中包含安装包、Xcode 归档或发布档案，保留整个目录。",
+                                   impact: "请先确认这些文件已另行保存，再在 Finder 中处理。")
+        }
         if known?.rule.category == .assistantRecord, classification.group == .review, measurement.complete,
            Double(measurement.latestModified) > now.timeIntervalSince1970 - SpaceCleaningKnownLocations.quietPeriod {
             // An assistant may still be writing here; only quiet folders are offered.
@@ -688,6 +748,8 @@ private final class Worker {
             classification.reason = alreadyProtected ? classification.reason + "仅完成部分容量统计。"
                 : measurement.exceededItemBound ? "此目录内容超过单项核验上限，本次保留；其他项目不受影响。" +
                     (known?.rule.cleanCommand.map { "也可以在终端运行 \($0) 清理。" } ?? "")
+                : classification.bulk ? "文件数量超过整体核验上限或无法完整读取，本次保留。" +
+                    (known?.rule.cleanCommand.map { "也可以在终端运行 \($0) 清理。" } ?? "")
                 : "内容核验未完成，本次保留；可缩小扫描范围后重试。"
             classification.testable = false
         } else if measurement.releaseContent && classification.group != .protected {
@@ -709,7 +771,8 @@ private final class Worker {
                      title: classification.title ?? knownTitle ?? url.lastPathComponent, reason: classification.reason, impact: classification.impact,
                      logicalBytes: measurement.logical, allocatedBytes: measurement.allocated, isDirectory: directory,
                      canConfirmTestPurpose: classification.testable, treeFingerprint: measurement.fingerprint, sizeIsComplete: measurement.complete,
-                     isReviewSuggestion: classification.suggestion && classification.group == .review ? true : nil)
+                     isReviewSuggestion: classification.suggestion && classification.group == .review ? true : nil,
+                     isBulkVerified: classification.bulk && measurement.complete ? true : nil)
     }
 
     func classify(_ url: URL, identity: SpaceCleaningFileIdentity) -> Classification {
@@ -722,7 +785,14 @@ private final class Worker {
         if isReleaseProtected(url) { return .init(kind: url.pathExtension.lowercased() == "xcarchive" ? .releaseArchive : .releaseMaterial,
                                                   group: .protected, reason: "正式发布档案或关联材料，保留原件。", impact: "用于发布、更新和问题定位。") }
         if overlapsRunningApplication(url) || cacheOwnerIsRunning(url) {
-            return .init(kind: .runningApplication, group: .protected, reason: "关联应用或开发工具正在运行，本次保留。", impact: "退出相关应用后重新扫描。")
+            var running = Classification(kind: .runningApplication, group: .protected, reason: "关联应用或开发工具正在运行，本次保留。", impact: "退出相关应用后重新扫描。")
+            // Keep the readable name and the whole-folder measurement of a recognized item.
+            if Scanner.isDirectory(identity), let kind = buildOutputKind(url) {
+                running.title = SpaceCleaningBuildOutputs.title(kind, label: buildOutputLabel(url, kind: kind)); running.bulk = true
+            } else if let known = knownLocation(url), known.rule.category != .assistantRecord {
+                running.title = knownClassification(url, identity: identity, known: known)?.title; running.bulk = known.rule.bulk
+            }
+            return running
         }
         if Scanner.isRegular(identity), identity.linkCount > 1 { return .init(kind: .hardLink, group: .protected, reason: "文件存在多个硬链接，默认保留。", impact: "删除一个路径不等于释放对应空间。") }
         let ext = url.pathExtension.lowercased()
@@ -733,6 +803,12 @@ private final class Worker {
             return .init(kind: .unknownApplication, group: .protected, reason: "尚未确认是测试副本还是需要保留的导出 App。", impact: "不能仅凭名称、签名或公证状态判断用途。", testable: true)
         }
         if ext == "xcarchive", !cacheFolder { return .init(kind: .unknownArchive, group: .protected, reason: "归档用途待确认，默认保留。", impact: "确认仅用于测试且不是需保留的唯一归档后，可手动复核。", testable: true) }
+        if Scanner.isDirectory(identity), let kind = buildOutputKind(url) {
+            // Age and size are filled in after the whole-folder measurement.
+            return .init(kind: .developmentFile, group: .review, reason: SpaceCleaningBuildOutputs.reason(kind, days: 0),
+                         impact: SpaceCleaningBuildOutputs.impact(kind), title: SpaceCleaningBuildOutputs.title(kind, label: buildOutputLabel(url, kind: kind)),
+                         suggestion: true, bulk: true)
+        }
         if let known = knownLocation(url), let classification = knownClassification(url, identity: identity, known: known) {
             return classification
         }
@@ -871,10 +947,78 @@ private final class Worker {
         return result
     }
 
+    struct BulkMeasurement {
+        var logical: UInt64 = 0; var allocated: UInt64 = 0; var entries = 0; var latestModified: Int64 = 0
+        var complete = true; var releaseContent = false; var unsafe = false; var cloudContent = false
+    }
+    /// Sizes a whole-folder item from metadata alone, without content reads or
+    /// the shared verification budget. Links are never followed or counted, a
+    /// hard-linked file counts once, and another volume inside marks it unsafe.
+    func bulkMeasure(_ root: URL, rootIdentity: SpaceCleaningFileIdentity, scope: SpaceCleaningScope) -> BulkMeasurement {
+        var result = BulkMeasurement(), hardLinked = Set<UInt64>()
+        let limit = options.maximumBulkEntries
+        let rootFD = root.withUnsafeFileSystemRepresentation { $0.map { open($0, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK) } ?? -1 }
+        guard rootFD >= 0 else { result.complete = false; return result }
+        defer { close(rootFD) }
+        var opened = stat()
+        guard fstat(rootFD, &opened) == 0, UInt64(bitPattern: Int64(opened.st_dev)) == rootIdentity.device,
+              UInt64(opened.st_ino) == rootIdentity.inode else { result.complete = false; return result }
+        result.latestModified = 0
+        func walk(_ descriptor: Int32, depth: Int) -> Bool {
+            guard depth <= 128 else { result.complete = false; return false }
+            let copy = dup(descriptor)
+            guard copy >= 0, let stream = fdopendir(copy) else { if copy >= 0 { close(copy) }; result.complete = false; return false }
+            defer { closedir(stream) }
+            while let item = readdir(stream) {
+                let name = withUnsafePointer(to: &item.pointee.d_name) { $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXNAMLEN) + 1) { String(cString: $0) } }
+                if name == "." || name == ".." { continue }
+                result.entries += 1
+                if result.entries % 4_096 == 0 {
+                    checked += 4_096; emit(scope: scope, url: root)
+                    if cancelled() { result.complete = false; return false }
+                }
+                guard result.entries <= limit else { result.complete = false; return false }
+                var info = stat()
+                guard name.withCString({ fstatat(descriptor, $0, &info, AT_SYMLINK_NOFOLLOW) }) == 0 else { result.complete = false; return false }
+                guard UInt64(bitPattern: Int64(info.st_dev)) == rootIdentity.device else { result.unsafe = true; continue }
+                if Scanner.isCloudPlaceholder(fileFlags: UInt32(info.st_flags)) { result.cloudContent = true; continue }
+                let type = info.st_mode & S_IFMT
+                if SpaceCleaningFilesystem.isReleaseLikeName(name, isDirectory: type == S_IFDIR) { result.releaseContent = true }
+                if type == S_IFREG {
+                    result.logical = saturatingAdd(result.logical, UInt64(max(0, info.st_size)))
+                    result.latestModified = max(result.latestModified, Int64(info.st_mtimespec.tv_sec))
+                    if info.st_nlink <= 1 || hardLinked.insert(UInt64(info.st_ino)).inserted {
+                        result.allocated = saturatingAdd(result.allocated, UInt64(max(0, info.st_blocks)) * 512)
+                    }
+                } else if type == S_IFDIR {
+                    let child = name.withCString { openat(descriptor, $0, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK) }
+                    guard child >= 0 else { result.complete = false; return false }
+                    defer { close(child) }
+                    guard walk(child, depth: depth + 1) else { return false }
+                } else if type != S_IFLNK {
+                    result.unsafe = true
+                }
+            }
+            return true
+        }
+        _ = walk(rootFD, depth: 0)
+        return result
+    }
+    /// Project-relative label: the project for a SwiftPM build folder
+    /// (`DeskDen/Launcher`), the folder itself otherwise (`Cards/build/DerivedData`).
+    func buildOutputLabel(_ url: URL, kind: SpaceCleaningBuildOutputs.Kind) -> String {
+        let target = kind == .swiftPackage ? url.deletingLastPathComponent() : url
+        let developer = homeRelative("Developer")
+        let base = Scanner.contains(target.path, in: developer) && target.path != developer ? developer : homePath
+        let relative = target.path.dropFirst(base.count).split(separator: "/").map(String.init)
+        let label = relative.suffix(4).joined(separator: "/")
+        return kind == .testResult ? (label as NSString).deletingPathExtension : label
+    }
     func shouldAggregate(_ url: URL, scope: SpaceCleaningScope, identity: SpaceCleaningFileIdentity) -> Bool {
         if developmentReason(url, identity: identity) != nil { return true }
         if isPackage(url) || isReleaseProtected(url) { return true }
         if options.mode == .largeFiles { return false }
+        if buildOutputKind(url) != nil { return true }
         if cacheKind(url) != nil { return true }
         if isApplicationCacheFolder(url), !["Google", "Firefox"].contains(url.lastPathComponent),
            !visitedRoots.contains(where: { Scanner.contains($0, in: url.path) }) { return true }
@@ -973,6 +1117,7 @@ private final class Worker {
         }
         // Tool identities come from SpaceCleaningToolActivity, which reads the
         // launch script of interpreted tools; raw names remain accepted.
+        if let kind = buildOutputKind(url) { return !SpaceCleaningBuildOutputs.owners(kind).isDisjoint(with: tools) }
         if let known = knownLocation(url), known.rule.category != .assistantRecord {
             if !known.rule.tools.isDisjoint(with: tools) { return true }
             // JetBrains Toolbox stays open in the background and never uses IDE caches.
@@ -1027,7 +1172,8 @@ private final class Worker {
                              impact: "如仍在使用这个旧版本，下次打开项目时会重新建立索引。", title: title)
             }
             return .init(kind: .packageCache, group: rule.category == .toolCache ? .rebuildable : .review,
-                         reason: rule.reason, impact: rule.impact, title: title, suggestion: rule.category == .toolDownload)
+                         reason: rule.reason, impact: rule.bulk ? rule.impact + SpaceCleaningBuildOutputs.wholeFolderNote : rule.impact,
+                         title: title, suggestion: rule.category == .toolDownload, bulk: rule.bulk)
         }
     }
     /// Product folders of the same name compare by version; the newest is current.
@@ -1138,6 +1284,19 @@ private final class Worker {
             markLimit(); return false
         }
         checked += 1; phaseChecked += 1; emit(scope: scope, url: url); return true
+    }
+    /// Project-tree directories have their own bound so that a large Developer
+    /// folder cannot starve later scopes; reaching it still marks the scan partial.
+    var projectEntriesVisited = 0
+    func visitProjectEntry(_ url: URL, scope: SpaceCleaningScope) -> Bool {
+        guard !cancelled() else { return false }
+        guard projectEntriesVisited < options.maximumBulkEntries else {
+            if !limit { issue(scope, url, .entryLimit, "开发目录数量超过本次查找上限，结果不完整。") }
+            limit = true; return false
+        }
+        projectEntriesVisited += 1; checked += 1
+        if projectEntriesVisited % 256 == 0 { emit(scope: scope, url: url) }
+        return true
     }
     func emit(scope: SpaceCleaningScope?, url: URL?) {
         progress(.init(stage: stage, currentScopeID: scope?.id, currentPath: url?.deletingLastPathComponent().path,

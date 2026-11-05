@@ -964,7 +964,8 @@ import Quartz
     private func makeContext() -> SpaceCleaningContext { Self.context(home: homeDirectory, runtime: runtime, declarations: declarations) }
     private nonisolated static func context(home: URL, runtime: SpaceCleaningRuntimeContext, declarations: [SpaceCleaningTestDeclaration]) -> SpaceCleaningContext {
         .init(homeDirectory: home, runningApplicationURLs: runtime.runningURLs(), testDeclarations: declarations,
-              activeToolNames: SpaceCleaningToolActivity.currentIdentities())
+              activeToolNames: SpaceCleaningToolActivity.currentIdentities(),
+              runningExecutablePaths: SpaceCleaningToolActivity.currentExecutablePaths())
     }
     private func acceptProgress(_ progress: SpaceCleaningProgress) {
         checkedCount = progress.checkedEntries; scanPhase = progress.phase

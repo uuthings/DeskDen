@@ -130,14 +130,20 @@ final class SpaceCleaningKnownLocationsTests: XCTestCase {
         }
     }
 
-    func testOversizedToolCacheNamesItsOwnCleanupCommand() throws {
+    func testLargeYarnCacheIsVerifiedAsOneFolderAndBeyondItsBoundNamesItsCommand() throws {
         try fixture { home in
             for index in 0..<12 { try file(home, "Library/Caches/Yarn/v6/npm-pkg-\(index)-integrity/node_modules/pkg/index.js") }
+            // The per-item content bound no longer applies to a whole-folder cache.
             let report = scan(home, "Library/Caches", kind: .browserCache, options: .init(maximumEntries: 20))
             let yarn = try XCTUnwrap(report.candidates.first { $0.url.lastPathComponent == "Yarn" })
-            XCTAssertFalse(yarn.canProcess)
-            XCTAssertEqual(yarn.title, "Yarn 下载缓存", "a protected cache keeps its readable name")
-            XCTAssertTrue(yarn.reason.contains("yarn cache clean"), yarn.reason)
+            XCTAssertTrue(yarn.isRecommendedForSelection, yarn.reason)
+            XCTAssertEqual(yarn.isBulkVerified, true)
+            XCTAssertNil(yarn.treeFingerprint, "whole-folder items carry no content fingerprint")
+            var bounded = SpaceCleaningOptions(); bounded.maximumBulkEntries = 5
+            let oversized = try XCTUnwrap(scan(home, "Library/Caches", kind: .browserCache, options: bounded).candidates.first { $0.url.lastPathComponent == "Yarn" })
+            XCTAssertFalse(oversized.canProcess)
+            XCTAssertEqual(oversized.title, "Yarn 下载缓存", "a protected cache keeps its readable name")
+            XCTAssertTrue(oversized.reason.contains("yarn cache clean"), oversized.reason)
         }
     }
 
