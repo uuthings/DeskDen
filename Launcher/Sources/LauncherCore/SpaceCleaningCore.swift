@@ -806,15 +806,32 @@ private final class Worker {
     func cacheOwnerIsRunning(_ url: URL) -> Bool {
         if within(url, "Library/Caches"), let owner = relativeComponents(url, "Library/Caches").first,
            runningBundleIdentifiers.contains(owner.lowercased()) { return true }
+        // Browsers and Xcode match by bundle identifier as well as bundle name:
+        // a renamed app keeps its identifier, and either signal keeps the cache.
         let running = context.runningApplicationURLs.map { $0.lastPathComponent.lowercased() }
-        if within(url, "Library/Caches/com.apple.Safari") || within(url, "Library/Containers/com.apple.Safari") { return running.contains("safari.app") }
-        if within(url, "Library/Caches/Google/Chrome") { return running.contains { $0.hasPrefix("google chrome") } }
-        if within(url, "Library/Caches/Firefox") { return running.contains { $0.hasPrefix("firefox") } }
-        if within(url, "Library/Developer/Xcode/DerivedData") { return running.contains { $0.hasPrefix("xcode") } || !context.activeToolNames.isDisjoint(with: ["xcodebuild", "swift", "swift-frontend", "clang", "clang++", "XCBBuildService"]) }
-        if within(url, ".npm/_cacache") { return !context.activeToolNames.isDisjoint(with: ["npm", "npx"]) }
-        if within(url, "Library/Caches/Homebrew") { return context.activeToolNames.contains("brew") }
-        if within(url, "Library/Caches/pip") { return !context.activeToolNames.isDisjoint(with: ["pip", "pip3"]) }
-        if within(url, "Library/Caches/org.swift.swiftpm") { return !context.activeToolNames.isDisjoint(with: ["swift", "swift-package", "xcodebuild", "XCBBuildService"]) }
+        func identifier(_ matches: (String) -> Bool) -> Bool { runningBundleIdentifiers.contains(where: matches) }
+        let tools = context.activeToolNames
+        if within(url, "Library/Caches/com.apple.Safari") || within(url, "Library/Containers/com.apple.Safari") {
+            return running.contains("safari.app") || identifier { $0 == "com.apple.safari" }
+        }
+        if within(url, "Library/Caches/Google/Chrome") {
+            return running.contains { $0.hasPrefix("google chrome") } || identifier { $0.hasPrefix("com.google.chrome") }
+        }
+        if within(url, "Library/Caches/Firefox") {
+            return running.contains { $0.hasPrefix("firefox") } || identifier { $0.hasPrefix("org.mozilla.firefox") || $0 == "org.mozilla.nightly" }
+        }
+        if within(url, "Library/Developer/Xcode/DerivedData") {
+            return running.contains { $0.hasPrefix("xcode") } || identifier { $0 == "com.apple.dt.xcode" } ||
+                !tools.isDisjoint(with: ["xcodebuild", "swift", "swift-frontend", "swift-driver", "clang", "clang++", "XCBBuildService", "SWBBuildService"])
+        }
+        // Tool identities come from SpaceCleaningToolActivity, which reads the
+        // launch script of interpreted tools; raw names remain accepted.
+        if within(url, ".npm/_cacache") { return !tools.isDisjoint(with: [SpaceCleaningToolActivity.npm, "npx"]) }
+        if within(url, "Library/Caches/Homebrew") { return tools.contains(SpaceCleaningToolActivity.homebrew) }
+        if within(url, "Library/Caches/pip") { return !tools.isDisjoint(with: [SpaceCleaningToolActivity.pip, "pip3"]) }
+        if within(url, "Library/Caches/org.swift.swiftpm") {
+            return !tools.isDisjoint(with: ["swift", "swift-package", "swift-build", "xcodebuild", "XCBBuildService", "SWBBuildService"])
+        }
         return false
     }
     func isReleaseProtected(_ url: URL) -> Bool {

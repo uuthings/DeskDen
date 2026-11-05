@@ -864,3 +864,69 @@ final class SpaceCleaningCoreTests: XCTestCase {
     }
 
 }
+
+// MARK: - Activity of renamed applications and interpreted tools
+
+extension SpaceCleaningCoreTests {
+    private func application(_ home: URL, _ name: String, identifier: String) throws -> URL {
+        let url = home.appendingPathComponent("Applications-under-test").appendingPathComponent(name)
+        let contents = url.appendingPathComponent("Contents")
+        try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+        let plist: [String: Any] = ["CFBundleIdentifier": identifier, "CFBundlePackageType": "APPL"]
+        try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+            .write(to: contents.appendingPathComponent("Info.plist"))
+        return url
+    }
+
+    func testRenamedBrowsersAndXcodeKeepTheirCachesProtectedByBundleIdentifier() throws {
+        try fixture { home in
+            try file(home, "Library/Caches/Google/Chrome/Default/blob")
+            try file(home, "Library/Caches/Firefox/Profiles/a.default/cache2/entry")
+            try file(home, "Library/Developer/Xcode/DerivedData/ModuleCache.noindex/module.pcm")
+            let cases: [(String, String, String)] = [
+                ("MyBrowser.app", "com.google.Chrome", "Library/Caches/Google/Chrome"),
+                ("Fox.app", "org.mozilla.firefoxdeveloperedition", "Library/Caches/Firefox/Profiles"),
+                ("Developer Tools.app", "com.apple.dt.Xcode", "Library/Developer/Xcode/DerivedData")
+            ]
+            for (name, identifier, relative) in cases {
+                let idle = scan(home, at: relative)
+                let selected = idle.candidates.filter(\.isRecommendedForSelection)
+                XCTAssertFalse(selected.isEmpty, relative)
+                let context = SpaceCleaningContext(homeDirectory: home,
+                                                   runningApplicationURLs: [try application(home, name, identifier: identifier)])
+                let busy = scan(home, at: relative, context: context)
+                XCTAssertFalse(busy.candidates.isEmpty, relative)
+                XCTAssertTrue(busy.candidates.allSatisfy { $0.kind == .runningApplication && !$0.canProcess }, relative)
+                // A selection made before the renamed app started is refused at execution time.
+                for candidate in selected {
+                    XCTAssertEqual(SpaceCleaningScanner.revalidate(candidate: candidate, context: context), .protected, relative)
+                    XCTAssertEqual(SpaceCleaningScanner.validatePolicy(candidate: candidate, context: context), .protected, relative)
+                }
+            }
+        }
+    }
+
+    func testPackageCachesStayProtectedWhileTheirInterpretedToolsRun() throws {
+        try fixture { home in
+            try file(home, ".npm/_cacache/content-v2/blob")
+            try file(home, "Library/Caches/Homebrew/downloads/bottle")
+            try file(home, "Library/Caches/pip/http-v2/wheel")
+            let processes: [(String, [String], String)] = [
+                ("node", ["node", home.appendingPathComponent(".local/bin/npm").path, "install"], ".npm/_cacache"),
+                ("ruby", ["ruby", "/opt/homebrew/Library/Homebrew/brew.rb", "upgrade"], "Library/Caches/Homebrew"),
+                ("Python", ["/usr/bin/python3", "-m", "pip", "install", "requests"], "Library/Caches/pip")
+            ]
+            for (executable, arguments, relative) in processes {
+                // Interpreters running unrelated scripts do not hold these caches.
+                let idle = scan(home, at: relative, context: .init(homeDirectory: home, activeToolNames: ["node", "ruby", "Python", "bash"]))
+                XCTAssertFalse(idle.candidates.isEmpty, relative)
+                XCTAssertTrue(idle.candidates.allSatisfy(\.isRecommendedForSelection), relative)
+                let tools = SpaceCleaningToolActivity.identities(executable: executable, arguments: arguments)
+                let busy = scan(home, at: relative, context: .init(homeDirectory: home, activeToolNames: tools))
+                XCTAssertTrue(busy.candidates.allSatisfy { $0.kind == .runningApplication && !$0.canProcess }, relative)
+                let unknown = scan(home, at: relative, context: .init(homeDirectory: home, activeToolNames: SpaceCleaningToolActivity.unreadableProcessTable))
+                XCTAssertTrue(unknown.candidates.allSatisfy { !$0.canProcess }, relative)
+            }
+        }
+    }
+}

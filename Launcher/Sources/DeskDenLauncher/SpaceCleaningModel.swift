@@ -842,7 +842,7 @@ import Quartz
     private func makeContext() -> SpaceCleaningContext { Self.context(home: homeDirectory, runtime: runtime, declarations: declarations) }
     private nonisolated static func context(home: URL, runtime: SpaceCleaningRuntimeContext, declarations: [SpaceCleaningTestDeclaration]) -> SpaceCleaningContext {
         .init(homeDirectory: home, runningApplicationURLs: runtime.runningURLs(), testDeclarations: declarations,
-              activeToolNames: SpaceCleaningRuntimeContext.activeTools())
+              activeToolNames: SpaceCleaningToolActivity.currentIdentities())
     }
     private func acceptProgress(_ progress: SpaceCleaningProgress) {
         checkedCount = progress.checkedEntries; scanPhase = progress.phase
@@ -1135,21 +1135,5 @@ private final class SpaceCleaningPersistence: @unchecked Sendable {
     func record(_ record: SpaceCleaningRecord) throws {
         do { try store.record(record) }
         catch { lock.lock(); problem = error.localizedDescription; lock.unlock(); cancellation.cancel(); throw error }
-    }
-}
-
-extension SpaceCleaningRuntimeContext {
-    static func activeTools() -> Set<String> {
-        let estimate = proc_listallpids(nil, 0)
-        guard estimate > 0, estimate < 1_000_000 else { return ["xcodebuild", "npm"] }
-        var ids = [pid_t](repeating: 0, count: Int(estimate) + 64)
-        let count = ids.withUnsafeMutableBytes { proc_listallpids($0.baseAddress, Int32($0.count)) }
-        guard count > 0 else { return ["xcodebuild", "npm"] }
-        var result = Set<String>()
-        for pid in ids.prefix(min(Int(count), ids.count)) where pid > 0 {
-            var buffer = [CChar](repeating: 0, count: 1024)
-            if proc_name(pid, &buffer, UInt32(buffer.count)) > 0 { result.insert(String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)) }
-        }
-        return result
     }
 }
