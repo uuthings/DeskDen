@@ -218,4 +218,40 @@ final class SpaceCleaningBuildOutputsTests: XCTestCase {
         let legacy = try JSONDecoder().decode(SpaceCleaningTreeProof.self, from: JSONEncoder().encode(content))
         XCTAssertNil(legacy.metadataOnly)
     }
+
+    /// Released builds validate `entryCount` against the content-proof bound and
+    /// treat a failing record as a corrupt history. A large whole-folder record
+    /// must stay within that bound so those builds can still open the history.
+    func testLargeWholeFolderProofStaysReadableByReleasedBuilds() throws {
+        let identity = SpaceCleaningFileIdentity(device: 1, inode: 2, sizeBytes: 0, allocatedBytes: 0, modifiedSeconds: 0, modifiedNanoseconds: 0,
+                                                 changedSeconds: 0, changedNanoseconds: 0, linkCount: 1, mode: UInt32(S_IFDIR))
+        let hash = String(repeating: "b", count: 64)
+        let large = SpaceCleaningTreeProof(sha256: hash, entryCount: 300_000, logicalBytes: 9, rootIdentity: identity, metadataOnly: true)
+        XCTAssertEqual(large.entryCount, SpaceCleaningTreeProof.maximumContentEntries)
+        XCTAssertEqual(large.metadataEntryCount, 300_000)
+        XCTAssertEqual(large.coveredEntries, 300_000)
+        XCTAssertTrue(large.isValid)
+
+        // The fields a released build reads: sha256, entryCount, logicalBytes, rootIdentity.
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(large)) as? [String: Any])
+        let releasedCount = try XCTUnwrap(object["entryCount"] as? Int)
+        XCTAssertTrue((1...SpaceCleaningTreeProof.maximumContentEntries).contains(releasedCount))
+
+        let decoded = try JSONDecoder().decode(SpaceCleaningTreeProof.self, from: JSONEncoder().encode(large))
+        XCTAssertEqual(decoded, large)
+        XCTAssertTrue(decoded.matches(large))
+        var smaller = large; smaller.metadataEntryCount = 299_999
+        XCTAssertFalse(smaller.matches(large), "the full count stays part of the proof")
+        var tampered = large; tampered.entryCount = 5
+        XCTAssertFalse(tampered.isValid, "the compatibility count must follow the full count")
+
+        // Whole-folder records written before the full count was stored separately stay readable.
+        var legacy = large; legacy.metadataEntryCount = nil; legacy.entryCount = 300_000
+        XCTAssertTrue(legacy.isValid)
+        XCTAssertEqual(legacy.coveredEntries, 300_000)
+        XCTAssertTrue(legacy.matches(large))
+        var content = SpaceCleaningTreeProof(sha256: hash, entryCount: 10, logicalBytes: 9, rootIdentity: identity)
+        content.metadataEntryCount = 10
+        XCTAssertFalse(content.isValid, "content proofs never carry a whole-folder count")
+    }
 }

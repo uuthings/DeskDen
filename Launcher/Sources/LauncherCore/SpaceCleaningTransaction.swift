@@ -13,6 +13,10 @@ public protocol SpaceCleaningFileOperating: Sendable {
 }
 public struct SpaceCleaningTreeProof: Codable, Equatable, Sendable {
     public var sha256: String
+    /// Entries covered by a content proof. Released builds reject records whose
+    /// count exceeds `maximumContentEntries`, and a rejected record makes the
+    /// whole history unreadable there, so a whole-folder proof stores at most
+    /// that many here and keeps its full count in `metadataEntryCount`.
     public var entryCount: Int
     public var logicalBytes: UInt64
     public var rootIdentity: SpaceCleaningFileIdentity
@@ -20,18 +24,30 @@ public struct SpaceCleaningTreeProof: Codable, Equatable, Sendable {
     /// without file contents. Optional so older receipts stay readable; older
     /// builds cannot match such a proof and therefore never act on it.
     public var metadataOnly: Bool?
+    /// The full entry count of a whole-folder proof. Absent in content proofs
+    /// and in whole-folder proofs written before this field existed.
+    public var metadataEntryCount: Int?
     public static let maximumContentEntries = 100_000
     public static let maximumMetadataEntries = 5_000_000
     public init(sha256: String, entryCount: Int, logicalBytes: UInt64, rootIdentity: SpaceCleaningFileIdentity, metadataOnly: Bool? = nil) {
-        self.sha256 = sha256; self.entryCount = entryCount; self.logicalBytes = logicalBytes
+        self.sha256 = sha256; self.logicalBytes = logicalBytes
         self.rootIdentity = rootIdentity; self.metadataOnly = metadataOnly
+        if metadataOnly == true {
+            self.entryCount = min(entryCount, Self.maximumContentEntries); metadataEntryCount = entryCount
+        } else {
+            self.entryCount = entryCount
+        }
     }
+    /// Entries the proof actually covers.
+    public var coveredEntries: Int { metadataOnly == true ? metadataEntryCount ?? entryCount : entryCount }
     public var isValid: Bool {
-        sha256.utf8.count == 64 && sha256.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) } &&
-            (1...(metadataOnly == true ? Self.maximumMetadataEntries : Self.maximumContentEntries)).contains(entryCount)
+        guard sha256.utf8.count == 64 && sha256.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { return false }
+        guard metadataOnly == true else { return metadataEntryCount == nil && (1...Self.maximumContentEntries).contains(entryCount) }
+        guard let full = metadataEntryCount else { return (1...Self.maximumMetadataEntries).contains(entryCount) }
+        return (1...Self.maximumMetadataEntries).contains(full) && entryCount == min(full, Self.maximumContentEntries)
     }
     public func matches(_ other: Self) -> Bool {
-        sha256 == other.sha256 && entryCount == other.entryCount && logicalBytes == other.logicalBytes &&
+        sha256 == other.sha256 && coveredEntries == other.coveredEntries && logicalBytes == other.logicalBytes &&
         (metadataOnly ?? false) == (other.metadataOnly ?? false) &&
         rootIdentity.matchesMovedResource(other.rootIdentity) && rootIdentity.mode == other.rootIdentity.mode
     }
