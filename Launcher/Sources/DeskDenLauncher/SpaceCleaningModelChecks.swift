@@ -537,8 +537,9 @@ import LauncherCore
                   "verified production moves persist exactly one recoverable receipt per selected item")
             check(model.batches.first?.items.allSatisfy { $0.isDirectory == false && $0.bytes > 0 && $0.originalURL.path.hasPrefix(first.home.path) } == true,
                   "history presentation retains each recorded file's identity, original path and size")
-            check(model.screen == .completed && model.requiresRescan && model.selectedIDs.isEmpty && model.currentBatch?.items.count == 2,
-                  "processing enters a dedicated completion state with actual receipts and consumes the stale scan selection")
+            check(model.screen == .completed && !model.requiresRescan && model.selectedIDs.isEmpty && model.currentBatch?.items.count == 2 &&
+                  model.items.isEmpty && model.retiredResultCount == 2 && !model.canReturnToResults,
+                  "processing enters a dedicated completion state with actual receipts and retires exactly the processed results")
             model.goHome()
             check(model.screen == .start && model.batches.count == 1 && model.currentBatch?.items.count == 2 && model.selectedIDs.isEmpty,
                   "explicit return home preserves cleanup history without restarting a scan or restoring stale selection")
@@ -560,12 +561,41 @@ import LauncherCore
                   String(contentsOf: conflicted.originalURL, encoding: .utf8) == "new occupant",
                   "renamed restoration preserves both the original selected content and the new occupant")
             let oldIDs = model.items.map(\.id); oldIDs.forEach { model.toggleItem($0) }; model.requestCleanup()
-            check(model.selectedIDs.isEmpty && model.dialog == nil && model.requiresRescan,
-                  "restored files cannot be processed again using stale candidate identities")
+            check(oldIDs.isEmpty && model.selectedIDs.isEmpty && model.dialog == nil && mover.moveCount == 2,
+                  "restored files are never offered again under their stale candidate identities")
             let reloaded = SpaceCleaningModel(dataDirectory: first.data, homeDirectory: first.home, mover: mover); models.append(reloaded)
             await reloaded.waitUntilIdle()
             check(reloaded.batches.count == 1 && reloaded.batches.first?.restorableCount == 0 && mover.moveCount == 2,
                   "history reload preserves restored outcomes without repeating any move")
+
+            let continuing = try fixture(root.appendingPathComponent("continue"), names: ["one.data", "two.data", "three.data"])
+            let continuingMover = SpaceCleaningCheckMover(root: continuing.home, trash: continuing.trash); movers.append(continuingMover)
+            let continuingModel = SpaceCleaningModel(dataDirectory: continuing.data, homeDirectory: continuing.home, mover: continuingMover); models.append(continuingModel)
+            continuingModel.startScan(); await continuingModel.waitUntilIdle()
+            guard let firstPick = continuingModel.items.first(where: { $0.isSelectable }) else { throw CheckError.missing }
+            let untouched = Set(continuingModel.items.map(\.id)).subtracting([firstPick.id])
+            continuingModel.toggleItem(firstPick.id); continuingModel.requestCleanup(); await continuingModel.waitUntilIdle()
+            check(continuingModel.screen == .completed && continuingMover.moveCount == 1 && !continuingModel.requiresRescan &&
+                  Set(continuingModel.items.map(\.id)) == untouched && continuingModel.retiredResultCount == 1 && continuingModel.canReturnToResults,
+                  "after a cleanup batch only the processed result leaves the list and the rest stay available")
+            continuingModel.returnToResults()
+            guard let secondPick = continuingModel.items.first(where: { $0.isSelectable }) else { throw CheckError.missing }
+            continuingModel.toggleItem(secondPick.id)
+            check(continuingModel.screen == .results && continuingModel.selectedIDs == [secondPick.id] && continuingModel.canProcess &&
+                  continuingModel.reportSummary.contains("已移出列表"),
+                  "returning to results lets the remaining verified items be selected again without a rescan")
+            continuingModel.requestCleanup(); await continuingModel.waitUntilIdle()
+            check(continuingMover.moveCount == 2 && continuingModel.items.count == 1 && continuingModel.retiredResultCount == 2 &&
+                  !FileManager.default.fileExists(atPath: secondPick.url.path) &&
+                  continuingModel.items.allSatisfy { FileManager.default.fileExists(atPath: $0.url.path) },
+                  "a second batch processes the newly selected item and leaves unselected results in place")
+            let overlapIDs = (0..<6).map { _ in UUID() }
+            let overlapResults = zip(overlapIDs, ["/Users/test/a", "/Users/test/a/b", "/Users/test/a/b/c.txt", "/Users/test/ab", "/Users/test/x", "/Users/test/x/y"]
+                .map { URL(fileURLWithPath: $0) }).map { ($0, $1) }
+            check(SpaceCleaningModel.overlappingResultIDs(overlapResults, touching: [URL(fileURLWithPath: "/Users/test/a/b")]) == Set(overlapIDs[0...2]) &&
+                  SpaceCleaningModel.overlappingResultIDs(overlapResults, touching: [URL(fileURLWithPath: "/Users/test/x/y/z")]) == Set(overlapIDs[4...5]) &&
+                  SpaceCleaningModel.overlappingResultIDs(overlapResults, touching: []).isEmpty,
+                  "retired results cover the touched path, its ancestors and descendants, never a sibling sharing a name prefix")
 
             let permanent = try fixture(root.appendingPathComponent("permanent"), names: ["remove.data"])
             let permanentMover = SpaceCleaningCheckMover(root: permanent.home, trash: permanent.trash); movers.append(permanentMover)

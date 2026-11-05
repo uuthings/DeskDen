@@ -182,8 +182,10 @@ import LauncherCore
             host.rootView = fixture(model: model, light: false)
             _ = await settle(window) { frame("space-cleaning-history-search", host) != nil }
             try await capture(host, "cleanup-history-dark.png")
+            check(model.historyReturnTitle == "返回处理结果", "history opened from a completion page names that page as its return")
             model.returnFromHistory()
-            check(model.screen == .start, "return from processed history respects the required fresh scan")
+            check(model.screen == .completed && !model.requiresRescan,
+                  "return from processed history reopens its completion page without forcing a rescan")
         } catch { check(false, "workspace fixture: \(error)") }
         let capacities = await capacityFixtureChecks()
         return (count + capacities.count, failures + capacities.failures)

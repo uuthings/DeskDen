@@ -544,6 +544,10 @@ import LauncherCore
                     frame("space-cleaning-completed-home", in: host).map { card.contains($0) }
                 } == true && exists("space-cleaning-completed-summary", in: host),
                       "\(name) completion shows actual counts and an in-card return-home button")
+                check(frame("space-cleaning-completed", in: host).flatMap { card in
+                    frame("space-cleaning-completed-results", in: host).map { card.contains($0) }
+                } == true && exists("space-cleaning-completed-remaining", in: host),
+                      "\(name) completion offers an in-card return to the remaining scan results")
                 try capture(host: host, name: "completed-" + name, output: output)
             }
             check(clickBackground("space-cleaning-completed-home", in: host), "completion return-home button has a clickable background")
@@ -598,7 +602,10 @@ import LauncherCore
             let restored = cleaning.batches.first(where: { $0.id == batch.id })?.items.first(where: { $0.id == record.id })
             check(try Data(contentsOf: download) == Data("existing destination".utf8) && restored?.resultURL != download && restored?.canRestore == false,
                   "restoring a fixture preserves the existing namesake and records a different restored path")
-            check(cleaning.requiresRescan && cleaning.selectedCount == 0, "restoration invalidates stale cleanup selection")
+            check(!cleaning.requiresRescan && cleaning.selectedCount == 0 &&
+                  !cleaning.items.contains { $0.url.standardizedFileURL == download.standardizedFileURL } &&
+                  cleaning.items.contains { $0.url.standardizedFileURL == otherDownload.standardizedFileURL },
+                  "restoration never re-offers the restored file under its stale identity and keeps unrelated results")
             check(calendarSystem.requests == 0 && calendarNotifications.requests == 0 && !app.device.isSampling,
                   "cleaning UI fixtures do not request calendar access or start device sampling")
             app.navigate(.cleaning)

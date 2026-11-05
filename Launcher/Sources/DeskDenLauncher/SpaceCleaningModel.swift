@@ -41,6 +41,9 @@ import Quartz
     @Published private(set) var processingTotal = 0
     @Published private(set) var processingItem = ""
     @Published private(set) var requiresRescan = false
+    /// Results acted on since the scan; they leave the list while the rest
+    /// stay selectable (see `retireResults`).
+    @Published private(set) var retiredResultCount = 0
     @Published private(set) var isReconcilingHistory = false
     weak var hostWindow: NSWindow?
 
@@ -332,6 +335,7 @@ import Quartz
     var noRecommendationsSummary: String {
         if requiresRescan { return "本次扫描未完成，请重新扫描后再清理。" }
         if scanMode == .largeFiles { return scanReachedLimit ? "本次覆盖范围有限；已检查位置中未发现符合大小范围的可复核文件。" : "已检查位置中未发现符合大小范围的可复核文件。开发环境及受保护位置保持保留。" }
+        if retiredResultCount > 0 { return "已处理或受影响的 \(retiredResultCount) 项已移出列表；建议整理的内容已全部处理，其他文件可自行选择。" }
         if scanReachedLimit { return "本次扫描达到覆盖边界；已完整核验的内容中暂未发现建议整理的项目。" }
         let inUse = resultIndex.runningApplicationCount
         if inUse > 0 { return "有 \(inUse) 项关联应用或工具正在使用，已保留。其他文件由你选择。" }
@@ -350,11 +354,17 @@ import Quartz
     }
     func clearSelection() { guard !isBusy else { return }; selectedIDs = [] }
     func goHome() { guard !isBusy else { return }; closeDialog(); screen = .start }
+    /// The remaining verified results stay available after a batch.
+    var canReturnToResults: Bool { !items.isEmpty }
+    func returnToResults() { guard !isBusy, canReturnToResults else { return }; closeDialog(); screen = .results }
     var reportSummary: String {
         if requiresRescan { return "文件状态已变化，请重新扫描后再选择" }
         if screen == .scanning { return "已检查 \(checkedCount) 项 · 逐项核验用途与保护规则" }
         if scanMode == .largeFiles { return "找到 \(reviewableItems.count) 个符合大小范围的文件 · 均需手动选择" + (scanReachedLimit ? " · 覆盖范围有限" : "") }
         if recommendedIDs.isEmpty { return noRecommendationsSummary }
+        if retiredResultCount > 0 {
+            return "已处理或受影响的 \(retiredResultCount) 项已移出列表 · 剩余 \(recommendedIDs.count) 项建议整理内容，可继续选择" + (scanReachedLimit ? " · 覆盖范围有限" : "")
+        }
         let manualCount = recommendedIDs.subtracting(automaticallySelectedIDs).count
         let selection = automaticallySelectedIDs.isEmpty
             ? "这 \(manualCount) 项需确认后手动选择"
@@ -459,7 +469,7 @@ import Quartz
         installResultIndex(.init())
         selectedIDs = []; recommendedIDs = []; automaticallySelectedIDs = []; detailID = nil; resultScrollID = nil; candidates = [:]; items = []
         directorySizes = [:]; measuringDirectoryID = nil
-        requiresRescan = false; screen = .start; message = historyError
+        requiresRescan = false; retiredResultCount = 0; screen = .start; message = historyError
     }
     /// Selecting files and clicking the clearly named Trash action is the user's
     /// confirmation. Keep the same selection snapshot and verified transaction.
@@ -574,7 +584,7 @@ import Quartz
         selectedIDs = []; confirmedIDs = []; detailID = nil; resultScrollID = nil; searchText = ""; onlySelected = false; resultTab = .recommended; items = []; recommendedIDs = []; automaticallySelectedIDs = []; candidates = [:]
         directorySizes = [:]; measuringDirectoryID = nil
         if scanMode == .largeFiles { resultTab = .reviewable; sortKey = .size; sortAscending = false }
-        coverageIssues = []; coverageNotes = []; summarizedProtectedCount = 0; scanReachedLimit = false; requiresRescan = false; checkedCount = 0; scanPhase = .discovering; scanCompletedItems = 0; scanTotalItems = nil; scanDirectory = ""; scanItem = ""
+        coverageIssues = []; coverageNotes = []; summarizedProtectedCount = 0; scanReachedLimit = false; requiresRescan = false; retiredResultCount = 0; checkedCount = 0; scanPhase = .discovering; scanCompletedItems = 0; scanTotalItems = nil; scanDirectory = ""; scanItem = ""
         scanRecordedCandidates = 0; scanLogicalBytes = 0; scanCompletedScopes = 0; scanTotalScopes = scopes.count; scanRecentPaths = []
         closeDialog(); message = historyError; screen = .scanning
         task = Task { [weak self] in
@@ -703,12 +713,14 @@ import Quartz
         let token = cancellation, mover = mover, home = homeDirectory, declarations = declarations, runtime = runtime
         let persistence = SpaceCleaningPersistence(store: historyStore, cancellation: token)
         task = Task { [weak self] in
+            var attempted: [SpaceCleaningCandidate] = []
             for candidate in selected {
                 // Stop between items. An item already started completes its verified
                 // transaction; an irreversible directory deletion is never cut in half.
                 guard !token.isCancelled, persistence.error == nil else { break }
                 let cancelledBeforeItem = false
                 self?.processingItem = candidate.title
+                attempted.append(candidate)
                 let record = await Task.detached(priority: .utility) {
                     SpaceCleaningTransaction.execute(candidate: candidate, operationID: operationID, method: chosen,
                         permanentConfirmed: permanent, mover: mover, isCancelled: { cancelledBeforeItem },
@@ -726,7 +738,10 @@ import Quartz
                 if persistence.error != nil { break }
             }
             guard let self else { return }
-            self.finishProcessing(error: persistence.error)
+            // Items never started keep their selection, so stopping can be resumed.
+            let started = Set(attempted.map(\.id))
+            self.finishProcessing(error: persistence.error, touched: attempted.map(\.url),
+                                  resume: Set(selected.map(\.id)).subtracting(started))
         }
     }
     func executeRestore(batchID: UUID, renameConflicts: Bool) {
@@ -737,9 +752,11 @@ import Quartz
         let token = cancellation, persistence = SpaceCleaningPersistence(store: historyStore, cancellation: cancellation)
         let home = homeDirectory, runtime = runtime, declarations = declarations
         task = Task { [weak self] in
+            var touched: [URL] = []
             for record in selected {
                 guard !token.isCancelled else { break }
                 self?.processingItem = record.candidate.title
+                touched.append(record.originalURL)
                 let restored = await Task.detached(priority: .utility) {
                     SpaceCleaningTransaction.restore(record: record, conflict: renameConflicts ? .rename : .skip,
                         isCancelled: { false }, validatePolicy: { candidate in
@@ -747,10 +764,11 @@ import Quartz
                             return record.locationURL.map { Self.runningAt($0, context: context) } == true ? "项目正在废纸篓中运行，请先退出相关应用。" : nil
                         }, persist: persistence.record)
                 }.value
+                if let destination = restored.restoredURL { touched.append(destination) }
                 self?.acceptRecord(restored); self?.processingCompleted += 1
                 if persistence.error != nil { break }
             }
-            self?.finishProcessing(error: persistence.error)
+            self?.finishProcessing(error: persistence.error, touched: touched)
         }
     }
     func executePurge(batchID: UUID) {
@@ -775,18 +793,60 @@ import Quartz
                 self?.acceptRecord(purged); self?.processingCompleted += 1
                 if persistence.error != nil { break }
             }
-            self?.finishProcessing(error: persistence.error)
+            self?.finishProcessing(error: persistence.error, touched: selected.compactMap(\.locationURL))
         }
     }
     private func beginProcessing(count: Int) {
-        cancellation = SpaceCleaningCancellation(); selectedIDs = []; requiresRescan = true; detailID = nil
+        cancellation = SpaceCleaningCancellation(); selectedIDs = []; detailID = nil
         currentBatch = nil; processingCompleted = 0; processingTotal = count; processingItem = "正在核验所选项目"; screen = .processing
     }
-    private func finishProcessing(error: String?) {
+    private func finishProcessing(error: String?, touched: [URL], resume: Set<UUID> = []) {
         if let error { historyError = error; message = "处理记录未能安全保存，已暂停后续操作。" + error }
         else if cancellation.isCancelled { message = "已停止后续处理。另有 \(max(0, processingTotal - processingCompleted)) 项未开始；实际处理结果与可恢复项目见下方记录。" }
         else { message = nil }
+        retireResults(touching: touched, resume: resume)
         rebuildBatches(); task = nil; screen = operationDestination; refreshDisk()
+    }
+    /// A batch makes only the results it acted on stale: those items, plus any
+    /// result nested inside or containing them, leave the list. Everything else
+    /// keeps its verified snapshot and stays selectable, so cleanup can continue
+    /// without a rescan. Every later operation still revalidates identity,
+    /// content, running state and protection before touching a file.
+    private func retireResults(touching urls: [URL], resume: Set<UUID>) {
+        let retired = Self.overlappingResultIDs(candidates.lazy.map { ($0.key, $0.value.url) }, touching: urls)
+        suspendsResultProjection = true
+        if !retired.isEmpty {
+            for id in retired { candidates[id] = nil; directorySizes[id] = nil }
+            recommendedIDs.subtract(retired); automaticallySelectedIDs.subtract(retired)
+            retiredResultCount += items.reduce(0) { $0 + (retired.contains($1.id) ? 1 : 0) }
+        }
+        selectedIDs = resume.filter { candidates[$0] != nil }
+        selectionRevision &+= 1
+        resultScrollID = nil
+        suspendsResultProjection = false
+        if retired.isEmpty { rebuildSelectionCache(); refreshResultProjection() }
+        else { installResultIndex(CleaningResultsIndex(items: items.filter { !retired.contains($0.id) }, recommendedIDs: recommendedIDs)) }
+    }
+    /// Results whose path equals, contains or lies inside any touched path.
+    nonisolated static func overlappingResultIDs(_ results: some Sequence<(UUID, URL)>, touching urls: [URL]) -> Set<UUID> {
+        let touched = Set(urls.map { $0.standardizedFileURL.path })
+        guard !touched.isEmpty else { return [] }
+        var ancestors = Set<String>()
+        for path in touched {
+            var parent = (path as NSString).deletingLastPathComponent
+            while parent.count > 1, ancestors.insert(parent).inserted { parent = (parent as NSString).deletingLastPathComponent }
+        }
+        var overlapping = Set<UUID>()
+        for (id, url) in results {
+            let path = url.standardizedFileURL.path
+            if touched.contains(path) || ancestors.contains(path) { overlapping.insert(id); continue }
+            var parent = (path as NSString).deletingLastPathComponent
+            while parent.count > 1 {
+                if touched.contains(parent) { overlapping.insert(id); break }
+                parent = (parent as NSString).deletingLastPathComponent
+            }
+        }
+        return overlapping
     }
     private func loadHistory() {
         do {

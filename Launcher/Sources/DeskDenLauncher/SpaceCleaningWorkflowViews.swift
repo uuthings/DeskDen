@@ -403,6 +403,11 @@ struct SpaceCleaningCompletionView: View {
                             .font(.system(size: 12)).foregroundStyle(palette.secondary).lineSpacing(4)
                         Label("文件去向、处理状态与失败原因已保存在清理记录中。", systemImage: "clock.arrow.circlepath")
                             .font(.system(size: 11)).foregroundStyle(palette.muted)
+                        if !model.reviewableItems.isEmpty {
+                            Label("扫描结果中还有 \(model.reviewableItems.count) 项可复核内容，可返回继续选择；处理前仍会逐项重新核验。", systemImage: "list.bullet")
+                                .font(.system(size: 11)).foregroundStyle(palette.muted)
+                                .accessibilityIdentifier("space-cleaning-completed-remaining")
+                        }
                     }.fixedSize(horizontal: false, vertical: true)
                     if !pending.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
@@ -455,8 +460,13 @@ struct SpaceCleaningCompletionView: View {
             Spacer(minLength: 8)
             Button("查看清理记录", action: model.showHistory).buttonStyle(WBButtonStyle())
                 .accessibilityIdentifier("space-cleaning-completed-history")
-            Button("返回首页", action: model.goHome).buttonStyle(WBButtonStyle(primary: true))
+            // Remaining verified results stay selectable; continuing is the main path.
+            Button("返回首页", action: model.goHome).buttonStyle(WBButtonStyle(primary: !model.canReturnToResults))
                 .accessibilityIdentifier("space-cleaning-completed-home")
+            if model.canReturnToResults {
+                Button("返回扫描结果", action: model.returnToResults).buttonStyle(WBButtonStyle(primary: true))
+                    .accessibilityIdentifier("space-cleaning-completed-results")
+            }
         }.padding(14)
     }
 
