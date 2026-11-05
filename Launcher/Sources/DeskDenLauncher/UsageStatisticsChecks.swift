@@ -76,6 +76,16 @@ import LauncherCore
             let headerChecks = await sourceHeaderChecks(appearance: app.usageAppearance, window: window)
             count += headerChecks.count; failures += headerChecks.failures
             window.contentView = host
+            // This workbench-only host has no launcher panel. A failed launcher
+            // save must reach the workbench message instead of ending the process.
+            try owner.store.save(owner.configuration)
+            try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: owner.store.url.path)
+            let savedAppearance = app.appearance
+            app.changeAppearance(savedAppearance == .light ? .dark : .light)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: owner.store.url.path)
+            check(app.appearance == savedAppearance && owner.lastSaveError != nil && app.message == owner.lastSaveError,
+                  "an unreadable launcher configuration reports the failed appearance save without a launcher panel")
+            app.message = nil
             var observedCardWidths = Set<Int>()
             for light in [false, true] {
                 app.changeAppearance(light ? .light : .dark)

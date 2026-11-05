@@ -109,6 +109,17 @@ final class AIQuotaAlertTests: XCTestCase {
         XCTAssertEqual(permissions.intValue & 0o777, 0o600)
     }
 
+    func testReminderStateStaysReadableForBackgroundRefreshesWhileTheMacIsLocked() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = AIQuotaAlertStore(url: folder.appendingPathComponent("alerts.json"))
+        var value = AIQuotaAlertConfiguration(); value.rule = rule
+        try store.save(value)
+        value.rule.criticalPercent = 95; try store.save(value)
+        let protection = try store.url.resourceValues(forKeys: [.fileProtectionKey]).fileProtection
+        XCTAssertTrue(protection == nil || protection == .completeUntilFirstUserAuthentication, String(describing: protection))
+    }
+
     func testCorruptOrFutureRuleFileCannotBeReplacedByDefaults() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

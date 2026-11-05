@@ -28,7 +28,9 @@ public struct ConfigurationStore: Sendable {
             try previous.write(to: backupURL, options: .atomic)
             try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: backupURL.path)
         }
-        try encoded.write(to: url, options: [.atomic, .completeFileProtectionUnlessOpen])
+        // The running app rereads this file to back it up before each save,
+        // including while the Mac is locked; complete-unless-open would fail.
+        try encoded.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
     public func recoverPrevious() throws -> LauncherConfiguration {

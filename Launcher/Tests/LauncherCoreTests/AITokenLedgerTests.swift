@@ -88,6 +88,17 @@ final class AITokenLedgerTests: XCTestCase {
         XCTAssertEqual(permissions.intValue & 0o777, 0o600)
     }
 
+    func testArchiveStaysReadableForBackgroundRefreshesWhileTheMacIsLocked() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = AITokenLedgerStore(url: folder.appendingPathComponent("tokens.json"))
+        var ledger = AITokenLedger(now: now)
+        try ledger.ingest([record("one")], at: now); try store.save(ledger)
+        try ledger.ingest([record("two")], at: now); try store.save(ledger)
+        let protection = try store.url.resourceValues(forKeys: [.fileProtectionKey]).fileProtection
+        XCTAssertTrue(protection == nil || protection == .completeUntilFirstUserAuthentication, String(describing: protection))
+    }
+
     func testEncodedArchiveContainsOnlyUsageMetadata() throws {
         var ledger = AITokenLedger(now: now)
         try ledger.ingest([record("one")], at: now)

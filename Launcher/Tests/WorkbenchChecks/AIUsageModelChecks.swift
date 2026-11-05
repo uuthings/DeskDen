@@ -514,6 +514,8 @@ private actor FixtureClaudeSubscription: ClaudeSubscriptionProviding {
         let notificationRestart = AIUsageModel(dataDirectory: notificationBase, startServices: false, notifications: notificationService, claudeSubscription: FixtureClaudeSubscription())
         await refresh(notificationRestart)
         check(notificationService.delivered.count == 1, "successful delivery deduplication survives model restart")
+        check(notificationRestart.storageReadErrors.isEmpty && notificationRestart.alertConfiguration.state.deliveries.count == 1,
+              "a restarted model reloads the delivered reminder state instead of write-protecting it")
         check(notificationRestart.saveManual(provider: .codex, shortPercent: "95", weekPercent: "", observedAt: now, shortReset: reset, weekReset: reset), "same window can receive a newer high-severity reading")
         await refresh(notificationRestart)
         check(notificationService.delivered.count == 2 && notificationService.delivered.last?.level == .critical, "higher threshold sends once within the same reset window")

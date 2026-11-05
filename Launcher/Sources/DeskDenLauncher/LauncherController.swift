@@ -1454,6 +1454,9 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
         let value = button("",symbol:symbol,rect:NSRect(x:x,y:y,width:32,height:32),action:action); value.setAccessibilityLabel(title); value.toolTip = title
     }
     func toast(_ message:String,persistent:Bool = false,undo:(()->Void)? = nil) {
+        // Workbench-only hosts never build the launcher panel, like render().
+        // Failing callers still return false and keep lastSaveError for display.
+        guard let background else { return }
         toastTask?.cancel(); toastView?.removeFromSuperview()
         let width = min(size.width-80,max(260,CGFloat(message.count)*12+60+(undo == nil ? 0 : 50)))
         let card = CardView(frame:NSRect(x:(size.width-width)/2,y:size.height-116,width:width,height:48)); card.radius = 11

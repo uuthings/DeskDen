@@ -160,7 +160,9 @@ public struct AITokenLedgerStore: Sendable {
             try previous.write(to: backupURL, options: .atomic)
             try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: backupURL.path)
         }
-        try data.write(to: url, options: [.atomic, .completeFileProtectionUnlessOpen])
+        // Background refreshes reopen this file while the Mac is locked, and
+        // complete-unless-open files cannot be reopened until it is unlocked.
+        try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
     private func read(_ file: URL) throws -> Data {

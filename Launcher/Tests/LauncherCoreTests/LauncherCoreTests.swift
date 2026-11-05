@@ -498,6 +498,13 @@ final class ConfigurationStoreTests: XCTestCase {
         let copies = try FileManager.default.contentsOfDirectory(at:directory,includingPropertiesForKeys:nil).filter { $0.lastPathComponent.contains("preserved-") }
         XCTAssertEqual(copies.count,1); XCTAssertEqual(try Data(contentsOf:copies[0]),damaged)
     }
+    func testSavedConfigurationStaysReadableWhileTheMacIsLocked() throws {
+        // Each save rereads the previous file for its backup, also while locked.
+        var value = LauncherConfiguration(); try store.save(value)
+        value.settings.display = .name; try store.save(value)
+        let protection = try store.url.resourceValues(forKeys:[.fileProtectionKey]).fileProtection
+        XCTAssertTrue(protection == nil || protection == .completeUntilFirstUserAuthentication,String(describing:protection))
+    }
     func testSaveNeverOverwritesCorruptConfiguration() throws {
         try store.save(LauncherConfiguration()); let damaged = Data("broken".utf8); try damaged.write(to:store.url)
         XCTAssertThrowsError(try store.save(LauncherConfiguration()))
