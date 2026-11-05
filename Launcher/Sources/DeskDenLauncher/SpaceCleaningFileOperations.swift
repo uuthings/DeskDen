@@ -13,6 +13,10 @@ struct SpaceCleaningAppFileOperations: SpaceCleaningFileOperating {
         }
         return destination
     }
+    /// Simulators belong to CoreSimulator; only Xcode's own tool deletes them.
+    func deleteSimulator(udid: String) throws {
+        try SpaceCleaningSimulators.deleteWithXcode(udid: udid)
+    }
 }
 
 /// Shared cancellation gate for bounded cleaning scans and transactions.

@@ -631,6 +631,50 @@ import LauncherCore
             check(clearedPreference.method == .trash && !clearedPreference.rememberMethod,
                   "unchecking remember removes the prior permanent preference and restores the default Trash choice")
 
+            // Simulators never reach the Trash: a Trash batch with one asks first,
+            // deletes it through the injected Xcode tool and trashes the rest.
+            if SpaceCleaningSimulators.toolURL() != nil {
+                let simulator = try fixture(root.appendingPathComponent("simulator"), names: ["keep-trash.data"])
+                let udid = UUID().uuidString
+                let device = simulator.home.appendingPathComponent("Library/Developer/CoreSimulator/Devices/" + udid)
+                try FileManager.default.createDirectory(at: device.appendingPathComponent("data"), withIntermediateDirectories: true)
+                try Data(repeating: 1, count: 2_048).write(to: device.appendingPathComponent("data/app.bin"))
+                let deviceRecord: [String: Any] = ["UDID": udid, "name": "Check Phone", "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+                    "deviceType": "com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro", "state": 1, "isDeleted": false,
+                    "lastUsedAt": Date(timeIntervalSinceNow: -30 * 86_400)]
+                try PropertyListSerialization.data(fromPropertyList: deviceRecord, format: .binary, options: 0)
+                    .write(to: device.appendingPathComponent("device.plist"))
+                let simulatorMover = SpaceCleaningCheckMover(root: simulator.home, trash: simulator.trash); movers.append(simulatorMover)
+                let simulatorModel = SpaceCleaningModel(dataDirectory: simulator.data, homeDirectory: simulator.home, mover: simulatorMover)
+                models.append(simulatorModel)
+                simulatorModel.startScan(); await simulatorModel.waitUntilIdle()
+                guard let phone = simulatorModel.items.first(where: \.isSimulator),
+                      let download = simulatorModel.items.first(where: { $0.url.lastPathComponent == "keep-trash.data" }) else { throw CheckError.missing }
+                check(phone.isSelectable && phone.name == "模拟器 · Check Phone（iOS 27.0）" && phone.fileCategory == .simulator &&
+                      simulatorModel.recommendedIDs.contains(phone.id) && !simulatorModel.automaticallySelectedIDs.contains(phone.id) &&
+                      phone.handlingNote?.contains("无法恢复") == true,
+                      "an unused simulator is suggested by name and system, explains it cannot be restored and is never preselected")
+                simulatorModel.toggleItem(phone.id); simulatorModel.toggleItem(download.id)
+                simulatorModel.method = .trash; simulatorModel.requestCleanup()
+                check(simulatorModel.dialog == .confirm && !simulatorModel.isBusy && simulatorModel.selectedSimulatorCount == 1 &&
+                      simulatorMover.moveCount == 0 && simulatorMover.deletedSimulators.isEmpty,
+                      "a Trash batch with a simulator asks for the irreversible-action acknowledgement before anything moves")
+                simulatorModel.executeConfirmed(permanent: false, remember: false)
+                check(!simulatorModel.isBusy && FileManager.default.fileExists(atPath: device.path) && simulatorMover.moveCount == 0,
+                      "without the acknowledgement neither the simulator nor the other item is processed")
+                simulatorModel.acknowledgement = true; simulatorModel.executeConfirmed(permanent: false, remember: false)
+                await simulatorModel.waitUntilIdle()
+                let simulatorRecords = try read(simulator.data)
+                check(simulatorMover.deletedSimulators == [udid.uppercased()] && !FileManager.default.fileExists(atPath: device.path) &&
+                      simulatorMover.moveCount == 1 &&
+                      simulatorRecords.contains { $0.candidate.simulator != nil && $0.state == .deleted && $0.method == .permanent } &&
+                      simulatorRecords.contains { $0.candidate.simulator == nil && $0.state == .trashed },
+                      "the simulator is deleted through Xcode while the other item still goes to the Trash")
+                check(simulatorModel.currentBatch?.method == .trash && simulatorModel.currentBatch?.restorableCount == 1 &&
+                      simulatorModel.currentBatch?.deletedCount == 1,
+                      "the batch stays a Trash batch and lists its simulator as permanently deleted")
+            }
+
             let purgeFixture = try fixture(root.appendingPathComponent("purge"), names: ["batch-one.data"])
             let purgeMover = SpaceCleaningCheckMover(root: purgeFixture.home, trash: purgeFixture.trash); movers.append(purgeMover)
             let purgeModel = SpaceCleaningModel(dataDirectory: purgeFixture.data, homeDirectory: purgeFixture.home, mover: purgeMover); models.append(purgeModel)
@@ -808,6 +852,15 @@ private final class SpaceCleaningCheckMover: SpaceCleaningFileOperating, @unchec
     var entered: Bool { lock.lock(); defer { lock.unlock() }; return reached }
     var timedOut: Bool { lock.lock(); defer { lock.unlock() }; return expired }
     func release() { gate.signal() }
+    private var simulatorCalls: [String] = []
+    var deletedSimulators: [String] { lock.lock(); defer { lock.unlock() }; return simulatorCalls }
+    /// Stands in for `simctl delete`: removes only the fixture's own device folder.
+    func deleteSimulator(udid: String) throws {
+        let device = root.appendingPathComponent("Library/Developer/CoreSimulator/Devices/" + udid)
+        guard UUID(uuidString: udid) != nil, device.path.hasPrefix(root.path + "/") else { throw CocoaError(.fileWriteNoPermission) }
+        lock.lock(); simulatorCalls.append(udid); lock.unlock()
+        try FileManager.default.removeItem(at: device)
+    }
     func moveToTrash(_ source: URL) throws -> URL {
         guard source.path.hasPrefix(root.path + "/"), trash.path.hasPrefix(root.path + "/") else { throw CocoaError(.fileWriteNoPermission) }
         lock.lock(); calls += 1; let shouldWait = gateFirst && calls == 1; if shouldWait { reached = true }; lock.unlock()

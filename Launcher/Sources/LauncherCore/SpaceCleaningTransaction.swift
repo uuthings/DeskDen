@@ -10,6 +10,14 @@ public protocol SpaceCleaningFileOperating: Sendable {
     /// Return the system's actual destination; a thrown error is not proof that
     /// the source did not move. The transaction reconciles all recorded evidence.
     func moveToTrash(_ source: URL) throws -> URL
+    /// Deletes a simulator through Xcode's own tool. Returning normally means
+    /// the tool reported success; the transaction still checks the result.
+    func deleteSimulator(udid: String) throws
+}
+extension SpaceCleaningFileOperating {
+    public func deleteSimulator(udid: String) throws {
+        throw SpaceCleaningFilesystem.Failure(message: "当前处理方式不能删除模拟器，未处理。")
+    }
 }
 public struct SpaceCleaningTreeProof: Codable, Equatable, Sendable {
     public var sha256: String
@@ -107,6 +115,11 @@ public enum SpaceCleaningTransaction {
                                isCancelled: () -> Bool = { false }, validatePolicy: (SpaceCleaningCandidate) -> String?,
                                validateActivity: (SpaceCleaningCandidate, URL) -> String? = { _, _ in nil },
                                persist: (SpaceCleaningRecord) throws -> Void) -> SpaceCleaningRecord {
+        if let device = candidate.simulator {
+            return executeSimulator(candidate, device: device, operationID: operationID, permanentConfirmed: permanentConfirmed,
+                                    mover: mover, isCancelled: isCancelled, validatePolicy: validatePolicy,
+                                    validateActivity: validateActivity, persist: persist)
+        }
         var record = SpaceCleaningRecord(operationID: operationID, candidate: candidate, method: method)
         guard !isCancelled() else { return finish(record, .cancelled, "已取消，未处理项目。", persist) }
         guard method != .permanent || permanentConfirmed else { return finish(record, .skipped, "永久删除尚未明确确认，未处理项目。", persist) }
@@ -322,6 +335,52 @@ public enum SpaceCleaningTransaction {
         }
     }
 
+    /// A simulator is deleted only through Xcode's tool (`simctl delete`), never
+    /// moved or removed file by file: CoreSimulator owns the device set. It
+    /// cannot be restored, so it needs the irreversible-action confirmation
+    /// whichever method the batch uses, and its record is always permanent.
+    private static func executeSimulator(_ candidate: SpaceCleaningCandidate, device: SpaceCleaningSimulatorDevice, operationID: UUID,
+                                         permanentConfirmed: Bool, mover: any SpaceCleaningFileOperating, isCancelled: () -> Bool,
+                                         validatePolicy: (SpaceCleaningCandidate) -> String?,
+                                         validateActivity: (SpaceCleaningCandidate, URL) -> String?,
+                                         persist: (SpaceCleaningRecord) throws -> Void) -> SpaceCleaningRecord {
+        var record = SpaceCleaningRecord(operationID: operationID, candidate: candidate, method: .permanent)
+        guard !isCancelled() else { return finish(record, .cancelled, "已取消，未处理项目。", persist) }
+        guard permanentConfirmed else { return finish(record, .skipped, "模拟器不能移入废纸篓，删除前需要确认无法恢复；未处理。", persist) }
+        // The same folder, the same shut-down device and no use since the scan.
+        func unchanged() -> Bool {
+            candidate.canProcess && SpaceCleaningFilesystem.validateAncestors(candidate) &&
+                SpaceCleaningFilesystem.capture(candidate.url) == candidate.identity &&
+                SpaceCleaningSimulators.device(at: candidate.url) == device && device.isShutdown
+        }
+        guard unchanged() else { return finish(record, .skipped, "模拟器在扫描后被使用、状态已变化或受保护，未删除；请重新扫描。", persist) }
+        if let reason = validatePolicy(candidate) { return finish(record, .skipped, reason, persist) }
+        if let reason = validateActivity(candidate, candidate.url) { return finish(record, .skipped, reason, persist) }
+        guard !isCancelled() else { return finish(record, .cancelled, "已取消，未删除模拟器。", persist) }
+        guard unchanged() else { return finish(record, .skipped, "核验期间模拟器状态已变化，未删除；请重新扫描。", persist) }
+        record.proof = SpaceCleaningSimulators.proof(for: device, identity: candidate.identity, logicalBytes: candidate.logicalBytes)
+        record.locationURL = candidate.url
+        record.state = .deleting; record.updatedAt = Date()
+        record.explanation = "已记录不可恢复的删除意图，正在通过 Xcode 的 simctl 删除模拟器。"
+        do { try persist(record) } catch {
+            var untouched = record; untouched.proof = nil; untouched.locationURL = nil
+            return finish(untouched, .failed, "删除意图未能保存，未删除模拟器：" + error.localizedDescription, persist)
+        }
+        do {
+            try mover.deleteSimulator(udid: device.udid)
+        } catch {
+            // A reported failure is not proof that nothing changed.
+            if SpaceCleaningFilesystem.capture(candidate.url) == candidate.identity, SpaceCleaningSimulators.device(at: candidate.url) == device {
+                return finish(record, .failed, "模拟器未删除，原设备保持不变：" + error.localizedDescription, persist)
+            }
+            return finish(record, .needsReview, "模拟器删除未确认完成，请在 Xcode 的「设备与模拟器」窗口中核对：" + error.localizedDescription, persist)
+        }
+        guard SpaceCleaningFilesystem.absent(candidate.url) else {
+            return finish(record, .needsReview, "simctl 报告已删除，但设备文件夹仍在；请在 Xcode 的「设备与模拟器」窗口中核对。", persist)
+        }
+        return finish(record, .deleted, "已通过 Xcode 的 simctl 删除模拟器，不经过废纸篓，无法恢复。", persist)
+    }
+
     /// A review record may regain its restore entry only when it describes an
     /// item that reached the system Trash through this flow and nothing else
     /// (a purge, a restore or a still-isolated move) can have moved it since.
@@ -395,7 +454,10 @@ public enum SpaceCleaningTransaction {
                 record.state = .skipped; record.explanation = "上次操作尚未移动项目，原文件仍在原位；未重新执行。"
             } else { record.state = .needsReview; record.explanation = "上次操作中断，请核对原位置和记录的隔离位置；未重复移动或删除。" }
         case .isolated, .deleting:
-            record.state = .needsReview; record.explanation = "操作中断，记录位置可能保留完整或部分项目。未推定成功，未自动继续删除；请在 Finder 中核对。"
+            record.state = .needsReview
+            record.explanation = record.candidate.simulator != nil
+                ? "模拟器删除中断，未推定成功；请在 Xcode 的「设备与模拟器」窗口中核对。"
+                : "操作中断，记录位置可能保留完整或部分项目。未推定成功，未自动继续删除；请在 Finder 中核对。"
         case .deleted, .restored, .skipped, .cancelled, .failed: return record
         }
         if isCancelled() { return original }

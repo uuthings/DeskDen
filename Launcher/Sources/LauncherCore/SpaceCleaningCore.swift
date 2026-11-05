@@ -18,6 +18,8 @@ public enum SpaceCleaningScopeKind: String, Codable, Sendable {
     case releaseArchives, releaseArchiveDiscovery, installedApplications, custom
     /// Conversation records and outputs that coding assistants keep for the user.
     case assistantData
+    /// The current user's Xcode simulator devices, one item per device.
+    case simulators
 }
 public enum SpaceCleaningScanPhase: String, Sendable { case discovering, verifying, finished }
 public enum SpaceCleaningStage: String, Codable, Sendable { case caches, development, downloads, protection, complete, cancelled, failed }
@@ -59,13 +61,21 @@ public struct SpaceCleaningContext: Sendable {
     public var activeToolNames: Set<String>
     /// Executables of running processes: an item that contains one stays protected.
     public var runningExecutablePaths: [String]
+    /// Simulator UDIDs and `name=` device names that running processes refer to
+    /// (see `SpaceCleaningSimulators.references`); a referenced simulator stays protected.
+    public var simulatorReferences: Set<String>
+    /// Xcode's simulator tool is installed. Without it simulators stay protected,
+    /// since they are deleted only through that tool.
+    public var simulatorToolAvailable: Bool
     public init(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
                 runningApplicationURLs: [URL] = [], protectedReleaseURLs: [URL] = [],
                 testDeclarations: [SpaceCleaningTestDeclaration] = [], activeToolNames: Set<String> = [],
-                runningExecutablePaths: [String] = []) {
+                runningExecutablePaths: [String] = [], simulatorReferences: Set<String> = [],
+                simulatorToolAvailable: Bool = true) {
         self.homeDirectory = homeDirectory; self.runningApplicationURLs = runningApplicationURLs
         self.protectedReleaseURLs = protectedReleaseURLs; self.testDeclarations = testDeclarations
         self.activeToolNames = activeToolNames; self.runningExecutablePaths = runningExecutablePaths
+        self.simulatorReferences = simulatorReferences; self.simulatorToolAvailable = simulatorToolAvailable
     }
 }
 public enum SpaceCleaningScanMode: String, Codable, CaseIterable, Sendable { case cleanup, largeFiles }
@@ -121,6 +131,10 @@ public struct SpaceCleaningCandidate: Identifiable, Codable, Equatable, Sendable
     /// Verified as one folder (identity, owner, size and file times) instead of
     /// file by file; the transaction then uses a metadata-only proof.
     public var isBulkVerified: Bool?
+    /// The Xcode simulator this item stands for. It is deleted only through
+    /// Xcode's own tool and never moved to the Trash. Optional so receipts stay
+    /// readable across versions; the item's kind stays one released builds know.
+    public var simulator: SpaceCleaningSimulatorDevice?
     public var canProcess: Bool { group != .protected && sizeIsComplete }
     /// Default selection requires positive reconstruction evidence, not just an
     /// age threshold or permission to delete. Personal and diagnostic files stay manual.
@@ -140,13 +154,13 @@ public struct SpaceCleaningCandidate: Identifiable, Codable, Equatable, Sendable
                 group: SpaceCleaningGroup, title: String, reason: String, impact: String,
                 logicalBytes: UInt64, allocatedBytes: UInt64, isDirectory: Bool,
                 canConfirmTestPurpose: Bool = false, treeFingerprint: String? = nil, sizeIsComplete: Bool = true,
-                isReviewSuggestion: Bool? = nil, isBulkVerified: Bool? = nil) {
+                isReviewSuggestion: Bool? = nil, isBulkVerified: Bool? = nil, simulator: SpaceCleaningSimulatorDevice? = nil) {
         self.id = id; self.scopeID = scopeID; self.url = url; self.rootURL = rootURL
         self.rootIdentity = rootIdentity; self.identity = identity; self.ancestorIdentities = ancestorIdentities
         self.kind = kind; self.group = group; self.title = title; self.reason = reason; self.impact = impact
         self.logicalBytes = logicalBytes; self.allocatedBytes = allocatedBytes; self.isDirectory = isDirectory
         self.canConfirmTestPurpose = canConfirmTestPurpose; self.treeFingerprint = treeFingerprint; self.sizeIsComplete = sizeIsComplete
-        self.isReviewSuggestion = isReviewSuggestion; self.isBulkVerified = isBulkVerified
+        self.isReviewSuggestion = isReviewSuggestion; self.isBulkVerified = isBulkVerified; self.simulator = simulator
     }
 }
 public struct SpaceCleaningIssue: Identifiable, Codable, Equatable, Sendable {
@@ -216,6 +230,7 @@ public enum SpaceCleaningScanner {
             ("Library/Caches", .browserCache, "其他应用缓存复核"),
             ("Library/Logs/DiagnosticReports", .diagnostics, "诊断记录"),
             ("Library/Developer/Xcode/DerivedData", .derivedData, "Xcode 构建缓存"),
+            (SpaceCleaningSimulators.deviceSetPath, .simulators, "Xcode 模拟器"),
             ("Developer/Builds", .development, "本地开发构建"),
             ("Downloads", .downloads, "下载文件"),
             ("Library/Developer/Xcode/Archives", .archives, "Xcode 归档"),
@@ -290,6 +305,13 @@ public enum SpaceCleaningScanner {
         return withoutActuallyEscaping(isCancelled) { cancellation in
             let worker = Worker(context: context, options: options, now: Date(), cancelled: cancellation, progress: { _ in })
             guard worker.validRoot(candidate.rootURL), !worker.isPackage(candidate.rootURL), !worker.hasPackageAncestor(candidate.rootURL) else { return .protected }
+            if let device = candidate.simulator {
+                // A simulator is re-read from its own record: the same device,
+                // still shut down, unused since the scan and not referenced.
+                let fresh = worker.classify(candidate.url, identity: identity)
+                guard fresh.group != .protected else { return .protected }
+                return fresh.simulator == device && fresh.kind == candidate.kind ? .unchanged : .changed
+            }
             if candidate.isBulkVerified == true {
                 // Whole-folder items re-check identity, rule and owners here; the
                 // transaction re-walks the tree for its metadata proof.
@@ -340,6 +362,11 @@ public enum SpaceCleaningScanner {
         guard SpaceCleaningDevelopmentPolicy.reason(at: candidate.url) == nil else { return .protected }
         guard !isCloudPlaceholder(at: candidate.url), !candidate.ancestorIdentities.contains(where: { isCloudPlaceholder(at: $0.url) }) else { return .protected }
         let worker = Worker(context: context, options: .init(), now: Date(), cancelled: { false }, progress: { _ in })
+        if let device = candidate.simulator {
+            guard let identity = captureIdentity(at: candidate.url) else { return .missing }
+            let fresh = worker.classify(candidate.url, identity: identity)
+            return fresh.group == .protected || fresh.simulator != device ? .protected : .unchanged
+        }
         if worker.isReleaseProtected(candidate.url) || (candidate.url.pathExtension.lowercased() == "app" && worker.isInstalled(candidate.url)) ||
             worker.cacheOwnerIsRunning(candidate.url) || worker.overlapsRunningApplication(candidate.url) { return .protected }
         return .unchanged
@@ -543,6 +570,10 @@ private final class Worker {
                 }
             } else if scope.kind == .releaseArchiveDiscovery {
                 discoverReleaseArchives(scope, root: root, rootIdentity: rootIdentity)
+            } else if scope.kind == .simulators || root.path == simulatorDeviceSetPath {
+                // Simulators are whole devices, never large files; the large-file
+                // scan leaves the device set alone.
+                if options.mode == .cleanup { discoverSimulators(scope, root: root, rootIdentity: rootIdentity) }
             } else {
                 walk(scope, directory: root, root: root, rootIdentity: rootIdentity, ancestors: [.init(url: root, identity: rootIdentity)], depth: 0)
             }
@@ -555,6 +586,7 @@ private final class Worker {
         // A large protected or unknown directory must not consume the verification
         // budget before positively identified rebuildable content has been checked.
         // Preserve discovery order within each priority and keep the same total bound.
+        measureSimulators(pendingCandidates)
         var rebuildableCandidates: [PendingCandidate] = [], otherCandidates: [PendingCandidate] = []
         for pending in pendingCandidates {
             guard !cancelled() else { break }
@@ -624,6 +656,12 @@ private final class Worker {
                     guard visit(child, scope: scope) else { break }
                 }
                 guard let identity = Scanner.captureIdentity(at: child) else { issue(scope, child, .unreadable, "文件已消失或无法读取元数据。"); continue }
+                if child.path == simulatorDeviceSetPath, Scanner.isDirectory(identity), !Scanner.isSymbolicLink(identity) {
+                    if options.mode == .cleanup, identity.device == rootIdentity.device, Scanner.canonicalURL(child)?.path == child.path {
+                        discoverSimulators(scope, root: child, rootIdentity: identity)
+                    }
+                    visitedRoots.append(child.path); continue
+                }
                 if options.mode == .largeFiles, Scanner.isRegular(identity),
                    developmentReason(child, identity: identity) == nil, !cloudPlaceholder(child),
                    (identity.sizeBytes < options.minimumFileBytes || options.maximumFileBytes.map({ identity.sizeBytes > $0 }) == true) { continue }
@@ -639,6 +677,72 @@ private final class Worker {
                 emit(scope: scope, url: child)
             }
         }
+    }
+
+    var simulatorDeviceSetPath: String { homeRelative(SpaceCleaningSimulators.deviceSetPath) }
+    var simulatorSizes: [String: (identity: SpaceCleaningFileIdentity, size: SpaceCleaningSimulators.Size)] = [:]
+    /// Devices are separate folder trees and are measured in parallel: walking
+    /// close to a million simulator files one by one dominated the scan.
+    func measureSimulators(_ pending: [PendingCandidate]) {
+        let devices = pending.filter { $0.url.deletingLastPathComponent().path == simulatorDeviceSetPath && Scanner.isDirectory($0.identity) }
+        guard !devices.isEmpty, !cancelled() else { return }
+        final class Results: @unchecked Sendable {
+            private let lock = NSLock()
+            private var values: [Int: SpaceCleaningSimulators.Size] = [:]
+            func set(_ index: Int, _ size: SpaceCleaningSimulators.Size) { lock.lock(); values[index] = size; lock.unlock() }
+            func get(_ index: Int) -> SpaceCleaningSimulators.Size? { lock.lock(); defer { lock.unlock() }; return values[index] }
+        }
+        let results = Results(), progress = SpaceCleaningSimulators.Progress(), group = DispatchGroup()
+        let queue = OperationQueue()
+        queue.maxConcurrentOperationCount = max(1, min(8, ProcessInfo.processInfo.activeProcessorCount))
+        let limit = options.maximumBulkEntries
+        for (index, device) in devices.enumerated() {
+            let url = device.url, identity = device.identity
+            group.enter()
+            queue.addOperation {
+                results.set(index, SpaceCleaningSimulators.measure(url, expected: identity, limit: limit, progress: progress))
+                group.leave()
+            }
+        }
+        let base = checked
+        while group.wait(timeout: .now() + 0.2) == .timedOut {
+            if cancelled() { progress.stop() }
+            checked = base + progress.entries
+            emit(scope: devices[0].scope, url: devices[0].root)
+        }
+        checked = base + progress.entries
+        for (index, device) in devices.enumerated() {
+            if let size = results.get(index) { simulatorSizes[device.url.path] = (device.identity, size) }
+        }
+    }
+    /// The record of a device folder directly inside the user's device set.
+    func simulatorRecord(_ url: URL) -> (device: SpaceCleaningSimulatorDevice, written: Date)? {
+        url.deletingLastPathComponent().path == simulatorDeviceSetPath ? SpaceCleaningSimulators.record(at: url) : nil
+    }
+    /// One item per device folder with a valid record. The device set's own
+    /// files and anything unrecognized are left alone.
+    func discoverSimulators(_ scope: SpaceCleaningScope, root: URL, rootIdentity: SpaceCleaningFileIdentity) {
+        guard let children = readChildren(root, scope: scope) else { return }
+        for child in children {
+            guard visit(child, scope: scope) else { break }
+            guard UUID(uuidString: child.lastPathComponent) != nil, let identity = Scanner.captureIdentity(at: child),
+                  Scanner.isDirectory(identity), !Scanner.isSymbolicLink(identity), identity.device == rootIdentity.device,
+                  Scanner.canonicalURL(child)?.path == child.path else { continue }
+            guard simulatorRecord(child) != nil else {
+                issue(scope, child, .unreadable, "无法读取这台模拟器的设备记录，未列出。"); continue
+            }
+            pendingCandidates.append(.init(url: child, identity: identity, scope: scope, root: root, rootIdentity: rootIdentity,
+                                           ancestors: [.init(url: root, identity: rootIdentity)]))
+        }
+    }
+    func simulatorClassification(_ url: URL, _ entry: (device: SpaceCleaningSimulatorDevice, written: Date)) -> Classification {
+        let assessment = SpaceCleaningSimulators.assess(entry.device, written: entry.written, now: now,
+            referenced: SpaceCleaningSimulators.isReferenced(entry.device, by: context.simulatorReferences),
+            runningInside: overlapsRunningApplication(url), toolAvailable: context.simulatorToolAvailable)
+        var result = Classification(kind: assessment.kind, group: assessment.group, reason: assessment.reason, impact: assessment.impact,
+                                    title: SpaceCleaningSimulators.title(entry.device), suggestion: assessment.suggestion)
+        result.simulator = entry.device
+        return result
     }
 
     func discoverReleaseArchives(_ scope: SpaceCleaningScope, root: URL, rootIdentity: SpaceCleaningFileIdentity) {
@@ -671,6 +775,8 @@ private final class Worker {
         var suggestion = false
         /// Measured and later verified as one folder (see `bulkMeasure`).
         var bulk = false
+        /// An Xcode simulator device, deleted only through Xcode's own tool.
+        var simulator: SpaceCleaningSimulatorDevice? = nil
     }
     struct Measurement { var logical: UInt64 = 0; var allocated: UInt64 = 0; var fingerprint: String?; var complete = true; var unsafe = false; var releaseContent = false; var cloudContent = false; var developmentContent = false; var exceededItemBound = false; var latestModified: Int64 = 0 }
 
@@ -681,6 +787,20 @@ private final class Worker {
             issue(scope, url, .duplicate, "同一文件身份已记录，不重复计算容量。"); return nil
         }
         var classification = classify(url, identity: identity)
+        if let device = classification.simulator {
+            // Sizes only: CoreSimulator owns the files, and the device is deleted
+            // as a whole through Xcode's tool, never file by file.
+            let size: SpaceCleaningSimulators.Size
+            if let measured = simulatorSizes[url.path], measured.identity == identity { size = measured.size }
+            else { size = SpaceCleaningSimulators.measure(url, expected: identity, limit: options.maximumBulkEntries, progress: .init()) }
+            var group = classification.group, reason = classification.reason
+            if !size.complete, group != .protected { group = .protected; reason = "模拟器文件数量超过统计上限或无法完整读取，本次保留。" }
+            return .init(scopeID: scope.id, url: url, rootURL: root, rootIdentity: rootIdentity, identity: identity,
+                         ancestorIdentities: ancestors, kind: classification.kind, group: group,
+                         title: classification.title ?? url.lastPathComponent, reason: reason, impact: classification.impact,
+                         logicalBytes: size.logical, allocatedBytes: size.allocated, isDirectory: true, sizeIsComplete: size.complete,
+                         isReviewSuggestion: classification.suggestion && group == .review ? true : nil, simulator: device)
+        }
         // Later protections replace the classification but keep its readable name.
         let knownTitle = classification.title
         var measurement = Measurement()
@@ -778,6 +898,11 @@ private final class Worker {
     func classify(_ url: URL, identity: SpaceCleaningFileIdentity) -> Classification {
         if Scanner.isSymbolicLink(identity) { return .init(kind: .symbolicLink, group: .protected, reason: "符号链接默认保留，未跟随目标。", impact: "链接大小不代表目标占用。") }
         if cloudPlaceholder(url) { return .init(kind: .cloudPlaceholder, group: .protected, reason: "云端内容尚未下载到本机，本次保留。", impact: "不触发下载，不计入本机可清理容量。") }
+        if Scanner.isDirectory(identity), let entry = simulatorRecord(url) { return simulatorClassification(url, entry) }
+        if within(url, SpaceCleaningSimulators.serviceDataPath) {
+            return .init(kind: .unsupported, group: .protected, reason: "Xcode 模拟器服务的内部数据，保留。",
+                         impact: "模拟器在「开发与归档」范围中按设备列出，只能整台删除。")
+        }
         if let reason = developmentReason(url, identity: identity) {
             return .init(kind: .developmentEnvironment, group: .protected, reason: reason,
                          impact: "依赖仍可能用于构建或调试，不提供内部文件清理。")
@@ -1015,6 +1140,9 @@ private final class Worker {
         return kind == .testResult ? (label as NSString).deletingPathExtension : label
     }
     func shouldAggregate(_ url: URL, scope: SpaceCleaningScope, identity: SpaceCleaningFileIdentity) -> Bool {
+        // CoreSimulator's files are never listed one by one; only its own folder
+        // is opened so that a wider scope still reaches the device set.
+        if within(url, SpaceCleaningSimulators.serviceDataPath) { return url.path != homeRelative(SpaceCleaningSimulators.serviceDataPath) }
         if developmentReason(url, identity: identity) != nil { return true }
         if isPackage(url) || isReleaseProtected(url) { return true }
         if options.mode == .largeFiles { return false }
@@ -1267,7 +1395,7 @@ private final class Worker {
     func stageFor(_ kind: SpaceCleaningScopeKind) -> SpaceCleaningStage {
         switch kind {
         case .browserCache, .packageCache, .diagnostics: .caches
-        case .derivedData, .development, .assistantData: .development
+        case .derivedData, .development, .assistantData, .simulators: .development
         case .downloads, .custom: .downloads
         case .archives, .releaseArchives, .releaseArchiveDiscovery, .installedApplications: .protection
         }

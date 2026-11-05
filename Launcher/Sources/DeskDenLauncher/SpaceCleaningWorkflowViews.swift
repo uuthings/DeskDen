@@ -279,7 +279,7 @@ struct SpaceCleaningHistoryView: View {
 
     private func itemIdentity(_ item: CleaningHistoryItemDisplay) -> some View {
         HStack(alignment: .center, spacing: 10) {
-            SpaceCleaningFileGlyph(category: CleaningFileCategory(url: item.originalURL, isDirectory: item.isDirectory ?? false))
+            SpaceCleaningFileGlyph(category: item.category)
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.name).font(.system(size: 12, weight: .medium)).lineLimit(2).truncationMode(.middle)
                     .accessibilityIdentifier("space-cleaning-history-name-" + item.id.uuidString)

@@ -49,7 +49,8 @@ enum CleaningScopeGroup: String, CaseIterable, Codable, Identifiable, Sendable {
         case .media: ["~/Pictures", "~/Music", "~/Movies"]
         case .caches: ["~/Library/Caches", "~/Library/Containers/com.apple.Safari/Data/Library/Caches", "~/.npm/_cacache",
                        "~/.cache/uv、~/.gradle、~/.cargo/registry 等工具缓存", "~/Library/Logs/DiagnosticReports"]
-        case .development: ["~/Developer", "~/Library/Developer/Xcode/DerivedData", "~/Library/Developer/Xcode/Archives", "~/Applications",
+        case .development: ["~/Developer", "~/Library/Developer/Xcode/DerivedData", "~/Library/Developer/CoreSimulator 中的 Xcode 模拟器",
+                            "~/Library/Developer/Xcode/Archives", "~/Applications",
                             "~/.codex 与 ~/.claude 的会话记录", "~/Library/Application Support 内的发布档案", "已登记的发布档案位置"]
         }
     }
@@ -61,7 +62,7 @@ enum CleaningScopeGroup: String, CaseIterable, Codable, Identifiable, Sendable {
         case .desktop: "检查桌面上的文件与目录，保留原始路径供你核对。"
         case .media: "检查用户媒体目录中的照片、视频、音频与归档。"
         case .caches: "识别已知应用缓存、包下载缓存和诊断记录，标明所属工具与删除后果。"
-        case .development: "检查开发目录、构建缓存、AI 助手会话记录、用户应用及归档，发布档案只核验保护状态。"
+        case .development: "检查开发目录、构建缓存、Xcode 模拟器、AI 助手会话记录、用户应用及归档，发布档案只核验保护状态。"
         }
     }
     var impact: String {
@@ -71,14 +72,14 @@ enum CleaningScopeGroup: String, CaseIterable, Codable, Identifiable, Sendable {
         case .desktop: "先确认文件用途与归属，再选择移入废纸篓或保留。"
         case .media: "不自动推断哪些媒体资料已经不再需要。"
         case .caches: "仅完整核验的可重建缓存可预选，部分内容会重新下载。"
-        case .development: "Git 资料、依赖、虚拟环境、已安装应用及发布原件保持保护；会话记录只在停止更新 3 天后提供。"
+        case .development: "Git 资料、依赖、虚拟环境、已安装应用及发布原件保持保护；会话记录只在停止更新 3 天后提供，正在使用的模拟器保留。"
         }
     }
     func includes(_ scope: SpaceCleaningScope, home: URL) -> Bool {
         switch scope.kind {
         case .downloads: return self == .downloads
         case .browserCache, .packageCache, .diagnostics: return self == .caches
-        case .derivedData, .development, .archives, .releaseArchives, .releaseArchiveDiscovery, .installedApplications, .assistantData:
+        case .derivedData, .development, .archives, .releaseArchives, .releaseArchiveDiscovery, .installedApplications, .assistantData, .simulators:
             return self == .development
         case .custom:
             let root = SpaceCleaningScanner.canonicalURL(home) ?? home.standardizedFileURL
@@ -115,14 +116,18 @@ struct CleaningItemDisplay: Identifiable, Sendable {
     let needsPurposeConfirmation: Bool
     let kind: SpaceCleaningKind
     let isDirectory: Bool
+    /// The last use of a simulator; the modification time otherwise.
     let modifiedDate: Date
+    /// An Xcode simulator: deleted through Xcode, never moved to the Trash.
+    var isSimulator = false
 
-    var fileCategory: CleaningFileCategory { .init(url: url, isDirectory: isDirectory) }
+    var fileCategory: CleaningFileCategory { isSimulator ? .simulator : .init(url: url, isDirectory: isDirectory) }
     var typeTitle: String { fileCategory.title(forExtension: url.pathExtension) }
     /// Personal-file rows already carry their useful facts. Only show an
     /// explanation when a scan rule actually changes the available action.
     var handlingNote: String? {
-        if group == .protected || group == .rebuildable || needsPurposeConfirmation || [.testApplication, .testArchive, .installerPackage, .downloadedDiskImage, .oldDiagnostic].contains(kind) {
+        if group == .protected || group == .rebuildable || needsPurposeConfirmation || isSimulator ||
+            [.testApplication, .testArchive, .installerPackage, .downloadedDiskImage, .oldDiagnostic].contains(kind) {
             return reason + " " + impact
         }
         return nil
@@ -162,6 +167,8 @@ struct CleaningItemDisplay: Identifiable, Sendable {
 /// or opens a file to determine its type.
 enum CleaningFileCategory: String, Sendable, CaseIterable {
     case folder, application, xcodeArchive, diskImage, installer, archive, pdf, document, image, video, audio, code, file
+    /// An Xcode simulator device, set by the scan result rather than a path.
+    case simulator
 
     init(url: URL, isDirectory: Bool) {
         let ext = url.pathExtension.lowercased()
@@ -196,6 +203,7 @@ enum CleaningFileCategory: String, Sendable, CaseIterable {
         case .audio: "waveform"
         case .code: "chevron.left.forwardslash.chevron.right"
         case .file: "doc"
+        case .simulator: "iphone"
         }
     }
     func title(forExtension ext: String) -> String {
@@ -213,6 +221,7 @@ enum CleaningFileCategory: String, Sendable, CaseIterable {
         case .audio: return prefix + "音频"
         case .code: return prefix + "代码"
         case .file: return prefix + "文件"
+        case .simulator: return "模拟器"
         }
     }
 }
@@ -230,6 +239,8 @@ struct CleaningHistoryItemDisplay: Identifiable, Sendable {
     let originalURL: URL
     let resultURL: URL?
     var isDirectory: Bool? = nil
+    var isSimulator = false
+    var category: CleaningFileCategory { isSimulator ? .simulator : .init(url: originalURL, isDirectory: isDirectory ?? false) }
 }
 
 struct CleaningHistoryBatchDisplay: Identifiable, Sendable {

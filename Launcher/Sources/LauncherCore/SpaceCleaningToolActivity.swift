@@ -205,6 +205,24 @@ public enum SpaceCleaningToolActivity {
         return result.sorted()
     }
 
+    /// Simulator UDIDs and device names that running processes refer to (see
+    /// `SpaceCleaningSimulators.references`). Only those values are kept. An
+    /// unreadable process table counts as referring to every simulator.
+    public static func currentSimulatorReferences() -> Set<String> {
+        let estimate = proc_listallpids(nil, 0)
+        guard estimate > 0, estimate < 1_000_000 else { return [SpaceCleaningSimulators.unknownReferences] }
+        var identifiers = [pid_t](repeating: 0, count: Int(estimate) + 64)
+        let count = identifiers.withUnsafeMutableBytes { proc_listallpids($0.baseAddress, Int32($0.count)) }
+        guard count > 0 else { return [SpaceCleaningSimulators.unknownReferences] }
+        var result = Set<String>()
+        var reader = ArgumentReader()
+        for pid in identifiers.prefix(min(Int(count), identifiers.count)) where pid > 0 {
+            guard let parsed = reader.arguments(of: pid) else { continue }
+            result.formUnion(SpaceCleaningSimulators.references(executable: parsed.executable, arguments: parsed.arguments))
+        }
+        return result
+    }
+
     private struct ArgumentReader {
         private var buffer: [UInt8] = []
         mutating func arguments(of pid: pid_t) -> (executable: String, arguments: [String])? {

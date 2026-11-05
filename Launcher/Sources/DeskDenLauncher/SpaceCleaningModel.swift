@@ -163,6 +163,9 @@ import Quartz
     var selectedBytes: UInt64 { selectedByteCache }
     var selectedAllocatedBytes: UInt64 { selectedAllocatedByteCache }
     var selectedCount: Int { selectedItemCache.count }
+    /// Simulators in the selection are deleted through Xcode and cannot reach
+    /// the Trash, so they need the irreversible-action acknowledgement.
+    var selectedSimulatorCount: Int { selectedItemCache.reduce(0) { $0 + ($1.isSimulator ? 1 : 0) } }
     var isBusy: Bool { task != nil }
     var canProcess: Bool { !isBusy && !frozenForQuit && !requiresRescan && historyError == nil && selectedCount > 0 }
     var animationActive: Bool { windowVisible && [.start, .scope, .scanning].contains(screen) && !reduceMotion && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion && dialog == nil }
@@ -476,7 +479,7 @@ import Quartz
     func requestCleanup() {
         guard canProcess else { return }
         requestConfirmation()
-        if method == .trash { executeConfirmed(permanent: false, remember: rememberMethod) }
+        if method == .trash && selectedSimulatorCount == 0 { executeConfirmed(permanent: false, remember: rememberMethod) }
     }
     func chooseMethod(_ choice: SpaceCleaningMethod) {
         guard !isBusy, !frozenForQuit, dialog != .confirm else { return }
@@ -706,6 +709,9 @@ import Quartz
               !permanent || acknowledgement, let historyStore else { return }
         let selected = selectedItems.compactMap { candidates[$0.id] }
         guard selected.count == confirmedIDs.count else { return }
+        // Simulators never reach the Trash; deleting one always needs the acknowledgement.
+        let simulatorsConfirmed = acknowledgement
+        guard simulatorsConfirmed || !selected.contains(where: { $0.simulator != nil }) else { return }
         let chosen: SpaceCleaningMethod = permanent ? .permanent : .trash
         if remember { savePreference(chosen) } else if hasSavedMethod { clearPreference() }
         operationDestination = .completed; closeDialog(); beginProcessing(count: selected.count)
@@ -723,13 +729,14 @@ import Quartz
                 attempted.append(candidate)
                 let record = await Task.detached(priority: .utility) {
                     SpaceCleaningTransaction.execute(candidate: candidate, operationID: operationID, method: chosen,
-                        permanentConfirmed: permanent, mover: mover, isCancelled: { cancelledBeforeItem },
+                        permanentConfirmed: permanent || (candidate.simulator != nil && simulatorsConfirmed), mover: mover,
+                        isCancelled: { cancelledBeforeItem },
                         validatePolicy: { item in
-                            let context = Self.context(home: home, runtime: runtime, declarations: declarations)
+                            let context = Self.context(home: home, runtime: runtime, declarations: declarations, simulators: item.simulator != nil)
                             let validation = SpaceCleaningScanner.revalidate(candidate: item, context: context, isCancelled: { cancelledBeforeItem })
                             return validation == .unchanged ? nil : "文件内容、使用状态或保护规则已变化，已跳过；请重新扫描。"
                         }, validateActivity: { candidate, currentURL in
-                            let context = Self.context(home: home, runtime: runtime, declarations: declarations)
+                            let context = Self.context(home: home, runtime: runtime, declarations: declarations, simulators: candidate.simulator != nil)
                             if Self.runningAt(currentURL, context: context) { return "文件关联的应用正在运行，已保留项目。" }
                             return SpaceCleaningScanner.validatePolicy(candidate: candidate, context: context) == .unchanged ? nil : "使用状态或保护规则已变化，已保留项目。"
                         }, persist: persistence.record)
@@ -760,7 +767,7 @@ import Quartz
                 let restored = await Task.detached(priority: .utility) {
                     SpaceCleaningTransaction.restore(record: record, conflict: renameConflicts ? .rename : .skip,
                         isCancelled: { false }, validatePolicy: { candidate in
-                            let context = Self.context(home: home, runtime: runtime, declarations: declarations)
+                            let context = Self.context(home: home, runtime: runtime, declarations: declarations, simulators: false)
                             return record.locationURL.map { Self.runningAt($0, context: context) } == true ? "项目正在废纸篓中运行，请先退出相关应用。" : nil
                         }, persist: persistence.record)
                 }.value
@@ -785,7 +792,7 @@ import Quartz
                 let purged = await Task.detached(priority: .utility) {
                     SpaceCleaningTransaction.purge(record: record, permanentConfirmed: true, isCancelled: { false },
                         validatePolicy: { candidate in
-                            let context = Self.context(home: home, runtime: runtime, declarations: declarations)
+                            let context = Self.context(home: home, runtime: runtime, declarations: declarations, simulators: false)
                             if let location = record.locationURL, Self.runningAt(location, context: context) { return "项目正在废纸篓中运行，请先退出相关应用。" }
                             return SpaceCleaningScanner.validatePolicy(candidate: candidate, context: context) == .unchanged ? nil : "当前用途或运行状态受保护，未永久删除。"
                         }, persist: persistence.record)
@@ -904,14 +911,16 @@ import Quartz
     private func rebuildBatches() {
         batches = Dictionary(grouping: records, by: \.operationID).map { id, entries in
             let entries = entries.sorted { $0.createdAt < $1.createdAt }
-            return CleaningHistoryBatchDisplay(id: id, date: entries.first!.createdAt, method: entries.first!.method,
+            // A Trash batch keeps its method when simulators in it were deleted through Xcode.
+            return CleaningHistoryBatchDisplay(id: id, date: entries.first!.createdAt,
+                method: entries.contains { $0.method == .trash } ? .trash : .permanent,
                 items: entries.map { record in
                     CleaningHistoryItemDisplay(id: record.id, name: record.candidate.title, bytes: record.candidate.logicalBytes,
                         allocatedBytes: record.candidate.allocatedBytes,
                         state: record.state, statusText: Self.stateTitle(record.state), explanation: record.explanation + (record.state == .needsReview ? record.previousTrashURL.map { " 上次废纸篓位置：" + $0.path } ?? "" : ""),
                         canRestore: record.canRestore && historyError == nil, canPurge: record.canPurge && historyError == nil,
                         originalURL: record.originalURL, resultURL: record.restoredURL ?? record.locationURL,
-                        isDirectory: record.candidate.isDirectory)
+                        isDirectory: record.candidate.isDirectory, isSimulator: record.candidate.simulator != nil)
                 }, bytes: entries.reduce(0) { $0 &+ $1.candidate.logicalBytes })
         }.sorted { $0.date > $1.date }
         currentBatch = batches.first { $0.id == currentOperationID }
@@ -937,7 +946,9 @@ import Quartz
               subtitle: item.url.deletingLastPathComponent().path, reason: item.reason, impact: item.impact,
               isSelectable: item.canProcess, needsPurposeConfirmation: item.canConfirmTestPurpose,
               kind: item.kind, isDirectory: item.isDirectory,
-              modifiedDate: Date(timeIntervalSince1970: Double(item.identity.modifiedSeconds) + Double(item.identity.modifiedNanoseconds) / 1_000_000_000))
+              modifiedDate: item.simulator?.lastUsedAt ??
+                Date(timeIntervalSince1970: Double(item.identity.modifiedSeconds) + Double(item.identity.modifiedNanoseconds) / 1_000_000_000),
+              isSimulator: item.simulator != nil)
     }
     func selectedScopes(_ context: SpaceCleaningContext) -> [SpaceCleaningScope] {
         let global = SpaceCleaningScanner.globalScopes(context: context)
@@ -962,10 +973,16 @@ import Quartz
         }
     }
     private func makeContext() -> SpaceCleaningContext { Self.context(home: homeDirectory, runtime: runtime, declarations: declarations) }
-    private nonisolated static func context(home: URL, runtime: SpaceCleaningRuntimeContext, declarations: [SpaceCleaningTestDeclaration]) -> SpaceCleaningContext {
+    /// Reading every process's arguments for simulator references takes tens of
+    /// milliseconds, so per-item checks gather them only for a simulator. Without
+    /// them a simulator counts as unprocessable, never as unused.
+    private nonisolated static func context(home: URL, runtime: SpaceCleaningRuntimeContext, declarations: [SpaceCleaningTestDeclaration],
+                                            simulators: Bool = true) -> SpaceCleaningContext {
         .init(homeDirectory: home, runningApplicationURLs: runtime.runningURLs(), testDeclarations: declarations,
               activeToolNames: SpaceCleaningToolActivity.currentIdentities(),
-              runningExecutablePaths: SpaceCleaningToolActivity.currentExecutablePaths())
+              runningExecutablePaths: SpaceCleaningToolActivity.currentExecutablePaths(),
+              simulatorReferences: simulators ? SpaceCleaningToolActivity.currentSimulatorReferences() : [],
+              simulatorToolAvailable: simulators && SpaceCleaningSimulators.toolURL() != nil)
     }
     private func acceptProgress(_ progress: SpaceCleaningProgress) {
         checkedCount = progress.checkedEntries; scanPhase = progress.phase

@@ -498,8 +498,8 @@ struct SpaceCleaningResultsView: View {
             Text(model.selectedCount == 0 ? "尚未选择文件" : "已选 \(model.selectedCount) 项 · 占用 \(SpaceCleaningFormat.bytes(model.selectedAllocatedBytes))")
                 .font(.system(size: 12, weight: .medium)).monospacedDigit().lineLimit(1)
             HStack(spacing: 8) {
-                Text(model.method == .trash ? "废纸篓内可恢复" : "永久删除无法恢复")
-                    .font(.system(size: 11)).foregroundStyle(model.method == .trash ? palette.muted : palette.warning)
+                Text(model.method == .permanent ? "永久删除无法恢复" : model.selectedSimulatorCount > 0 ? "模拟器无法恢复" : "废纸篓内可恢复")
+                    .font(.system(size: 11)).foregroundStyle(model.method == .trash && model.selectedSimulatorCount == 0 ? palette.muted : palette.warning)
                     .frame(width: 110, alignment: .leading)
                 HStack(spacing: 10) {
                     Button(model.onlySelected ? "返回分类" : "查看已选") { model.toggleSelectedFilter() }
@@ -540,22 +540,35 @@ struct SpaceCleaningResultsView: View {
         }.buttonStyle(WBButtonStyle(primary: model.method == .trash, destructive: model.method == .permanent))
             .fixedSize().disabled(!model.canProcess).accessibilityIdentifier("space-cleaning-cleanup")
     }
+    /// Permanent deletion, or a Trash batch with simulators: those cannot reach
+    /// the Trash and are deleted through Xcode.
+    private var confirmationDetail: String {
+        let simulators = model.selectedSimulatorCount, others = model.selectedCount - simulators
+        if model.method == .permanent {
+            return "这些文件不会进入废纸篓，清理记录只能保留操作信息，无法恢复文件。" +
+                (simulators > 0 ? "其中 \(simulators) 台模拟器通过 Xcode 的 simctl 删除。" : "")
+        }
+        return (others > 0 ? "\(others) 项移入废纸篓，可以恢复；" : "") +
+            "\(simulators) 台模拟器不能移入废纸篓，将通过 Xcode 的 simctl 直接删除，无法恢复。"
+    }
     private var permanentConfirmation: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let permanent = model.method == .permanent
+        return VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("永久删除这 \(model.selectedCount) 项？", systemImage: "trash.slash").font(.system(size: 14, weight: .medium))
+                Label(permanent ? "永久删除这 \(model.selectedCount) 项？" : "处理这 \(model.selectedCount) 项？", systemImage: "trash.slash")
+                    .font(.system(size: 14, weight: .medium))
                 Spacer()
                 Text("磁盘占用 " + SpaceCleaningFormat.bytes(model.selectedAllocatedBytes)).font(.system(size: 14)).monospacedDigit()
             }
-            Text("这些文件不会进入废纸篓，清理记录只能保留操作信息，无法恢复文件。")
-                .font(.system(size: 11)).foregroundStyle(palette.secondary)
+            Text(confirmationDetail)
+                .font(.system(size: 11)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
-                Toggle("我理解永久删除无法恢复", isOn: $model.acknowledgement)
+                Toggle(permanent ? "我理解永久删除无法恢复" : "我理解模拟器删除后无法恢复", isOn: $model.acknowledgement)
                     .toggleStyle(.checkbox).font(.system(size: 11)).clickableCursor()
                     .accessibilityIdentifier("space-cleaning-permanent-acknowledgement")
                 Spacer()
                 Button("取消", action: model.closeDialog).buttonStyle(WBButtonStyle())
-                Button("确认永久删除") { model.executeConfirmed(permanent: true, remember: model.rememberMethod) }
+                Button(permanent ? "确认永久删除" : "确认处理") { model.executeConfirmed(permanent: permanent, remember: model.rememberMethod) }
                     .buttonStyle(WBButtonStyle(destructive: true)).disabled(!model.canProcess || !model.acknowledgement)
                     .accessibilityIdentifier("space-cleaning-confirm-execute")
             }
@@ -619,7 +632,7 @@ private extension CleaningFileCategory {
         switch self {
         case .folder: palette.accent
         case .diskImage: Color(nsColor: .systemBlue)
-        case .application, .xcodeArchive: Color(nsColor: .systemIndigo)
+        case .application, .xcodeArchive, .simulator: Color(nsColor: .systemIndigo)
         case .installer, .archive: Color(nsColor: .systemOrange)
         case .pdf: Color(nsColor: .systemRed)
         case .document: Color(nsColor: .systemBlue)
