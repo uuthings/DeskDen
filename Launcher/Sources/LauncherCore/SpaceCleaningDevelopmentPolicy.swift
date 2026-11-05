@@ -52,7 +52,7 @@ enum SpaceCleaningDevelopmentPolicy {
                 if let value = SpaceCleaningScanner.captureIdentity(at: current),
                    value.mode & UInt32(S_IFMT) == UInt32(S_IFDIR),
                    SpaceCleaningScanner.canonicalURL(current)?.path == current.path,
-                   let marker = SpaceCleaningScanner.captureIdentity(at: current.appendingPathComponent("pyvenv.cfg")),
+                   let marker = SpaceCleaningScanner.captureIdentity(at: current.appendingPathComponent("pyvenv.cfg", isDirectory: false)),
                    marker.mode & UInt32(S_IFMT) == UInt32(S_IFREG) {
                     result = "此目录含有 Python 虚拟环境标记，保留整个环境。"; break
                 }

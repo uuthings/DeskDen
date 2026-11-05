@@ -858,7 +858,10 @@ final class SpaceCleaningCoreTests: XCTestCase {
             XCTAssertEqual(candidate.logicalBytes, 73)
             XCTAssertEqual(SpaceCleaningScanner.revalidate(candidate: candidate, context: context), .unchanged)
             XCTAssertTrue(report.candidates.filter { $0.kind == .runningApplication }.allSatisfy { !$0.canProcess })
-            XCTAssertTrue(report.reachedLimit)
+            // The protected browser is only measured within its own bound and
+            // reported as partial; it no longer exhausts the shared budget.
+            XCTAssertTrue(report.issues.contains { $0.kind == .entryLimit })
+            XCTAssertFalse(report.coverageComplete)
             XCTAssertLessThanOrEqual(report.checkedEntries, 16)
         }
     }
@@ -927,6 +930,101 @@ extension SpaceCleaningCoreTests {
                 let unknown = scan(home, at: relative, context: .init(homeDirectory: home, activeToolNames: SpaceCleaningToolActivity.unreadableProcessTable))
                 XCTAssertTrue(unknown.candidates.allSatisfy { !$0.canProcess }, relative)
             }
+        }
+    }
+}
+
+// MARK: - Verification budget per candidate
+
+extension SpaceCleaningCoreTests {
+    private func files(_ home: URL, _ directory: String, count: Int) throws {
+        for index in 0..<count { try file(home, directory + "/entry-\(index)") }
+    }
+    private func packageCacheScopes(_ home: URL) -> [SpaceCleaningScope] {
+        SpaceCleaningScanner.recommendedScopes(context: .init(homeDirectory: home)).filter { [.browserCache, .packageCache].contains($0.kind) }
+    }
+
+    func testOversizedRebuildableCacheLeavesOtherCachesVerifiable() throws {
+        try fixture { home in
+            try files(home, ".npm/_cacache/content-v2", count: 30)
+            try files(home, "Library/Caches/Homebrew/downloads", count: 1)
+            try files(home, "Library/Caches/pip/http-v2", count: 1)
+            let report = SpaceCleaningScanner.scan(scopes: packageCacheScopes(home), context: .init(homeDirectory: home),
+                                                   options: .init(maximumEntries: 20))
+            let oversized = try XCTUnwrap(report.candidates.first { $0.title == "content-v2" })
+            XCTAssertFalse(oversized.sizeIsComplete)
+            XCTAssertFalse(oversized.canProcess)
+            XCTAssertTrue(oversized.reason.contains("单项核验上限"), oversized.reason)
+            XCTAssertTrue(try XCTUnwrap(report.candidates.first { $0.title == "downloads" }).isRecommendedForSelection)
+            XCTAssertTrue(try XCTUnwrap(report.candidates.first { $0.title == "http-v2" }).isRecommendedForSelection)
+            XCTAssertTrue(report.reachedLimit)
+            XCTAssertFalse(report.complete)
+        }
+    }
+
+    func testClosingTheBrowserNoLongerHidesPackageCaches() throws {
+        try fixture { home in
+            try files(home, "Library/Caches/Google/Chrome/Default", count: 15)
+            try files(home, ".npm/_cacache/content-v2", count: 18)
+            try files(home, "Library/Caches/pip/http-v2", count: 1)
+            for running in [[home.appendingPathComponent("Google Chrome.app")], []] {
+                let report = SpaceCleaningScanner.scan(scopes: packageCacheScopes(home),
+                    context: .init(homeDirectory: home, runningApplicationURLs: running), options: .init(maximumEntries: 20))
+                let selected = Set(report.candidates.filter(\.isRecommendedForSelection).map(\.title))
+                XCTAssertTrue(selected.isSuperset(of: ["content-v2", "http-v2"]), "\(running) \(selected)")
+                XCTAssertEqual(selected.contains("Default"), running.isEmpty)
+            }
+        }
+    }
+
+    func testSharedVerificationBudgetStillBoundsTotalWork() throws {
+        try fixture { home in
+            // Verified in discovery order: npm, Homebrew, then pip.
+            try files(home, ".npm/_cacache/index-v5", count: 15)
+            try files(home, "Library/Caches/Homebrew/downloads", count: 15)
+            try files(home, "Library/Caches/pip/http-v2", count: 15)
+            let report = SpaceCleaningScanner.scan(scopes: packageCacheScopes(home), context: .init(homeDirectory: home),
+                                                   options: .init(maximumEntries: 20, maximumVerificationEntries: 30))
+            XCTAssertTrue(try XCTUnwrap(report.candidates.first { $0.title == "index-v5" }).isRecommendedForSelection)
+            XCTAssertTrue(try XCTUnwrap(report.candidates.first { $0.title == "downloads" }).isRecommendedForSelection)
+            let unverified = try XCTUnwrap(report.candidates.first { $0.title == "http-v2" })
+            XCTAssertFalse(unverified.sizeIsComplete)
+            XCTAssertFalse(unverified.canProcess)
+            XCTAssertTrue(report.reachedLimit)
+            XCTAssertTrue(report.issues.contains { $0.kind == .entryLimit })
+            // Three discovered directories plus at most 30 verified entries.
+            XCTAssertLessThanOrEqual(report.checkedEntries, 3 + 30)
+        }
+    }
+
+    func testNestedReleaseMaterialStillProtectsTheMeasuredDirectory() throws {
+        try fixture { home in
+            try file(home, "Library/Caches/pip/http-v2/plain/data")
+            try file(home, "Library/Caches/pip/wheels/nested/ReleaseArchives/1.0/App.dmg")
+            try file(home, "Library/Caches/pip/selfcheck/Build.xcarchive/Distributions/record.plist")
+            try file(home, "Library/Caches/pip/selfcheck/Build.xcarchive/Products/App")
+            let report = scan(home, at: "Library/Caches/pip")
+            XCTAssertTrue(try XCTUnwrap(report.candidates.first { $0.title == "http-v2" }).isRecommendedForSelection)
+            for title in ["wheels", "selfcheck"] {
+                let candidate = try XCTUnwrap(report.candidates.first { $0.title == title })
+                XCTAssertEqual(candidate.kind, .releaseMaterial, title)
+                XCTAssertFalse(candidate.canProcess, title)
+            }
+        }
+    }
+
+    func testItemDepthBoundDoesNotStopLaterVerification() throws {
+        try fixture { home in
+            try file(home, "Builds/A.app/Contents/nested/deeper/file")
+            try file(home, "Builds/B.app/Contents")
+            let report = scan(home, at: "Builds", options: .init(maximumDepth: 1))
+            let deep = try XCTUnwrap(report.candidates.first { $0.title == "A.app" })
+            XCTAssertFalse(deep.sizeIsComplete)
+            XCTAssertFalse(deep.canConfirmTestPurpose)
+            let shallow = try XCTUnwrap(report.candidates.first { $0.title == "B.app" })
+            XCTAssertTrue(shallow.sizeIsComplete)
+            XCTAssertTrue(shallow.canConfirmTestPurpose)
+            XCTAssertTrue(report.reachedLimit)
         }
     }
 }

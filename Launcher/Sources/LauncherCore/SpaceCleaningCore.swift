@@ -65,15 +65,22 @@ public struct SpaceCleaningContext: Sendable {
 }
 public enum SpaceCleaningScanMode: String, Codable, CaseIterable, Sendable { case cleanup, largeFiles }
 public struct SpaceCleaningOptions: Equatable, Sendable {
+    /// Discovery bound, and the bound for verifying any single directory candidate.
     public var maximumEntries: Int
+    /// Total entries the verification phase may read across all candidates.
+    /// One oversized candidate only stays unverified itself; this bound keeps
+    /// the overall work limited.
+    public var maximumVerificationEntries: Int
     public var maximumDepth: Int
     public var diagnosticMinimumAge: TimeInterval
     public var mode: SpaceCleaningScanMode
     public var minimumFileBytes: UInt64
     public var maximumFileBytes: UInt64?
-    public init(maximumEntries: Int = 100_000, maximumDepth: Int = 32, diagnosticMinimumAge: TimeInterval = 30 * 86_400,
-                mode: SpaceCleaningScanMode = .cleanup, minimumFileBytes: UInt64 = 100_000_000, maximumFileBytes: UInt64? = nil) {
+    public init(maximumEntries: Int = 100_000, maximumVerificationEntries: Int? = nil, maximumDepth: Int = 32,
+                diagnosticMinimumAge: TimeInterval = 30 * 86_400, mode: SpaceCleaningScanMode = .cleanup,
+                minimumFileBytes: UInt64 = 100_000_000, maximumFileBytes: UInt64? = nil) {
         self.maximumEntries = min(1_000_000, max(1, maximumEntries))
+        self.maximumVerificationEntries = min(5_000_000, max(self.maximumEntries, maximumVerificationEntries ?? self.maximumEntries * 5))
         self.maximumDepth = min(128, max(1, maximumDepth))
         self.diagnosticMinimumAge = diagnosticMinimumAge.isFinite ? max(0, diagnosticMinimumAge) : 30 * 86_400
         let minimum = max(1, minimumFileBytes)
@@ -313,9 +320,7 @@ public enum SpaceCleaningScanner {
         guard !isCloudPlaceholder(at: candidate.url), !candidate.ancestorIdentities.contains(where: { isCloudPlaceholder(at: $0.url) }) else { return .protected }
         let worker = Worker(context: context, options: .init(), now: Date(), cancelled: { false }, progress: { _ in })
         if worker.isReleaseProtected(candidate.url) || (candidate.url.pathExtension.lowercased() == "app" && worker.isInstalled(candidate.url)) ||
-            worker.cacheOwnerIsRunning(candidate.url) || context.runningApplicationURLs.contains(where: {
-                worker.overlaps(candidate.url.path, worker.canonicalPath($0))
-            }) { return .protected }
+            worker.cacheOwnerIsRunning(candidate.url) || worker.overlapsRunningApplication(candidate.url) { return .protected }
         return .unchanged
     }
 
@@ -394,6 +399,9 @@ private final class Worker {
     let metadata: SpaceCleaningMetadataReader
     let home: URL
     let runningBundleIdentifiers: Set<String>
+    /// Resolved once per worker: every classification compares against them.
+    let runningPaths: [String]
+    let protectedReleasePaths: [String]
     var candidates: [SpaceCleaningCandidate] = []
     var issues: [SpaceCleaningIssue] = []
     var checked = 0
@@ -403,6 +411,7 @@ private final class Worker {
     var phaseChecked = 0
     var phaseLimited = false
     func markLimit() { limit = true; phaseLimited = true }
+    var phaseBudget: Int { phase == .discovering ? options.maximumEntries : options.maximumVerificationEntries }
     var visitedFiles: Set<String> = []
     var visitedRoots: [String] = []
     var completedScopes = 0
@@ -431,7 +440,11 @@ private final class Worker {
         self.metadata = metadata
         home = Scanner.canonicalURL(context.homeDirectory) ?? context.homeDirectory
         runningBundleIdentifiers = Set(context.runningApplicationURLs.compactMap { Bundle(url: $0)?.bundleIdentifier?.lowercased() })
+        func resolved(_ url: URL) -> String { Scanner.canonicalURL(url)?.path ?? url.standardizedFileURL.path }
+        runningPaths = context.runningApplicationURLs.map(resolved)
+        protectedReleasePaths = context.protectedReleaseURLs.map(resolved)
     }
+    func overlapsRunningApplication(_ url: URL) -> Bool { runningPaths.contains { overlaps(url.path, $0) } }
 
     func scan(_ scopes: [SpaceCleaningScope]) -> SpaceCleaningReport {
         totalScopes = scopes.count
@@ -584,7 +597,7 @@ private final class Worker {
     }
 
     struct Classification { var kind: SpaceCleaningKind; var group: SpaceCleaningGroup; var reason: String; var impact: String; var testable = false }
-    struct Measurement { var logical: UInt64 = 0; var allocated: UInt64 = 0; var fingerprint: String?; var complete = true; var unsafe = false; var releaseContent = false; var cloudContent = false; var developmentContent = false }
+    struct Measurement { var logical: UInt64 = 0; var allocated: UInt64 = 0; var fingerprint: String?; var complete = true; var unsafe = false; var releaseContent = false; var cloudContent = false; var developmentContent = false; var exceededItemBound = false }
 
     func makeCandidate(_ url: URL, identity: SpaceCleaningFileIdentity, scope: SpaceCleaningScope, root: URL,
                        rootIdentity: SpaceCleaningFileIdentity, ancestors: [SpaceCleaningPathIdentity]) -> SpaceCleaningCandidate? {
@@ -626,7 +639,9 @@ private final class Worker {
         } else if !measurement.complete {
             let alreadyProtected = classification.group == .protected && !classification.testable
             classification.group = .protected
-            classification.reason = alreadyProtected ? classification.reason + "仅完成部分容量统计。" : "内容核验未完成，本次保留；可缩小扫描范围后重试。"
+            classification.reason = alreadyProtected ? classification.reason + "仅完成部分容量统计。"
+                : measurement.exceededItemBound ? "此目录内容超过单项核验上限，本次保留；其他项目不受影响。"
+                : "内容核验未完成，本次保留；可缩小扫描范围后重试。"
             classification.testable = false
         } else if measurement.releaseContent && classification.group != .protected {
             classification = .init(kind: .releaseMaterial, group: .protected, reason: "目录包含发布材料，保留整个目录。", impact: "请单独核对原件与副本。")
@@ -658,7 +673,7 @@ private final class Worker {
         }
         if isReleaseProtected(url) { return .init(kind: url.pathExtension.lowercased() == "xcarchive" ? .releaseArchive : .releaseMaterial,
                                                   group: .protected, reason: "正式发布档案或关联材料，保留原件。", impact: "用于发布、更新和问题定位。") }
-        if context.runningApplicationURLs.contains(where: { overlaps(url.path, canonicalPath($0)) }) || cacheOwnerIsRunning(url) {
+        if overlapsRunningApplication(url) || cacheOwnerIsRunning(url) {
             return .init(kind: .runningApplication, group: .protected, reason: "关联应用或开发工具正在运行，本次保留。", impact: "退出相关应用后重新扫描。")
         }
         if Scanner.isRegular(identity), identity.linkCount > 1 { return .init(kind: .hardLink, group: .protected, reason: "文件存在多个硬链接，默认保留。", impact: "删除一个路径不等于释放对应空间。") }
@@ -716,8 +731,10 @@ private final class Worker {
                 result.complete = false; result.cloudContent = true
                 issue(scope, directory, .cloudPlaceholder, "目录尚未下载到本机，未读取其中内容。"); continue
             }
+            // A per-item bound leaves only this candidate unverified; the shared
+            // verification budget (visit) still stops the phase when exhausted.
             guard depth <= options.maximumDepth else {
-                if !protectedBudget { markLimit() }
+                if !protectedBudget { limit = true; result.exceededItemBound = true }
                 result.complete = false; issue(scope, directory, .depthLimit, "已到达目录内容核验深度上限。"); break
             }
             guard let identity = Scanner.captureIdentity(at: directory), Scanner.isDirectory(identity), identity.device == rootIdentity.device,
@@ -727,8 +744,8 @@ private final class Worker {
             for child in children {
                 guard measuredEntries < measurementLimit else {
                     result.complete = false
-                    if !protectedBudget { markLimit() }
-                    issue(scope, root, .entryLimit, protectedBudget ? "受保护目录仅完成有界容量统计，文件继续保留。" : "目录内容超出本次核验上限。")
+                    if !protectedBudget { limit = true; result.exceededItemBound = true }
+                    issue(scope, root, .entryLimit, protectedBudget ? "受保护目录仅完成有界容量统计，文件继续保留。" : "此目录内容超过单项核验上限，本次保留；其他项目继续核验。")
                     break measurementLoop
                 }
                 guard visit(child, scope: scope) else { result.complete = false; break }
@@ -747,7 +764,7 @@ private final class Worker {
                     continue
                 }
                 if childIdentity.device != rootIdentity.device { result.unsafe = true; continue }
-                if strongRoot || isStrongReleaseProtected(child) || (!generated && !allowBundleLinks && isReleaseProtected(child)) { result.releaseContent = true }
+                if strongRoot || entryAddsStrongReleaseProtection(child) || (!generated && !allowBundleLinks && hasReleaseMaterialName(child)) { result.releaseContent = true }
                 if Scanner.isSymbolicLink(childIdentity) {
                     let target = (try? FileManager.default.destinationOfSymbolicLink(atPath: child.path)) ?? ""
                     hash.update(data: Data("link:\(target.utf8.count):\(target)\n".utf8))
@@ -834,13 +851,18 @@ private final class Worker {
         }
         return false
     }
-    func isReleaseProtected(_ url: URL) -> Bool {
-        if isStrongReleaseProtected(url) { return true }
+    func isReleaseProtected(_ url: URL) -> Bool { isStrongReleaseProtected(url) || hasReleaseMaterialName(url) }
+    func hasReleaseMaterialName(_ url: URL) -> Bool {
         let ext = url.pathExtension.lowercased(), name = url.lastPathComponent.lowercased()
         return ext == "dsym" || ["appcast.xml", "appcast.json", "sha256sums", "sha256sums.txt", "checksums.txt", "distribution-summary.plist"].contains(name)
     }
     func isStrongReleaseProtected(_ url: URL) -> Bool {
-        if context.protectedReleaseURLs.contains(where: { overlaps(url.path, canonicalPath($0)) }) || url.pathComponents.contains(where: { $0.lowercased() == "releasearchives" }) { return true }
+        let path = url.path
+        if protectedReleasePaths.contains(where: { overlaps(path, $0) }) { return true }
+        // An ASCII-lowercased substring test only skips work; the component rules decide.
+        let lowered = path.lowercased()
+        if lowered.contains("releasearchives"), url.pathComponents.contains(where: { $0.lowercased() == "releasearchives" }) { return true }
+        guard lowered.contains(".xcarchive") else { return false }
         var parent = url
         while parent.path != "/" {
             if parent.pathExtension.lowercased() == "xcarchive", archiveHasDistributionRecords(parent) { return true }
@@ -849,6 +871,14 @@ private final class Worker {
             parent = next
         }
         return false
+    }
+    /// Per-entry form used while measuring a tree whose root was already checked
+    /// with isStrongReleaseProtected: every in-tree ancestor is checked when it
+    /// is visited, so only the entry's own name and records are new evidence.
+    func entryAddsStrongReleaseProtection(_ url: URL) -> Bool {
+        if url.lastPathComponent.lowercased() == "releasearchives" { return true }
+        if url.pathExtension.lowercased() == "xcarchive", archiveHasDistributionRecords(url) { return true }
+        return !protectedReleasePaths.isEmpty && protectedReleasePaths.contains { overlaps(url.path, $0) }
     }
     func archiveHasDistributionRecords(_ archive: URL) -> Bool {
         // These are Organizer distribution records, not an inference from an App's
@@ -907,8 +937,10 @@ private final class Worker {
     }
     func visit(_ url: URL, scope: SpaceCleaningScope) -> Bool {
         guard !cancelled() else { return false }
-        guard phaseChecked < options.maximumEntries else {
-            if !phaseLimited { issue(scope, url, .entryLimit, "已到达本次扫描条目上限，结果不完整。") }
+        guard phaseChecked < phaseBudget else {
+            if !phaseLimited {
+                issue(scope, url, .entryLimit, phase == .discovering ? "已到达本次扫描条目上限，结果不完整。" : "已到达本次核验总量上限，其余项目保留。")
+            }
             markLimit(); return false
         }
         checked += 1; phaseChecked += 1; emit(scope: scope, url: url); return true
@@ -944,7 +976,7 @@ private final class Worker {
               let handle = fdopendir(descriptor) else { close(descriptor); issue(scope, url, .unreadable, "目录句柄不可用。"); return nil }
         defer { closedir(handle) }
         metadata.willEnumerate(url)
-        var children: [URL] = []
+        var names: [(name: String, type: UInt8)] = []
         while true {
             if cancelled() { return nil }
             errno = 0
@@ -956,18 +988,24 @@ private final class Worker {
                 $0.withMemoryRebound(to: CChar.self, capacity: MemoryLayout.size(ofValue: entry.pointee.d_name)) { String(cString: $0) }
             }
             if name == "." || name == ".." { continue }
-            if children.count >= min(options.maximumEntries - phaseChecked + 1, maximumNames ?? options.maximumEntries + 1) {
+            if names.count >= min(phaseBudget - phaseChecked + 1, maximumNames ?? phaseBudget + 1) {
                 // The extra name is a sentinel: visiting it reports the bound after
                 // genuinely checking the retained entries, rather than claiming work.
                 break
             }
-            children.append(url.appendingPathComponent(name))
+            names.append((name, entry.pointee.d_type))
         }
         var after = stat()
         guard fstat(descriptor, &after) == 0, Scanner.identity(after) == beforeIdentity,
               Scanner.captureIdentity(at: url) == beforeIdentity, Scanner.canonicalURL(url)?.path == url.path else {
             issue(scope, url, .changed, "读取期间目录发生变化，已跳过。"); return nil
         }
-        return children.sorted { $0.lastPathComponent < $1.lastPathComponent }
+        // A bare appendingPathComponent stats every name to decide on a trailing
+        // slash. readdir already reports the (no-follow) type; only an unknown
+        // type falls back to that lookup, so the URLs keep their usual form.
+        return names.sorted { $0.name < $1.name }.map { entry in
+            entry.type == UInt8(DT_UNKNOWN) ? url.appendingPathComponent(entry.name)
+                : url.appendingPathComponent(entry.name, isDirectory: entry.type == UInt8(DT_DIR))
+        }
     }
 }
