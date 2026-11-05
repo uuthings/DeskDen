@@ -838,7 +838,11 @@ final class SpaceCleaningCoreTests: XCTestCase {
             XCTAssertTrue(report.complete)
             XCTAssertEqual(report.candidates.filter(\.isRecommendedForSelection).count, 2)
             XCTAssertEqual(report.candidates.filter(\.isRecommendedForSelection).reduce(0) { $0 + $1.logicalBytes }, 78)
-            XCTAssertFalse(try XCTUnwrap(report.candidates.first { $0.title == "personal.data" }).isRecommendedForSelection)
+            // A sibling of the known browser cache is reviewed as one folder, not file by file.
+            let sibling = try XCTUnwrap(report.candidates.first { $0.title == "Other" })
+            XCTAssertFalse(sibling.isRecommendedForSelection)
+            XCTAssertEqual(sibling.logicalBytes, 53)
+            XCTAssertFalse(report.candidates.contains { $0.title == "personal.data" })
             XCTAssertEqual(report.logicalBytes, 131)
         }
     }
@@ -1087,6 +1091,69 @@ extension SpaceCleaningCoreTests {
             XCTAssertEqual(diagnostic.group, .review)
             XCTAssertTrue(diagnostic.isCleanupSuggestion)
             XCTAssertFalse(diagnostic.isRecommendedForSelection)
+        }
+    }
+}
+
+// MARK: - DerivedData, dependency checkouts and installer suggestions
+
+extension SpaceCleaningCoreTests {
+    func testDerivedDataRecognizesGeneratedFoldersAndReviewsUnknownOnesAsWholes() throws {
+        try fixture { home in
+            let root = "Library/Developer/Xcode/DerivedData"
+            try file(home, root + "/SDKExplicitPrecompiledModules/os.pcm", bytes: 11)
+            try file(home, root + "/App-Release-20261101/ModuleCache.noindex/module.pcm", bytes: 12)
+            try file(home, root + "/App-Release-20261101/SDKStatCaches.noindex/stat.cache", bytes: 13)
+            try file(home, root + "/App-abcdef/Logs/Build/one.xcactivitylog")
+            try file(home, root + "/App-abcdef/Logs/Test/two.xcactivitylog")
+            try file(home, root + "/App-abcdef/SourcePackages/checkouts/Library/.git/HEAD")
+            try file(home, root + "/App-abcdef/SourcePackages/checkouts/Library/Tests/Resources/test.pkg")
+            try file(home, root + "/App-abcdef/info.plist")
+            let report = scan(home, at: root)
+            let generated = Set(report.candidates.filter { $0.kind == .derivedData }.map(\.title))
+            XCTAssertEqual(generated, ["SDKExplicitPrecompiledModules", "ModuleCache.noindex", "SDKStatCaches.noindex"])
+            XCTAssertTrue(report.candidates.filter { $0.kind == .derivedData }.allSatisfy(\.isRecommendedForSelection))
+            let logs = try XCTUnwrap(report.candidates.first { $0.title == "Logs" })
+            XCTAssertEqual(logs.kind, .developmentFile)
+            XCTAssertFalse(logs.isCleanupSuggestion)
+            let packages = try XCTUnwrap(report.candidates.first { $0.title == "SourcePackages" })
+            XCTAssertEqual(packages.kind, .developmentEnvironment)
+            XCTAssertFalse(packages.canProcess)
+            for title in ["one.xcactivitylog", "two.xcactivitylog", "test.pkg", "os.pcm", "module.pcm"] {
+                XCTAssertFalse(report.candidates.contains { $0.title == title }, title)
+            }
+            XCTAssertFalse(report.candidates.contains { $0.kind == .installerPackage })
+        }
+    }
+
+    func testInstallerSuggestionsSkipProjectsBuildOutputAndDependencies() throws {
+        try fixture { home in
+            try file(home, "Downloads/Installer.pkg")
+            try file(home, "Downloads/Real.dmg")
+            try file(home, "Downloads/clone/.git/HEAD")
+            try file(home, "Downloads/clone/fixtures/image.dmg")
+            try file(home, "Developer/Repo/.git/HEAD")
+            try file(home, "Developer/Repo/Tests/Resources/test.pkg")
+            try file(home, "Developer/Tool/.build/checkouts/Sparkle/Tests/Resources/test.pkg")
+            let report = SpaceCleaningScanner.scan(scopes: [.init(directory: home.appendingPathComponent("Downloads"), kind: .downloads),
+                                                            .init(directory: home.appendingPathComponent("Developer"))],
+                                                   context: .init(homeDirectory: home))
+            let suggestions = Set(report.candidates.filter(\.isCleanupSuggestion).map(\.title))
+            XCTAssertEqual(suggestions, ["Installer.pkg", "Real.dmg"])
+            for title in ["image.dmg", "test.pkg"] {
+                let matches = report.candidates.filter { $0.title == title }
+                XCTAssertFalse(matches.isEmpty, title)
+                XCTAssertTrue(matches.allSatisfy { $0.kind == .developmentFile && $0.canProcess && !$0.isCleanupSuggestion }, title)
+            }
+        }
+    }
+
+    func testHomeFolderRepositoryDoesNotHideInstallerSuggestions() throws {
+        try fixture { home in
+            try file(home, ".git/HEAD")
+            try file(home, "Downloads/Installer.pkg")
+            let report = scan(home, at: "Downloads")
+            XCTAssertEqual(report.candidates.first { $0.title == "Installer.pkg" }?.kind, .installerPackage)
         }
     }
 }

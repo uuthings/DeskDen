@@ -430,6 +430,7 @@ private final class Worker {
         let ancestors: [SpaceCleaningPathIdentity]
     }
     var pendingCandidates: [PendingCandidate] = []
+    var gitWorkTreeCache: [String: Bool] = [:]
     private var developmentLookup = SpaceCleaningDevelopmentPolicy.Lookup()
     private func developmentReason(_ url: URL, identity: SpaceCleaningFileIdentity? = nil) -> String? {
         developmentLookup.reason(at: url, identity: identity)
@@ -701,17 +702,23 @@ private final class Worker {
             return .init(kind: known, group: .rebuildable, reason: known == .derivedData ? "已识别的 Xcode 可重建内容。" : "来自已知的可重建缓存位置。",
                          impact: known == .derivedData ? "下次构建或索引可能更慢。" : "相关内容可能需要重新下载或生成。")
         }
-        if Scanner.isRegular(identity), ext == "pkg" {
+        let installerMedia = Scanner.isRegular(identity) && (ext == "pkg" || (ext == "dmg" && (within(url, "Downloads") || within(url, "Desktop"))))
+        if installerMedia, isInsideDevelopmentWorkspace(url) {
+            return .init(kind: .developmentFile, group: .review,
+                         reason: "开发项目、构建产物或依赖中的\(ext.uppercased()) 文件，可能是测试资源或构建输出，不作为安装介质推荐。",
+                         impact: "确认不再需要后再手动选择。")
+        }
+        if installerMedia, ext == "pkg" {
             return .init(kind: .installerPackage, group: .review,
                          reason: "PKG 安装包，可在不再需要安装或保留此版本时选择清理。",
                          impact: "尚未核验安装是否完成；清理后如需安装，需重新获取此安装包。")
         }
-        if Scanner.isRegular(identity), ext == "dmg", within(url, "Downloads") || within(url, "Desktop") {
+        if installerMedia {
             return .init(kind: .downloadedDiskImage, group: .review,
                          reason: "下载或桌面中的磁盘映像，可核对用途后选择清理。",
                          impact: "磁盘映像也可能包含个人文件；尚未核验其内容或安装状态。")
         }
-        if cacheFolder, Scanner.isDirectory(identity) {
+        if cacheFolder || isBrowserCacheSibling(url), Scanner.isDirectory(identity) {
             return .init(kind: .personalFile, group: .review, reason: "其他应用的缓存目录，需确认相关应用不再需要后手动选择。",
                          impact: "应用可能重新下载或生成这些内容；正在使用时清理可能影响其运行。")
         }
@@ -726,6 +733,10 @@ private final class Worker {
             }
         }
         if !Scanner.isDirectory(identity) && !Scanner.isRegular(identity) { return .init(kind: .unsupported, group: .protected, reason: "特殊文件默认保留。", impact: "不在普通文件处理范围内。") }
+        if within(url, Self.derivedDataRoot) {
+            return .init(kind: .developmentFile, group: .review, reason: "DerivedData 中未单独识别的内容，需要人工确认。",
+                         impact: "多为 Xcode 生成的日志、索引或依赖副本；删除后可能需要重新解析或构建。")
+        }
         if within(url, "Downloads") { return .init(kind: .downloadedFile, group: .review, reason: "下载内容，请确认是否仍需保留。", impact: "不会仅因体积大或时间久而推荐删除。") }
         if within(url, "Developer") { return .init(kind: .developmentFile, group: .review, reason: "开发目录中的文件，需要人工确认。", impact: "可能包含项目源码或独有构建材料。") }
         return .init(kind: .personalFile, group: .review, reason: "未匹配整理规则的文件，需要人工复核。", impact: "文件名和修改时间不代表可安全删除。")
@@ -737,7 +748,9 @@ private final class Worker {
         var pending: [(URL, Int)] = [(root, 0)]
         var identities: [(URL, SpaceCleaningFileIdentity)] = []
         var localSeen: Set<String> = []
-        let generated = cacheKind(root) == .derivedData
+        // Debug symbols and checksums inside DerivedData are build output or
+        // downloaded artifacts; strong release evidence still applies there.
+        let generated = cacheKind(root) == .derivedData || within(root, Self.derivedDataRoot)
         let strongRoot = isStrongReleaseProtected(root)
         let measurementLimit = protectedBudget ? min(10_000, options.maximumEntries) : options.maximumEntries
         var measuredEntries = 0
@@ -814,8 +827,43 @@ private final class Worker {
         if cacheKind(url) != nil { return true }
         if isApplicationCacheFolder(url), !["Google", "Firefox"].contains(url.lastPathComponent),
            !visitedRoots.contains(where: { Scanner.contains($0, in: url.path) }) { return true }
+        // Siblings of the known browser caches (for example Google/Chrome-headless)
+        // are separate cache folders; the known roots keep their own rules.
+        if isBrowserCacheSibling(url), !visitedRoots.contains(where: { Scanner.contains($0, in: url.path) }) { return true }
+        // DerivedData subfolders that no rule recognizes (logs, package checkouts,
+        // text indexes) are reviewed as one item instead of file by file.
+        if within(url, Self.derivedDataRoot) {
+            let parts = relativeComponents(url, Self.derivedDataRoot)
+            if parts.count == 2 && parts[1] != "Build" { return true }
+            if parts.count == 3 && parts[1] == "Build" { return true }
+        }
         // Directories in Downloads/custom locations remain navigable, never wholesale inferred junk.
         return false
+    }
+    static let derivedDataRoot = "Library/Developer/Xcode/DerivedData"
+    func isBrowserCacheSibling(_ url: URL) -> Bool {
+        let parent = url.deletingLastPathComponent().path
+        guard parent == homeRelative("Library/Caches/Google") || parent == homeRelative("Library/Caches/Firefox") else { return false }
+        return ![homeRelative("Library/Caches/Google/Chrome"), homeRelative("Library/Caches/Firefox/Profiles")].contains(url.path)
+    }
+    private static let workspaceComponents: Set<String> = [".build", "SourcePackages", "checkouts", "DerivedData"]
+    /// Installers and disk images inside a project, its build output or a
+    /// dependency checkout are usually test resources or build products, not
+    /// downloads. A `.git` entry below the home folder marks a working tree;
+    /// one in the home folder itself (a dotfiles repository) does not count.
+    func isInsideDevelopmentWorkspace(_ url: URL) -> Bool {
+        if url.pathComponents.contains(where: { Self.workspaceComponents.contains($0) }) { return true }
+        var directory = url.deletingLastPathComponent(), visited: [String] = [], result = false
+        while true {
+            let path = directory.path
+            if path == "/" || path == homePath || path.isEmpty { break }
+            if let cached = gitWorkTreeCache[path] { result = cached; break }
+            visited.append(path)
+            if Scanner.captureIdentity(at: directory.appendingPathComponent(".git", isDirectory: false)) != nil { result = true; break }
+            directory.deleteLastPathComponent()
+        }
+        for path in visited { gitWorkTreeCache[path] = result }
+        return result
     }
     func cacheKind(_ url: URL) -> SpaceCleaningKind? {
         let roots = ["Library/Caches/com.apple.Safari", "Library/Containers/com.apple.Safari/Data/Library/Caches", "Library/Caches/Google/Chrome"]
@@ -826,11 +874,14 @@ private final class Worker {
         }
         if within(url, ".npm/_cacache") { return .packageCache }
         if ["Library/Caches/Homebrew", "Library/Caches/pip", "Library/Caches/org.swift.swiftpm"].contains(where: { within(url, $0) }) { return .packageCache }
-        if within(url, "Library/Developer/Xcode/DerivedData") {
-            let parts = relativeComponents(url, "Library/Developer/Xcode/DerivedData")
-            let topCaches: Set<String> = ["ModuleCache.noindex", "SDKStatCaches.noindex", "CompilationCache.noindex", "SymbolCache.noindex"]
-            if let first = parts.first, topCaches.contains(first) { return .derivedData }
-            if parts.count >= 2 && parts[1] == "Index.noindex" { return .derivedData }
+        if within(url, Self.derivedDataRoot) {
+            let parts = relativeComponents(url, Self.derivedDataRoot)
+            // Generated module, SDK and compilation caches live at the top level
+            // and again inside custom -derivedDataPath roots and project folders.
+            let generated: Set<String> = ["ModuleCache.noindex", "SDKStatCaches.noindex", "CompilationCache.noindex",
+                                          "SymbolCache.noindex", "SDKExplicitPrecompiledModules"]
+            if let first = parts.first, generated.contains(first) { return .derivedData }
+            if parts.count >= 2 && (parts[1] == "Index.noindex" || generated.contains(parts[1])) { return .derivedData }
             if parts.count >= 3 && parts[1] == "Build" && ["Intermediates.noindex", "Products"].contains(parts[2]) { return .derivedData }
         }
         return nil
