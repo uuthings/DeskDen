@@ -32,6 +32,8 @@ import Quartz
     @Published private(set) var diskUpdatedAt: Date?
     @Published private(set) var coverageIssues: [String] = []
     @Published private(set) var coverageNotes: [String] = []
+    /// Protected entries summarized in the scope notes instead of listed rows.
+    @Published private(set) var summarizedProtectedCount = 0
     private var scanReachedLimit = false
     @Published private(set) var currentBatch: CleaningHistoryBatchDisplay?
     @Published private(set) var batches: [CleaningHistoryBatchDisplay] = []
@@ -572,7 +574,7 @@ import Quartz
         selectedIDs = []; confirmedIDs = []; detailID = nil; resultScrollID = nil; searchText = ""; onlySelected = false; resultTab = .recommended; items = []; recommendedIDs = []; automaticallySelectedIDs = []; candidates = [:]
         directorySizes = [:]; measuringDirectoryID = nil
         if scanMode == .largeFiles { resultTab = .reviewable; sortKey = .size; sortAscending = false }
-        coverageIssues = []; coverageNotes = []; scanReachedLimit = false; requiresRescan = false; checkedCount = 0; scanPhase = .discovering; scanCompletedItems = 0; scanTotalItems = nil; scanDirectory = ""; scanItem = ""
+        coverageIssues = []; coverageNotes = []; summarizedProtectedCount = 0; scanReachedLimit = false; requiresRescan = false; checkedCount = 0; scanPhase = .discovering; scanCompletedItems = 0; scanTotalItems = nil; scanDirectory = ""; scanItem = ""
         scanRecordedCandidates = 0; scanLogicalBytes = 0; scanCompletedScopes = 0; scanTotalScopes = scopes.count; scanRecentPaths = []
         closeDialog(); message = historyError; screen = .scanning
         task = Task { [weak self] in
@@ -589,9 +591,9 @@ import Quartz
                 return report
             }.value
             guard let self, self.generation == run else { return }
-            let selectionContext = self.makeContext()
+            let selectionContext = self.makeContext(), home = self.homeDirectory
             let prepared = await Task.detached(priority: .userInitiated) {
-                Self.prepareResults(report, context: selectionContext, mode: options.mode)
+                Self.prepareResults(report, context: selectionContext, options: options, home: home)
             }.value
             guard self.generation == run else { return }
             self.checkedCount = report.checkedEntries
@@ -603,6 +605,8 @@ import Quartz
                     (options.maximumFileBytes.map { "，且 ≤ " + SpaceCleaningFormat.bytes($0) } ?? "；无上限") + "。包与受保护目录不展开。")
             }
             self.coverageNotes += report.issues.filter { [.missing, .duplicate].contains($0.kind) }.map { $0.url.path.replacingOccurrences(of: self.homeDirectory.path, with: "~") + " · " + $0.reason }
+            self.coverageNotes += prepared.summaryNotes
+            self.summarizedProtectedCount = prepared.summarizedCount
             self.suspendsResultProjection = true
             self.candidates = prepared.candidates
             self.recommendedIDs = prepared.recommendedIDs
@@ -646,18 +650,46 @@ import Quartz
         }
     }
     private nonisolated static func prepareResults(_ report: SpaceCleaningReport, context: SpaceCleaningContext,
-                                                   mode: SpaceCleaningScanMode) -> PreparedCleaningResults {
+                                                   options: SpaceCleaningOptions, home: URL) -> PreparedCleaningResults {
+        let mode = options.mode
         let candidates = Dictionary(uniqueKeysWithValues: report.candidates.map { ($0.id, $0) })
         let recommended: Set<UUID> = mode == .cleanup && report.stage == .complete ? Set(report.candidates.filter {
             $0.isCleanupSuggestion && SpaceCleaningScanner.validatePolicy(candidate: $0, context: context) == .unchanged
         }.map(\.id)) : []
         let automatic = Set(report.candidates.filter { recommended.contains($0.id) && $0.isRecommendedForSelection }.map(\.id))
-        let items = report.candidates.map(Self.display).sorted {
+        // Tiny protected entries that can never be processed are summarized
+        // instead of listed one by one; their protection does not change.
+        let summarized = report.candidates.filter { isSummarizedProtection($0, options: options) }
+        let hidden = Set(summarized.map(\.id))
+        let items = report.candidates.filter { !hidden.contains($0.id) }.map(Self.display).sorted {
             if $0.group != $1.group { return CleaningResultGroup.allCases.firstIndex(of: $0.group)! < CleaningResultGroup.allCases.firstIndex(of: $1.group)! }
             return $0.bytes == $1.bytes ? $0.url.path < $1.url.path : $0.bytes > $1.bytes
         }
         return .init(candidates: candidates, recommendedIDs: recommended, automaticallySelectedIDs: automatic,
-                     index: .init(items: items, recommendedIDs: recommended))
+                     index: .init(items: items, recommendedIDs: recommended),
+                     summarizedCount: summarized.count, summaryNotes: summaryNotes(summarized, home: home))
+    }
+    /// Symbolic links are never followed or counted; in large-file mode the
+    /// protected placeholders, development markers and special files below the
+    /// size bound are not large files either.
+    nonisolated static func isSummarizedProtection(_ candidate: SpaceCleaningCandidate, options: SpaceCleaningOptions) -> Bool {
+        guard !candidate.canProcess, candidate.group == .protected else { return false }
+        if candidate.kind == .symbolicLink { return true }
+        return options.mode == .largeFiles && !candidate.isDirectory &&
+            [.cloudPlaceholder, .developmentEnvironment, .unsupported].contains(candidate.kind) &&
+            candidate.identity.sizeBytes < options.minimumFileBytes
+    }
+    private nonisolated static func summaryNotes(_ summarized: [SpaceCleaningCandidate], home: URL) -> [String] {
+        func short(_ url: URL) -> String { url.path.replacingOccurrences(of: home.path, with: "~") }
+        let links = Dictionary(grouping: summarized.filter { $0.kind == .symbolicLink }, by: { $0.url.deletingLastPathComponent() })
+            .sorted { $0.value.count == $1.value.count ? $0.key.path < $1.key.path : $0.value.count > $1.value.count }
+        var notes = links.prefix(20).map { short($0.key) + " · 已保留 \($0.value.count) 个符号链接，未跟随目标，不计入容量，未逐项列出。" }
+        if links.count > 20 {
+            notes.append("另有 \(links.count - 20) 个目录中的 \(links.dropFirst(20).reduce(0) { $0 + $1.value.count }) 个符号链接同样保留，未逐项列出。")
+        }
+        let small = summarized.filter { $0.kind != .symbolicLink }.count
+        if small > 0 { notes.append("另有 \(small) 个小于下限的受保护项目（云端占位、开发标记或特殊文件）未逐项列出，仍保持保留。") }
+        return notes
     }
     func executeConfirmed(permanent: Bool, remember: Bool) {
         guard dialog == .confirm, canProcess, confirmedIDs == Set(selectedItems.map(\.id)),
@@ -1003,6 +1035,8 @@ private struct PreparedCleaningResults: Sendable {
     let recommendedIDs: Set<UUID>
     let automaticallySelectedIDs: Set<UUID>
     let index: CleaningResultsIndex
+    let summarizedCount: Int
+    let summaryNotes: [String]
 }
 
 struct CleaningResultsQuery: Hashable, Sendable {

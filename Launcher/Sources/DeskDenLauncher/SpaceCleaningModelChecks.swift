@@ -649,6 +649,16 @@ import LauncherCore
             check(pausedAfterFailedWrite && recoveringModel.canProcess,
                   "a failed history write pauses processing, and the next scan reopens the history without a restart")
 
+            let linked = try fixture(root.appendingPathComponent("links"), names: ["target.data"])
+            try FileManager.default.createSymbolicLink(at: linked.home.appendingPathComponent("Downloads/alias"),
+                                                       withDestinationURL: linked.home.appendingPathComponent("Downloads/target.data"))
+            let linkMover = SpaceCleaningCheckMover(root: linked.home, trash: linked.trash); movers.append(linkMover)
+            let linkModel = SpaceCleaningModel(dataDirectory: linked.data, homeDirectory: linked.home, mover: linkMover); models.append(linkModel)
+            linkModel.startScan(); await linkModel.waitUntilIdle()
+            check(linkModel.summarizedProtectedCount == 1 && !linkModel.items.contains { $0.kind == .symbolicLink } &&
+                  linkModel.items.contains { $0.name == "target.data" } && linkModel.coverageNotes.contains { $0.contains("1 个符号链接") },
+                  "symbolic links are summarized by folder in the scope notes instead of listed as protected rows")
+
             let quitFixture = try fixture(root.appendingPathComponent("quit"), names: ["first.data", "second.data"])
             let gated = SpaceCleaningCheckMover(root: quitFixture.home, trash: quitFixture.trash, gateFirst: true); movers.append(gated)
             let quitModel = SpaceCleaningModel(dataDirectory: quitFixture.data, homeDirectory: quitFixture.home, mover: gated); models.append(quitModel)

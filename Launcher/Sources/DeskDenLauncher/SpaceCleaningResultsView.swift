@@ -78,6 +78,14 @@ struct SpaceCleaningResultsView: View {
                 Text(model.onlySelected ? "仅显示已选项目" : model.resultTab == .protected ? "这些项目保持保留" : "点击项目查看详情")
                     .lineLimit(1)
                 Spacer(minLength: 4)
+                if model.resultTab == .protected && model.summarizedProtectedCount > 0 && !model.onlySelected {
+                    // Summarized links and small protected entries stay visible in the scope notes.
+                    Button("另有 \(model.summarizedProtectedCount) 项已汇总") { model.dialog = .issues }
+                        .buttonStyle(WBTextActionButtonStyle())
+                        .help("符号链接等不可处理的小型保护项目按目录汇总在范围说明中")
+                        .accessibilityIdentifier("space-cleaning-summarized-protection")
+                        .fixedSize()
+                }
                 if !model.coverageIssues.isEmpty {
                     Button("\(model.coverageIssues.count) 处未完整覆盖") { model.dialog = .issues }
                         .buttonStyle(WBTextActionButtonStyle()).foregroundStyle(palette.warning)
