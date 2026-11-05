@@ -379,7 +379,11 @@ import Quartz
         if case .purpose = dialog { closeDialog() }
         detailID = nil
     }
-    func showHistory() { guard !isBusy else { return }; previousScreen = screen; screen = .history; reconcileHistory() }
+    func showHistory() {
+        guard !isBusy else { return }
+        previousScreen = screen; screen = .history
+        if historyError != nil { reloadHistoryIfNeeded() } else { reconcileHistory() }
+    }
     var historyReturnTitle: String { "返回" + screenTitle(previousScreen == .history || requiresRescan ? .start : previousScreen) }
     var dialogReturnTitle: String { "返回" + screenTitle(screen) }
     private func screenTitle(_ screen: CleaningScreen) -> String {
@@ -548,6 +552,9 @@ import Quartz
 
     func startScan() {
         guard !isBusy, !frozenForQuit else { return }
+        reloadHistoryIfNeeded()
+        // A successful reload reconciles uncertain records first; scan after that.
+        guard !isBusy else { message = "正在核对清理记录，完成后再开始扫描。"; return }
         guard canScanScope else { message = "请先选择要扫描的范围或目录。"; return }
         guard largeFileRangeError == nil else { message = largeFileRangeError; return }
         let context = makeContext()
@@ -751,6 +758,23 @@ import Quartz
             historyStore = store; records = store.records; rebuildBatches()
             reconcileHistory()
         } catch { historyError = error.localizedDescription; message = "清理历史无法读取，原文件已保留；扫描仍可使用，文件处理已暂停。" }
+    }
+    /// After a failed load or write, reopen the durable history instead of
+    /// requiring a restart. Disk is the source of truth: records are reloaded
+    /// and uncertain ones reconciled exactly as after launch. An unchanged
+    /// problem (corrupt or externally modified files) keeps processing paused.
+    func reloadHistoryIfNeeded() {
+        guard historyError != nil, !isBusy, !frozenForQuit else { return }
+        let previous = message
+        do {
+            let store = try SpaceCleaningHistoryStore(fileURL: dataDirectory.appendingPathComponent("history.json"))
+            historyStore = store; records = store.records; historyError = nil
+            if previous != nil { message = nil }
+            rebuildBatches(); reconcileHistory()
+        } catch {
+            historyError = error.localizedDescription
+            message = "清理记录仍无法可靠读取，原文件已保留；扫描仍可使用，文件处理继续暂停。"
+        }
     }
     private func reconcileHistory() {
         guard !isBusy, !frozenForQuit, historyError == nil, let store = historyStore else { return }

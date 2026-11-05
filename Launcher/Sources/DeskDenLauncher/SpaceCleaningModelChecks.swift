@@ -629,6 +629,23 @@ import LauncherCore
                   "invalid history keeps scanning available but blocks destructive operations")
             check(try Data(contentsOf: corruptURL) == invalid, "invalid history is retained verbatim instead of silently replaced")
 
+            let recovering = try fixture(root.appendingPathComponent("recover"), names: ["recover.data"])
+            let recoveringMover = SpaceCleaningCheckMover(root: recovering.home, trash: recovering.trash); movers.append(recoveringMover)
+            let recoveringModel = SpaceCleaningModel(dataDirectory: recovering.data, homeDirectory: recovering.home, mover: recoveringMover); models.append(recoveringModel)
+            recoveringModel.startScan(); await recoveringModel.waitUntilIdle()
+            try FileManager.default.createDirectory(at: recovering.data, withIntermediateDirectories: true)
+            chmod(recovering.data.path, 0o500)
+            recoveringModel.items.forEach { recoveringModel.toggleItem($0.id) }; recoveringModel.method = .trash
+            recoveringModel.requestCleanup(); await recoveringModel.waitUntilIdle()
+            let pausedAfterFailedWrite = !recoveringModel.canProcess && recoveringMover.moveCount == 0 &&
+                FileManager.default.fileExists(atPath: recovering.home.appendingPathComponent("Downloads/recover.data").path)
+            chmod(recovering.data.path, 0o700)
+            recoveringModel.startScan(); await recoveringModel.waitUntilIdle()
+            if recoveringModel.items.isEmpty { recoveringModel.startScan(); await recoveringModel.waitUntilIdle() }
+            recoveringModel.items.forEach { recoveringModel.toggleItem($0.id) }
+            check(pausedAfterFailedWrite && recoveringModel.canProcess,
+                  "a failed history write pauses processing, and the next scan reopens the history without a restart")
+
             let quitFixture = try fixture(root.appendingPathComponent("quit"), names: ["first.data", "second.data"])
             let gated = SpaceCleaningCheckMover(root: quitFixture.home, trash: quitFixture.trash, gateFirst: true); movers.append(gated)
             let quitModel = SpaceCleaningModel(dataDirectory: quitFixture.data, homeDirectory: quitFixture.home, mover: gated); models.append(quitModel)
