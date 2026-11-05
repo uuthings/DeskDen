@@ -730,7 +730,7 @@ final class SpaceCleaningCoreTests: XCTestCase {
             XCTAssertTrue(contents.candidates.allSatisfy {
                 $0.kind == .packageCache && $0.group == .rebuildable && $0.isCleanupSuggestion && $0.isRecommendedForSelection
             })
-            XCTAssertTrue(contents.candidates.contains { $0.title == "Legacy.pkg" && $0.isDirectory })
+            XCTAssertTrue(contents.candidates.contains { $0.title == "Homebrew 下载缓存 · Legacy.pkg" && $0.isDirectory })
             let aggregate = scan(home, at: "Library/Caches")
             XCTAssertEqual(aggregate.candidates.count, 1)
             let cache = try XCTUnwrap(aggregate.candidates.first)
@@ -955,12 +955,12 @@ extension SpaceCleaningCoreTests {
             try files(home, "Library/Caches/pip/http-v2", count: 1)
             let report = SpaceCleaningScanner.scan(scopes: packageCacheScopes(home), context: .init(homeDirectory: home),
                                                    options: .init(maximumEntries: 20))
-            let oversized = try XCTUnwrap(report.candidates.first { $0.title == "content-v2" })
+            let oversized = try XCTUnwrap(report.candidates.first { $0.url.lastPathComponent == "content-v2" })
             XCTAssertFalse(oversized.sizeIsComplete)
             XCTAssertFalse(oversized.canProcess)
             XCTAssertTrue(oversized.reason.contains("单项核验上限"), oversized.reason)
-            XCTAssertTrue(try XCTUnwrap(report.candidates.first { $0.title == "downloads" }).isRecommendedForSelection)
-            XCTAssertTrue(try XCTUnwrap(report.candidates.first { $0.title == "http-v2" }).isRecommendedForSelection)
+            XCTAssertTrue(try XCTUnwrap(report.candidates.first { $0.url.lastPathComponent == "downloads" }).isRecommendedForSelection)
+            XCTAssertTrue(try XCTUnwrap(report.candidates.first { $0.url.lastPathComponent == "http-v2" }).isRecommendedForSelection)
             XCTAssertTrue(report.reachedLimit)
             XCTAssertFalse(report.complete)
         }
@@ -974,7 +974,7 @@ extension SpaceCleaningCoreTests {
             for running in [[home.appendingPathComponent("Google Chrome.app")], []] {
                 let report = SpaceCleaningScanner.scan(scopes: packageCacheScopes(home),
                     context: .init(homeDirectory: home, runningApplicationURLs: running), options: .init(maximumEntries: 20))
-                let selected = Set(report.candidates.filter(\.isRecommendedForSelection).map(\.title))
+                let selected = Set(report.candidates.filter(\.isRecommendedForSelection).map(\.url.lastPathComponent))
                 XCTAssertTrue(selected.isSuperset(of: ["content-v2", "http-v2"]), "\(running) \(selected)")
                 XCTAssertEqual(selected.contains("Default"), running.isEmpty)
             }
@@ -989,9 +989,9 @@ extension SpaceCleaningCoreTests {
             try files(home, "Library/Caches/pip/http-v2", count: 15)
             let report = SpaceCleaningScanner.scan(scopes: packageCacheScopes(home), context: .init(homeDirectory: home),
                                                    options: .init(maximumEntries: 20, maximumVerificationEntries: 30))
-            XCTAssertTrue(try XCTUnwrap(report.candidates.first { $0.title == "index-v5" }).isRecommendedForSelection)
-            XCTAssertTrue(try XCTUnwrap(report.candidates.first { $0.title == "downloads" }).isRecommendedForSelection)
-            let unverified = try XCTUnwrap(report.candidates.first { $0.title == "http-v2" })
+            XCTAssertTrue(try XCTUnwrap(report.candidates.first { $0.url.lastPathComponent == "index-v5" }).isRecommendedForSelection)
+            XCTAssertTrue(try XCTUnwrap(report.candidates.first { $0.url.lastPathComponent == "downloads" }).isRecommendedForSelection)
+            let unverified = try XCTUnwrap(report.candidates.first { $0.url.lastPathComponent == "http-v2" })
             XCTAssertFalse(unverified.sizeIsComplete)
             XCTAssertFalse(unverified.canProcess)
             XCTAssertTrue(report.reachedLimit)
@@ -1008,9 +1008,9 @@ extension SpaceCleaningCoreTests {
             try file(home, "Library/Caches/pip/selfcheck/Build.xcarchive/Distributions/record.plist")
             try file(home, "Library/Caches/pip/selfcheck/Build.xcarchive/Products/App")
             let report = scan(home, at: "Library/Caches/pip")
-            XCTAssertTrue(try XCTUnwrap(report.candidates.first { $0.title == "http-v2" }).isRecommendedForSelection)
+            XCTAssertTrue(try XCTUnwrap(report.candidates.first { $0.url.lastPathComponent == "http-v2" }).isRecommendedForSelection)
             for title in ["wheels", "selfcheck"] {
-                let candidate = try XCTUnwrap(report.candidates.first { $0.title == title })
+                let candidate = try XCTUnwrap(report.candidates.first { $0.url.lastPathComponent == title })
                 XCTAssertEqual(candidate.kind, .releaseMaterial, title)
                 XCTAssertFalse(candidate.canProcess, title)
             }
@@ -1077,9 +1077,9 @@ extension SpaceCleaningCoreTests {
                 .filter { [.browserCache, .packageCache].contains($0.kind) }
             let report = SpaceCleaningScanner.scan(scopes: scopes, context: .init(homeDirectory: home))
             XCTAssertFalse(report.issues.contains { $0.kind == .unsafePath })
-            XCTAssertTrue(try XCTUnwrap(report.candidates.first { $0.title == "repositories" }).isRecommendedForSelection)
-            XCTAssertFalse(try XCTUnwrap(report.candidates.first { $0.title == "manifests" }).canProcess)
-            XCTAssertFalse(report.candidates.contains { $0.title == "org.swift.swiftpm" })
+            XCTAssertTrue(try XCTUnwrap(report.candidates.first { $0.url.lastPathComponent == "repositories" }).isRecommendedForSelection)
+            XCTAssertFalse(try XCTUnwrap(report.candidates.first { $0.url.lastPathComponent == "manifests" }).canProcess)
+            XCTAssertFalse(report.candidates.contains { $0.url.lastPathComponent == "org.swift.swiftpm" })
         }
     }
 

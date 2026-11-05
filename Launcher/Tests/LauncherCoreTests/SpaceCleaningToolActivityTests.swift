@@ -28,6 +28,28 @@ final class SpaceCleaningToolActivityTests: XCTestCase {
         XCTAssertEqual(Activity.identities(executable: "/usr/bin/xcodebuild", arguments: ["xcodebuild", "build"]), ["xcodebuild"])
     }
 
+    func testNewCacheOwnersAreRecognizedByTheirScriptsAndBinaries() {
+        // Yarn, pnpm and Playwright run as Node scripts; unrelated Node work does not count.
+        XCTAssertEqual(Activity.identities(executable: "node", arguments: ["node", "/opt/homebrew/lib/node_modules/yarn/bin/yarn.js", "install"]), [Activity.yarn])
+        XCTAssertEqual(Activity.identities(executable: "node", arguments: ["node", "/Users/test/.cache/node/corepack/v1/pnpm/9.0.0/bin/pnpm.cjs", "i"]), [Activity.pnpm])
+        XCTAssertEqual(Activity.identities(executable: "node", arguments: ["node", "/Users/test/app/node_modules/@playwright/test/cli.js", "test"]), [Activity.playwright])
+        XCTAssertEqual(Activity.identities(executable: "node", arguments: ["node", "/Users/test/app/scripts/yarn-report.js"]), [])
+        // Native tools report their own names.
+        XCTAssertEqual(Activity.identities(executable: "/opt/homebrew/bin/uv", arguments: ["uv", "pip", "install"]), [Activity.uv])
+        XCTAssertEqual(Activity.identities(executable: "uvx", arguments: ["uvx", "ruff"]), [Activity.uv])
+        XCTAssertEqual(Activity.identities(executable: "cargo", arguments: ["cargo", "build"]), [Activity.cargo])
+        XCTAssertEqual(Activity.identities(executable: "chrome-headless-shell", arguments: ["chrome-headless-shell"]), [Activity.testBrowser])
+        // Gradle runs inside Java; other Java work does not count.
+        XCTAssertEqual(Activity.identities(executable: "java", arguments: ["java", "-Xmx2g", "-cp", "/Users/test/.gradle/wrapper/dists/gradle-8.7/lib/gradle-launcher.jar",
+                                                                          "org.gradle.launcher.daemon.bootstrap.GradleDaemon", "8.7"]), [Activity.gradle])
+        XCTAssertEqual(Activity.identities(executable: "java", arguments: ["java", "-jar", "/Users/test/server.jar"]), [])
+        // CocoaPods, Poetry and Composer run through their interpreters.
+        XCTAssertEqual(Activity.identities(executable: "ruby", arguments: ["ruby", "/opt/homebrew/bin/pod", "install"]), [Activity.cocoapods])
+        XCTAssertEqual(Activity.identities(executable: "Python", arguments: ["Python", "/Users/test/.local/bin/poetry", "install"]), [Activity.poetry])
+        XCTAssertEqual(Activity.identities(executable: "php", arguments: ["php", "/usr/local/bin/composer", "install"]), [Activity.composer])
+        XCTAssertTrue(Activity.unreadableProcessTable.isSuperset(of: [Activity.yarn, Activity.uv, Activity.gradle, Activity.testBrowser]))
+    }
+
     func testProcessArgumentsParserReturnsArgvWithoutEnvironment() {
         var bytes = withUnsafeBytes(of: Int32(3).littleEndian) { Array($0) }
         bytes += Array("/opt/homebrew/bin/node".utf8) + [0, 0, 0, 0]

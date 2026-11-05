@@ -16,6 +16,8 @@ public enum SpaceCleaningKind: String, Codable, CaseIterable, Sendable {
 public enum SpaceCleaningScopeKind: String, Codable, Sendable {
     case browserCache, packageCache, derivedData, diagnostics, downloads, development, archives
     case releaseArchives, releaseArchiveDiscovery, installedApplications, custom
+    /// Conversation records and outputs that coding assistants keep for the user.
+    case assistantData
 }
 public enum SpaceCleaningScanPhase: String, Sendable { case discovering, verifying, finished }
 public enum SpaceCleaningStage: String, Codable, Sendable { case caches, development, downloads, protection, complete, cancelled, failed }
@@ -107,6 +109,10 @@ public struct SpaceCleaningCandidate: Identifiable, Codable, Equatable, Sendable
     public var canConfirmTestPurpose: Bool
     public var treeFingerprint: String?
     public var sizeIsComplete: Bool
+    /// A recognized location worth a look, such as old assistant records or a
+    /// test browser download. It is listed with suggestions, never preselected.
+    /// Optional so receipts written before or after this field stay readable.
+    public var isReviewSuggestion: Bool?
     public var canProcess: Bool { group != .protected && sizeIsComplete }
     /// Default selection requires positive reconstruction evidence, not just an
     /// age threshold or permission to delete. Personal and diagnostic files stay manual.
@@ -118,19 +124,21 @@ public struct SpaceCleaningCandidate: Identifiable, Codable, Equatable, Sendable
     public var isCleanupSuggestion: Bool {
         guard canProcess else { return false }
         return isRecommendedForSelection ||
-            (group == .review && [.installerPackage, .downloadedDiskImage, .oldDiagnostic].contains(kind))
+            (group == .review && ([.installerPackage, .downloadedDiskImage, .oldDiagnostic].contains(kind) || isReviewSuggestion == true))
     }
     public init(id: UUID = UUID(), scopeID: UUID = UUID(), url: URL, rootURL: URL,
                 rootIdentity: SpaceCleaningFileIdentity, identity: SpaceCleaningFileIdentity,
                 ancestorIdentities: [SpaceCleaningPathIdentity] = [], kind: SpaceCleaningKind,
                 group: SpaceCleaningGroup, title: String, reason: String, impact: String,
                 logicalBytes: UInt64, allocatedBytes: UInt64, isDirectory: Bool,
-                canConfirmTestPurpose: Bool = false, treeFingerprint: String? = nil, sizeIsComplete: Bool = true) {
+                canConfirmTestPurpose: Bool = false, treeFingerprint: String? = nil, sizeIsComplete: Bool = true,
+                isReviewSuggestion: Bool? = nil) {
         self.id = id; self.scopeID = scopeID; self.url = url; self.rootURL = rootURL
         self.rootIdentity = rootIdentity; self.identity = identity; self.ancestorIdentities = ancestorIdentities
         self.kind = kind; self.group = group; self.title = title; self.reason = reason; self.impact = impact
         self.logicalBytes = logicalBytes; self.allocatedBytes = allocatedBytes; self.isDirectory = isDirectory
         self.canConfirmTestPurpose = canConfirmTestPurpose; self.treeFingerprint = treeFingerprint; self.sizeIsComplete = sizeIsComplete
+        self.isReviewSuggestion = isReviewSuggestion
     }
 }
 public struct SpaceCleaningIssue: Identifiable, Codable, Equatable, Sendable {
@@ -193,11 +201,10 @@ public enum SpaceCleaningScanner {
             ("Library/Caches/com.apple.Safari", .browserCache, "Safari 缓存"),
             ("Library/Containers/com.apple.Safari/Data/Library/Caches", .browserCache, "Safari 沙盒缓存"),
             ("Library/Caches/Google/Chrome", .browserCache, "Chrome 缓存"),
-            ("Library/Caches/Firefox/Profiles", .browserCache, "Firefox 缓存"),
-            (".npm/_cacache", .packageCache, "npm 下载缓存"),
-            ("Library/Caches/Homebrew", .packageCache, "Homebrew 下载缓存"),
-            ("Library/Caches/pip", .packageCache, "pip 下载缓存"),
-            ("Library/Caches/org.swift.swiftpm", .packageCache, "Swift Package 缓存"),
+            ("Library/Caches/Firefox/Profiles", .browserCache, "Firefox 缓存")
+        ] + SpaceCleaningKnownLocations.dedicatedScopes.map {
+            ($0.path, $0.category == .assistantRecord ? SpaceCleaningScopeKind.assistantData : SpaceCleaningScopeKind.packageCache, $0.scopeTitle ?? $0.title)
+        } + [
             ("Library/Caches", .browserCache, "其他应用缓存复核"),
             ("Library/Logs/DiagnosticReports", .diagnostics, "诊断记录"),
             ("Library/Developer/Xcode/DerivedData", .derivedData, "Xcode 构建缓存"),
@@ -403,6 +410,8 @@ private final class Worker {
     let protectedReleasePaths: [String]
     let homePath: String
     let libraryCachesPath: String
+    /// Absolute roots of the known locations, longest first.
+    let knownRoots: [(rule: SpaceCleaningKnownLocation, root: String)]
     var candidates: [SpaceCleaningCandidate] = []
     var issues: [SpaceCleaningIssue] = []
     var checked = 0
@@ -447,6 +456,17 @@ private final class Worker {
         homePath = home.path
         libraryCachesPath = (homePath == "/" ? "" : homePath) + "/Library/Caches"
         protectedReleasePaths = context.protectedReleaseURLs.map(resolved)
+        let base = homePath == "/" ? "" : homePath
+        knownRoots = SpaceCleaningKnownLocations.all.map { ($0, base + "/" + $0.path) }.sorted { $0.root.count > $1.root.count }
+    }
+    /// The known location whose root is or contains this URL.
+    func knownLocation(_ url: URL) -> (rule: SpaceCleaningKnownLocation, root: String)? {
+        let path = url.path
+        return knownRoots.first { Scanner.contains(path, in: $0.root) }
+    }
+    /// Components below a known root (empty for the root itself).
+    func knownComponents(_ url: URL, root: String) -> [Substring] {
+        url.path == root ? [] : url.path.dropFirst(root.count + 1).split(separator: "/")
     }
     func overlapsRunningApplication(_ url: URL) -> Bool { runningPaths.contains { overlaps(url.path, $0) } }
 
@@ -604,8 +624,14 @@ private final class Worker {
         }
     }
 
-    struct Classification { var kind: SpaceCleaningKind; var group: SpaceCleaningGroup; var reason: String; var impact: String; var testable = false }
-    struct Measurement { var logical: UInt64 = 0; var allocated: UInt64 = 0; var fingerprint: String?; var complete = true; var unsafe = false; var releaseContent = false; var cloudContent = false; var developmentContent = false; var exceededItemBound = false }
+    struct Classification {
+        var kind: SpaceCleaningKind; var group: SpaceCleaningGroup; var reason: String; var impact: String; var testable = false
+        /// Overrides the file name, such as "npm 下载缓存 · content-v2".
+        var title: String? = nil
+        /// Listed with suggestions while it stays reviewable; never preselected.
+        var suggestion = false
+    }
+    struct Measurement { var logical: UInt64 = 0; var allocated: UInt64 = 0; var fingerprint: String?; var complete = true; var unsafe = false; var releaseContent = false; var cloudContent = false; var developmentContent = false; var exceededItemBound = false; var latestModified: Int64 = 0 }
 
     func makeCandidate(_ url: URL, identity: SpaceCleaningFileIdentity, scope: SpaceCleaningScope, root: URL,
                        rootIdentity: SpaceCleaningFileIdentity, ancestors: [SpaceCleaningPathIdentity]) -> SpaceCleaningCandidate? {
@@ -614,6 +640,8 @@ private final class Worker {
             issue(scope, url, .duplicate, "同一文件身份已记录，不重复计算容量。"); return nil
         }
         var classification = classify(url, identity: identity)
+        // Later protections replace the classification but keep its readable name.
+        let knownTitle = classification.title
         var measurement = Measurement()
         if classification.kind == .developmentEnvironment {
             measurement.complete = false
@@ -631,6 +659,14 @@ private final class Worker {
                                   protectedBudget: classification.group == .protected && !classification.testable)
         } else if Scanner.isRegular(identity) {
             measurement.logical = identity.sizeBytes; measurement.allocated = identity.allocatedBytes
+        }
+        let known = knownLocation(url)
+        if known?.rule.category == .assistantRecord, classification.group == .review, measurement.complete,
+           Double(measurement.latestModified) > now.timeIntervalSince1970 - SpaceCleaningKnownLocations.quietPeriod {
+            // An assistant may still be writing here; only quiet folders are offered.
+            classification.group = .protected; classification.suggestion = false
+            classification.reason += "其中有最近 3 天内仍在更新的内容，本次保留。"
+            classification.impact = "停止更新满 3 天后再整理，避免影响正在进行的会话。"
         }
         if measurement.developmentContent {
             classification = .init(kind: .developmentEnvironment, group: .protected,
@@ -650,7 +686,8 @@ private final class Worker {
             let alreadyProtected = classification.group == .protected && !classification.testable
             classification.group = .protected
             classification.reason = alreadyProtected ? classification.reason + "仅完成部分容量统计。"
-                : measurement.exceededItemBound ? "此目录内容超过单项核验上限，本次保留；其他项目不受影响。"
+                : measurement.exceededItemBound ? "此目录内容超过单项核验上限，本次保留；其他项目不受影响。" +
+                    (known?.rule.cleanCommand.map { "也可以在终端运行 \($0) 清理。" } ?? "")
                 : "内容核验未完成，本次保留；可缩小扫描范围后重试。"
             classification.testable = false
         } else if measurement.releaseContent && classification.group != .protected {
@@ -669,9 +706,10 @@ private final class Worker {
         if measurement.unsafe || measurement.releaseContent { classification.testable = false }
         return .init(scopeID: scope.id, url: url, rootURL: root, rootIdentity: rootIdentity, identity: identity,
                      ancestorIdentities: ancestors, kind: classification.kind, group: classification.group,
-                     title: url.lastPathComponent, reason: classification.reason, impact: classification.impact,
+                     title: classification.title ?? knownTitle ?? url.lastPathComponent, reason: classification.reason, impact: classification.impact,
                      logicalBytes: measurement.logical, allocatedBytes: measurement.allocated, isDirectory: directory,
-                     canConfirmTestPurpose: classification.testable, treeFingerprint: measurement.fingerprint, sizeIsComplete: measurement.complete)
+                     canConfirmTestPurpose: classification.testable, treeFingerprint: measurement.fingerprint, sizeIsComplete: measurement.complete,
+                     isReviewSuggestion: classification.suggestion && classification.group == .review ? true : nil)
     }
 
     func classify(_ url: URL, identity: SpaceCleaningFileIdentity) -> Classification {
@@ -695,6 +733,9 @@ private final class Worker {
             return .init(kind: .unknownApplication, group: .protected, reason: "尚未确认是测试副本还是需要保留的导出 App。", impact: "不能仅凭名称、签名或公证状态判断用途。", testable: true)
         }
         if ext == "xcarchive", !cacheFolder { return .init(kind: .unknownArchive, group: .protected, reason: "归档用途待确认，默认保留。", impact: "确认仅用于测试且不是需保留的唯一归档后，可手动复核。", testable: true) }
+        if let known = knownLocation(url), let classification = knownClassification(url, identity: identity, known: known) {
+            return classification
+        }
         if let known = cacheKind(url) {
             if unsafeCacheFileName(url.lastPathComponent) {
                 return .init(kind: .unsupported, group: .protected, reason: "缓存中的数据库、事务边车或锁文件默认保留。", impact: "需要先核实应用状态与数据一致性。")
@@ -751,6 +792,13 @@ private final class Worker {
         // Debug symbols and checksums inside DerivedData are build output or
         // downloaded artifacts; strong release evidence still applies there.
         let generated = cacheKind(root) == .derivedData || within(root, Self.derivedDataRoot)
+        // Inside a known package cache, unpacked `node_modules` and lock files are
+        // cache structure; the owner was confirmed idle before measuring.
+        let known = knownLocation(root).map(\.rule)
+        let allowsDevelopmentNames = known?.allowsDevelopmentNames == true
+        let allowsLockFiles = known.map { $0.category != .assistantRecord && $0.allowsLockFiles } == true
+        // Only the link rule relaxes here; release names and lock files keep their own checks.
+        let allowsInternalLinks = allowBundleLinks || known?.allowsInternalLinks == true
         let strongRoot = isStrongReleaseProtected(root)
         let measurementLimit = protectedBudget ? min(10_000, options.maximumEntries) : options.maximumEntries
         var measuredEntries = 0
@@ -780,7 +828,10 @@ private final class Worker {
                 guard visit(child, scope: scope) else { result.complete = false; break }
                 measuredEntries += 1
                 guard let childIdentity = Scanner.captureIdentity(at: child) else { result.complete = false; break }
-                if developmentReason(child, identity: childIdentity) != nil {
+                // Files, not folders: compressing old records rewrites folders
+                // while each file keeps its own modification time.
+                if Scanner.isRegular(childIdentity) { result.latestModified = max(result.latestModified, childIdentity.modifiedSeconds) }
+                if !allowsDevelopmentNames, developmentReason(child, identity: childIdentity) != nil {
                     result.complete = false; result.unsafe = true; result.developmentContent = true
                     continue
                 }
@@ -797,7 +848,7 @@ private final class Worker {
                 if Scanner.isSymbolicLink(childIdentity) {
                     let target = (try? FileManager.default.destinationOfSymbolicLink(atPath: child.path)) ?? ""
                     hash.update(data: Data("link:\(target.utf8.count):\(target)\n".utf8))
-                    if !allowBundleLinks || target.isEmpty || target.hasPrefix("/") ||
+                    if !allowsInternalLinks || target.isEmpty || target.hasPrefix("/") ||
                         !(Scanner.canonicalURL(child).map { Scanner.contains($0.path, in: root.path) } ?? false) { result.unsafe = true }
                 } else if Scanner.isDirectory(childIdentity) {
                     pending.append((child, depth + 1))
@@ -807,7 +858,7 @@ private final class Worker {
                         result.logical = saturatingAdd(result.logical, childIdentity.sizeBytes)
                         result.allocated = saturatingAdd(result.allocated, childIdentity.allocatedBytes)
                     }
-                    if !allowBundleLinks && unsafeCacheFileName(child.lastPathComponent) { result.unsafe = true }
+                    if !allowBundleLinks && !allowsLockFiles && unsafeCacheFileName(child.lastPathComponent) { result.unsafe = true }
                 } else { result.unsafe = true }
                 emit(scope: scope, url: child)
             }
@@ -836,6 +887,15 @@ private final class Worker {
             let parts = relativeComponents(url, Self.derivedDataRoot)
             if parts.count == 2 && parts[1] != "Build" { return true }
             if parts.count == 3 && parts[1] == "Build" { return true }
+        }
+        // Known locations list one item per child (or per YYYY/MM month folder).
+        if let known = knownLocation(url) {
+            let depth = knownComponents(url, root: known.root).count
+            switch known.rule.granularity {
+            case .children: if depth == 1 { return true }
+            case .months: if depth == 2 { return true }
+            case .root: break
+            }
         }
         // Directories in Downloads/custom locations remain navigable, never wholesale inferred junk.
         return false
@@ -872,8 +932,12 @@ private final class Worker {
             let components = relativeComponents(url, "Library/Caches/Firefox/Profiles")
             if components.count >= 2 && components[1] == "cache2" { return .browserCache }
         }
-        if within(url, ".npm/_cacache") { return .packageCache }
-        if ["Library/Caches/Homebrew", "Library/Caches/pip", "Library/Caches/org.swift.swiftpm"].contains(where: { within(url, $0) }) { return .packageCache }
+        if let known = knownLocation(url), known.rule.category != .assistantRecord {
+            // Unversioned JetBrains folders (Toolbox, daemons) are not IDE caches.
+            if known.rule.path == "Library/Caches/JetBrains", let first = knownComponents(url, root: known.root).first,
+               SpaceCleaningKnownLocations.jetBrainsVersion(String(first)) == nil { return nil }
+            return .packageCache
+        }
         if within(url, Self.derivedDataRoot) {
             let parts = relativeComponents(url, Self.derivedDataRoot)
             // Generated module, SDK and compilation caches live at the top level
@@ -909,13 +973,70 @@ private final class Worker {
         }
         // Tool identities come from SpaceCleaningToolActivity, which reads the
         // launch script of interpreted tools; raw names remain accepted.
-        if within(url, ".npm/_cacache") { return !tools.isDisjoint(with: [SpaceCleaningToolActivity.npm, "npx"]) }
-        if within(url, "Library/Caches/Homebrew") { return tools.contains(SpaceCleaningToolActivity.homebrew) }
-        if within(url, "Library/Caches/pip") { return !tools.isDisjoint(with: [SpaceCleaningToolActivity.pip, "pip3"]) }
-        if within(url, "Library/Caches/org.swift.swiftpm") {
-            return !tools.isDisjoint(with: ["swift", "swift-package", "swift-build", "xcodebuild", "XCBBuildService", "SWBBuildService"])
+        if let known = knownLocation(url), known.rule.category != .assistantRecord {
+            if !known.rule.tools.isDisjoint(with: tools) { return true }
+            // JetBrains Toolbox stays open in the background and never uses IDE caches.
+            return known.rule.bundlePrefixes.contains { prefix in
+                identifier { $0.hasPrefix(prefix.lowercased()) && $0 != "com.jetbrains.toolbox" }
+            }
         }
         return false
+    }
+    /// Names what a known location is and what removing it costs. Returns nil
+    /// for entries the rule does not describe, which keep the generic rules.
+    func knownClassification(_ url: URL, identity: SpaceCleaningFileIdentity,
+                             known: (rule: SpaceCleaningKnownLocation, root: String)) -> Classification? {
+        let rule = known.rule, parts = knownComponents(url, root: known.root)
+        let name = url.lastPathComponent
+        switch rule.category {
+        case .assistantRecord:
+            guard Scanner.isDirectory(identity) else { return nil }
+            let label: String
+            switch rule.granularity {
+            case .months:
+                guard parts.count == 2, let month = SpaceCleaningKnownLocations.monthTitle(year: String(parts[0]), month: String(parts[1])) else { return nil }
+                label = month
+            case .children:
+                guard parts.count == 1 else { return nil }
+                label = SpaceCleaningKnownLocations.claudeProjectName(name, homePath: homePath)
+            case .root:
+                guard parts.isEmpty else { return nil }
+                label = ""
+            }
+            return .init(kind: .personalFile, group: .review, reason: rule.reason, impact: rule.impact,
+                         title: label.isEmpty ? rule.title : rule.title + " · " + label, suggestion: true)
+        case .toolCache, .toolDownload:
+            let depth = rule.granularity == .root ? 0 : 1
+            guard parts.count == depth else { return nil }
+            if depth == 1, !Scanner.isDirectory(identity),
+               unsafeCacheFileName(name) || ["cachedir.tag", ".gitignore", "readme", "readme.md", "readme.txt"].contains(name.lowercased()) {
+                return .init(kind: .unsupported, group: .protected, reason: "缓存目录的标记或锁文件，保留。", impact: "体积很小，用于协调缓存的读写。")
+            }
+            let title = depth == 0 ? rule.title : rule.title + " · " + name
+            if rule.path == "Library/Caches/JetBrains" {
+                guard let version = SpaceCleaningKnownLocations.jetBrainsVersion(name) else {
+                    return .init(kind: .personalFile, group: .review, reason: "JetBrains 目录中的其他缓存（例如 Toolbox 或后台服务）。",
+                                 impact: "相关应用可能重新下载或生成这些内容；正在使用时清理可能影响其运行。", title: title)
+                }
+                if isNewestJetBrainsVersion(url, version: version) {
+                    return .init(kind: .packageCache, group: .review, reason: "当前 \(version.product) 版本的缓存与索引。",
+                                 impact: rule.impact, title: title, suggestion: true)
+                }
+                return .init(kind: .packageCache, group: .rebuildable,
+                             reason: "旧版本 \(version.product) 留下的缓存与索引，新版本不会再使用。",
+                             impact: "如仍在使用这个旧版本，下次打开项目时会重新建立索引。", title: title)
+            }
+            return .init(kind: .packageCache, group: rule.category == .toolCache ? .rebuildable : .review,
+                         reason: rule.reason, impact: rule.impact, title: title, suggestion: rule.category == .toolDownload)
+        }
+    }
+    /// Product folders of the same name compare by version; the newest is current.
+    func isNewestJetBrainsVersion(_ url: URL, version: (product: String, version: [Int])) -> Bool {
+        let siblings = (try? FileManager.default.contentsOfDirectory(atPath: url.deletingLastPathComponent().path)) ?? []
+        return !siblings.contains { sibling in
+            guard let other = SpaceCleaningKnownLocations.jetBrainsVersion(sibling), other.product == version.product else { return false }
+            return other.version.lexicographicallyPrecedes(version.version) == false && other.version != version.version
+        }
     }
     func isReleaseProtected(_ url: URL) -> Bool { isStrongReleaseProtected(url) || hasReleaseMaterialName(url) }
     func hasReleaseMaterialName(_ url: URL) -> Bool {
@@ -1000,7 +1121,7 @@ private final class Worker {
     func stageFor(_ kind: SpaceCleaningScopeKind) -> SpaceCleaningStage {
         switch kind {
         case .browserCache, .packageCache, .diagnostics: .caches
-        case .derivedData, .development: .development
+        case .derivedData, .development, .assistantData: .development
         case .downloads, .custom: .downloads
         case .archives, .releaseArchives, .releaseArchiveDiscovery, .installedApplications: .protection
         }

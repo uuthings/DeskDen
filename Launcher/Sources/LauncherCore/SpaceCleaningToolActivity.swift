@@ -12,17 +12,43 @@ public enum SpaceCleaningToolActivity {
     public static let npm = "npm"
     public static let homebrew = "brew"
     public static let pip = "pip"
+    public static let yarn = "yarn"
+    public static let pnpm = "pnpm"
+    public static let bun = "bun"
+    public static let uv = "uv"
+    public static let poetry = "poetry"
+    public static let gradle = "gradle"
+    public static let cargo = "cargo"
+    public static let go = "go"
+    public static let cocoapods = "pod"
+    public static let carthage = "carthage"
+    public static let deno = "deno"
+    public static let composer = "composer"
+    public static let playwright = "playwright"
+    /// Browsers that Playwright and Puppeteer download and launch from their caches.
+    public static let testBrowser = "test-browser"
     /// Used when the process table cannot be read: every tool-owned cache stays protected.
-    public static let unreadableProcessTable: Set<String> = [npm, homebrew, pip, "xcodebuild", "swift"]
+    public static let unreadableProcessTable: Set<String> = [
+        npm, homebrew, pip, yarn, pnpm, bun, uv, poetry, gradle, cargo, go, cocoapods, carthage, deno, composer,
+        playwright, testBrowser, "xcodebuild", "swift"
+    ]
 
     /// Native executables that are reported under their own names.
     static let nativeTools: Set<String> = [
         "xcodebuild", "swift", "swift-frontend", "swift-driver", "swift-build", "swift-package",
         "clang", "clang++", "XCBBuildService", "SWBBuildService"
     ]
+    /// Native executables that map to a cache owner identity.
+    private static let nativeOwners: [String: String] = [
+        "yarn": yarn, "pnpm": pnpm, "bun": bun, "uv": uv, "uvx": uv, "cargo": cargo, "go": go,
+        "carthage": carthage, "deno": deno, "chrome-headless-shell": testBrowser,
+        "google chrome for testing": testBrowser, "headless_shell": testBrowser
+    ]
     private static let npmScripts: Set<String> = ["npm", "npx", "npm-cli.js", "npx-cli.js", "npm.js", "npx.js"]
+    private static let yarnScripts: Set<String> = ["yarn", "yarn.js", "yarn.cjs", "yarnpkg"]
+    private static let pnpmScripts: Set<String> = ["pnpm", "pnpm.cjs", "pnpm.js", "pnpx", "pnpx.cjs"]
 
-    enum Interpreter { case env, node, shell, ruby, python }
+    enum Interpreter { case env, node, shell, ruby, python, java, php }
 
     static func interpreter(_ name: String) -> Interpreter? {
         let name = name.lowercased()
@@ -31,6 +57,8 @@ public enum SpaceCleaningToolActivity {
         if ["sh", "bash", "zsh", "dash", "ksh"].contains(name) { return .shell }
         if name.hasPrefix("ruby") { return .ruby }
         if name.hasPrefix("python") { return .python }
+        if name == "java" { return .java }
+        if name == "php" || name.hasPrefix("php8") || name.hasPrefix("php7") { return .php }
         return nil
     }
 
@@ -44,6 +72,7 @@ public enum SpaceCleaningToolActivity {
         if lower == "npm" || lower == "npx" { result.insert(npm) }
         if lower == "brew" { result.insert(homebrew) }
         if isPipName(lower) { result.insert(pip) }
+        if let owner = nativeOwners[lower] { result.insert(owner) }
         let operands = Array(arguments.dropFirst())
         // A path argument is specific enough to count anywhere in argv; a bare
         // word only counts when it is the script the interpreter was started with.
@@ -60,10 +89,22 @@ public enum SpaceCleaningToolActivity {
             if candidates.contains(where: { npmScripts.contains(basename($0).lowercased()) || $0.contains("/node_modules/npm/bin/") }) {
                 result.insert(npm)
             }
+            if candidates.contains(where: { yarnScripts.contains(basename($0).lowercased()) || $0.contains("/node_modules/yarn/bin/") }) {
+                result.insert(yarn)
+            }
+            if candidates.contains(where: { pnpmScripts.contains(basename($0).lowercased()) || $0.contains("/node_modules/pnpm/bin/") }) {
+                result.insert(pnpm)
+            }
+            if candidates.contains(where: { basename($0).lowercased() == "playwright" || $0.contains("/node_modules/playwright/") ||
+                $0.contains("/node_modules/@playwright/test/") || $0.contains("/node_modules/playwright-core/") }) {
+                result.insert(playwright)
+            }
         case .shell:
             if paths.contains(where: { basename($0) == "brew" || $0.hasSuffix("/Library/Homebrew/brew.sh") }) { result.insert(homebrew) }
         case .ruby:
             if operands.contains(where: { $0.hasSuffix("/Homebrew/brew.rb") }) { result.insert(homebrew) }
+            let candidates = paths + (script.map { [$0] } ?? [])
+            if candidates.contains(where: { basename($0) == "pod" || $0.contains("/gems/cocoapods-") }) { result.insert(cocoapods) }
         case .python:
             if let index = operands.firstIndex(of: "-m"), index + 1 < operands.count {
                 let module = operands[index + 1].lowercased()
@@ -71,6 +112,16 @@ public enum SpaceCleaningToolActivity {
             }
             let candidates = paths + (script.map { [$0] } ?? [])
             if candidates.contains(where: { isPipName(basename($0).lowercased()) }) { result.insert(pip) }
+            if candidates.contains(where: { basename($0).lowercased() == "poetry" }) ||
+                operands.firstIndex(of: "-m").map({ $0 + 1 < operands.count && operands[$0 + 1].lowercased() == "poetry" }) == true {
+                result.insert(poetry)
+            }
+        case .java:
+            // Gradle daemons, wrappers and launchers all run Gradle classes.
+            if operands.contains(where: { $0.contains("org.gradle.") }) { result.insert(gradle) }
+        case .php:
+            let candidates = paths + (script.map { [$0] } ?? [])
+            if candidates.contains(where: { ["composer", "composer.phar"].contains(basename($0).lowercased()) }) { result.insert(composer) }
         case nil:
             break
         }
@@ -128,8 +179,10 @@ public enum SpaceCleaningToolActivity {
                 result.formUnion(identities(executable: parsed.executable, arguments: parsed.arguments))
             } else if kind == .node {
                 // Another user's Node process (for example `sudo npm`) can still
-                // write the shared npm cache; its script cannot be confirmed.
-                result.insert(npm)
+                // write the shared package caches; its script cannot be confirmed.
+                result.formUnion([npm, yarn, pnpm, playwright])
+            } else if kind == .java {
+                result.insert(gradle)
             }
         }
         return result

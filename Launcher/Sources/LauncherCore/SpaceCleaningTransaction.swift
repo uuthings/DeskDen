@@ -93,7 +93,12 @@ public enum SpaceCleaningTransaction {
         if let reason = validateActivity(candidate, candidate.url) { return finish(record, .skipped, reason, persist) }
         do {
             let selected = try SpaceCleaningFilesystem.snapshot(candidate.url, expected: candidate.identity, allowRename: false, isCancelled: isCancelled)
-            if let reason = SpaceCleaningDevelopmentPolicy.reason(in: selected) { return finish(record, .skipped, reason, persist) }
+            // A few fixed caches and assistant outputs store unpacked packages or
+            // generated prototypes; only those paths skip this project check.
+            let knownStructure = [.packageCache, .personalFile].contains(candidate.kind) && SpaceCleaningKnownLocations.allowsProjectNames(candidate.url)
+            if !knownStructure, let reason = SpaceCleaningDevelopmentPolicy.reason(in: selected) {
+                return finish(record, .skipped, reason, persist)
+            }
             guard !isCancelled(), SpaceCleaningFilesystem.validateAncestors(candidate),
                   SpaceCleaningFilesystem.capture(candidate.url) == candidate.identity else { throw SpaceCleaningFilesystem.Failure(message: "内容核验后项目或父目录已变化。") }
             if let reason = validatePolicy(candidate) { throw SpaceCleaningFilesystem.Failure(message: reason) }
@@ -228,7 +233,8 @@ public enum SpaceCleaningTransaction {
         if let reason = validatePolicy(record.candidate) { record.explanation = reason; try? persist(record); return record }
         do {
             let current = try verifiedSnapshot(record, at: source, isCancelled: isCancelled)
-            if let reason = SpaceCleaningDevelopmentPolicy.reason(in: current) {
+            let knownStructure = [.packageCache, .personalFile].contains(record.candidate.kind) && SpaceCleaningKnownLocations.allowsProjectNames(record.originalURL)
+            if !knownStructure, let reason = SpaceCleaningDevelopmentPolicy.reason(in: current) {
                 return finish(record, .trashed, reason + " 可从清理记录恢复，未永久删除。", persist)
             }
             // A fresh unique directory in the same Trash parent avoids moving
