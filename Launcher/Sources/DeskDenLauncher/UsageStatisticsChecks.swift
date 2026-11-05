@@ -170,6 +170,12 @@ import LauncherCore
                   && frame("fc.usage.manager.service", objects: objects(host)) != nil
                   && frame("fc.usage.config.kind", objects: objects(host)) == nil,
                   "the native form exposes one category and a service field without a second classification")
+            manager.selectService(.claude)
+            await settle(host)
+            check(frame("fc.usage.manager.connect-subscription", objects: objects(host)) != nil
+                  && frame("fc.usage.manager.claude-member", objects: objects(host)) == nil
+                  && frame("fc.ai.claude.copy-switch-command", objects: objects(host)) == nil,
+                  "Claude shows one connection action and keeps the separate login under collapsed advanced options")
             manager.selectService(.codex)
             await settle(host)
             check(frame("fc.usage.manager.connect-subscription", objects: objects(host)) != nil

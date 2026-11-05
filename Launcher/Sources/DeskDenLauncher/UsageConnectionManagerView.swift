@@ -18,6 +18,7 @@ struct UsageConnectionManagerView: View {
     @State private var showingBrowserGuide = false
     @State private var browserGuideMessage: String?
     @State private var showingSubscriptionOptions = false
+    @State private var showingClaudeAdvanced = false
 
     init(app: WorkbenchAppModel, manager: UsageConnectionManager, onClose: @escaping () -> Void) {
         self.app = app; self.manager = manager; self.onClose = onClose
@@ -213,27 +214,39 @@ struct UsageConnectionManagerView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(provider == .codex ? "本机 Codex 订阅" : "本机 Claude 订阅").font(.system(size: 12))
+                    Text(provider == .codex ? "本机 Codex 订阅" : ai.claudeUsesSeparateLogin ? "Claude 会员 · 方寸单独登录" : "本机 Claude 订阅").font(.system(size: 12))
                     Text(subscriptionStatus(provider)).font(.system(size: 11)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
-                Button(manager.busy ? "正在连接…" : provider == .claude && ai.claudeSubscriptionNeedsLogin ? "连接会员账号" : "连接本机订阅") {
+                Button(manager.busy ? "正在连接…" : provider == .claude ? ClaudeConnectionPresentation.primaryTitle(ai.claudeLoginRemedy) : "连接本机订阅") {
                     manager.connectSubscription(app: app, allowDirectorySelection: true,
-                                                loginClaudeMember: provider == .claude && ai.claudeSubscriptionNeedsLogin)
+                                                claude: ClaudeConnectionPresentation.primaryAction(ai.claudeLoginRemedy))
                 }
                     .buttonStyle(WBButtonStyle(primary: true)).disabled(manager.busy)
                     .accessibilityIdentifier("fc.usage.manager.connect-subscription")
             }
+            if provider == .claude && ai.claudeLoginRemedy == .switchInTerminal { ClaudeTerminalSwitchNotice() }
             Text(provider == .claude
-                 ? "通过 Claude 官方客户端查询五小时和每周额度。会员登录在官方网页完成，单独保存，不改变现有 Claude Code 登录。"
+                 ? "通过本机 Claude Code 查询五小时和每周额度。登录由官方客户端完成，方寸不读取凭据。"
                  : "自动读取本机登录来源并配置额度同步，无需填写密钥或选择额度文件。")
                 .font(.system(size: 11)).foregroundStyle(palette.secondary)
             if provider == .claude {
-                Button(ai.claudeSubscriptionNeedsLogin ? "重新检测本机登录" : "连接其他会员账号") {
-                    manager.connectSubscription(app: app, loginClaudeMember: !ai.claudeSubscriptionNeedsLogin)
+                DisclosureGroup("高级连接方式", isExpanded: $showingClaudeAdvanced) {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(ai.claudeUsesSeparateLogin ? "改回本机登录" : "为方寸单独登录会员").font(.system(size: 12))
+                            Text(ai.claudeUsesSeparateLogin ? "退出方寸单独保存的会员登录，改为读取本机 Claude Code" : "终端需要保留 API 或其他登录时使用，不改变本机 Claude Code")
+                                .font(.system(size: 11)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 0)
+                        Button(ai.claudeUsesSeparateLogin ? "改回" : "官方登录") {
+                            manager.connectSubscription(app: app, claude: ai.claudeUsesSeparateLogin ? .useLocalLogin : .signInSeparately)
+                        }
+                        .buttonStyle(WBButtonStyle()).disabled(manager.busy)
+                        .accessibilityIdentifier("fc.usage.manager.claude-member")
+                    }.padding(.top, 8)
                 }
-                .buttonStyle(WBButtonStyle()).disabled(manager.busy)
-                .accessibilityIdentifier("fc.usage.manager.claude-member")
+                .font(.system(size: 11)).foregroundStyle(palette.secondary)
             }
             if let plan = ai.providerSummaries.first(where: { $0.provider == provider })?.effectiveAccountPlan {
                 Text("会员计划 · " + plan.title).font(.system(size: 12)).foregroundStyle(palette.secondary)

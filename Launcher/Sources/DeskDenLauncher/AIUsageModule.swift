@@ -30,6 +30,10 @@ enum AISubscriptionConnectionResult: Equatable, Sendable {
     var isReady: Bool { if case .ready = self { true } else { false } }
 }
 
+/// Explicit Claude connection actions. `check` reads the login in use; the two login
+/// actions open the official login page; a separate login and its reversal are advanced.
+enum ClaudeConnectionAction: Equatable, Sendable { case check, signIn, signInSeparately, useLocalLogin }
+
 /// A short-lived, UI-free mode of the app invoked by Claude Code's official status line.
 /// Input may contain other metadata; only the two documented quota windows survive.
 enum ClaudeQuotaStatusLineHost {
@@ -417,7 +421,8 @@ final class AIUsageModel: ObservableObject {
     @Published private(set) var connectionPreview: AIUsageConnectionPreview?
     @Published private(set) var connectionPreviewLoading = false
     @Published private(set) var claudeQuotaSyncMessage: String?
-    @Published private(set) var claudeSubscriptionNeedsLogin = false
+    @Published private(set) var claudeLoginRemedy: ClaudeLoginRemedy?
+    @Published private(set) var claudeUsesSeparateLogin = false
     @Published private(set) var isRefreshingClaudeSubscription = false
     @Published private(set) var isConnectingClaudeSubscriptionAccount = false
     @Published private(set) var subscriptionConnectionResults: [AIProvider: AISubscriptionConnectionResult] = [:]
@@ -456,6 +461,7 @@ final class AIUsageModel: ObservableObject {
     private var generation = 0
     private var preparingForQuit = false
     var todayTokens: Int64 { filteredRecords(period: .today).reduce(0) { $0 + $1.tokens.total } }
+    var claudeSubscriptionNeedsLogin: Bool { claudeLoginRemedy != nil }
     var storageRecoveryInstructions: String { "原文件已保留，对应文件的写入已暂停。请先退出方寸，备份下列原文件，再修复文件或将损坏文件移出此目录，重新打开方寸。移走文件会重新建立该项数据，不会恢复旧记录。" }
     func revealDataDirectory() { NSWorkspace.shared.open(directory) }
     init(dataDirectory: URL, startServices: Bool = true, notifications: (any AIQuotaNotificationProviding)? = nil,
@@ -762,7 +768,7 @@ final class AIUsageModel: ObservableObject {
         guard mutate(provider, update: { $0.enabled = enabled }) else { return false }
         if !enabled {
             subscriptionFollowups.removeValue(forKey: provider)?.cancel(); subscriptionConnectionResults.removeValue(forKey: provider)
-            if provider == .claude { cancelClaudeSubscriptionRefresh(); claudeSubscriptionReading = nil; claudeSubscriptionNeedsLogin = false }
+            if provider == .claude { cancelClaudeSubscriptionRefresh(); claudeSubscriptionReading = nil; claudeLoginRemedy = nil }
         }
         return true
     }
@@ -780,7 +786,7 @@ final class AIUsageModel: ObservableObject {
     /// Queries the official Claude subscription independently of conversation logs.
     /// Only a fresh automatic quota may return ready; login is a separate action.
     func connectLocalSubscription(provider: AIProvider) async -> AISubscriptionConnectionResult {
-        if provider == .claude { return await connectClaudeSubscription(login: false) }
+        if provider == .claude { return await connectClaude(.check) }
         guard connectingSubscriptions.insert(provider).inserted else {
             return .waiting(message: "正在检查本机来源，请稍候。")
         }
@@ -832,28 +838,19 @@ final class AIUsageModel: ObservableObject {
         followSubscriptionReading(provider)
         return result
     }
-    /// The account login path is called only by the explicit subscription-login action.
-    func connectClaudeSubscriptionAccount() async -> AISubscriptionConnectionResult {
-        await connectClaudeSubscription(login: true)
-    }
-    /// Cancels only the user-initiated account flow, preserving any previous reading.
-    func cancelClaudeSubscriptionAccountConnection() {
-        guard isConnectingClaudeSubscriptionAccount else { return }
-        cancelClaudeSubscriptionRefresh()
-        isConnectingClaudeSubscriptionAccount = false
-        claudeQuotaSyncMessage = "Claude 会员连接已取消，原有读数已保留。"
-    }
-    private func connectClaudeSubscription(login: Bool) async -> AISubscriptionConnectionResult {
+    /// Login actions run only from an explicit click; `check` is the ordinary connection.
+    func connectClaude(_ action: ClaudeConnectionAction) async -> AISubscriptionConnectionResult {
         guard !preparingForQuit, connectingSubscriptions.insert(.claude).inserted else {
             return .waiting(message: "正在检查 Claude 会员额度，请稍候。")
         }
+        let opensLoginPage = action == .signIn || action == .signInSeparately
         defer {
             connectingSubscriptions.remove(.claude)
-            if login { isConnectingClaudeSubscriptionAccount = false }
+            if opensLoginPage { isConnectingClaudeSubscriptionAccount = false }
         }
         errorMessage = nil
-        let task = startClaudeSubscriptionRefresh(login: login, forceRefresh: !login)
-        if login { isConnectingClaudeSubscriptionAccount = true }
+        let task = startClaudeSubscriptionRefresh(action)
+        if opensLoginPage { isConnectingClaudeSubscriptionAccount = true }
         let request = claudeSubscriptionGeneration
         await withTaskCancellationHandler { await task?.value } onCancel: { task?.cancel() }
         guard !Task.isCancelled, !preparingForQuit, claudeSubscriptionGeneration == request else { return .failed(message: "Claude 额度连接已取消。") }
@@ -865,7 +862,7 @@ final class AIUsageModel: ObservableObject {
             }
             applyClaudeSubscriptionSummary()
             result = freshSubscriptionResult(.claude) ?? .failed(message: "Claude 返回的额度读数已过期，请稍后重新检测。")
-        case .loginRequired(let message), .failed(let message): result = .failed(message: message)
+        case .loginRequired(let message, _), .failed(let message): result = .failed(message: message)
         case .unavailable(let message):
             result = freshSubscriptionResult(.claude) ?? .failed(message: message)
         case nil: result = .failed(message: "Claude 额度连接已取消，请重试。")
@@ -875,10 +872,20 @@ final class AIUsageModel: ObservableObject {
         if case .failed = result { errorMessage = result.message }
         return result
     }
-    @discardableResult private func startClaudeSubscriptionRefresh(login: Bool = false, forceRefresh: Bool = false) -> Task<Void, Never>? {
+    /// Cancels only the user-initiated login flow, preserving any previous reading.
+    func cancelClaudeSubscriptionAccountConnection() {
+        guard isConnectingClaudeSubscriptionAccount else { return }
+        cancelClaudeSubscriptionRefresh()
+        isConnectingClaudeSubscriptionAccount = false
+        claudeQuotaSyncMessage = "Claude 会员登录已取消，原有读数已保留。"
+    }
+    /// A nil action is the background fetch. Background fetches and checks share one
+    /// in-flight query; the login actions and the return to the local login replace it.
+    @discardableResult private func startClaudeSubscriptionRefresh(_ action: ClaudeConnectionAction? = nil) -> Task<Void, Never>? {
         guard !preparingForQuit else { return nil }
-        if !login, let existing = claudeSubscriptionTask { return existing }
-        if login { cancelClaudeSubscriptionRefresh() }
+        let explicit = action != nil && action != .check
+        if !explicit, let existing = claudeSubscriptionTask { return existing }
+        if explicit { cancelClaudeSubscriptionRefresh() }
         let request = UUID(); claudeSubscriptionGeneration = request
         isRefreshingClaudeSubscription = true
         let service = claudeSubscription
@@ -889,10 +896,16 @@ final class AIUsageModel: ObservableObject {
                 }
             }
             let reading: ClaudeSubscriptionReading
-            if login { reading = await service.login() }
-            else if forceRefresh { reading = await service.refresh() }
-            else { reading = await service.fetch() }
+            switch action {
+            case nil: reading = await service.fetch()
+            case .check: reading = await service.refresh()
+            case .signIn: reading = await service.login()
+            case .signInSeparately: reading = await service.loginSeparately()
+            case .useLocalLogin: reading = await service.useLocalLogin()
+            }
+            let separate = await service.usesSeparateLogin()
             guard let self, !Task.isCancelled, !self.preparingForQuit, self.claudeSubscriptionGeneration == request else { return }
+            self.claudeUsesSeparateLogin = separate
             await self.acceptClaudeSubscriptionReading(reading)
         }
         claudeSubscriptionTask = task
@@ -929,8 +942,8 @@ final class AIUsageModel: ObservableObject {
         guard !Task.isCancelled, !preparingForQuit else { return }
         claudeSubscriptionReading = accepted
         switch accepted {
-        case .loginRequired: claudeSubscriptionNeedsLogin = true
-        case .ready(let snapshot): claudeSubscriptionNeedsLogin = false; lastClaudeSubscriptionSnapshot = snapshot
+        case .loginRequired(_, let remedy): claudeLoginRemedy = remedy
+        case .ready(let snapshot): claudeLoginRemedy = nil; lastClaudeSubscriptionSnapshot = snapshot
         case .unavailable, .failed: break
         }
         applyClaudeSubscriptionSummary()
@@ -952,7 +965,7 @@ final class AIUsageModel: ObservableObject {
                 summary = .init(provider: .claude, state: snapshot.isStale() ? .stale : .ready, snapshot: snapshot,
                                 detail: snapshot.isStale() ? "保留最后有效读数，等待 Claude 更新额度窗口。" : "额度由 Claude 官方命令读取，不由 Token 数推算。")
             }
-        case .loginRequired(let message):
+        case .loginRequired(let message, _):
             summary = .init(provider: .claude, state: .unavailable, snapshot: retained, detail: message)
         case .failed(let message):
             summary = .init(provider: .claude, state: .error, snapshot: retained, detail: message)
@@ -979,7 +992,7 @@ final class AIUsageModel: ObservableObject {
         for provider in Array(subscriptionConnectionResults.keys) where configuration(for: provider).enabled {
             if provider == .claude, let reading = claudeSubscriptionReading {
                 switch reading {
-                case .loginRequired(let message), .failed(let message):
+                case .loginRequired(let message, _), .failed(let message):
                     subscriptionConnectionResults[provider] = .failed(message: message); continue
                 default: break
                 }

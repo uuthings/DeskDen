@@ -1178,30 +1178,27 @@ private struct AIUsageDialogContent: View {
     private var claudeDialog: some View {
         AIDialogShell(title: "连接 Claude 额度", close: model.requestDismissDialog) {
             VStack(alignment: .leading, spacing: 0) {
-                Text("通过 Claude 官方客户端主动查询五小时和每周额度，无需发送对话，也不通过 Token 数推算。").aiText(12, color: palette.secondary).padding(.bottom, 4)
-                AISourceRow(title: "检测本机登录", detail: "检查当前身份并读取订阅额度", last: true) {
-                    Button(model.dialogBusy ? "正在连接…" : "连接本机订阅") {
-                        guard !model.dialogBusy else { return }
-                        model.dialogBusy = true
-                        Task { @MainActor in
-                            _ = await UsageSubscriptionAuthorization.connect(model: model, provider: .claude)
-                            model.dialogBusy = false
-                        }
+                Text("通过本机 Claude Code 主动查询五小时和每周额度，无需发送对话，也不通过 Token 数推算。").aiText(12, color: palette.secondary).padding(.bottom, 4)
+                AISourceRow(title: model.claudeUsesSeparateLogin ? "方寸单独登录" : "本机 Claude Code",
+                            detail: ClaudeConnectionPresentation.status(model.claudeLoginRemedy), last: true) {
+                    Button(model.dialogBusy ? "正在连接…" : ClaudeConnectionPresentation.primaryTitle(model.claudeLoginRemedy)) {
+                        connectClaude(ClaudeConnectionPresentation.primaryAction(model.claudeLoginRemedy))
                     }.buttonStyle(WBButtonStyle(primary: true, compact: true)).disabled(model.dialogBusy)
                         .accessibilityIdentifier("fc.ai.claude.enableSync")
                 }
-                AISourceRow(title: "连接会员账号", detail: "在官方网页登录，独立保存，不改变现有 Claude Code 登录", last: true) {
-                    Button(model.dialogBusy ? "正在连接…" : "官方登录") {
-                        guard !model.dialogBusy else { return }
-                        model.dialogBusy = true
-                        Task { @MainActor in
-                            _ = await model.connectClaudeSubscriptionAccount()
-                            model.dialogBusy = false
-                        }
-                    }.buttonStyle(WBButtonStyle(primary: model.claudeSubscriptionNeedsLogin, compact: true)).disabled(model.dialogBusy)
-                        .accessibilityIdentifier("fc.ai.claude.member-login")
-                }
+                if model.claudeLoginRemedy == .switchInTerminal { ClaudeTerminalSwitchNotice().padding(.top, 12) }
                 DisclosureGroup("高级连接方式") {
+                    if model.claudeUsesSeparateLogin {
+                        AISourceRow(title: "改回本机登录", detail: "退出方寸单独保存的会员登录，改为读取本机 Claude Code") {
+                            Button("改回") { connectClaude(.useLocalLogin) }.buttonStyle(WBButtonStyle(compact: true))
+                                .accessibilityIdentifier("fc.ai.claude.use-local-login")
+                        }
+                    } else {
+                        AISourceRow(title: "为方寸单独登录会员", detail: "终端需要保留 API 或其他登录时使用，不改变本机 Claude Code") {
+                            Button("官方登录") { connectClaude(.signInSeparately) }.buttonStyle(WBButtonStyle(compact: true))
+                                .accessibilityIdentifier("fc.ai.claude.member-login")
+                        }
+                    }
                     AISourceRow(title: "选择额度 JSON", detail: "读取已有额度文件") {
                         Button("选择文件") { model.chooseQuotaFile(for: .claude) }.buttonStyle(WBButtonStyle(compact: true)).accessibilityIdentifier("fc.ai.claude.json")
                     }
@@ -1212,7 +1209,8 @@ private struct AIUsageDialogContent: View {
                         HStack { Text("已配置额度文件").aiText(11, color: palette.muted); Spacer(); Button("移除连接") { model.removeQuotaFile(for: .claude) }.buttonStyle(WBQuietButtonStyle()) }.padding(.top, 12)
                     }
                 }.font(.system(size: 11)).foregroundStyle(palette.secondary).padding(.top, 16).disabled(model.dialogBusy)
-                if let message = model.claudeQuotaSyncMessage { AINotice(text: message).padding(.top, 12) }
+                // A failed connection reports one message as the error, not twice.
+                if let message = model.claudeQuotaSyncMessage, message != model.errorMessage { AINotice(text: message).padding(.top, 12) }
                 errorText.padding(.top, model.errorMessage == nil ? 0 : 12)
             }
         } footer: {
@@ -1230,6 +1228,14 @@ private struct AIUsageDialogContent: View {
             Button("完成") { model.requestDismissDialog() }
                 .buttonStyle(WBButtonStyle(primary: true)).disabled(model.dialogBusy)
         }.accessibilityIdentifier("fc.modal.ai.claude-connect")
+    }
+    private func connectClaude(_ action: ClaudeConnectionAction) {
+        guard !model.dialogBusy else { return }
+        model.dialogBusy = true
+        Task { @MainActor in
+            _ = await model.connectClaude(action)
+            model.dialogBusy = false
+        }
     }
     private var previewDialog: some View {
         AIDialogShell(title: model.connectionPreview.map { "连接 " + $0.provider.title + " 来源" } ?? "检查来源", close: model.requestDismissDialog) {

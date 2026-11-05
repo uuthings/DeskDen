@@ -26,6 +26,9 @@ private actor FixtureClaudeSubscription: ClaudeSubscriptionProviding {
     var fetchCount = 0
     var loginCount = 0
     var refreshCount = 0
+    var separateCount = 0
+    var localCount = 0
+    var separate = false
     var delay: Duration
     var loginDelay: Duration
     init(_ reading: ClaudeSubscriptionReading = .unavailable("fixture: no current official quota"),
@@ -33,7 +36,15 @@ private actor FixtureClaudeSubscription: ClaudeSubscriptionProviding {
         self.reading = reading; loginReading = login; self.delay = delay; self.loginDelay = loginDelay
     }
     func setReading(_ value: ClaudeSubscriptionReading) { reading = value }
-    func counts() -> (fetch: Int, login: Int, refresh: Int) { (fetchCount, loginCount, refreshCount) }
+    func counts() -> (fetch: Int, login: Int, refresh: Int, separate: Int, local: Int) { (fetchCount, loginCount, refreshCount, separateCount, localCount) }
+    func loginSeparately() async -> ClaudeSubscriptionReading {
+        separateCount += 1
+        try? await Task.sleep(for: loginDelay)
+        if case .ready = loginReading { separate = true }
+        return loginReading
+    }
+    func useLocalLogin() async -> ClaudeSubscriptionReading { localCount += 1; separate = false; return await fetch() }
+    func usesSeparateLogin() -> Bool { separate }
     func refresh() async -> ClaudeSubscriptionReading { refreshCount += 1; return await fetch() }
     func fetch() async -> ClaudeSubscriptionReading {
         fetchCount += 1
@@ -203,23 +214,24 @@ private actor FixtureClaudeSubscription: ClaudeSubscriptionProviding {
                                  claudeSettingsDirectory: settings, statusLineExecutableURL: executable,
                                  claudeSubscription: service), base, settings)
         }
-        let apiKeyService = FixtureClaudeSubscription(.loginRequired("当前 Claude Code 使用 API 计费登录，请连接会员账号。"))
+        let apiKeyService = FixtureClaudeSubscription(.loginRequired("当前 Claude Code 使用 API 计费登录，请在终端切换为会员登录。", .switchInTerminal))
         let (apiKeyModel, apiKeyBase, apiKeySettings) = try connectionFixture("api-key-needs-membership", service: apiKeyService)
         let apiKeyBefore = try Data(contentsOf: file(apiKeyBase, "sources.json"))
         let apiKeyResult = await apiKeyModel.connectLocalSubscription(provider: .claude)
         if case .failed = apiKeyResult { check(true, "API-key authentication reports a membership-login requirement instead of directory authorization or indefinite waiting") }
         else { check(false, "API-key authentication reports a membership-login requirement instead of directory authorization or indefinite waiting") }
         let apiKeyAfter = try Data(contentsOf: file(apiKeyBase, "sources.json"))
-        check(apiKeyModel.claudeSubscriptionNeedsLogin && apiKeyBefore == apiKeyAfter
+        check(apiKeyModel.claudeLoginRemedy == .switchInTerminal && apiKeyBefore == apiKeyAfter
               && !fm.fileExists(atPath: apiKeySettings.appendingPathComponent("settings.json").path),
-              "diagnosing API-key authentication preserves source and Claude settings without creating a session directory")
+              "a Console login asks for a Terminal switch and preserves source and Claude settings without creating a session directory")
         let initialServiceCounts = await apiKeyService.counts()
-        check(initialServiceCounts.fetch == 1 && initialServiceCounts.login == 0 && initialServiceCounts.refresh == 1,
+        check(initialServiceCounts.fetch == 1 && initialServiceCounts.login == 0 && initialServiceCounts.refresh == 1 && initialServiceCounts.separate == 0,
               "explicit subscription checks request fresh quota without starting interactive account login")
-        let failedLogin = await apiKeyModel.connectClaudeSubscriptionAccount()
+        let failedLogin = await apiKeyModel.connectClaude(.signInSeparately)
         let loginServiceCounts = await apiKeyService.counts()
-        check(!failedLogin.isReady && loginServiceCounts.login == 1 && !apiKeyModel.configuration(for: .claude).enabled,
-              "explicit failed account login is reported honestly and does not enable an unconnected source")
+        check(!failedLogin.isReady && loginServiceCounts.separate == 1 && loginServiceCounts.login == 0
+              && !apiKeyModel.configuration(for: .claude).enabled && !apiKeyModel.claudeUsesSeparateLogin,
+              "a failed separate login is reported honestly without enabling the source or selecting the separate login")
 
         let actualQuota = AIQuotaSnapshot(provider: .claude, observedAt: now, source: .claudeCLI,
             shortWindow: try .init(usedPercent: 13, durationMinutes: 300, resetsAt: reset),
@@ -262,14 +274,21 @@ private actor FixtureClaudeSubscription: ClaudeSubscriptionProviding {
         check(failedReload.providerSummaries.first { $0.provider == .claude }?.snapshot == actualQuota
               && failedReload.providerSummaries.first { $0.provider == .claude }?.state == .error,
               "restart restores the last official reading without reviving a cleared manual override when the source is unavailable")
-        await readyService.setReading(.loginRequired("fixture: membership login expired"))
+        await readyService.setReading(.loginRequired("fixture: membership login expired", .signIn))
         await refresh(readyModel)
-        check(readyModel.claudeSubscriptionNeedsLogin && readyModel.providerSummaries.first { $0.provider == .claude }?.detail == "fixture: membership login expired"
+        check(readyModel.claudeLoginRemedy == .signIn && readyModel.providerSummaries.first { $0.provider == .claude }?.detail == "fixture: membership login expired"
               && readyModel.providerSummaries.first { $0.provider == .claude }?.snapshot == actualQuota,
               "expired membership keeps the useful last reading and a durable login action")
-        let loginResult = await readyModel.connectClaudeSubscriptionAccount()
-        check(loginResult.isReady && !readyModel.claudeSubscriptionNeedsLogin,
-              "explicit account login accepts a verified official quota and clears the login requirement")
+        let loginResult = await readyModel.connectClaude(.signIn)
+        check(loginResult.isReady && !readyModel.claudeSubscriptionNeedsLogin && !readyModel.claudeUsesSeparateLogin,
+              "explicit official login accepts a verified quota, clears the login requirement and stays on the local login")
+        await readyService.setReading(.ready(actualQuota))
+        let separateResult = await readyModel.connectClaude(.signInSeparately)
+        check(separateResult.isReady && readyModel.claudeUsesSeparateLogin, "a verified separate login is published as the login in use")
+        let localResult = await readyModel.connectClaude(.useLocalLogin)
+        let localCounts = await readyService.counts()
+        check(localResult.isReady && !readyModel.claudeUsesSeparateLogin && localCounts.separate == 1 && localCounts.local == 1,
+              "returning to the local login stops using the separate login and keeps the official quota")
         check(readyModel.setEnabled(false, provider: .claude), "a connected Claude source can be disconnected")
         let disconnectedCounts = await readyService.counts()
         await refresh(readyModel)
@@ -323,7 +342,7 @@ private actor FixtureClaudeSubscription: ClaudeSubscriptionProviding {
         let cancellableLoginService = FixtureClaudeSubscription(.ready(actualQuota), login: .ready(cancelledLoginQuota), loginDelay: .seconds(10))
         let (cancellableLoginModel, _, _) = try connectionFixture("official-cli-cancel-account-login", service: cancellableLoginService)
         _ = await cancellableLoginModel.connectLocalSubscription(provider: .claude)
-        let accountAction = Task { await cancellableLoginModel.connectClaudeSubscriptionAccount() }
+        let accountAction = Task { await cancellableLoginModel.connectClaude(.signIn) }
         for _ in 0..<100 {
             if cancellableLoginModel.isConnectingClaudeSubscriptionAccount { break }
             try? await Task.sleep(for: .milliseconds(2))

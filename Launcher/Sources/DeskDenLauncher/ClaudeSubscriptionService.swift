@@ -4,7 +4,8 @@ import Darwin
 import LauncherCore
 
 /// Runs the user's unmodified, signed Claude Code. Only its official control
-/// channel handles authentication; Fangcun never opens credential stores.
+/// channel handles authentication; Fangcun never opens credential stores and
+/// never starts a login that would replace an existing login of another kind.
 actor ClaudeSubscriptionService: ClaudeSubscriptionProviding {
     private let dataDirectory: URL
     private var cached: ClaudeSubscriptionReading?
@@ -46,13 +47,31 @@ actor ClaudeSubscriptionService: ClaudeSubscriptionProviding {
         return await fetch()
     }
 
-    /// Called only by the explicit “connect membership” action. The official CLI
-    /// opens its own login page; neither authorization codes nor tokens enter UI.
+    /// Called only by an explicit login action. The official CLI opens its own
+    /// login page; neither authorization codes nor tokens enter UI.
     func login() async -> ClaudeSubscriptionReading {
+        let directory = dataDirectory
+        return await interactive { await Self.signIn(dataDirectory: directory) }
+    }
+
+    /// Advanced: logs in to a Fangcun-only configuration and keeps the local login unchanged.
+    func loginSeparately() async -> ClaudeSubscriptionReading {
+        let directory = dataDirectory
+        return await interactive { await Self.connectSeparately(dataDirectory: directory) }
+    }
+
+    func useLocalLogin() async -> ClaudeSubscriptionReading {
+        let directory = dataDirectory
+        return await interactive { await Self.leaveSeparateLogin(dataDirectory: directory) }
+    }
+
+    func usesSeparateLogin() -> Bool { (try? Self.dedicatedSelection(dataDirectory)) ?? false }
+
+    /// Runs one login-related operation at a time in place of any background query.
+    private func interactive(_ operation: @escaping @Sendable () async -> ClaudeSubscriptionReading) async -> ClaudeSubscriptionReading {
         if let loginFlight { return await wait(loginFlight) }
         flight?.task.cancel(); flight = nil
-        let directory = dataDirectory
-        let task = Task { await Self.connect(dataDirectory: directory) }
+        let task = Task { await operation() }
         loginFlight = task
         let reading = await wait(task)
         loginFlight = nil
@@ -75,29 +94,22 @@ actor ClaudeSubscriptionService: ClaudeSubscriptionProviding {
         // Cached snapshots keep their original observedAt, including on failures.
     }
 
-    private static func query(dataDirectory: URL, isolated: Bool? = nil) async -> ClaudeSubscriptionReading {
+    private static func query(dataDirectory: URL, separate: Bool? = nil) async -> ClaudeSubscriptionReading {
         guard !Task.isCancelled else { return .failed("Claude 额度读取已取消。") }
         let executable: URL
         switch ClaudeOfficialExecutable.discover() {
         case .found(let value): executable = value
-        case .missing: return .unavailable("未找到官方 Claude Code。请安装官方客户端后连接会员。")
+        case .missing: return .unavailable("未找到官方 Claude Code。请安装官方客户端后登录会员。")
         case .untrusted: return .unavailable("无法验证本机 Claude Code 的官方签名，请使用官方 macOS 原生安装版。")
         }
         let configuration: URL?
-        do {
-            let selected = try isolated ?? dedicatedSelection(dataDirectory)
-            configuration = selected ? dataDirectory.appendingPathComponent("ClaudeSubscription", isDirectory: true) : nil
-            if let configuration { try privateDirectory(configuration, create: false) }
-        } catch { return .failed("Claude 会员连接目录不可用，请重新连接会员。") }
-        let auth = await ClaudeSubscriptionProcess.run(executable: executable, configuration: configuration, mode: .authentication)
-        switch auth {
-        case .authentication(.subscription): break
-        case .authentication(.apiKey):
-            return .loginRequired("本机 Claude Code 当前使用 API 登录，不能读取会员额度。点击“连接会员账号”独立接入，原有配置会保留。")
-        case .authentication(.signedOut):
-            return .loginRequired("Claude Code 尚未登录会员，请点击“连接会员账号”完成官方授权。")
-        case .authentication(.other):
-            return .loginRequired("当前 Claude Code 身份不提供会员额度，请通过官方登录连接 Claude 会员。")
+        do { configuration = try selectedConfiguration(dataDirectory, separate: separate) }
+        catch { return .failed(separateDirectoryMessage) }
+        switch await ClaudeSubscriptionProcess.run(executable: executable, configuration: configuration, mode: .authentication) {
+        case .authentication(.signedOut) where configuration != nil:
+            return .loginRequired("方寸单独保存的 Claude 会员登录已退出或失效，请重新登录 Claude 会员。", .signIn)
+        case .authentication(let identity):
+            if let requirement = ClaudeSubscriptionUsage.loginRequirement(identity) { return requirement }
         case .failure(let reading): return reading
         default: return .failed("无法确认 Claude Code 的登录方式，请更新官方客户端后重试。")
         }
@@ -108,33 +120,91 @@ actor ClaudeSubscriptionService: ClaudeSubscriptionProviding {
         }
     }
 
-    private static func connect(dataDirectory: URL) async -> ClaudeSubscriptionReading {
+    /// Logs in to the configuration in use through the official claude.ai flow. A missing
+    /// or expired membership login is completed; a login of another kind is explained and kept.
+    private static func signIn(dataDirectory: URL) async -> ClaudeSubscriptionReading {
         let executable: URL
         switch ClaudeOfficialExecutable.discover() {
         case .found(let value): executable = value
         case .missing: return .unavailable("未找到官方 Claude Code。请先安装官方客户端。")
         case .untrusted: return .unavailable("无法验证 Claude Code 的官方签名，请安装官方 macOS 原生版后重试。")
         }
-        let configuration = dataDirectory.appendingPathComponent("ClaudeSubscription", isDirectory: true)
-        do { try privateDirectory(dataDirectory, create: true); try privateDirectory(configuration, create: true) }
-        catch { return .failed("无法建立独立的 Claude 会员连接目录，原有配置未更改。") }
+        let configuration: URL?
+        do { configuration = try selectedConfiguration(dataDirectory, separate: nil) }
+        catch { return .failed(separateDirectoryMessage) }
+        switch await ClaudeSubscriptionProcess.run(executable: executable, configuration: configuration, mode: .authentication) {
+        case .authentication(.signedOut), .authentication(.subscription): break
+        case .authentication(let identity):
+            return ClaudeSubscriptionUsage.loginRequirement(identity) ?? .failed("无法确认 Claude Code 的登录方式，请更新官方客户端后重试。")
+        case .failure(let reading): return reading
+        default: return .failed("无法确认 Claude Code 的登录方式，请更新官方客户端后重试。")
+        }
+        guard !Task.isCancelled else { return .failed("Claude 会员登录已取消。") }
         switch await ClaudeSubscriptionProcess.run(executable: executable, configuration: configuration, mode: .login) {
         case .completed: break
         case .failure(let reading): return reading
-        default: return .loginRequired("Claude 会员授权尚未完成，请重新连接并完成官方网页授权。")
+        default: return .loginRequired("Claude 会员授权尚未完成，请重新登录并在浏览器中完成授权。", .signIn)
         }
-        guard !Task.isCancelled else { return .failed("Claude 会员连接已取消。") }
+        guard !Task.isCancelled else { return .failed("Claude 会员登录已取消。") }
+        return await query(dataDirectory: dataDirectory, separate: configuration != nil)
+    }
+
+    private static func connectSeparately(dataDirectory: URL) async -> ClaudeSubscriptionReading {
+        let executable: URL
+        switch ClaudeOfficialExecutable.discover() {
+        case .found(let value): executable = value
+        case .missing: return .unavailable("未找到官方 Claude Code。请先安装官方客户端。")
+        case .untrusted: return .unavailable("无法验证 Claude Code 的官方签名，请安装官方 macOS 原生版后重试。")
+        }
+        let configuration = separateConfiguration(dataDirectory)
+        do { try privateDirectory(dataDirectory, create: true); try privateDirectory(configuration, create: true) }
+        catch { return .failed("无法建立方寸单独登录所需的目录，本机 Claude Code 登录未更改。") }
+        switch await ClaudeSubscriptionProcess.run(executable: executable, configuration: configuration, mode: .login) {
+        case .completed: break
+        case .failure(.loginRequired(let message, _)): return .loginRequired(message, .separateLogin)
+        case .failure(let reading): return reading
+        default: return .loginRequired("Claude 会员授权尚未完成，请重新登录并完成官方网页授权。", .separateLogin)
+        }
+        guard !Task.isCancelled else { return .failed("Claude 会员登录已取消。") }
         // Verify the type before persisting the selector. Never choose a Console
         // login, and never alter the default CLI's settings or credential entry.
         guard case .authentication(.subscription) = await ClaudeSubscriptionProcess.run(executable: executable, configuration: configuration, mode: .authentication) else {
-            return .loginRequired("尚未确认 Claude 会员登录，请重新连接并选择 Claude 订阅账号。")
+            return .loginRequired("尚未确认 Claude 会员登录，请重新登录并选择 Claude 订阅账号。", .separateLogin)
         }
         do {
             let marker = dataDirectory.appendingPathComponent("claude-subscription-selection.json")
             try regularFileIfPresent(marker)
             try ProtectedAtomicFile.write(Data("{\"version\":1,\"useDedicatedConfiguration\":true}".utf8), to: marker)
         } catch { return .failed("会员已完成官方登录，但无法保存连接选择，请重试。") }
-        return await query(dataDirectory: dataDirectory, isolated: true)
+        return await query(dataDirectory: dataDirectory, separate: true)
+    }
+
+    /// Returns to the local Claude Code login. The separate login is signed out through the
+    /// official client first so no unused login stays behind; its directory is kept.
+    private static func leaveSeparateLogin(dataDirectory: URL) async -> ClaudeSubscriptionReading {
+        let configuration = separateConfiguration(dataDirectory)
+        if case .found(let executable) = ClaudeOfficialExecutable.discover(), (try? privateDirectory(configuration, create: false)) != nil {
+            _ = await ClaudeSubscriptionProcess.run(executable: executable, configuration: configuration, mode: .logout)
+        }
+        let marker = dataDirectory.appendingPathComponent("claude-subscription-selection.json")
+        do {
+            try regularFileIfPresent(marker)
+            if FileManager.default.fileExists(atPath: marker.path) { try FileManager.default.removeItem(at: marker) }
+        } catch { return .failed("无法改回本机 Claude Code 登录，请稍后重试。") }
+        guard !Task.isCancelled else { return .failed("已改回本机登录，额度读取已取消。") }
+        return await query(dataDirectory: dataDirectory, separate: false)
+    }
+
+    private static let separateDirectoryMessage = "方寸单独保存的 Claude 登录目录不可用，请在“高级连接方式”中改回本机登录后重试。"
+    private static func separateConfiguration(_ dataDirectory: URL) -> URL {
+        dataDirectory.appendingPathComponent("ClaudeSubscription", isDirectory: true)
+    }
+    /// The separate configuration once it was chosen, otherwise nil for the local login.
+    private static func selectedConfiguration(_ dataDirectory: URL, separate: Bool?) throws -> URL? {
+        guard try separate ?? dedicatedSelection(dataDirectory) else { return nil }
+        let configuration = separateConfiguration(dataDirectory)
+        try privateDirectory(configuration, create: false)
+        return configuration
     }
 
     private static func dedicatedSelection(_ directory: URL) throws -> Bool {
@@ -198,7 +268,7 @@ private enum ClaudeOfficialExecutable {
 }
 
 private enum ClaudeSubscriptionProcess {
-    enum Mode: Sendable { case authentication, usage, login }
+    enum Mode: Sendable { case authentication, usage, login, logout }
     enum Result: Sendable {
         case authentication(ClaudeSubscriptionUsage.Authentication)
         case usage(ClaudeSubscriptionReading)
@@ -214,19 +284,11 @@ private enum ClaudeSubscriptionProcess {
         let process = Process(), output = Pipe(), errors = Pipe(), input = Pipe()
         process.executableURL = executable
         process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
-        var environment = ProcessInfo.processInfo.environment
-        // A dedicated subscription is intentionally independent of API/provider
-        // overrides inherited from Fangcun's parent process. No global changes.
-        if let configuration {
-            for key in ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_PROFILE", "ANTHROPIC_FEDERATION_RULE_ID", "ANTHROPIC_ORGANIZATION_ID", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"] {
-                environment.removeValue(forKey: key)
-            }
-            environment["CLAUDE_CONFIG_DIR"] = configuration.path
-        }
-        process.environment = environment
+        process.environment = ClaudeSubscriptionUsage.processEnvironment(ProcessInfo.processInfo.environment, configurationDirectory: configuration?.path)
         switch mode {
         case .authentication: process.arguments = ["--safe-mode", "auth", "status", "--json"]
         case .login: process.arguments = ["--safe-mode", "auth", "login", "--claudeai"]
+        case .logout: process.arguments = ["--safe-mode", "auth", "logout"]
         case .usage:
             process.arguments = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
                 "--no-session-persistence", "--safe-mode", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}", "--tools", ""]
@@ -259,7 +321,7 @@ private enum ClaudeSubscriptionProcess {
         while true {
             if result == nil, Task.isCancelled { result = .failure(.failed("Claude 操作已取消。")) }
             if result == nil, Date().timeIntervalSince(began) > timeout {
-                result = .failure(mode == .login ? .loginRequired("Claude 网页授权尚未完成，请重新连接并在浏览器中完成授权。") : .failed("Claude 额度读取超时，请检查网络后稍后重试。"))
+                result = .failure(mode == .login ? .loginRequired("Claude 网页授权尚未完成，请重新登录并在浏览器中完成授权。", .signIn) : .failed("Claude 额度读取超时，请检查网络后稍后重试。"))
             }
             for fd in [stdout, stderr] {
                 if (fd == stdout && stdoutEOF) || (fd == stderr && stderrEOF) { continue }
@@ -284,7 +346,7 @@ private enum ClaudeSubscriptionProcess {
                     }
                     let chunk = Data(buffer.prefix(count))
                     if fd == stderr { errorData.append(chunk); continue }
-                    if mode == .login { errorData.append(chunk); continue }
+                    if mode == .login || mode == .logout { errorData.append(chunk); continue }
                     pending.append(chunk)
                     if mode != .usage { continue }
                     while let newline = pending.firstIndex(of: 10) {
@@ -331,7 +393,7 @@ private enum ClaudeSubscriptionProcess {
         process.waitUntilExit()
         if let result { return result }
         if mode == .authentication, let auth = ClaudeSubscriptionUsage.authentication(pending) { return .authentication(auth) }
-        if mode == .login, process.terminationStatus == 0 { return .completed }
+        if mode == .login || mode == .logout, process.terminationStatus == 0 { return .completed }
         return .failure(ClaudeSubscriptionUsage.failure(from: errorData))
     }
 }

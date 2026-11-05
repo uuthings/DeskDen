@@ -31,6 +31,58 @@ import LauncherCore
     }
 }
 
+/// One state-driven Claude action replaces parallel connect buttons; the separate
+/// login stays under advanced options in both the dialog and the connection manager.
+@MainActor enum ClaudeConnectionPresentation {
+    static func primaryAction(_ remedy: ClaudeLoginRemedy?) -> ClaudeConnectionAction { remedy == .signIn ? .signIn : .check }
+    static func primaryTitle(_ remedy: ClaudeLoginRemedy?) -> String {
+        switch remedy {
+        case nil: "连接本机订阅"
+        case .signIn: "登录 Claude 会员"
+        case .switchInTerminal, .separateLogin: "重新检测"
+        }
+    }
+    static func status(_ remedy: ClaudeLoginRemedy?) -> String {
+        switch remedy {
+        case nil: "检查当前登录并读取会员额度"
+        case .signIn: "尚未登录 Claude 会员"
+        case .switchInTerminal: "当前是 API 账号登录，需要切换为会员登录"
+        case .separateLogin: "当前登录方式不提供会员额度"
+        }
+    }
+    /// The person runs the command; Fangcun never replaces an existing login itself.
+    static func copySwitchCommandAndOpenTerminal() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(ClaudeSubscriptionUsage.terminalSwitchCommand, forType: .string)
+        if let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") {
+            NSWorkspace.shared.openApplication(at: terminal, configuration: NSWorkspace.OpenConfiguration())
+        }
+    }
+}
+
+/// Shown for an Anthropic Console login, whose replacement is the person's decision.
+struct ClaudeTerminalSwitchNotice: View {
+    @Environment(\.workbenchPalette) private var palette
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("在“终端”中粘贴运行以下命令，按提示在浏览器登录 Claude 会员，完成后点“重新检测”。")
+                    .font(.system(size: 11)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(ClaudeSubscriptionUsage.terminalSwitchCommand)
+                    .font(.system(size: 11, design: .monospaced)).foregroundStyle(palette.text)
+                    .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                    .accessibilityIdentifier("fc.ai.claude.switch-command")
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            Button("复制并打开终端") { ClaudeConnectionPresentation.copySwitchCommandAndOpenTerminal() }
+                .buttonStyle(WBButtonStyle(compact: true))
+                .accessibilityIdentifier("fc.ai.claude.copy-switch-command")
+        }
+        .padding(.vertical, 10).padding(.horizontal, 12)
+        .background(RoundedRectangle(cornerRadius: 8).fill(palette.soft))
+        .accessibilityElement(children: .contain)
+    }
+}
+
 enum UsageConnectionKind: String, CaseIterable {
     case subscription, traffic, api
     var title: String { switch self { case .subscription: "AI 订阅额度"; case .traffic: "服务流量"; case .api: "API 余额" } }

@@ -161,7 +161,7 @@ struct UsageManagedConnection: Identifiable {
         if let category = original.appearance.categoryID, !valid.contains(category) { original.appearance.categoryID = "uncategorized" }
     }
 
-    func connectSubscription(app: WorkbenchAppModel, allowDirectorySelection: Bool = false, loginClaudeMember: Bool = false) {
+    func connectSubscription(app: WorkbenchAppModel, allowDirectorySelection: Bool = false, claude: ClaudeConnectionAction = .check) {
         guard !busy, let provider = draft.service?.aiProvider else { return }
         // Local subscriptions are unique sources. Connecting from the new form
         // reuses that source without replacing its saved card customization.
@@ -182,8 +182,8 @@ struct UsageManagedConnection: Identifiable {
             guard let self, let app else { return }
             defer { self.busy = false }
             let result: AISubscriptionConnectionResult
-            if provider == .claude, loginClaudeMember {
-                result = await app.ai.connectClaudeSubscriptionAccount()
+            if provider == .claude {
+                result = await app.ai.connectClaude(claude)
             } else {
                 result = allowDirectorySelection
                     ? await UsageSubscriptionAuthorization.connect(model: app.ai, provider: provider)
