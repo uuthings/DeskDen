@@ -70,7 +70,7 @@ enum SpaceCleaningBuildOutputs {
         }
     }
     static func reason(_ kind: Kind, days: Int) -> String {
-        let age = days <= 0 ? "今天" : "\(days) 天前"
+        let age = days <= 0 ? "今天" : " \(days) 天前"
         switch kind {
         case .swiftPackage: return "Swift Package Manager 的构建产物与依赖副本，最后构建于\(age)。"
         case .derivedData: return "项目内的 Xcode 构建目录（编译产物、索引与依赖副本），最后构建于\(age)。"
