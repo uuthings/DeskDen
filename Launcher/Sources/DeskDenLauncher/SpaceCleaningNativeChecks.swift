@@ -28,8 +28,10 @@ import LauncherCore
               "every cleaning file category has an available native symbol without loading file icons")
         let manager = FileManager.default
         let rawRoot = manager.temporaryDirectory.appendingPathComponent("deskden-space-native-\(UUID().uuidString)")
-        let output = ProcessInfo.processInfo.environment["DESKDEN_SPACE_CLEANING_VISUAL_DIR"].map { URL(fileURLWithPath: $0) }
-            ?? manager.temporaryDirectory.appendingPathComponent("deskden-space-visual-\(UUID().uuidString)")
+        // Each run keeps its screenshots for review; earlier sets are removed when
+        // it finishes, so the temporary folder holds one set instead of one per run.
+        let evidence = SpaceCleaningCheckEvidence(override: ProcessInfo.processInfo.environment["DESKDEN_SPACE_CLEANING_VISUAL_DIR"])
+        let output = evidence.url
         defer { try? manager.removeItem(at: rawRoot) }
         do {
             try manager.createDirectory(at: rawRoot, withIntermediateDirectories: true)
@@ -612,6 +614,8 @@ import LauncherCore
             await cleaning.prepareForQuit()
             print("DETAIL space-cleaning owned-view evidence=\(output.path); real fixture scan and transactions; no actual user Trash; manual screenshot review remains separate")
         } catch { check(false, "space cleaning native fixture: \(error.localizedDescription)") }
+        let removed = evidence.finish(fixturePrefix: "deskden-space-native-", fixture: rawRoot)
+        if removed > 0 { print("DETAIL space-cleaning removed \(removed) earlier check folders; only the latest screenshot set is kept") }
         return (count, failures)
     }
 
@@ -982,4 +986,52 @@ private struct SpaceCleaningFixtureTrash: SpaceCleaningFileOperating {
     func permission() async -> AIQuotaNotificationPermission { .denied }
     func requestPermission() async throws -> Bool { false }
     func deliver(_ event: AIQuotaAlertEvent) async throws { throw AIUsageError.invalid("isolated cleaning fixture") }
+}
+
+/// Only the latest run's screenshots stay for review. Each run holds a lock in
+/// its own folder while it runs, so a finishing run never removes a set that
+/// another run is still writing; folders from builds without the lock count as
+/// finished once untouched for ten minutes.
+private final class SpaceCleaningCheckEvidence {
+    static let evidencePrefix = "deskden-space-visual-"
+    static let lockName = ".deskden-check.lock"
+    static let idle: TimeInterval = 10 * 60
+    let url: URL
+    private let temporary: URL
+    private var lock: Int32 = -1
+    /// A folder chosen through the environment is used as is and never removed.
+    init(override: String?, temporary: URL = FileManager.default.temporaryDirectory) {
+        self.temporary = temporary
+        if let override { url = URL(fileURLWithPath: override); return }
+        url = temporary.appendingPathComponent(Self.evidencePrefix + UUID().uuidString, isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        lock = open(url.appendingPathComponent(Self.lockName).path, O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0o600)
+        if lock >= 0, flock(lock, LOCK_EX | LOCK_NB) != 0 { Darwin.close(lock); lock = -1 }
+    }
+    deinit { if lock >= 0 { Darwin.close(lock) } }
+    /// Removes earlier screenshot sets and fixture folders left by interrupted
+    /// runs, then releases this run's lock. Returns how many folders it removed.
+    func finish(fixturePrefix: String, fixture: URL, now: Date = Date()) -> Int {
+        defer { if lock >= 0 { Darwin.close(lock); lock = -1 } }
+        var removed = 0
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: temporary.path)) ?? [] {
+            let prefix = name.hasPrefix(Self.evidencePrefix) ? Self.evidencePrefix : name.hasPrefix(fixturePrefix) ? fixturePrefix : nil
+            guard let prefix, UUID(uuidString: String(name.dropFirst(prefix.count))) != nil else { continue }
+            let folder = temporary.appendingPathComponent(name, isDirectory: true)
+            guard folder.standardizedFileURL.path != url.standardizedFileURL.path,
+                  folder.standardizedFileURL.path != fixture.standardizedFileURL.path,
+                  let values = try? folder.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .contentModificationDateKey]),
+                  values.isDirectory == true, values.isSymbolicLink != true else { continue }
+            let other = open(folder.appendingPathComponent(Self.lockName).path, O_RDWR | O_CLOEXEC | O_NOFOLLOW)
+            if other >= 0 {
+                // A run still holding its lock is writing this set.
+                if flock(other, LOCK_EX | LOCK_NB) == 0, (try? FileManager.default.removeItem(at: folder)) != nil { removed += 1 }
+                Darwin.close(other)
+                continue
+            }
+            guard let modified = values.contentModificationDate, now.timeIntervalSince(modified) >= Self.idle else { continue }
+            if (try? FileManager.default.removeItem(at: folder)) != nil { removed += 1 }
+        }
+        return removed
+    }
 }
