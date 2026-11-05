@@ -111,20 +111,57 @@ enum SpaceCleaningFilesystem {
     static func sameDirectory(_ left: SpaceCleaningFileIdentity, _ right: SpaceCleaningFileIdentity) -> Bool {
         left.device == right.device && left.inode == right.inode && left.mode == right.mode && right.mode & UInt32(S_IFMT) == UInt32(S_IFDIR)
     }
-    static func validateAncestors(_ candidate: SpaceCleaningCandidate) -> Bool {
+
+    /// Metadata-only. `absent` means the entry is gone while its volume is
+    /// reachable; permission errors and unmounted volumes are `unavailable`,
+    /// which is never evidence that a recorded item changed.
+    enum Presence: Equatable { case present(SpaceCleaningFileIdentity), absent, unavailable }
+    static func presence(_ url: URL) -> Presence {
+        guard url.isFileURL else { return .unavailable }
+        var info = stat()
+        if url.withUnsafeFileSystemRepresentation({ $0.map { lstat($0, &info) } ?? -1 }) == 0 { return .present(identity(info)) }
+        let failure = errno
+        guard failure == ENOENT || failure == ENOTDIR else { return .unavailable }
+        return volumeIsReachable(url) ? .absent : .unavailable
+    }
+    /// A path under /Volumes needs its mount point; other paths live on the system volumes.
+    static func volumeIsReachable(_ url: URL) -> Bool {
+        let components = url.standardizedFileURL.pathComponents
+        guard components.count >= 3, components[1] == "Volumes" else { return true }
+        var info = stat()
+        return lstat("/Volumes/" + components[2], &info) == 0
+    }
+
+    enum AncestorStatus: Equatable { case valid, changed, unavailable }
+    /// Distinguishes a replaced or deleted parent chain from one that cannot be
+    /// reached right now (permissions, an unmounted volume, dataless folders).
+    static func ancestorStatus(_ candidate: SpaceCleaningCandidate) -> AncestorStatus {
         let root = candidate.rootURL.path, path = candidate.url.path
         guard root != "/", path.hasPrefix(root + "/"),
               !candidate.ancestorIdentities.isEmpty,
               candidate.ancestorIdentities.first?.url.path == root,
               candidate.ancestorIdentities.last?.url.path == candidate.url.deletingLastPathComponent().path,
               let first = candidate.ancestorIdentities.first,
-              sameDirectory(first.identity, candidate.rootIdentity) else { return false }
+              sameDirectory(first.identity, candidate.rootIdentity) else { return .changed }
         for (index, ancestor) in candidate.ancestorIdentities.enumerated() {
-            if index > 0, ancestor.url.deletingLastPathComponent().path != candidate.ancestorIdentities[index - 1].url.path { return false }
-            guard let directory = try? Directory(ancestor.url), sameDirectory(directory.identity, ancestor.identity), directory.stillAtPath() else { return false }
+            if index > 0, ancestor.url.deletingLastPathComponent().path != candidate.ancestorIdentities[index - 1].url.path { return .changed }
+            switch presence(ancestor.url) {
+            case .absent: return .changed
+            case .unavailable: return .unavailable
+            case .present(let actual):
+                let type = UInt32(S_IFMT)
+                guard actual.device == ancestor.identity.device, actual.inode == ancestor.identity.inode,
+                      actual.mode & type == ancestor.identity.mode & type, actual.mode & type == UInt32(S_IFDIR) else { return .changed }
+                // The same directory with different permission bits is not a
+                // replacement; it cannot be trusted as valid until they match again.
+                if actual.mode != ancestor.identity.mode { return .unavailable }
+            }
+            guard let directory = try? Directory(ancestor.url) else { return .unavailable }
+            guard sameDirectory(directory.identity, ancestor.identity), directory.stillAtPath() else { return .changed }
         }
-        return true
+        return .valid
     }
+    static func validateAncestors(_ candidate: SpaceCleaningCandidate) -> Bool { ancestorStatus(candidate) == .valid }
     static func move(_ source: URL, to destination: URL, expected: SpaceCleaningFileIdentity) throws {
         let from = try Directory(source.deletingLastPathComponent())
         let to = try Directory(destination.deletingLastPathComponent())

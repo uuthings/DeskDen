@@ -754,7 +754,9 @@ import Quartz
     }
     private func reconcileHistory() {
         guard !isBusy, !frozenForQuit, historyError == nil, let store = historyStore else { return }
-        let uncertain = records.filter { [.prepared, .isolated, .trashed, .deleting, .restoring].contains($0.state) }
+        let uncertain = records.filter {
+            [.prepared, .isolated, .trashed, .deleting, .restoring].contains($0.state) || SpaceCleaningTransaction.canReverify($0)
+        }
         guard !uncertain.isEmpty else { return }
         cancellation = SpaceCleaningCancellation(); isReconcilingHistory = true
         let token = cancellation, persistence = SpaceCleaningPersistence(store: store, cancellation: cancellation)

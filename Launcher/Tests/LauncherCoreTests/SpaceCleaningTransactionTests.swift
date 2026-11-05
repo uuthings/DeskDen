@@ -512,3 +512,110 @@ final class SpaceCleaningTransactionTests: XCTestCase {
         }
     }
 }
+
+// MARK: - Temporary read failures and re-verification
+
+extension SpaceCleaningTransactionTests {
+    /// Removes search permission so lookups below `directory` fail with EACCES.
+    private func withoutSearchPermission<T>(_ directory: URL, _ body: () throws -> T) rethrows -> T {
+        XCTAssertEqual(chmod(directory.path, 0), 0)
+        defer { chmod(directory.path, 0o755) }
+        return try body()
+    }
+
+    func testUnreadableTrashKeepsRestoreEntryAndRecoversWhenReadableAgain() throws {
+        try fixture { fixture in
+            let moved = clean(fixture)
+            XCTAssertEqual(moved.state, .trashed, moved.explanation)
+            let location = try XCTUnwrap(moved.locationURL)
+            let (reconciled, restoreAttempt, purgeAttempt) = withoutSearchPermission(fixture.trash) {
+                (SpaceCleaningTransaction.reconcile(moved),
+                 SpaceCleaningTransaction.restore(record: moved, conflict: .skip, persist: { _ in }),
+                 SpaceCleaningTransaction.purge(record: moved, permanentConfirmed: true, persist: { _ in }))
+            }
+            XCTAssertEqual(reconciled.state, .trashed, reconciled.explanation)
+            XCTAssertTrue(reconciled.canRestore)
+            XCTAssertEqual(restoreAttempt.state, .trashed, restoreAttempt.explanation)
+            XCTAssertTrue(restoreAttempt.canRestore)
+            XCTAssertEqual(purgeAttempt.state, .trashed, purgeAttempt.explanation)
+            XCTAssertTrue(purgeAttempt.canPurge)
+            XCTAssertEqual(purgeAttempt.locationURL, location)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.item.path))
+            XCTAssertEqual(try String(contentsOf: location, encoding: .utf8), "selected-A")
+            // Readable again: the next check clears the note and restore succeeds.
+            let rechecked = SpaceCleaningTransaction.reconcile(reconciled)
+            XCTAssertEqual(rechecked.state, .trashed)
+            XCTAssertNotEqual(rechecked.explanation, reconciled.explanation)
+            let restored = SpaceCleaningTransaction.restore(record: rechecked, conflict: .skip, persist: { _ in })
+            XCTAssertEqual(restored.state, .restored, restored.explanation)
+            XCTAssertEqual(try String(contentsOf: fixture.item, encoding: .utf8), "selected-A")
+        }
+    }
+
+    func testUnreachableOriginalLocationKeepsRestoreEntry() throws {
+        try fixture(nested: true) { fixture in
+            let moved = clean(fixture)
+            XCTAssertEqual(moved.state, .trashed, moved.explanation)
+            let blocked = withoutSearchPermission(fixture.root) {
+                SpaceCleaningTransaction.restore(record: moved, conflict: .skip, persist: { _ in })
+            }
+            XCTAssertEqual(blocked.state, .trashed, blocked.explanation)
+            XCTAssertTrue(blocked.canRestore)
+            let restored = SpaceCleaningTransaction.restore(record: blocked, conflict: .skip, persist: { _ in })
+            XCTAssertEqual(restored.state, .restored, restored.explanation)
+            XCTAssertEqual(try String(contentsOf: fixture.item, encoding: .utf8), "selected-A")
+        }
+    }
+
+    func testStartupCheckReadsMetadataWhileRestoreStillVerifiesContent() throws {
+        try fixture(directory: true) { fixture in
+            let moved = clean(fixture)
+            XCTAssertEqual(moved.state, .trashed, moved.explanation)
+            let location = try XCTUnwrap(moved.locationURL)
+            // A same-length nested change leaves the directory's own metadata unchanged.
+            try Data("changed-B!".utf8).write(to: location.appendingPathComponent("Contents/nested/b.data"))
+            XCTAssertEqual(SpaceCleaningTransaction.reconcile(moved).state, .trashed)
+            let restored = SpaceCleaningTransaction.restore(record: moved, conflict: .skip, persist: { _ in })
+            XCTAssertEqual(restored.state, .needsReview, restored.explanation)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.item.path))
+            XCTAssertEqual(try String(contentsOf: location.appendingPathComponent("Contents/nested/b.data"), encoding: .utf8), "changed-B!")
+        }
+    }
+
+    func testReviewRecordRegainsRestoreEntryOnlyAfterCompleteVerification() throws {
+        try fixture { fixture in
+            let moved = clean(fixture)
+            XCTAssertEqual(moved.state, .trashed, moved.explanation)
+            var downgraded = moved
+            downgraded.state = .needsReview; downgraded.explanation = "earlier temporary failure"
+            XCTAssertTrue(SpaceCleaningTransaction.canReverify(downgraded))
+            let promoted = SpaceCleaningTransaction.reconcile(downgraded)
+            XCTAssertEqual(promoted.state, .trashed, promoted.explanation)
+            XCTAssertTrue(promoted.canRestore)
+
+            // Purge and restore intents, permanent deletion and items still in isolation stay in review.
+            var purging = downgraded
+            purging.previousTrashURL = fixture.trash.appendingPathComponent("previous.data")
+            XCTAssertFalse(SpaceCleaningTransaction.canReverify(purging))
+            var restoring = downgraded; restoring.restoredURL = fixture.item
+            XCTAssertFalse(SpaceCleaningTransaction.canReverify(restoring))
+            var permanent = downgraded; permanent.method = .permanent
+            XCTAssertFalse(SpaceCleaningTransaction.canReverify(permanent))
+            var isolated = downgraded
+            isolated.locationURL = downgraded.isolationURL?.appendingPathComponent(fixture.item.lastPathComponent)
+            XCTAssertFalse(SpaceCleaningTransaction.canReverify(isolated))
+
+            // Same length and modification time but different content: metadata
+            // passes, the complete verification does not.
+            let location = try XCTUnwrap(moved.locationURL)
+            let proof = try XCTUnwrap(moved.proof)
+            try Data("selected-B".utf8).write(to: location)
+            var times = [timespec(tv_sec: 0, tv_nsec: Int(UTIME_OMIT)),
+                         timespec(tv_sec: Int(proof.rootIdentity.modifiedSeconds), tv_nsec: Int(proof.rootIdentity.modifiedNanoseconds))]
+            XCTAssertEqual(utimensat(AT_FDCWD, location.path, &times, AT_SYMLINK_NOFOLLOW), 0)
+            XCTAssertEqual(SpaceCleaningTransaction.reconcile(downgraded).state, .needsReview)
+            try FileManager.default.removeItem(at: location)
+            XCTAssertEqual(SpaceCleaningTransaction.reconcile(downgraded).state, .needsReview)
+        }
+    }
+}

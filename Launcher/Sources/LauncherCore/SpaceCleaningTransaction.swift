@@ -132,7 +132,7 @@ public enum SpaceCleaningTransaction {
             // content have matched. A path returned by an API is not evidence.
             try persist(record)
             _ = try verifiedSnapshot(record, at: destination, isCancelled: { false }, lease: selected.lease)
-            record.state = .trashed; record.explanation = "已移到废纸篓，完整项目身份和内容核验一致。"
+            record.state = .trashed; record.explanation = trashedExplanation
             record.updatedAt = Date()
             do { try persist(record) }
             catch { return rollback(record, explanation: "移动结果未能保存。", persist: persist) }
@@ -156,8 +156,12 @@ public enum SpaceCleaningTransaction {
         var record = original
         guard !isCancelled() else { return original }
         if let reason = validatePolicy(record.candidate) { record.explanation = reason; try? persist(record); return record }
-        guard SpaceCleaningFilesystem.validateAncestors(record.candidate) else {
-            return finish(record, .needsReview, "原父目录已变化或不可访问，未自动恢复；请在 Finder 中核对。", persist)
+        switch SpaceCleaningFilesystem.ancestorStatus(record.candidate) {
+        case .valid: break
+        case .unavailable:
+            return finish(record, .trashed, "原位置暂时无法访问（权限或所在卷变化），未恢复；废纸篓中的项目保持可恢复，可稍后重试。", persist)
+        case .changed:
+            return finish(record, .needsReview, "原父目录已变化，未自动恢复；请在 Finder 中核对。", persist)
         }
         do {
             let current = try verifiedSnapshot(record, at: source, isCancelled: isCancelled)
@@ -198,6 +202,12 @@ public enum SpaceCleaningTransaction {
             if (try? verifiedSnapshot(record, at: source, isCancelled: { false })) != nil {
                 record.restoredURL = nil
                 return finish(record, .trashed, "恢复未完成，原废纸篓项目仍可核验：" + error.localizedDescription, persist)
+            }
+            // Unreadable is not changed: keep the entry when nothing reached the destination.
+            if SpaceCleaningFilesystem.presence(source) == .unavailable,
+               record.restoredURL.map({ SpaceCleaningFilesystem.presence($0) == .absent }) ?? true {
+                record.restoredURL = nil
+                return finish(record, .trashed, "暂时无法读取废纸篓中的项目，未恢复；恢复入口保留，可稍后重试。", persist)
             }
             return finish(record, .needsReview, "恢复中断，未覆盖或重复移动项目：" + error.localizedDescription, persist)
         }
@@ -240,8 +250,25 @@ public enum SpaceCleaningTransaction {
                 if let isolation = record.isolationURL { SpaceCleaningFilesystem.removeEmptyIsolation(isolation) }
                 return finish(original, .trashed, "本次永久删除未完成，项目仍在废纸篓：" + error.localizedDescription, persist)
             }
+            // Unreadable before anything moved: the original Trash entry stays recoverable.
+            if SpaceCleaningFilesystem.presence(source) == .unavailable,
+               record.locationURL == original.locationURL || record.locationURL.map({ SpaceCleaningFilesystem.presence($0) == .absent }) == true {
+                if let isolation = record.isolationURL, isolation != original.isolationURL { SpaceCleaningFilesystem.removeEmptyIsolation(isolation) }
+                return finish(original, .trashed, "暂时无法读取废纸篓中的项目，未永久删除；恢复和永久删除入口保留。", persist)
+            }
             return finish(record, .needsReview, "永久删除尚未确认完成，请核对记录位置；未重复删除：" + error.localizedDescription, persist)
         }
+    }
+
+    /// A review record may regain its restore entry only when it describes an
+    /// item that reached the system Trash through this flow and nothing else
+    /// (a purge, a restore or a still-isolated move) can have moved it since.
+    public static func canReverify(_ record: SpaceCleaningRecord) -> Bool {
+        guard record.state == .needsReview, record.method == .trash, record.proof?.isValid == true,
+              record.previousTrashURL == nil, record.restoredURL == nil, let location = record.locationURL,
+              location.path != record.originalURL.path else { return false }
+        if let isolation = record.isolationURL, location.deletingLastPathComponent().path == isolation.path { return false }
+        return true
     }
 
     /// Startup only verifies evidence. Incomplete deletion is never resumed;
@@ -251,9 +278,34 @@ public enum SpaceCleaningTransaction {
         var record = original
         switch record.state {
         case .trashed:
-            if let location = record.locationURL, (try? verifiedSnapshot(record, at: location, isCancelled: isCancelled)) != nil { return record }
-            if isCancelled() { return original }
-            record.state = .needsReview; record.explanation = "废纸篓项目已变化、被移走或无法读取，已停用自动恢复和永久删除。"
+            // Metadata only: the same object, length and modification time keep
+            // the entry. Restore and purge re-verify the complete content first.
+            guard let location = record.locationURL, let proof = record.proof else { return original }
+            switch SpaceCleaningFilesystem.presence(location) {
+            case .present(let actual) where proof.rootIdentity.matchesMovedResource(actual) && proof.rootIdentity.mode == actual.mode:
+                guard record.explanation == unavailableTrashExplanation else { return original }
+                record.explanation = trashedExplanation
+            case .unavailable:
+                // Missing permission or an unmounted volume is not evidence that
+                // the item changed; keep the entry and check again next time.
+                guard record.explanation != unavailableTrashExplanation else { return original }
+                record.explanation = unavailableTrashExplanation
+            case .absent:
+                record.state = .needsReview
+                record.explanation = "废纸篓中已找不到该项目，可能已清空废纸篓或被移走；已停用自动恢复和永久删除。"
+            case .present:
+                record.state = .needsReview
+                record.explanation = "废纸篓中的项目已变化，已停用自动恢复和永久删除。"
+            }
+        case .needsReview:
+            // Re-check a record that an earlier failure moved to review. Only a
+            // complete content match at the recorded Trash location restores it.
+            guard canReverify(record), let location = record.locationURL, let proof = record.proof,
+                  case .present(let actual) = SpaceCleaningFilesystem.presence(location),
+                  proof.rootIdentity.matchesMovedResource(actual), proof.rootIdentity.mode == actual.mode,
+                  (try? verifiedSnapshot(record, at: location, isCancelled: isCancelled)) != nil else { return original }
+            record.state = .trashed
+            record.explanation = "已重新完整核验，项目仍在废纸篓的记录位置，恢复与永久删除入口已恢复。"
         case .restoring:
             if let destination = record.restoredURL, let source = record.locationURL,
                SpaceCleaningFilesystem.validateAncestors(record.candidate),
@@ -282,11 +334,13 @@ public enum SpaceCleaningTransaction {
             } else { record.state = .needsReview; record.explanation = "上次操作中断，请核对原位置和记录的隔离位置；未重复移动或删除。" }
         case .isolated, .deleting:
             record.state = .needsReview; record.explanation = "操作中断，记录位置可能保留完整或部分项目。未推定成功，未自动继续删除；请在 Finder 中核对。"
-        case .deleted, .restored, .skipped, .cancelled, .failed, .needsReview: return record
+        case .deleted, .restored, .skipped, .cancelled, .failed: return record
         }
         if isCancelled() { return original }
         record.updatedAt = Date(); return record
     }
+    private static let trashedExplanation = "已移到废纸篓，完整项目身份和内容核验一致。"
+    private static let unavailableTrashExplanation = "暂时无法核对废纸篓中的项目，恢复入口保留；恢复或永久删除前会重新完整核验。"
     private static func verifiedSnapshot(_ record: SpaceCleaningRecord, at url: URL, isCancelled: () -> Bool,
                                          lease: SpaceCleaningFilesystem.ObjectLease? = nil) throws -> SpaceCleaningFilesystem.Snapshot {
         guard let proof = record.proof, proof.isValid else { throw SpaceCleaningFilesystem.Failure(message: "缺少原始完整内容依据，未自动处理。") }
