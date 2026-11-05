@@ -1028,3 +1028,65 @@ extension SpaceCleaningCoreTests {
         }
     }
 }
+
+// MARK: - Discovery depth, application cache folders and diagnostics
+
+extension SpaceCleaningCoreTests {
+    func testDiscoveryDepthBoundSkipsOnlyTheDeepSubtree() throws {
+        try fixture { home in
+            try file(home, "A/aa/sibling-file")
+            try file(home, "A/zz/other-file")
+            try file(home, "A/d1/" + (2...40).map { "d\($0)" }.joined(separator: "/") + "/deep-file")
+            try file(home, "B/later-scope-file")
+            let report = SpaceCleaningScanner.scan(scopes: [.init(directory: home.appendingPathComponent("A")),
+                                                            .init(directory: home.appendingPathComponent("B"))],
+                                                   context: .init(homeDirectory: home))
+            XCTAssertEqual(Set(report.candidates.map(\.title)), ["sibling-file", "other-file", "later-scope-file"])
+            XCTAssertTrue(report.reachedLimit)
+            XCTAssertFalse(report.complete)
+            XCTAssertTrue(report.issues.contains { $0.kind == .depthLimit })
+        }
+    }
+
+    func testApplicationCacheFoldersNamedLikeBundlesKeepCacheRules() throws {
+        try fixture { home in
+            try file(home, "Library/Caches/cn.example.app/Cache.db", bytes: 10)
+            try file(home, "Library/Caches/cn.other.app/blob", bytes: 30)
+            let report = scan(home, at: "Library/Caches")
+            let withDatabase = try XCTUnwrap(report.candidates.first { $0.title == "cn.example.app" })
+            XCTAssertEqual(withDatabase.kind, .unsupported)
+            XCTAssertFalse(withDatabase.canProcess)
+            XCTAssertFalse(withDatabase.canConfirmTestPurpose)
+            let plain = try XCTUnwrap(report.candidates.first { $0.title == "cn.other.app" })
+            XCTAssertEqual(plain.group, .review)
+            XCTAssertFalse(plain.canConfirmTestPurpose)
+            XCTAssertFalse(plain.isCleanupSuggestion)
+            XCTAssertTrue(plain.reason.contains("其他应用的缓存目录"), plain.reason)
+        }
+    }
+
+    func testSwiftPackageCacheScopeIsScannedInsteadOfRejectedAsAPackage() throws {
+        try fixture { home in
+            try file(home, "Library/Caches/org.swift.swiftpm/repositories/package-1234/HEAD")
+            try file(home, "Library/Caches/org.swift.swiftpm/manifests/manifest.db")
+            let scopes = SpaceCleaningScanner.recommendedScopes(context: .init(homeDirectory: home))
+                .filter { [.browserCache, .packageCache].contains($0.kind) }
+            let report = SpaceCleaningScanner.scan(scopes: scopes, context: .init(homeDirectory: home))
+            XCTAssertFalse(report.issues.contains { $0.kind == .unsafePath })
+            XCTAssertTrue(try XCTUnwrap(report.candidates.first { $0.title == "repositories" }).isRecommendedForSelection)
+            XCTAssertFalse(try XCTUnwrap(report.candidates.first { $0.title == "manifests" }).canProcess)
+            XCTAssertFalse(report.candidates.contains { $0.title == "org.swift.swiftpm" })
+        }
+    }
+
+    func testOldDiagnosticsAreManualSuggestionsOutsideTheRebuildableGroup() throws {
+        try fixture { home in
+            try file(home, "Library/Logs/DiagnosticReports/old.ips")
+            let report = scan(home, at: "Library/Logs/DiagnosticReports", options: .init(diagnosticMinimumAge: 0))
+            let diagnostic = try XCTUnwrap(report.candidates.first { $0.kind == .oldDiagnostic })
+            XCTAssertEqual(diagnostic.group, .review)
+            XCTAssertTrue(diagnostic.isCleanupSuggestion)
+            XCTAssertFalse(diagnostic.isRecommendedForSelection)
+        }
+    }
+}

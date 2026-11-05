@@ -120,7 +120,7 @@ struct CleaningItemDisplay: Identifiable, Sendable {
     /// Personal-file rows already carry their useful facts. Only show an
     /// explanation when a scan rule actually changes the available action.
     var handlingNote: String? {
-        if group == .protected || group == .rebuildable || needsPurposeConfirmation || [.testApplication, .testArchive, .installerPackage, .downloadedDiskImage].contains(kind) {
+        if group == .protected || group == .rebuildable || needsPurposeConfirmation || [.testApplication, .testArchive, .installerPackage, .downloadedDiskImage, .oldDiagnostic].contains(kind) {
             return reason + " " + impact
         }
         return nil

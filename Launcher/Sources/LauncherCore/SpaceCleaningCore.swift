@@ -118,8 +118,7 @@ public struct SpaceCleaningCandidate: Identifiable, Codable, Equatable, Sendable
     public var isCleanupSuggestion: Bool {
         guard canProcess else { return false }
         return isRecommendedForSelection ||
-            (group == .review && [.installerPackage, .downloadedDiskImage].contains(kind)) ||
-            (group == .rebuildable && kind == .oldDiagnostic)
+            (group == .review && [.installerPackage, .downloadedDiskImage, .oldDiagnostic].contains(kind))
     }
     public init(id: UUID = UUID(), scopeID: UUID = UUID(), url: URL, rootURL: URL,
                 rootIdentity: SpaceCleaningFileIdentity, identity: SpaceCleaningFileIdentity,
@@ -402,6 +401,8 @@ private final class Worker {
     /// Resolved once per worker: every classification compares against them.
     let runningPaths: [String]
     let protectedReleasePaths: [String]
+    let homePath: String
+    let libraryCachesPath: String
     var candidates: [SpaceCleaningCandidate] = []
     var issues: [SpaceCleaningIssue] = []
     var checked = 0
@@ -442,6 +443,8 @@ private final class Worker {
         runningBundleIdentifiers = Set(context.runningApplicationURLs.compactMap { Bundle(url: $0)?.bundleIdentifier?.lowercased() })
         func resolved(_ url: URL) -> String { Scanner.canonicalURL(url)?.path ?? url.standardizedFileURL.path }
         runningPaths = context.runningApplicationURLs.map(resolved)
+        homePath = home.path
+        libraryCachesPath = (homePath == "/" ? "" : homePath) + "/Library/Caches"
         protectedReleasePaths = context.protectedReleaseURLs.map(resolved)
     }
     func overlapsRunningApplication(_ url: URL) -> Bool { runningPaths.contains { overlaps(url.path, $0) } }
@@ -551,7 +554,11 @@ private final class Worker {
         var pending: [(URL, [SpaceCleaningPathIdentity], Int)] = [(directory, ancestors, depth)]
         while let (current, chain, currentDepth) = pending.popLast() {
             guard !cancelled(), !phaseLimited else { return }
-            guard currentDepth <= options.maximumDepth else { markLimit(); issue(scope, current, .depthLimit, "已到达扫描深度上限。"); return }
+            // A deep directory is skipped on its own; its siblings and later scopes
+            // are still discovered, and the report keeps the coverage gap visible.
+            guard currentDepth <= options.maximumDepth else {
+                limit = true; issue(scope, current, .depthLimit, "已到达扫描深度上限，未展开此目录。"); continue
+            }
             guard let children = readChildren(current, scope: scope) else { continue }
             for child in children {
                 if visitedRoots.contains(where: { Scanner.contains(child.path, in: $0) }) { continue }
@@ -617,7 +624,9 @@ private final class Worker {
             // count protected directory contents as a single large regular file.
             measurement.complete = false
         } else if directory {
-            measurement = measure(url, rootIdentity: identity, scope: scope, allowBundleLinks: ["app", "xcarchive"].contains(url.pathExtension.lowercased()),
+            // Cache folders keep cache semantics: no package links, database and lock checks apply.
+            let bundle = ["app", "xcarchive"].contains(url.pathExtension.lowercased()) && !isApplicationCacheFolder(url)
+            measurement = measure(url, rootIdentity: identity, scope: scope, allowBundleLinks: bundle,
                                   protectedBudget: classification.group == .protected && !classification.testable)
         } else if Scanner.isRegular(identity) {
             measurement.logical = identity.sizeBytes; measurement.allocated = identity.allocatedBytes
@@ -678,11 +687,13 @@ private final class Worker {
         }
         if Scanner.isRegular(identity), identity.linkCount > 1 { return .init(kind: .hardLink, group: .protected, reason: "文件存在多个硬链接，默认保留。", impact: "删除一个路径不等于释放对应空间。") }
         let ext = url.pathExtension.lowercased()
-        if ext == "app" {
+        // A cache folder named like a bundle identifier (`cn.example.app`) is not an application.
+        let cacheFolder = isApplicationCacheFolder(url)
+        if ext == "app", !cacheFolder {
             if isInstalled(url) { return .init(kind: .installedApplication, group: .protected, reason: "已安装应用，需通过单独卸载流程处理。", impact: "不纳入文件清理。") }
             return .init(kind: .unknownApplication, group: .protected, reason: "尚未确认是测试副本还是需要保留的导出 App。", impact: "不能仅凭名称、签名或公证状态判断用途。", testable: true)
         }
-        if ext == "xcarchive" { return .init(kind: .unknownArchive, group: .protected, reason: "归档用途待确认，默认保留。", impact: "确认仅用于测试且不是需保留的唯一归档后，可手动复核。", testable: true) }
+        if ext == "xcarchive", !cacheFolder { return .init(kind: .unknownArchive, group: .protected, reason: "归档用途待确认，默认保留。", impact: "确认仅用于测试且不是需保留的唯一归档后，可手动复核。", testable: true) }
         if let known = cacheKind(url) {
             if unsafeCacheFileName(url.lastPathComponent) {
                 return .init(kind: .unsupported, group: .protected, reason: "缓存中的数据库、事务边车或锁文件默认保留。", impact: "需要先核实应用状态与数据一致性。")
@@ -700,19 +711,24 @@ private final class Worker {
                          reason: "下载或桌面中的磁盘映像，可核对用途后选择清理。",
                          impact: "磁盘映像也可能包含个人文件；尚未核验其内容或安装状态。")
         }
+        if cacheFolder, Scanner.isDirectory(identity) {
+            return .init(kind: .personalFile, group: .review, reason: "其他应用的缓存目录，需确认相关应用不再需要后手动选择。",
+                         impact: "应用可能重新下载或生成这些内容；正在使用时清理可能影响其运行。")
+        }
         if isPackage(url) { return .init(kind: .package, group: .protected, reason: "应用资源或文稿包默认保留。", impact: "不会拆开包选择内部文件。") }
         if Scanner.isRegular(identity), within(url, "Library/Logs/DiagnosticReports") {
             if ["log", "crash", "ips", "diag", "trace"].contains(ext) {
                 let age = now.timeIntervalSince1970 - Double(identity.modifiedSeconds) - Double(identity.modifiedNanoseconds) / 1_000_000_000
+                // Diagnostics reached their retention age; their history cannot be rebuilt.
                 return age >= options.diagnosticMinimumAge
-                    ? .init(kind: .oldDiagnostic, group: .rebuildable, reason: "达到保留期限的诊断记录。", impact: "如正在排查历史问题，建议保留。")
+                    ? .init(kind: .oldDiagnostic, group: .review, reason: "达到保留期限的诊断记录，历史内容删除后无法重新生成。", impact: "如正在排查历史问题，建议保留。")
                     : .init(kind: .recentDiagnostic, group: .protected, reason: "尚未达到诊断记录保留期限。", impact: "保留近期问题定位资料。")
             }
         }
         if !Scanner.isDirectory(identity) && !Scanner.isRegular(identity) { return .init(kind: .unsupported, group: .protected, reason: "特殊文件默认保留。", impact: "不在普通文件处理范围内。") }
         if within(url, "Downloads") { return .init(kind: .downloadedFile, group: .review, reason: "下载内容，请确认是否仍需保留。", impact: "不会仅因体积大或时间久而推荐删除。") }
         if within(url, "Developer") { return .init(kind: .developmentFile, group: .review, reason: "开发目录中的文件，需要人工确认。", impact: "可能包含项目源码或独有构建材料。") }
-        return .init(kind: .personalFile, group: .review, reason: "自选范围中的文件，需要人工复核。", impact: "文件名和修改时间不代表可安全删除。")
+        return .init(kind: .personalFile, group: .review, reason: "未匹配整理规则的文件，需要人工复核。", impact: "文件名和修改时间不代表可安全删除。")
     }
 
     func measure(_ root: URL, rootIdentity: SpaceCleaningFileIdentity, scope: SpaceCleaningScope, allowBundleLinks: Bool,
@@ -796,8 +812,7 @@ private final class Worker {
         if isPackage(url) || isReleaseProtected(url) { return true }
         if options.mode == .largeFiles { return false }
         if cacheKind(url) != nil { return true }
-        if url.deletingLastPathComponent().path == home.appendingPathComponent("Library/Caches").path,
-           !["Google", "Firefox"].contains(url.lastPathComponent),
+        if isApplicationCacheFolder(url), !["Google", "Firefox"].contains(url.lastPathComponent),
            !visitedRoots.contains(where: { Scanner.contains($0, in: url.path) }) { return true }
         // Directories in Downloads/custom locations remain navigable, never wholesale inferred junk.
         return false
@@ -901,9 +916,14 @@ private final class Worker {
         Scanner.contains(url.path, in: "/Applications") || Scanner.contains(url.path, in: "/System/Applications") || within(url, "Applications")
     }
     func isPackage(_ url: URL) -> Bool {
-        ["app", "xcarchive", "dsym", "pkg", "bundle", "framework", "plugin", "photoslibrary", "photolibrary", "rtfd", "pages", "numbers", "key", "xcodeproj", "xcworkspace"].contains(url.pathExtension.lowercased()) ||
+        // Per-app cache folders are named after bundle identifiers such as
+        // `org.swift.swiftpm`, which Launch Services may report as a package.
+        guard !isApplicationCacheFolder(url) else { return false }
+        return ["app", "xcarchive", "dsym", "pkg", "bundle", "framework", "plugin", "photoslibrary", "photolibrary", "rtfd", "pages", "numbers", "key", "xcodeproj", "xcworkspace"].contains(url.pathExtension.lowercased()) ||
             (try? url.resourceValues(forKeys: [.isPackageKey]).isPackage) == true
     }
+    /// A direct child of ~/Library/Caches: one application's cache folder.
+    func isApplicationCacheFolder(_ url: URL) -> Bool { url.deletingLastPathComponent().path == libraryCachesPath }
     func hasPackageAncestor(_ url: URL) -> Bool {
         var parent = url.deletingLastPathComponent()
         while parent.path != "/" {
@@ -914,9 +934,11 @@ private final class Worker {
         }
         return false
     }
-    func within(_ url: URL, _ relative: String) -> Bool { Scanner.contains(url.path, in: home.appendingPathComponent(relative).path) }
+    /// Joins strings: appendingPathComponent without a hint would stat each call.
+    func homeRelative(_ relative: String) -> String { (homePath == "/" ? "" : homePath) + "/" + relative }
+    func within(_ url: URL, _ relative: String) -> Bool { Scanner.contains(url.path, in: homeRelative(relative)) }
     func relativeComponents(_ url: URL, _ relative: String) -> [String] {
-        let root = home.appendingPathComponent(relative).path
+        let root = homeRelative(relative)
         return url.path == root ? [] : String(url.path.dropFirst(root.count + 1)).split(separator: "/").map(String.init)
     }
     func canonicalPath(_ url: URL) -> String { Scanner.canonicalURL(url)?.path ?? url.standardizedFileURL.path }

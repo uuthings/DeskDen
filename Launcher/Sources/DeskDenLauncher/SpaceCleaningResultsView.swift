@@ -232,7 +232,10 @@ struct SpaceCleaningResultsView: View {
                         HStack(spacing: 10) {
                             SpaceCleaningFileGlyph(category: item.fileCategory)
                             VStack(alignment: .leading, spacing: 5) {
-                                Text(item.name).font(.system(size: 12, weight: .medium)).lineLimit(1).truncationMode(.middle)
+                                HStack(spacing: 6) {
+                                    Text(item.name).font(.system(size: 12, weight: .medium)).lineLimit(1).truncationMode(.middle)
+                                    if model.needsManualSelection(item) { manualSelectionTag(item) }
+                                }
                                 Text(model.shortPath(item.url.deletingLastPathComponent()))
                                     .font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1).truncationMode(.middle)
                             }
@@ -261,6 +264,18 @@ struct SpaceCleaningResultsView: View {
                 .accessibilityIdentifier("space-cleaning-file-row-" + item.id.uuidString)
             Rectangle().fill(palette.line).frame(height: 1)
         }
+    }
+    /// Suggestion rows that are never preselected (installers, disk images, old
+    /// diagnostics) carry a light tag; it never truncates and keeps the row height.
+    private func manualSelectionTag(_ item: CleaningItemDisplay) -> some View {
+        Text("需手选").font(.system(size: 11)).foregroundStyle(palette.secondary)
+            .padding(.horizontal, 6).padding(.vertical, 1)
+            .background(palette.soft, in: RoundedRectangle(cornerRadius: 4))
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(palette.line, lineWidth: 1))
+            .fixedSize().layoutPriority(1)
+            .help("建议整理，但不会默认勾选；确认用途后再手动选择")
+            .accessibilityLabel("需手动选择")
+            .accessibilityIdentifier("space-cleaning-manual-tag-" + item.id.uuidString)
     }
     private func logicalSizeText(_ item: CleaningItemDisplay) -> String {
         if let measured = model.directorySizes[item.id] {

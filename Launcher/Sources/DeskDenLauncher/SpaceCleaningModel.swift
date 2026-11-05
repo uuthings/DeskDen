@@ -359,6 +359,10 @@ import Quartz
             : "\(automaticallySelectedIDs.count) 项可重建缓存已预选" + (manualCount > 0 ? "，另有 \(manualCount) 项需手动选择" : "")
         return "找到 \(recommendedIDs.count) 项建议整理内容 · " + selection + (scanReachedLimit ? " · 覆盖范围有限" : "")
     }
+    /// Listed as a cleanup suggestion but never preselected: the row says so.
+    func needsManualSelection(_ item: CleaningItemDisplay) -> Bool {
+        scanMode == .cleanup && item.isSelectable && recommendedIDs.contains(item.id) && !automaticallySelectedIDs.contains(item.id)
+    }
     func toggleItem(_ id: UUID) {
         guard !isBusy, !requiresRescan, resultIndex.item(id)?.isSelectable == true else { return }
         if !selectedIDs.insert(id).inserted { selectedIDs.remove(id) }

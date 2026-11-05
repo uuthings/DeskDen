@@ -369,6 +369,9 @@ import LauncherCore
                   "recommendations include an installer for manual selection while only verified cache is preselected")
             check(scopeModel.reportSummary.contains("1 项可重建缓存已预选") && scopeModel.reportSummary.contains("1 项需手动选择"),
                   "report distinguishes cleanup suggestions from the smaller automatic selection")
+            check(scopeModel.needsManualSelection(installer) &&
+                  scopeModel.recommendedItems.filter { defaults.contains($0.id) }.allSatisfy { !scopeModel.needsManualSelection($0) },
+                  "only suggestions that are never preselected carry the manual-selection row tag")
             scopeModel.showResults(.reviewable)
             check(scopeModel.visibleItems.contains { $0.url == manualFile } &&
                   scopeModel.visibleItems.allSatisfy { !scopeModel.recommendedIDs.contains($0.id) } && scopeModel.selectedIDs == defaults,
