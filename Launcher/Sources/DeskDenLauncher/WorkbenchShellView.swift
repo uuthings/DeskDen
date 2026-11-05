@@ -9,12 +9,15 @@ struct WorkbenchShellMetrics {
     let sidebarWidth: CGFloat
     let pageWidth: CGFloat
 
+    static let maximumPageWidth: CGFloat = 1360
     init(viewport: CGSize, home: Bool = false) {
         chromeHeight = 58
-        // Fixed reading margins are independent of scrollbar presence.
-        contentGutter = 24
+        // Fixed reading margins are independent of scrollbar presence. Wider
+        // windows center a 1360 pt page instead of stretching every card.
+        let available = max(0, viewport.width - 2)
+        pageWidth = max(0, min(Self.maximumPageWidth, available - 48))
+        contentGutter = max(24, (available - pageWidth) / 2)
         sidebarWidth = 0
-        pageWidth = max(0, viewport.width - 2 - 2 * contentGutter)
     }
 }
 
@@ -94,14 +97,14 @@ struct WorkbenchSceneView: View {
     @ObservedObject var model: WorkbenchAppModel
     private var home: Bool { model.route == .overview }
     private var palette: ThemePalette { ThemePalette(light: model.light) }
-    private var windowRadius: CGFloat { model.isFullScreen ? 0 : 16 }
+    private var windowRadius: CGFloat { model.isFullScreen ? 0 : WorkbenchViewport.windowRadius }
     var body: some View {
         GeometryReader { viewport in
             let metrics = WorkbenchShellMetrics(viewport: viewport.size, home: home)
             let chromeHeight = metrics.chromeHeight
             let settingsHeight: CGFloat = model.route == .settings ? 52 : 0
             let gutter = metrics.contentGutter
-            let pageInsets = EdgeInsets(top:24,leading:gutter,bottom:32,trailing:gutter)
+            let pageInsets = EdgeInsets(top:24,leading:gutter,bottom:24,trailing:gutter)
             ZStack(alignment: .topLeading) {
                 WorkbenchFluidBackground()
                 VStack(spacing: 0) {

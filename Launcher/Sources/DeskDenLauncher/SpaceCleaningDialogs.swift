@@ -75,7 +75,7 @@ struct SpaceCleaningDialogContent: View {
     }
     private var unavailableDialog: some View {
         WorkbenchDialogFrame(title: "记录已更新", dismiss: model.closeDialog) {
-            Text("这次处理记录当前不可用，请返回清理记录重新查看。")
+            Text("这次的清理记录当前不可用，请返回清理记录重新查看。")
                 .font(.system(size: 12)).foregroundStyle(palette.secondary)
         } actions: {
             Spacer()

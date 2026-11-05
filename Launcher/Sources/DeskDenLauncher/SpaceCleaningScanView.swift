@@ -90,7 +90,7 @@ struct SpaceCleaningScanView: View {
     private var status: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 5) {
-                Text(title).font(.system(size: 14, weight: .medium))
+                Text(title).font(.system(size: 15, weight: .medium))
                 Text((model.scanMode == .largeFiles ? "大文件扫描" : "常规扫描") + " · " + (model.scopeChoice == .global ? "全局范围" : "自选目录"))
                     .font(.system(size: 11)).foregroundStyle(palette.muted)
             }
@@ -120,7 +120,7 @@ struct SpaceCleaningScanView: View {
             }
             VStack(spacing: 7) {
                 if let fraction {
-                    Text(UsagePercentage.text(fraction * 100)).font(.system(size: 29, weight: .medium)).monospacedDigit()
+                    Text(UsagePercentage.text(fraction * 100)).font(.system(size: 30, weight: .regular)).monospacedDigit()
                     Text("项目核验进度").font(.system(size: 11)).foregroundStyle(palette.muted)
                 } else {
                     Image(systemName: "viewfinder").font(.system(size: 28, weight: .light)).foregroundStyle(palette.accent)
@@ -209,7 +209,7 @@ struct SpaceCleaningScanView: View {
                 Text(path).font(.system(size: 11, design: .monospaced)).foregroundStyle(palette.muted)
                     .lineLimit(1).truncationMode(.middle)
             }.frame(maxWidth: .infinity, alignment: .leading)
-        }.padding(.vertical, 10).frame(minHeight: 54).help(path)
+        }.frame(height: 52).help(path)
             .accessibilityElement(children: .combine).accessibilityIdentifier("space-cleaning-scan-recent-\(index)")
     }
 

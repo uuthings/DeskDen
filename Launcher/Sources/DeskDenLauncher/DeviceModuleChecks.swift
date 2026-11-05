@@ -13,7 +13,7 @@ import LauncherCore
         check(DeviceTrafficDisplay.adaptive(100_000_000_000) == "100 GB" && DeviceTrafficDisplay.adaptive(1_048_576) == "1.05 MB", "traffic card adaptive units use decimal bytes consistently with budget thresholds")
         check(DeviceTrafficDisplay.adaptive(999) == "999 B" && DeviceTrafficDisplay.adaptive(1000) == "1 KB" && DeviceTrafficDisplay.adaptive(nil) == "—", "traffic display preserves byte boundaries and missing data")
         check(DeviceFormat.capacity(1_048_576) == "1 MB", "storage unit fix does not change memory formatting")
-        check(DeviceFormat.storage(1_000_000_000_000) == "1 TB" && DeviceFormat.storage(nil) == "—", "storage formatting uses decimal units and preserves missing readings")
+        check(DeviceFormat.storage(1_000_000_000_000) == "1.0 TB" && DeviceFormat.storage(nil) == "—", "storage formatting uses decimal units and preserves missing readings")
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("deskden-device-check-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         let model = DeviceStatusModel(dataDirectory: dir)

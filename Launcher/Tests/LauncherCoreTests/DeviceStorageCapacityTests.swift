@@ -3,12 +3,22 @@ import XCTest
 
 final class DeviceStorageCapacityTests: XCTestCase {
     func testStorageUsesDecimalUnitsAndPreservesUnknownValues() {
-        XCTAssertEqual(DeviceStorageCapacity.formatted(1_000_000_000_000), "1 TB")
-        XCTAssertEqual(DeviceStorageCapacity.formatted(500_000_000_000), "500 GB")
+        // GB and TB keep one decimal; MB and smaller are whole numbers.
+        XCTAssertEqual(DeviceStorageCapacity.formatted(1_000_000_000_000), "1.0 TB")
+        XCTAssertEqual(DeviceStorageCapacity.formatted(500_000_000_000), "500.0 GB")
+        XCTAssertEqual(DeviceStorageCapacity.formatted(87_000_000_000), "87.0 GB")
         XCTAssertEqual(DeviceStorageCapacity.formatted(1_048_576), "1 MB")
+        XCTAssertEqual(DeviceStorageCapacity.formatted(36_864), "37 KB")
         XCTAssertEqual(DeviceStorageCapacity.formatted(1_073_741_824), "1.1 GB")
         XCTAssertEqual(DeviceStorageCapacity.formatted(0), "0 B")
         XCTAssertEqual(DeviceStorageCapacity.formatted(nil), "—")
+    }
+
+    func testRoundingMovesToTheNextUnitInsteadOfFourDigits() {
+        XCTAssertEqual(DeviceStorageCapacity.formatted(999_960_000_000), "1.0 TB")
+        XCTAssertEqual(DeviceStorageCapacity.formatted(999_600_000), "1.0 GB")
+        XCTAssertEqual(DeviceStorageCapacity.formatted(999_600), "1 MB")
+        XCTAssertEqual(DeviceStorageCapacity.formatted(999), "999 B")
     }
 
     func testReclaimableEstimateUsesSameTotalAsAvailableAndUsageBar() throws {

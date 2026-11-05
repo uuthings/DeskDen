@@ -78,20 +78,18 @@ struct WorkbenchAppearanceScene: NSViewRepresentable {
     }
 }
 
-/// The approved milky surface and the dark glass surface share semantic colors.
+/// Appearance-following entries for views that cannot read the environment
+/// palette. Every value comes from ThemePalette; none is defined here.
 enum HomeFluidPalette {
     static let light = ThemePalette(theme: .qingbiMist, opacity: 0.87, light: true)
-    static let onWhiteInk = Color(red: 23 / 255, green: 45 / 255, blue: 51 / 255)
-    static let ink = adaptive(0x172D33, 0xF3FCFF)
-    static let secondary = adaptive(0x50676D, 0xD4E2E6)
-    static let muted = adaptive(0x62757A, 0xB4C6CC)
-    static let green = adaptive(0x197460, 0x8BEAD1)
-    private static func adaptive(_ light: UInt32, _ dark: UInt32) -> Color {
+    static let onWhiteInk = light.text
+    static let ink = adaptive { $0.nsText }
+    static let secondary = adaptive { $0.nsSecondary }
+    static let muted = adaptive { $0.nsMuted }
+    static let green = adaptive { $0.nsAccent }
+    private static func adaptive(_ pick: @escaping @Sendable (ThemePalette) -> NSColor) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
-            let hex = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
-            return NSColor(srgbRed: Double((hex >> 16) & 255) / 255,
-                           green: Double((hex >> 8) & 255) / 255,
-                           blue: Double(hex & 255) / 255, alpha: 1)
+            pick(ThemePalette(light: appearance.bestMatch(from: [.aqua, .darkAqua]) != .darkAqua))
         })
     }
 }

@@ -21,9 +21,11 @@ struct SpaceCleaningModuleView: View {
                 header.fixedSize(horizontal: false, vertical: true)
                 if model.isReconcilingHistory && model.screen != .history {
                     HStack(spacing: 8) {
-                        Text("正在核对历史项目").font(.system(size: 11)).foregroundStyle(palette.muted)
+                        Text("正在核对历史项目").font(.system(size: 11)).foregroundStyle(palette.secondary)
                         Button("停止核对", action: model.cancelHistoryVerification).buttonStyle(WBQuietButtonStyle())
-                    }.padding(.bottom, 12).fixedSize(horizontal: false, vertical: true)
+                    }.padding(.horizontal, 10).frame(height: 24)
+                        .background(WorkbenchMaterialSurface(kind: .note, radius: 10))
+                        .padding(.bottom, 12).fixedSize()
                 }
                 }.measureCleaningHeight(.header)
                 // All stages use the actual work area. Dense or narrow layouts
@@ -31,19 +33,26 @@ struct SpaceCleaningModuleView: View {
                 content(width: geometry.size.width, height: height)
                     .frame(width: geometry.size.width, height: height, alignment: .top)
                 VStack(alignment: .leading, spacing: 0) {
+                // Notes outside the cards sit on the shared note backing so they
+                // stay readable on both wallpapers.
                 HStack(spacing: 8) {
-                    if !isPreparing {
-                        Text(model.scopeSummary).lineLimit(1).truncationMode(.middle)
-                        if model.screen == .results { Text(model.requiresRescan ? "· 需重新扫描" : "· 已检查") }
-                    } else if let date = model.lastScanDate {
-                        Text("上次扫描 · " + SpaceCleaningFormat.date(date, timeZone: timeZone))
-                    } else {
-                        Label("开发依赖与发布归档保持保护", systemImage: "checkmark.shield")
-                    }
+                    HStack(spacing: 6) {
+                        if !isPreparing {
+                            Text(model.scopeSummary).lineLimit(1).truncationMode(.middle)
+                            if model.screen == .results { Text(model.requiresRescan ? "· 需重新扫描" : "· 已检查").fixedSize() }
+                        } else if let date = model.lastScanDate {
+                            Text("上次扫描 · " + SpaceCleaningFormat.date(date, timeZone: timeZone)).lineLimit(1)
+                        } else {
+                            Label("开发依赖与发布归档保持保护", systemImage: "checkmark.shield").lineLimit(1)
+                        }
+                    }.foregroundStyle(palette.secondary).padding(.horizontal, 10).frame(height: 24)
+                        .background(WorkbenchMaterialSurface(kind: .note, radius: 10))
                     Spacer(minLength: 4)
                     Button("覆盖范围与保留规则") { model.dialog = .rules }.buttonStyle(WBTextActionButtonStyle())
+                        .foregroundStyle(palette.accent).padding(.horizontal, 10).frame(height: 24)
+                        .background(WorkbenchMaterialSurface(kind: .note, radius: 10))
                         .disabled(model.isBusy).accessibilityIdentifier("space-cleaning-rules-link")
-                }.font(.system(size: 11)).foregroundStyle(.white.opacity(0.92)).shadow(color:.black.opacity(0.45),radius:2,y:1).padding(.top, 12)
+                }.font(.system(size: 11)).padding(.top, 12)
                     .fixedSize(horizontal: false, vertical: true)
                 if let message = model.message {
                     HStack(alignment: .top, spacing: 8) {
@@ -51,11 +60,13 @@ struct SpaceCleaningModuleView: View {
                         Text(message).lineLimit(3).frame(maxWidth: .infinity, alignment: .leading)
                         Button { model.message = nil } label: { Image(systemName: "xmark") }
                             .buttonStyle(WBIconButtonStyle(size: 24)).accessibilityLabel("关闭提示")
-                    }.font(.system(size: 11)).foregroundStyle(.white.opacity(0.92)).shadow(color:.black.opacity(0.45),radius:2,y:1).padding(.top, 10)
+                    }.font(.system(size: 11)).foregroundStyle(palette.secondary)
+                        .padding(.horizontal, 10).padding(.vertical, 6)
+                        .background(WorkbenchMaterialSurface(kind: .note, radius: 10)).padding(.top, 10)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("space-cleaning-message")
                 }
-                }.environment(\.workbenchOnBackdrop, true).measureCleaningHeight(.footer)
+                }.measureCleaningHeight(.footer)
                 Spacer(minLength: 0)
             }.frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
         }.foregroundStyle(palette.text)
@@ -72,7 +83,8 @@ struct SpaceCleaningModuleView: View {
         switch model.screen {
         case .start, .scope: "查看空间占用，选择本次扫描范围"
         case .scanning: "正在检查空间占用，完成后逐项复核"
-        case .results: "核对文件用途，选择处理方式"
+        // The scan conclusion replaces a separate summary card.
+        case .results: model.reportSummary
         case .processing: "重新核验所选项目，安全完成处理"
         case .completed: "查看处理结果与未完成的项目"
         case .history: "查找每次处理的项目、方式与结果"
@@ -81,21 +93,25 @@ struct SpaceCleaningModuleView: View {
     private var capacityExplanation: String {
         let free = DeviceStorageCapacity.formatted(model.diskImmediatelyFree)
         let reclaimable = DeviceStorageCapacity.formatted(model.diskReclaimableEstimate)
-        return "当前用户目录所在卷，按十进制显示（1 GB = 10 亿字节）。立即空闲 \(free)，系统可回收估算 \(reclaimable)。可用空间优先包含系统按需可回收部分，缺少估算时使用立即空闲；不代表方寸可清理容量。"
+        return "当前用户目录所在卷，按十进制显示（1 GB = 10 亿字节）。立即空闲 \(free)，系统可回收（估算） \(reclaimable)。可用空间优先包含系统可回收部分，缺少估算时使用立即空闲；不代表方寸可清理容量。"
+    }
+    /// The way back sits before the title; the trailing group keeps page actions.
+    private var back: WBPageBack? {
+        if model.dialog.map({ !isPurpose($0) }) == true {
+            return WBPageBack(title: model.dialogReturnDestination, disabled: model.isBusy,
+                              identifier: "space-cleaning-dialog-return", action: model.closeDialog)
+        }
+        switch model.screen {
+        case .results:
+            return WBPageBack(title: "扫描设置", disabled: model.isBusy, identifier: "space-cleaning-edit-scope", action: model.goHome)
+        case .history:
+            return WBPageBack(title: model.historyReturnDestination, disabled: model.isBusy,
+                              identifier: "space-cleaning-history-return", action: model.returnFromHistory)
+        default: return nil
+        }
     }
     private var header: some View {
-        WBPageHeader(title: model.screen == .history ? "清理记录" : "空间清理", subtitle: subtitle) {
-            if model.dialog.map({ !isPurpose($0) }) == true {
-                Button(action: model.closeDialog) { Label(model.dialogReturnTitle, systemImage: "arrow.left") }
-                    .buttonStyle(WBQuietButtonStyle()).disabled(model.isBusy)
-            } else if model.screen == .results {
-                Button(action: model.goHome) { Label("扫描设置", systemImage: "chevron.left") }
-                    .buttonStyle(WBQuietButtonStyle()).disabled(model.isBusy)
-                    .accessibilityIdentifier("space-cleaning-edit-scope")
-            } else if model.screen == .history {
-                Button(action: model.returnFromHistory) { Label(model.historyReturnTitle, systemImage: "chevron.left") }
-                    .buttonStyle(WBQuietButtonStyle()).disabled(model.isBusy)
-            }
+        WBPageHeader(title: model.screen == .history ? "清理记录" : "空间清理", subtitle: subtitle, back: back) {
             if model.screen == .results {
                 Button(action: model.startScan) { Label("重新扫描", systemImage: "arrow.clockwise") }
                     .buttonStyle(WBButtonStyle()).disabled(model.isBusy).accessibilityIdentifier("space-cleaning-rescan")
@@ -137,7 +153,7 @@ struct SpaceCleaningModuleView: View {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("处理所选项目").font(.system(size: 11)).foregroundStyle(palette.muted)
-                    Text("正在安全处理所选项目").font(.system(size: 20, weight: .medium))
+                    Text("正在安全处理所选项目").font(.system(size: 17, weight: .medium))
                     Text("每项操作前，重新核对文件与保护状态。")
                         .font(.system(size: 11)).foregroundStyle(palette.muted)
                 }
@@ -196,9 +212,8 @@ struct SpaceCleaningProgressTrack: View {
     }
 }
 enum SpaceCleaningFormat {
-    static func bytes(_ bytes: UInt64) -> String {
-        bytes == 0 ? "0 B" : ByteCountFormatter.string(fromByteCount: Int64(min(bytes, UInt64(Int64.max))), countStyle: .file)
-    }
+    /// Same decimal units and precision as every other disk figure.
+    static func bytes(_ bytes: UInt64) -> String { DeviceStorageCapacity.formatted(bytes) }
     @MainActor private static var dateFormatters: [String: DateFormatter] = [:]
     @MainActor static func date(_ date: Date, timeZone: TimeZone = .current) -> String {
         formatted(date, pattern: "yyyy年MM月dd日 HH:mm", timeZone: timeZone)

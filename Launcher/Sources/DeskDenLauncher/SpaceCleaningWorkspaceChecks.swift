@@ -351,7 +351,7 @@ import LauncherCore
             _ = await settle(window) { accessibilityText("space-cleaning-disk-reclaimable-value", host).contains("—") }
             check(accessibilityText("space-cleaning-disk-reclaimable-value", host).contains("—")
                     && frame("space-cleaning-disk-segment-reclaimable", host) == nil
-                    && accessibilityText("space-cleaning-disk-capacity-note", host).contains("未提供按需回收估算"),
+                    && accessibilityText("space-cleaning-disk-capacity-note", host).contains("未提供系统可回收估算"),
                   "missing reclaimable estimate remains unknown with an explicit fallback explanation")
             check(accessibilityText("space-cleaning-disk-available-value", host).contains("42.3"),
                   "missing reclaimable estimate uses the actual immediately free amount without adding a fabricated estimate")

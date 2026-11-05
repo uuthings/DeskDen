@@ -35,13 +35,20 @@ public struct DeviceStorageCapacity: Equatable, Sendable {
     }
 
     /// Disk and file capacities use decimal SI units, as in macOS storage views.
-    /// Memory retains its separate binary formatter.
+    /// GB and larger always keep one decimal, so values on one card share a
+    /// precision; MB and smaller are whole numbers. Memory retains its
+    /// separate binary formatter.
     public static func formatted(_ bytes: UInt64?) -> String {
         guard let bytes else { return "—" }
         let units = ["B", "KB", "MB", "GB", "TB", "PB", "EB"]
         var number = Double(bytes), index = 0
         while number >= 1_000 && index < units.count - 1 { number /= 1_000; index += 1 }
-        let numberText = String(format: "%.1f", number)
-        return (numberText.hasSuffix(".0") ? String(numberText.dropLast(2)) : numberText) + " " + units[index]
+        func text(_ value: Double, _ unit: Int) -> String {
+            unit >= 3 ? String(format: "%.1f", value) : String(format: "%.0f", value)
+        }
+        // Rounding may reach 1000 of the current unit (999.96 GB, 999.6 MB);
+        // show the next unit instead of a four-digit value.
+        if index < units.count - 1, (Double(text(number, index)) ?? 0) >= 1_000 { number /= 1_000; index += 1 }
+        return text(number, index) + " " + units[index]
     }
 }

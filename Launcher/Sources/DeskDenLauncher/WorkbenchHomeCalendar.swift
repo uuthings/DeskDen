@@ -2,15 +2,24 @@ import SwiftUI
 import LauncherCore
 
 /// The home month remains compact; selecting a day reveals its real records
-/// without changing the independent all-pending list below it.
+/// in the same card without changing the independent all-pending list below.
 struct WorkbenchHomeCalendar: View {
     @ObservedObject var model: CalendarModel
     @ObservedObject var context: WorkbenchContextModel
     @Binding var selectedDay: Date?
+    /// Height available above the lower row. The agenda shows as many rows as
+    /// fit (at least one) and never pushes the lower cards down.
+    var maximumHeight: CGFloat = .infinity
     var navigate: (WorkbenchRoute) -> Void
     @State private var displayedMonth = Date()
     @State private var showingDay = false
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.workbenchPalette) private var palette
+
+    /// 12 top + 28 header + 6 + 24 weekdays + 6 × 36 rows + 10 bottom.
+    static let monthHeight: CGFloat = 296
+    static let agendaHeaderHeight: CGFloat = 31
+    static let agendaRowHeight: CGFloat = 36
 
     private var calendar: Calendar { context.dateContext.calendar }
     private var selection: Date { selectedDay ?? Date() }
@@ -27,35 +36,23 @@ struct WorkbenchHomeCalendar: View {
     var body: some View {
         let events = knownEvents
         let pending = model.reminders.filter { !$0.isCompleted }
-        VStack(spacing: 5) {
-          VStack(spacing: 0) {
-            monthHeader.padding(.bottom, 7)
-            HStack(spacing: 3) {
+        VStack(spacing: 0) {
+            monthHeader
+            HStack(spacing: 0) {
                 ForEach(["一", "二", "三", "四", "五", "六", "日"], id: \.self) { text in
-                    Text(text).font(.system(size: 11)).foregroundStyle(.white.opacity(0.68))
-                        .frame(maxWidth: .infinity).frame(height: 25)
+                    Text(text).font(.system(size: 11)).foregroundStyle(palette.muted)
+                        .frame(maxWidth: .infinity).frame(height: 24)
                 }
+            }.padding(.top, 6)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 0), count: 7), spacing: 0) {
+                ForEach(days, id: \.self) { date in dayButton(date, events: events, reminders: pending).frame(height: 36) }
             }
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 3), count: 7), spacing: 3) {
-                ForEach(days, id: \.self) { date in dayButton(date, events: events, reminders: pending) }
-            }
+            if showingDay { dayAgenda }
         }
-        .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 12)
-        .frame(maxWidth: .infinity).frame(height: 301)
-        .background {
-            if scheme == .light {
-                RoundedRectangle(cornerRadius: 14).fill(LinearGradient(
-                    colors: [Color(red: 3/255, green: 80/255, blue: 106/255).opacity(0.35),
-                             Color(red: 3/255, green: 59/255, blue: 87/255).opacity(0.37)],
-                    startPoint: .topLeading, endPoint: .bottomTrailing))
-            } else {
-                WorkbenchHomeSurface(radius: 14)
-            }
-        }
-          if showingDay { dayAgenda }
-        }
-        .padding(5)
-        .overlay(RoundedRectangle(cornerRadius: 19).strokeBorder(.white.opacity(0.28), lineWidth: 1))
+        .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 10)
+        .frame(maxWidth: .infinity, alignment: .top)
+        .foregroundStyle(palette.text)
+        .background(WorkbenchHomeSurface())
         .onAppear {
             displayedMonth = selection
             if !calendar.isDate(model.displayedMonth, equalTo: selection, toGranularity: .month) { model.selectDay(selection) }
@@ -67,19 +64,19 @@ struct WorkbenchHomeCalendar: View {
     }
 
     private var monthHeader: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             Text(HomeCalendarContent.format(displayedMonth, "yyyy年M月", calendar: calendar))
-                .font(.system(size: 12, weight: .medium)).lineLimit(1)
+                .font(.system(size: 13, weight: .medium)).foregroundStyle(palette.text).lineLimit(1)
             Spacer(minLength: 4)
-            Button { moveMonth(-1) } label: { Image(systemName: "chevron.left").frame(width: 25, height: 28) }
+            Button { moveMonth(-1) } label: { Image(systemName: "chevron.left").font(.system(size: 11)).frame(width: 26, height: 26) }
                 .accessibilityLabel("上个月").accessibilityIdentifier("fc.home.calendar.previous")
             Button("今天") {
                 displayedMonth = Date(); selectedDay = nil; showingDay = true; model.goToToday()
-            }.frame(height: 28).accessibilityIdentifier("fc.home.calendar.today")
-            Button { moveMonth(1) } label: { Image(systemName: "chevron.right").frame(width: 25, height: 28) }
+            }.font(.system(size: 12)).padding(.horizontal, 4).frame(height: 26).accessibilityIdentifier("fc.home.calendar.today")
+            Button { moveMonth(1) } label: { Image(systemName: "chevron.right").font(.system(size: 11)).frame(width: 26, height: 26) }
                 .accessibilityLabel("下个月").accessibilityIdentifier("fc.home.calendar.next")
         }
-        .font(.system(size: 11)).foregroundStyle(.white.opacity(0.92))
+        .foregroundStyle(palette.secondary)
         .buttonStyle(HomeCalendarControlStyle()).frame(height: 28)
     }
 
@@ -97,25 +94,29 @@ struct WorkbenchHomeCalendar: View {
             selectedDay = date; displayedMonth = date; model.selectDay(date); showingDay = true
         } label: {
             Text("\(calendar.component(.day, from: date))")
-                .font(.system(size: 12, weight: .medium)).monospacedDigit()
-                .frame(maxWidth: .infinity).frame(height: 34)
+                .font(.system(size: 13)).monospacedDigit()
+                .frame(width: 36, height: 34)
                 .overlay(alignment: .topTrailing) {
                     if let badge = civil.badge {
-                        Text(badge).font(.system(size: 8, weight: .medium))
-                            .foregroundStyle(badge == "班" ? Color(red: 0.65, green: 0.32, blue: 0.15) : HomeFluidPalette.light.accent)
+                        // Holiday marks keep fixed meanings: rest is green, a
+                        // working weekend is red, in both appearances.
+                        let tone = badge == "班" ? Color(red: 0.65, green: 0.32, blue: 0.15) : HomeFluidPalette.light.accent
+                        Text(badge).font(.system(size: 8, weight: .medium)).foregroundStyle(tone)
                             .frame(width: 11, height: 11)
-                            .background(.white.opacity(0.88), in: RoundedRectangle(cornerRadius: 3))
+                            .background(Color.white.opacity(0.92), in: RoundedRectangle(cornerRadius: 3))
+                            .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(tone.opacity(0.35), lineWidth: 0.5))
                             .padding(.top, 1).padding(.trailing, 1).accessibilityHidden(true)
                     }
                 }
                 .overlay(alignment: .bottom) {
                     if events + reminders > 0 {
-                        Circle().fill(selected ? HomeFluidPalette.light.accent : .white.opacity(0.9))
-                            .frame(width: 3, height: 3).padding(.bottom, 4)
+                        Circle().fill(selected ? HomeCalendarDateStyle.selectedText(scheme) : palette.accent)
+                            .frame(width: 4, height: 4).padding(.bottom, 4)
                     }
                 }
         }
         .buttonStyle(HomeCalendarDateStyle(selected: selected, today: today, outside: outside))
+        .frame(maxWidth: .infinity)
         .help(help).accessibilityLabel(help)
         .accessibilityValue(selected ? "已选择" : today ? "今天" : "未选择")
         .accessibilityAddTraits(selected ? [.isSelected] : [])
@@ -128,13 +129,27 @@ struct WorkbenchHomeCalendar: View {
         displayedMonth = first; selectedDay = first; showingDay = false; model.selectDay(first)
     }
 
+    /// Rows that fit above the lower row; the stacked narrow layout scrolls the
+    /// whole page instead, so it shows a short list.
+    private func visibleAgendaCount(_ total: Int) -> Int {
+        guard total > 0 else { return 0 }
+        guard maximumHeight.isFinite else { return min(total, 6) }
+        let room = (maximumHeight - Self.monthHeight - Self.agendaHeaderHeight) / Self.agendaRowHeight
+        return max(1, min(total, Int(room.rounded(.down))))
+    }
+
     private var dayAgenda: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        let entries = dayEntries
+        let shown = visibleAgendaCount(entries.count)
+        return VStack(alignment: .leading, spacing: 0) {
+            Rectangle().fill(palette.line).frame(height: 1).padding(.top, 2)
             HStack(spacing: 6) {
                 Text(calendar.isDateInToday(selection) ? "本日安排" : HomeCalendarContent.format(selection, "M月d日", calendar: calendar) + "安排")
-                    .font(.system(size: 11, weight: .medium)).lineLimit(1)
-                if !dayEntries.isEmpty {
-                    Text("\(dayEntries.count)").font(.system(size: 10)).foregroundStyle(HomeFluidPalette.muted)
+                    .font(.system(size: 12, weight: .medium)).lineLimit(1)
+                if !entries.isEmpty {
+                    Text("\(entries.count) 项" + (entries.count > shown ? " · 另有 \(entries.count - shown) 项" : ""))
+                        .font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
+                        .accessibilityIdentifier("fc.home.calendar.day.count")
                 }
                 Spacer(minLength: 4)
                 Button("查看") { model.selectDay(selection); navigate(.calendar) }
@@ -142,26 +157,19 @@ struct WorkbenchHomeCalendar: View {
                     .accessibilityLabel("查看当天全部安排")
                 Button { model.selectDay(selection); model.openNewReminder() } label: {
                     Image(systemName: "plus").font(.system(size: 11))
-                }.buttonStyle(WBIconButtonStyle(size: 24)).disabled(model.storageError != nil)
+                }.buttonStyle(WBIconButtonStyle(size: 26)).disabled(model.storageError != nil)
                     .accessibilityLabel("为选中日期新建待办")
                     .accessibilityIdentifier("fc.home.calendar.day.add")
-            }.frame(height: 24)
-            if dayEntries.isEmpty {
-                Text(dayAgendaStatus).font(.system(size: 11)).foregroundStyle(HomeFluidPalette.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
+            }.frame(height: 26).padding(.top, 2)
+            if entries.isEmpty {
+                Text(dayAgendaStatus).font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading).frame(height: Self.agendaRowHeight)
             } else {
-                WorkbenchScrollView {
-                    LazyVStack(spacing: 2) {
-                        ForEach(dayEntries) { entry in
-                            HomeCalendarEntryRow(entry: entry, model: model, context: context)
-                        }
-                    }
-                }.frame(height: 40)
+                ForEach(entries.prefix(shown)) { entry in
+                    HomeCalendarAgendaRow(entry: entry, model: model, context: context)
+                }
             }
         }
-        .padding(.horizontal, 10).padding(.vertical, 7)
-        .foregroundStyle(HomeFluidPalette.ink).background(WorkbenchHomeSurface(radius: 14))
         .accessibilityElement(children: .contain).accessibilityIdentifier("fc.home.calendar.dayDetails")
     }
 
@@ -197,7 +205,7 @@ struct WorkbenchHomeReminders: View {
         VStack(spacing: 0) {
             HStack(spacing: 7) {
                 Image(systemName: "checklist").font(.system(size: 16, weight: .light)).foregroundStyle(HomeFluidPalette.secondary)
-                Text("待办事项").font(.system(size: 12, weight: .medium))
+                Text("待办事项").font(.system(size: 13, weight: .medium))
                 Text("\(reminderCount)").font(.system(size: 11, weight: .medium)).foregroundStyle(HomeFluidPalette.green)
                     .padding(.horizontal, 6).frame(height: 21)
                     .background(HomeFluidPalette.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 5))
@@ -302,7 +310,67 @@ private struct HomeCalendarEntryRow: View {
     }
 }
 
+/// One line per record inside the month card: completion control, title and
+/// the time of day. The full record opens from the title, as in the list.
+private struct HomeCalendarAgendaRow: View {
+    let entry: CalendarAgendaEntry
+    @ObservedObject var model: CalendarModel
+    @ObservedObject var context: WorkbenchContextModel
+    @Environment(\.workbenchPalette) private var palette
+    private var color: Color { HomeCalendarContent.color(entry) }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if case .reminder(let item) = entry {
+                Button { Task { await model.toggle(item) } } label: {
+                    ZStack {
+                        Circle().strokeBorder(color, lineWidth: 1.5)
+                        if item.isCompleted {
+                            Circle().fill(color)
+                            Image(systemName: "checkmark").font(.system(size: 9, weight: .medium)).foregroundStyle(.white)
+                        }
+                    }.frame(width: 16, height: 16).frame(width: 20, height: 30)
+                }
+                .buttonStyle(ClickablePlainButtonStyle()).disabled(model.isWorking || !item.isWritable)
+                .accessibilityLabel((item.isCompleted ? "恢复" : "完成") + item.title)
+                .accessibilityIdentifier("fc.home.reminder.toggle." + item.stableID)
+            } else {
+                Image(systemName: "calendar").font(.system(size: 14)).foregroundStyle(color).frame(width: 20, height: 30)
+                    .accessibilityLabel("系统日程，只读")
+            }
+            Button {
+                switch entry {
+                case .reminder(let item): model.openReminder(item)
+                case .event(let event): model.selectedEvent = event
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Text(entry.title).font(.system(size: 13)).strikethrough(entry.isCompleted).lineLimit(1)
+                        .foregroundStyle(entry.isCompleted ? palette.muted : palette.text)
+                    Spacer(minLength: 4)
+                    Text(HomeCalendarContent.timeLabel(entry, context: context))
+                        .font(.system(size: 11)).monospacedDigit().foregroundStyle(palette.secondary).lineLimit(1)
+                }.frame(height: 36).contentShape(Rectangle())
+            }
+            .buttonStyle(ClickablePlainButtonStyle())
+            .help(entry.title + "\n" + HomeCalendarContent.subtitle(entry, context: context))
+        }.frame(height: HomeCalendarAgendaRow.height).accessibilityElement(children: .contain)
+    }
+    static let height: CGFloat = 36
+}
+
 private enum HomeCalendarContent {
+    /// The agenda already names its day, so a row shows only the time.
+    @MainActor static func timeLabel(_ entry: CalendarAgendaEntry, context: WorkbenchContextModel) -> String {
+        switch entry {
+        case .reminder(let item):
+            if item.due?.hasTime == true, let date = item.due?.date { return context.time(date) }
+            return "全天"
+        case .event(let event):
+            return event.isAllDay ? "全天" : context.time(event.start)
+        }
+    }
+
     @MainActor static func events(_ model: CalendarModel) -> [CalendarEventItem] {
         let today = model.todayEvents.filter { model.isSourceVisible($0.calendarID ?? $0.calendarName) }
         return Array(Dictionary((model.visibleCalendarEvents + model.overviewEvents + today).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }).values)
@@ -355,24 +423,32 @@ private enum HomeCalendarContent {
 }
 
 private struct HomeCalendarControlStyle: ButtonStyle {
+    @Environment(\.workbenchPalette) private var palette
     @State private var hovering = false
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label.padding(.horizontal, 2)
-            .background(.white.opacity(configuration.isPressed ? 0.20 : hovering ? 0.12 : 0), in: RoundedRectangle(cornerRadius: 6))
-            .contentShape(RoundedRectangle(cornerRadius: 6)).onHover { hovering = $0 }.clickableCursor()
+        configuration.label
+            .background(palette.accent.opacity(configuration.isPressed ? 0.14 : hovering ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 7))
+            .contentShape(RoundedRectangle(cornerRadius: 7)).onHover { hovering = $0 }.clickableCursor()
     }
 }
 
+/// The selected day fills its whole cell with the accent (white in the dark
+/// appearance); today keeps an accent outline. Outside days stay legible.
 private struct HomeCalendarDateStyle: ButtonStyle {
     let selected: Bool
     let today: Bool
     let outside: Bool
+    @Environment(\.workbenchPalette) private var palette
+    @Environment(\.colorScheme) private var scheme
     @State private var hovering = false
+    static func selectedText(_ scheme: ColorScheme) -> Color { scheme == .dark ? HomeFluidPalette.light.accent : .white }
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .foregroundStyle(selected ? HomeFluidPalette.light.accent : .white.opacity(outside ? 0.38 : 0.94))
-            .background(selected ? Color.white.opacity(configuration.isPressed ? 0.87 : 1) : .white.opacity(configuration.isPressed ? 0.22 : hovering ? 0.14 : 0), in: RoundedRectangle(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.white.opacity(today && !selected ? 0.38 : 0), lineWidth: 1))
-            .contentShape(RoundedRectangle(cornerRadius: 6)).onHover { hovering = $0 }.clickableCursor()
+        let fill = scheme == .dark ? Color.white.opacity(0.94) : palette.accent
+        let text = selected ? Self.selectedText(scheme) : today ? palette.accent : outside ? palette.muted.opacity(0.55) : palette.text
+        return configuration.label
+            .foregroundStyle(text)
+            .background(selected ? fill.opacity(configuration.isPressed ? 0.85 : 1) : palette.accent.opacity(configuration.isPressed ? 0.14 : hovering ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(palette.accent.opacity(today && !selected ? 1 : 0), lineWidth: 1))
+            .contentShape(RoundedRectangle(cornerRadius: 8)).onHover { hovering = $0 }.clickableCursor()
     }
 }

@@ -35,7 +35,7 @@ enum WorkbenchViewport {
         guard size.width.isFinite, size.height.isFinite else { return 1 }
         return min(1.3, max(1, min(size.width / 1120, size.height / 758)))
     }
-    static let windowRadius: CGFloat = 12
+    static let windowRadius: CGFloat = 16
 }
 
 enum WBControlMetrics {
@@ -241,7 +241,7 @@ struct WBCard<Content:View>: View {
             if let title {
                 HStack(spacing:7) {
                     if let symbol { Image(systemName:symbol).font(.system(size:16,weight:.regular)).foregroundStyle(palette.accent) }
-                    Text(title).font(.system(size:12,weight:.medium)).foregroundStyle(palette.text)
+                    Text(title).font(.system(size:13,weight:.medium)).foregroundStyle(palette.text)
                     Spacer(minLength:0)
                 }.frame(height:22).padding(.bottom,10)
             }
@@ -266,12 +266,12 @@ struct WBActionCard<Content: View>: View {
     @Environment(\.workbenchPalette) private var palette
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 9) {
+            VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 7) {
                     WorkbenchContentIcon(symbol: symbol).foregroundStyle(palette.secondary)
-                    Text(title).font(.system(size: 12, weight: .medium))
+                    Text(title).font(.system(size: 13, weight: .medium))
                     Spacer(minLength: 0)
-                }.frame(height: 20)
+                }.frame(height: 22)
                 content()
             }.frame(maxWidth: .infinity, alignment: .leading).padding(14)
                 .frame(minHeight: minimumHeight, alignment: .topLeading)
@@ -284,26 +284,47 @@ struct WBActionCard<Content: View>: View {
     }
 }
 
+/// A sub-page's way back. It sits before the title; the trailing group holds
+/// only the page's own actions.
+struct WBPageBack {
+    let title: String
+    var symbol = "chevron.left"
+    var disabled = false
+    var identifier = "workbench-page-back"
+    let action: () -> Void
+}
+
+/// Solid title text on a note backing stays readable on both wallpapers.
+/// Outlined lettering is kept for decorative text such as the home greeting.
 struct WBPageHeader<Trailing:View>:View {
     let title:String
     let subtitle:String
+    var back:WBPageBack? = nil
     let trailing:Trailing
     @Environment(\.workbenchPalette) private var palette
-    init(title:String,subtitle:String,@ViewBuilder trailing:()->Trailing) { self.title=title;self.subtitle=subtitle;self.trailing=trailing() }
+    init(title:String,subtitle:String,back:WBPageBack? = nil,@ViewBuilder trailing:()->Trailing) { self.title=title;self.subtitle=subtitle;self.back=back;self.trailing=trailing() }
     var body: some View {
-        HStack(alignment:.center,spacing:16) {
-            VStack(alignment:.leading,spacing:6) {
-                WorkbenchOutlinedText(text:title,fontSize:22,letterSpacing:2,lineWidth:0.5,leading:true)
-                    .frame(height:26).accessibilityElement(children:.ignore).accessibilityLabel(title)
-                    .accessibilityIdentifier("workbench-page-title").help(title)
-                Text(subtitle).font(.system(size:12)).foregroundStyle(.white.opacity(0.88)).lineLimit(1).truncationMode(.tail).frame(height:18,alignment:.leading).help(subtitle)
+        HStack(alignment:.center,spacing:12) {
+            if let back {
+                Button(action:back.action) { Label(back.title,systemImage:back.symbol) }
+                    .buttonStyle(WBButtonStyle()).disabled(back.disabled).fixedSize()
+                    .accessibilityIdentifier(back.identifier)
             }
+            VStack(alignment:.leading,spacing:6) {
+                Text(title).font(.system(size:22,weight:.medium)).foregroundStyle(palette.text).lineLimit(1)
+                    .frame(height:26,alignment:.leading).accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier("workbench-page-title").help(title)
+                Text(subtitle).font(.system(size:12)).foregroundStyle(palette.secondary).lineLimit(1).truncationMode(.tail)
+                    .frame(height:18,alignment:.leading).help(subtitle)
+            }.padding(.horizontal,14).padding(.vertical,6)
+                .background(WorkbenchMaterialSurface(kind:.note,radius:12))
+                .accessibilityElement(children:.contain).accessibilityIdentifier("workbench-page-heading")
             Spacer(minLength:12);trailing
-        }.frame(height:54).padding(.bottom,18).environment(\.workbenchOnBackdrop,true)
+        }.frame(height:62).padding(.bottom,12).environment(\.workbenchOnBackdrop,true)
     }
 }
 extension WBPageHeader where Trailing == EmptyView {
-    init(title:String,subtitle:String) { self.init(title:title,subtitle:subtitle) { EmptyView() } }
+    init(title:String,subtitle:String,back:WBPageBack? = nil) { self.init(title:title,subtitle:subtitle,back:back) { EmptyView() } }
 }
 
 struct WBMetric:View {
@@ -359,9 +380,41 @@ struct WBButtonStyle: ButtonStyle {
             .overlay(shape.fill(primary ? Color.black.opacity(pressed ? 0.12 : hovered ? 0.06 : 0) : tone.opacity(pressed ? 0.14 : hovered ? 0.08 : 0)).allowsHitTesting(false))
             .overlay(shape.strokeBorder(primary ? palette.primary : palette.controlBorder, lineWidth: showsBorder ? 1 : 0).allowsHitTesting(false))
             .contentShape(shape).opacity(enabled ? 1 : 0.4)
+            // The system ring is replaced by one that follows the control's corners.
+            .overlay(WBKeyboardFocusRing(radius: WBControlMetrics.cornerRadius))
             .focusEffectDisabled()
             .animation(reduceMotion ? nil : .easeOut(duration: WBControlMetrics.hoverDuration), value: hovered)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: pressed)
+            .onHover { hovering = $0 }.clickableCursor()
+    }
+}
+/// Buttons only receive focus through keyboard navigation, so a pointer click
+/// never shows this ring. It is drawn inside the control's own bounds so the
+/// control's size, hit area and accessibility frame stay unchanged.
+struct WBKeyboardFocusRing: View {
+    var radius: CGFloat
+    @Environment(\.isFocused) private var focused
+    @Environment(\.workbenchPalette) private var palette
+    var body: some View {
+        RoundedRectangle(cornerRadius: radius, style: .continuous)
+            .strokeBorder(palette.accent, lineWidth: 2)
+            .opacity(focused ? 1 : 0).allowsHitTesting(false).accessibilityHidden(true)
+    }
+}
+/// One option of a segmented choice. Unselected options tint on hover and
+/// press; the selected option keeps its raised face.
+struct WBSegmentOptionStyle: ButtonStyle {
+    var selected: Bool
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.workbenchPalette) private var palette
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovering = false
+    func makeBody(configuration: Configuration) -> some View {
+        let tint = !enabled || selected ? 0 : configuration.isPressed ? 0.14 : hovering ? 0.08 : 0
+        return configuration.label
+            .overlay(RoundedRectangle(cornerRadius: 6).fill(palette.accent.opacity(tint)).allowsHitTesting(false))
+            .opacity(enabled ? 1 : 0.4)
+            .animation(reduceMotion ? nil : .easeOut(duration: WBControlMetrics.hoverDuration), value: hovering)
             .onHover { hovering = $0 }.clickableCursor()
     }
 }

@@ -145,7 +145,7 @@ public final class SpaceCleaningHistoryStore: @unchecked Sendable {
 
     private static func openPrivate(_ name: String, in parent: Directory, flags: Int32) throws -> (Int32, stat) {
         let descriptor = name.withCString { openat(parent.descriptor, $0, flags | O_CLOEXEC | O_NOFOLLOW, 0o600) }
-        guard descriptor >= 0 else { throw failure("无法写入处理记录，未操作文件。") }
+        guard descriptor >= 0 else { throw failure("无法写入清理记录，未操作文件。") }
         var info = stat()
         guard fstat(descriptor, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_nlink == 1, info.st_uid == getuid() else {
             close(descriptor); throw failure("清理记录不是有效的私有文件。")
@@ -166,7 +166,7 @@ public final class SpaceCleaningHistoryStore: @unchecked Sendable {
         }
         // An interrupted append left a partial line that was never acknowledged.
         if journalLength != journalBytes {
-            guard ftruncate(descriptor, off_t(journalBytes)) == 0 else { throw Self.failure("处理记录日志无法清除未完成的写入。") }
+            guard ftruncate(descriptor, off_t(journalBytes)) == 0 else { throw Self.failure("清理记录日志无法清除未完成的写入。") }
             journalLength = journalBytes
         }
         do { try Self.write(line, to: descriptor, at: journalBytes) }
@@ -178,7 +178,7 @@ public final class SpaceCleaningHistoryStore: @unchecked Sendable {
         journalLength = journalBytes + line.count
         guard fsync(descriptor) == 0, parent.stillAtPath(), let current = parent.entry(name),
               current.device == key.device, current.inode == key.inode else {
-            throw Self.failure("处理记录未安全落盘或被外部修改。")
+            throw Self.failure("清理记录未安全落盘或被外部修改。")
         }
         journalBytes = journalLength
     }
@@ -189,7 +189,7 @@ public final class SpaceCleaningHistoryStore: @unchecked Sendable {
         defer { close(descriptor) }
         guard FileKey(device: UInt64(bitPattern: Int64(info.st_dev)), inode: UInt64(info.st_ino)) == expected,
               Int(info.st_size) == journalLength else { throw Self.failure("清理记录被外部修改，原记录已保留。") }
-        guard ftruncate(descriptor, 0) == 0, fsync(descriptor) == 0 else { throw Self.failure("处理记录日志无法整理。") }
+        guard ftruncate(descriptor, 0) == 0, fsync(descriptor) == 0 else { throw Self.failure("清理记录日志无法整理。") }
         journalBytes = 0; journalLength = 0
     }
 
@@ -201,15 +201,15 @@ public final class SpaceCleaningHistoryStore: @unchecked Sendable {
         defer { close(descriptor); _ = temporary.withCString { unlinkat(parent.descriptor, $0, 0) } }
         try Self.write(data, to: descriptor, at: 0)
         guard fsync(descriptor) == 0, parent.stillAtPath(), parent.entry(fileURL.lastPathComponent) == fileIdentity else {
-            throw Self.failure("处理记录未安全落盘或被外部修改。")
+            throw Self.failure("清理记录未安全落盘或被外部修改。")
         }
         let result = temporary.withCString { from in fileURL.lastPathComponent.withCString { to in
             fileIdentity == nil ? renameatx_np(parent.descriptor, from, parent.descriptor, to, UInt32(RENAME_EXCL))
                 : renameat(parent.descriptor, from, parent.descriptor, to)
         } }
-        guard result == 0 else { throw Self.failure("处理记录无法原子保存。") }
+        guard result == 0 else { throw Self.failure("清理记录无法原子保存。") }
         fileIdentity = parent.entry(fileURL.lastPathComponent)
-        guard fileIdentity != nil, parent.stillAtPath() else { throw Self.failure("保存后的处理记录无法核验。") }
+        guard fileIdentity != nil, parent.stillAtPath() else { throw Self.failure("保存后的清理记录无法核验。") }
         snapshotBytes = data.count
     }
 
@@ -271,6 +271,6 @@ public final class SpaceCleaningHistoryStore: @unchecked Sendable {
             }
         }
         try Self.write(lines, to: descriptor, at: offset)
-        guard fsync(descriptor) == 0 else { throw Self.failure("处理记录归档未安全落盘。") }
+        guard fsync(descriptor) == 0 else { throw Self.failure("清理记录归档未安全落盘。") }
     }
 }

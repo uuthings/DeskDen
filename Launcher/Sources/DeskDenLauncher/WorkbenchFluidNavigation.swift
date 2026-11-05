@@ -49,7 +49,8 @@ struct WorkbenchFluidNavigation: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("主导航")
                 .accessibilityIdentifier("workbench-top-navigation")
-        }.padding(.horizontal, 24).frame(height: 58)
+        }.frame(maxWidth: WorkbenchShellMetrics.maximumPageWidth)
+            .padding(.horizontal, 24).frame(maxWidth: .infinity).frame(height: 58)
             .onChange(of: model.windowVisible) { _, visible in if !visible { resetHover() } }
             .onDisappear { resetHover() }
     }
@@ -258,7 +259,8 @@ struct WorkbenchFluidSettingsNavigation: View {
                 WorkbenchFluidSettingsTab(tab: tab, selected: model.settingsTab == tab, suppressMotion: model.reduceMotion) { model.settingsTab = tab }
             }
             Spacer(minLength: 0)
-        }.padding(.horizontal, 24)
+        }.frame(maxWidth: WorkbenchShellMetrics.maximumPageWidth)
+            .padding(.horizontal, 24).frame(maxWidth: .infinity)
             .accessibilityElement(children: .contain).accessibilityLabel("设置分类")
             .accessibilityIdentifier("workbench-settings-navigation")
     }
@@ -441,8 +443,9 @@ private struct WorkbenchFluidUpdateEntry: View {
 }
 
 private enum FluidNavigationColors {
-    static let ink = Color(red: 32/255, green: 58/255, blue: 64/255)
-    static let secondary = Color(red: 80/255, green: 103/255, blue: 109/255)
+    // Selected capsules are always white; use the light palette's own text colors.
+    static let ink = ThemePalette(light: true).text
+    static let secondary = ThemePalette(light: true).secondary
     static let shadow = Color(red: 22/255, green: 64/255, blue: 75/255)
 }
 

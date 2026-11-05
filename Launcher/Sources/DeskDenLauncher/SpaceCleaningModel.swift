@@ -403,8 +403,11 @@ import Quartz
         previousScreen = screen; screen = .history
         if historyError != nil { reloadHistoryIfNeeded() } else { reconcileHistory() }
     }
-    var historyReturnTitle: String { "返回" + screenTitle(previousScreen == .history || requiresRescan ? .start : previousScreen) }
-    var dialogReturnTitle: String { "返回" + screenTitle(screen) }
+    /// Destination names for the header's back button; its chevron says "back".
+    var historyReturnDestination: String { screenTitle(previousScreen == .history || requiresRescan ? .start : previousScreen) }
+    var dialogReturnDestination: String { screenTitle(screen) }
+    var historyReturnTitle: String { "返回" + historyReturnDestination }
+    var dialogReturnTitle: String { "返回" + dialogReturnDestination }
     private func screenTitle(_ screen: CleaningScreen) -> String {
         switch screen {
         case .history: "清理记录"
@@ -808,7 +811,7 @@ import Quartz
         currentBatch = nil; processingCompleted = 0; processingTotal = count; processingItem = "正在核验所选项目"; screen = .processing
     }
     private func finishProcessing(error: String?, touched: [URL], resume: Set<UUID> = []) {
-        if let error { historyError = error; message = "处理记录未能安全保存，已暂停后续操作。" + error }
+        if let error { historyError = error; message = "清理记录未能安全保存，已暂停后续操作。" + error }
         else if cancellation.isCancelled { message = "已停止后续处理。另有 \(max(0, processingTotal - processingCompleted)) 项未开始；实际处理结果与可恢复项目见下方记录。" }
         else { message = nil }
         retireResults(touching: touched, resume: resume)

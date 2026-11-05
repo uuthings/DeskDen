@@ -15,13 +15,20 @@ struct WorkbenchOverview: View {
     @Environment(\.workbenchPageWidth) private var availableWidth
     @Environment(\.workbenchContentHeight) private var availableHeight
 
-    private var deviceWidth: CGFloat { min(320, 270 + max(0, availableWidth - 976) * 0.15) }
-    private var calendarWidth: CGFloat { min(340, 296 + max(0, availableWidth - 976) * 0.12) }
+    /// Both rows share one three-column grid, so the upper cards line up with
+    /// the lower ones and the greeting takes the middle column.
+    private var columnWidth: CGFloat { max(0, (availableWidth - 2 * Self.cardSpacing) / 3) }
+    static let cardSpacing: CGFloat = 12
+    static let lowerRowHeight: CGFloat = 232
+    /// The selected day's agenda grows only into the space above the lower row.
+    private var calendarMaximumHeight: CGFloat {
+        availableWidth >= 840 ? max(0, availableHeight - Self.lowerRowHeight - Self.cardSpacing) : .infinity
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             upperRow
-            Spacer(minLength: 24)
+            Spacer(minLength: Self.cardSpacing)
             lowerRow
         }
         .frame(maxWidth: .infinity, minHeight: availableHeight, alignment: .topLeading)
@@ -33,19 +40,18 @@ struct WorkbenchOverview: View {
 
     @ViewBuilder private var upperRow: some View {
         if availableWidth >= 840 {
-            HStack(alignment: .top, spacing: 20) {
-                deviceCard.frame(width: deviceWidth)
+            HStack(alignment: .top, spacing: Self.cardSpacing) {
+                deviceCard.frame(width: columnWidth)
                 WorkbenchHomeWelcome(context: context, reduceMotion: reduceMotion).frame(maxWidth: .infinity).frame(height: 311)
-                monthCard.frame(width: calendarWidth)
+                monthCard.frame(width: columnWidth)
             }.frame(minHeight: 311, alignment: .top)
         } else {
-            VStack(spacing: 16) {
+            VStack(spacing: Self.cardSpacing) {
                 WorkbenchHomeWelcome(context: context, reduceMotion: reduceMotion).frame(height: 210)
                 if availableWidth >= 580 {
-                    HStack(alignment: .top, spacing: 16) {
-                        deviceCard.frame(maxWidth: 320)
-                        Spacer(minLength: 0)
-                        monthCard.frame(width: min(340, (availableWidth - 16) / 2))
+                    HStack(alignment: .top, spacing: Self.cardSpacing) {
+                        deviceCard.frame(maxWidth: .infinity)
+                        monthCard.frame(maxWidth: .infinity)
                     }
                 } else {
                     deviceCard
@@ -59,7 +65,8 @@ struct WorkbenchOverview: View {
         WorkbenchHomeDeviceCard(model: device, navigate: navigate)
     }
     private var monthCard: some View {
-        WorkbenchHomeCalendar(model: calendar, context: context, selectedDay: $selectedDay, navigate: navigate)
+        WorkbenchHomeCalendar(model: calendar, context: context, selectedDay: $selectedDay,
+                              maximumHeight: calendarMaximumHeight, navigate: navigate)
     }
     private var storageCard: some View {
         WorkbenchHomeStorageCard(model: device, cleaning: cleaning) { navigate(.cleaning) }
@@ -73,21 +80,21 @@ struct WorkbenchOverview: View {
 
     @ViewBuilder private var lowerRow: some View {
         if availableWidth >= 760 {
-            HStack(alignment: .top, spacing: 8) {
+            HStack(alignment: .top, spacing: Self.cardSpacing) {
                 storageCard.frame(maxWidth: .infinity)
                 networkCard.frame(maxWidth: .infinity)
                 remindersCard.frame(maxWidth: .infinity)
             }
         } else if availableWidth >= 540 {
-            VStack(spacing: 8) {
-                HStack(spacing: 8) {
+            VStack(spacing: Self.cardSpacing) {
+                HStack(spacing: Self.cardSpacing) {
                     storageCard.frame(maxWidth: .infinity)
                     networkCard.frame(maxWidth: .infinity)
                 }
                 remindersCard
             }
         } else {
-            VStack(spacing: 8) { storageCard; networkCard; remindersCard }
+            VStack(spacing: Self.cardSpacing) { storageCard; networkCard; remindersCard }
         }
     }
 }

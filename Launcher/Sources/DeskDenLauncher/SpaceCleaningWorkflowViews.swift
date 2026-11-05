@@ -55,31 +55,26 @@ struct SpaceCleaningHistoryView: View {
         .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-history")
     }
 
+    /// The page header already names the page; the card opens with its counts
+    /// and search on one line.
     private func historyControls(matches: [CleaningHistorySearchMatch]) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 16) { historyTitle; Spacer(minLength: 10); historySearch.frame(width: 300) }
-                VStack(alignment: .leading, spacing: 12) { historyTitle; historySearch }
-            }
-            HStack(spacing: 12) {
-                Text(search.isUpdating ? "正在更新匹配结果…" : searching ? "匹配 \(search.matchedItemCount) / 共 \(search.totalItemCount) 项 · \(matches.count) 次处理" : "\(search.batchCount) 次处理 · \(search.totalItemCount) 项记录")
-                    .accessibilityIdentifier("space-cleaning-history-match-summary")
-                Spacer(minLength: 8)
-                if model.isReconcilingHistory {
-                    Button("停止核对", action: model.cancelHistoryVerification).buttonStyle(WBButtonStyle(compact: true))
-                } else {
-                    if !search.isUpdating { Text("\(search.restorableCount) 项可恢复") }
-                }
-            }.font(.system(size: 11)).foregroundStyle(palette.muted)
-        }.padding(14)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) { historySummary(matches: matches); Spacer(minLength: 10); historySearch.frame(width: 280) }
+            VStack(alignment: .leading, spacing: 10) { historySearch; historySummary(matches: matches) }
+        }.padding(.horizontal, 14).padding(.vertical, 12)
     }
 
-    private var historyTitle: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("处理记录").font(.system(size: 14, weight: .medium))
-            Text("保留原位置与逐项结果，随时回看。")
-                .font(.system(size: 11)).foregroundStyle(palette.muted)
-        }.fixedSize(horizontal: true, vertical: false)
+    private func historySummary(matches: [CleaningHistorySearchMatch]) -> some View {
+        HStack(spacing: 8) {
+            Text(search.isUpdating ? "正在更新匹配结果…" : searching ? "匹配 \(search.matchedItemCount) / 共 \(search.totalItemCount) 项 · \(matches.count) 次处理" : "\(search.batchCount) 次处理 · \(search.totalItemCount) 项记录")
+                .accessibilityIdentifier("space-cleaning-history-match-summary")
+            if model.isReconcilingHistory {
+                Button("停止核对", action: model.cancelHistoryVerification).buttonStyle(WBButtonStyle(compact: true))
+            } else if !search.isUpdating {
+                Text("·").foregroundStyle(palette.muted)
+                Text("\(search.restorableCount) 项可恢复").foregroundStyle(search.restorableCount > 0 ? palette.accent : palette.muted)
+            }
+        }.font(.system(size: 12)).monospacedDigit().foregroundStyle(palette.secondary).lineLimit(1).fixedSize()
     }
 
     private var historySearch: some View {
@@ -110,16 +105,18 @@ struct SpaceCleaningHistoryView: View {
         }.foregroundStyle(palette.muted).frame(maxWidth: .infinity).padding(.vertical, 70)
     }
 
+    /// A full-width header band, like the result list; columns line up with
+    /// the batch rows below (list inset 14 + row inset 12).
     private var batchColumns: some View {
         HStack(spacing: 12) {
             Text("处理日期").frame(maxWidth: .infinity, alignment: .leading)
             Text("处理方式").frame(width: 100, alignment: .leading)
-            Text("项目数量").frame(width: 68, alignment: .leading)
+            Text("项目数量").frame(width: 68, alignment: .trailing)
             Text("记录占用").frame(width: 100, alignment: .trailing)
             Text("结果").frame(width: 90, alignment: .leading)
             Color.clear.frame(width: 84, height: 1)
-        }.font(.system(size: 11)).foregroundStyle(palette.muted).padding(.horizontal, 12).frame(height: 32)
-            .background(palette.soft, in: RoundedRectangle(cornerRadius: 8)).padding(.horizontal, 14)
+        }.font(.system(size: 11)).foregroundStyle(palette.muted).padding(.horizontal, 26).frame(height: 34)
+            .background(palette.soft).overlay(alignment: .top) { Rectangle().fill(palette.line).frame(height: 1) }
             .accessibilityHidden(true)
     }
 
@@ -132,7 +129,8 @@ struct SpaceCleaningHistoryView: View {
                     if expanded { collapsedMatches.insert(batch.id) } else { collapsedMatches.remove(batch.id) }
                 } else { expandedBatch = expanded ? nil : batch.id }
             } label: {
-                batchSummary(match, expanded: expanded).padding(12).contentShape(RoundedRectangle(cornerRadius: 8))
+                batchSummary(match, expanded: expanded).padding(.horizontal, 12).padding(.vertical, wide ? 0 : 12)
+                    .contentShape(RoundedRectangle(cornerRadius: 8))
             }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 8, drawsSelection: false, showsBorder: false))
                 .accessibilityLabel((expanded ? "收起" : "展开") + "清理记录 " + SpaceCleaningFormat.date(batch.date, timeZone: timeZone))
                 .accessibilityValue(expanded ? "已展开" : "已收起")
@@ -162,11 +160,11 @@ struct SpaceCleaningHistoryView: View {
             HStack(spacing: 12) {
                 batchDate(batch).frame(maxWidth: .infinity, alignment: .leading)
                 Text(SpaceCleaningHistorySearch.methodTitle(batch.method)).frame(width: 100, alignment: .leading)
-                Text("\(batch.items.count) 项").frame(width: 68, alignment: .leading)
+                Text("\(batch.items.count) 项").monospacedDigit().frame(width: 68, alignment: .trailing)
                 Text(SpaceCleaningFormat.bytes(match.summary.allocatedBytes)).monospacedDigit().frame(width: 100, alignment: .trailing)
                 batchStatus(match.summary).frame(width: 90, alignment: .leading)
                 disclosure(expanded).frame(width: 84, alignment: .trailing)
-            }.font(.system(size: 12)).frame(minHeight: 50)
+            }.font(.system(size: 12)).frame(height: Self.batchRowHeight)
         } else {
             VStack(alignment: .leading, spacing: 10) {
                 HStack { batchDate(batch); Spacer(minLength: 8); disclosure(expanded) }
@@ -181,23 +179,25 @@ struct SpaceCleaningHistoryView: View {
         }
     }
 
+    static let batchRowHeight: CGFloat = 36
+    static let itemRowHeight: CGFloat = 52
+
+    /// Date and time share one line in the list; the detail keeps them apart.
     private func batchDate(_ batch: CleaningHistoryBatchDisplay) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(SpaceCleaningFormat.day(batch.date, timeZone: timeZone)).font(.system(size: 12, weight: .medium))
-            Text(SpaceCleaningFormat.time(batch.date, timeZone: timeZone)).font(.system(size: 11)).foregroundStyle(palette.muted)
-        }
+        Text(SpaceCleaningFormat.day(batch.date, timeZone: timeZone) + " " + SpaceCleaningFormat.time(batch.date, timeZone: timeZone))
+            .font(.system(size: 12, weight: .medium)).monospacedDigit().lineLimit(1)
     }
 
     private func batchStatus(_ summary: CleaningHistoryBatchSummary) -> some View {
         let tint = summary.hasAttention ? palette.warning : palette.accent
-        return Text(summary.status).font(.system(size: 11))
-            .foregroundStyle(tint).padding(.horizontal, 7).padding(.vertical, 4)
+        return Text(summary.status).font(.system(size: 11)).lineLimit(1)
+            .foregroundStyle(tint).padding(.horizontal, 7).padding(.vertical, 2)
             .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 6))
     }
 
     private func disclosure(_ expanded: Bool) -> some View {
-        HStack(spacing: 6) {
-            Text(expanded ? "收起明细" : "查看明细")
+        HStack(spacing: 4) {
+            Text(expanded ? "收起" : "展开")
             Image(systemName: "chevron.down").font(.system(size: 10, weight: .medium)).rotationEffect(.degrees(expanded ? 180 : 0))
         }.font(.system(size: 11)).foregroundStyle(palette.secondary).fixedSize()
     }
@@ -232,7 +232,7 @@ struct SpaceCleaningHistoryView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("本批记录 \(match.batch.items.count) 项 · 扫描时占用 \(SpaceCleaningFormat.bytes(match.summary.allocatedBytes))")
                 .font(.system(size: 11, weight: .medium))
-            Text(match.summary.purgeableCount > 0 ? "仅处理仍在废纸篓且核验一致的项目" : match.summary.restorableCount > 0 ? "恢复前核验文件，不覆盖同名项目" : "文件状态与处理记录已保留")
+            Text(match.summary.purgeableCount > 0 ? "仅处理仍在废纸篓且核验一致的项目" : match.summary.restorableCount > 0 ? "恢复前核验文件，不覆盖同名项目" : "文件状态与清理记录已保留")
                 .font(.system(size: 11)).foregroundStyle(palette.muted)
         }.fixedSize(horizontal: false, vertical: true)
     }
@@ -261,7 +261,7 @@ struct SpaceCleaningHistoryView: View {
                     Text(SpaceCleaningFormat.bytes(item.bytes)).font(.system(size: 12)).monospacedDigit().frame(width: 86, alignment: .trailing)
                     Text(SpaceCleaningFormat.bytes(item.allocatedBytes)).font(.system(size: 12)).monospacedDigit().frame(width: 86, alignment: .trailing)
                     itemActions(item).frame(width: 228, alignment: .leading)
-                }.padding(.horizontal, 10).padding(.vertical, 12)
+                }.padding(.horizontal, 10).frame(height: Self.itemRowHeight)
             } else {
                 VStack(alignment: .leading, spacing: 10) {
                     itemIdentity(item)
@@ -277,26 +277,29 @@ struct SpaceCleaningHistoryView: View {
             .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-history-item-" + item.id.uuidString)
     }
 
+    /// Two lines: name, then the original location shortened from the middle.
+    /// The full paths and the verification note remain in the tooltip.
     private func itemIdentity(_ item: CleaningHistoryItemDisplay) -> some View {
         HStack(alignment: .center, spacing: 10) {
             SpaceCleaningFileGlyph(category: item.category)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(item.name).font(.system(size: 12, weight: .medium)).lineLimit(2).truncationMode(.middle)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.name).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.middle)
                     .accessibilityIdentifier("space-cleaning-history-name-" + item.id.uuidString)
                 Text(item.originalURL.path).font(.system(size: 11)).foregroundStyle(palette.muted)
-                    .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
                     .accessibilityIdentifier("space-cleaning-history-original-path-" + item.id.uuidString)
-                if let currentURL = item.resultURL, currentURL != item.originalURL,
-                   [.restored, .needsReview, .isolated, .restoring, .deleting].contains(item.state) {
-                    Text("当前位置：" + currentURL.path).font(.system(size: 11)).foregroundStyle(palette.muted)
-                        .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                }
-                if !item.explanation.isEmpty {
-                    Text(item.explanation).font(.system(size: 11)).foregroundStyle(palette.muted)
-                        .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                }
             }.frame(maxWidth: .infinity, alignment: .leading)
+        }.help(itemHelp(item))
+    }
+
+    private func itemHelp(_ item: CleaningHistoryItemDisplay) -> String {
+        var lines = ["原位置：" + item.originalURL.path]
+        if let currentURL = item.resultURL, currentURL != item.originalURL,
+           [.restored, .needsReview, .isolated, .restoring, .deleting].contains(item.state) {
+            lines.append("当前位置：" + currentURL.path)
         }
+        if !item.explanation.isEmpty { lines.append(item.explanation) }
+        return lines.joined(separator: "\n")
     }
 
     private func itemSize(_ title: String, value: UInt64) -> some View {
@@ -308,8 +311,14 @@ struct SpaceCleaningHistoryView: View {
 
     private func itemActions(_ item: CleaningHistoryItemDisplay) -> some View {
         HStack(alignment: .center, spacing: 8) {
-            Text(item.statusText).font(.system(size: 11)).foregroundStyle(itemTint(item))
-                .fixedSize(horizontal: false, vertical: true).frame(minHeight: 28)
+            // Result on the first line, the verification note on the second.
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.statusText).font(.system(size: 12)).foregroundStyle(itemTint(item)).lineLimit(1)
+                if !item.explanation.isEmpty {
+                    Text(item.explanation).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
+                }
+            }.help(item.explanation)
+                .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("space-cleaning-history-status-" + item.id.uuidString)
             Spacer(minLength: 0)
             if item.canRestore {
@@ -363,7 +372,7 @@ struct SpaceCleaningCompletionView: View {
             } else {
                 WorkbenchScrollView {
                     VStack(alignment: .leading, spacing: 16) {
-                        completionHeading(title: "本次处理已结束", subtitle: "尚无已确认的成功处理记录。", symbol: "info.circle", needsAttention: true)
+                        completionHeading(title: "本次处理已结束", subtitle: "尚无已确认成功的清理记录。", symbol: "info.circle", needsAttention: true)
                         Text("本次原计划 \(model.processingTotal) 项，已核对 \(model.processingCompleted) 项。")
                             .font(.system(size: 12)).foregroundStyle(palette.secondary)
                         Text("可在清理记录中查看逐项状态；未确认的结果不计为清理成功。")
@@ -428,7 +437,7 @@ struct SpaceCleaningCompletionView: View {
                 .frame(width: 64, height: 64)
                 .background(Circle().fill((needsAttention ? palette.warning : palette.accent).opacity(0.10)))
             VStack(alignment: .leading, spacing: 8) {
-                Text(title).font(.system(size: 20, weight: .medium)).accessibilityIdentifier("space-cleaning-completed-title")
+                Text(title).font(.system(size: 17, weight: .medium)).accessibilityIdentifier("space-cleaning-completed-title")
                 Text(subtitle).font(.system(size: 12)).foregroundStyle(palette.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }.frame(maxWidth: .infinity, alignment: .leading)
@@ -461,7 +470,8 @@ struct SpaceCleaningCompletionView: View {
             Button("查看清理记录", action: model.showHistory).buttonStyle(WBButtonStyle())
                 .accessibilityIdentifier("space-cleaning-completed-history")
             // Remaining verified results stay selectable; continuing is the main path.
-            Button("返回首页", action: model.goHome).buttonStyle(WBButtonStyle(primary: !model.canReturnToResults))
+            // "首页" read as the app's home; this returns to the scan setup.
+            Button("返回扫描设置", action: model.goHome).buttonStyle(WBButtonStyle(primary: !model.canReturnToResults))
                 .accessibilityIdentifier("space-cleaning-completed-home")
             if model.canReturnToResults {
                 Button("返回扫描结果", action: model.returnToResults).buttonStyle(WBButtonStyle(primary: true))
@@ -474,7 +484,7 @@ struct SpaceCleaningCompletionView: View {
         VStack(alignment: .leading, spacing: 12) {
             Label(caption, systemImage: symbol).font(.system(size: 11)).foregroundStyle(palette.muted)
                 .fixedSize(horizontal: false, vertical: true).frame(minHeight: 32, alignment: .topLeading)
-            Text(value).font(.system(size: 26, weight: .regular)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.75)
+            Text(value).font(.system(size: 24, weight: .regular)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.75)
         }.frame(maxWidth: .infinity, minHeight: 84, alignment: .leading).padding(14)
             .background(RoundedRectangle(cornerRadius: 10).fill(palette.soft))
     }

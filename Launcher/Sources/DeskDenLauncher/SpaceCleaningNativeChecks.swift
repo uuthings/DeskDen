@@ -801,8 +801,12 @@ import LauncherCore
         guard let object = element(identifier, in: root), object.responds(to: NSSelectorFromString("accessibilityValue")) else { return nil }
         return object.value(forKey: "accessibilityValue") as? String
     }
+    /// The method is a two-option segmented choice; the visible value is the
+    /// option that reports itself as selected.
     private static func selectedMethodTitle(in host: NSView) -> String? {
         if let popup = element("space-cleaning-method-selector", in: host) as? NSPopUpButton { return popup.titleOfSelectedItem }
+        for (id, title) in [("space-cleaning-method-trash", "移入废纸篓"), ("space-cleaning-method-permanent", "永久删除")]
+            where accessibilityValue(id, in: host) == "已选择" { return title }
         return accessibilityValue("space-cleaning-method-selector", in: host)
     }
     private static func footerLayoutChecks(in host: NSView) -> [(Bool, String)] {

@@ -10,7 +10,8 @@ struct WorkbenchHomeDeviceCard: View {
     private var thermal: DeviceThermalPresentation { snapshot.thermalPresentation(rule: model.temperatureRule) }
 
     var body: some View {
-        VStack(spacing: 4) {
+        // One card; the shortcuts sit on a note backing below it, not in a frame around it.
+        VStack(spacing: 8) {
             Button { navigate(.device) } label: {
                 VStack(alignment: .leading, spacing: 11) {
                     HStack(spacing: 7) {
@@ -58,26 +59,25 @@ struct WorkbenchHomeDeviceCard: View {
                 + "，" + batteryStatus + "，内存 " + (snapshot.memory.map { DeviceFormat.capacity($0.used) + " / " + DeviceFormat.capacity($0.total) } ?? "读数不可用") + "，" + memoryPressure)
             .accessibilityIdentifier("home-device-detail")
             .accessibilityElement(children: .contain)
-            HStack(spacing: 8) {
+            HStack(spacing: 4) {
                 shortcut("设备", route: .device)
                 shortcut("清理", route: .cleaning)
                 shortcut("用量", route: .ai)
-            }.padding(.horizontal, 12).frame(height: 48)
+            }.padding(.horizontal, 5).frame(height: 40)
+                .background(WorkbenchMaterialSurface(kind: .note, radius: 10))
+                .accessibilityElement(children: .contain).accessibilityIdentifier("home-device-shortcuts")
         }
-        .padding(6)
-        .background(RoundedRectangle(cornerRadius: 20).fill(.white.opacity(0.025)))
-        .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(.white.opacity(0.32), lineWidth: 1))
         .accessibilityIdentifier("home-device-metrics")
     }
 
     private func shortcut(_ title: String, route: WorkbenchRoute) -> some View {
         Button { navigate(route) } label: {
-            VStack(spacing: 4) {
-                WorkbenchNavigationIcon(route: route, size: 18)
+            HStack(spacing: 6) {
+                WorkbenchNavigationIcon(route: route, size: 15)
                 Text(title).font(.system(size: 11))
-            }.frame(maxWidth: .infinity).frame(height: 43)
-                .foregroundStyle(.white.opacity(0.9))
-        }.buttonStyle(WorkbenchHomeCardButtonStyle(radius: 8, highlight: .white.opacity(0.10)))
+            }.frame(maxWidth: .infinity).frame(height: 30)
+                .foregroundStyle(palette.secondary)
+        }.buttonStyle(WorkbenchHomeCardButtonStyle(radius: 7, highlight: palette.accent.opacity(0.08)))
             .accessibilityLabel("打开" + route.title)
     }
     private func temperature(_ name: String, _ value: Double?, level: DeviceThermalLevel) -> some View {
@@ -100,7 +100,7 @@ struct WorkbenchHomeDeviceCard: View {
                     value.map { String(format: "%.0f", $0) } ?? "—"
                 }.joined(separator: " / "))
                     .fontWeight(.medium).monospacedDigit().foregroundStyle(HomeFluidPalette.ink)
-                Text("RPM").font(.system(size: 10))
+                Text("RPM").font(.system(size: 11))
             }
             Spacer(minLength: 0)
         }
@@ -117,9 +117,9 @@ struct WorkbenchHomeDeviceCard: View {
                     .fontWeight(.medium).monospacedDigit().lineLimit(1)
                 Spacer(minLength: 0)
                 Text(memoryPressure).foregroundStyle(DeviceAppearance.pressure(memory?.pressure, palette: palette)).lineLimit(1)
-            }.font(.system(size: 10.5))
+            }.font(.system(size: 11))
             WBProgress(value: (memory?.percent ?? 0) / 100,
-                       color: DeviceAppearance.pressure(memory?.pressure, palette: palette), height: 4)
+                       color: DeviceAppearance.pressure(memory?.pressure, palette: palette), height: 5)
                 .accessibilityLabel("运行内存已用比例，" + (memory.map { UsagePercentage.text($0.percent) } ?? "读数不可用"))
                 .accessibilityIdentifier("home-memory-progress")
         }.accessibilityElement(children: .combine).accessibilityIdentifier("home-memory-usage")
@@ -188,29 +188,31 @@ struct WorkbenchHomeStorageCard: View {
                 }.frame(height: 22)
                 Text("已用空间").font(.system(size: 11)).foregroundStyle(HomeFluidPalette.secondary).padding(.top, 13)
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    WorkbenchHomeValue(value: DeviceFormat.storage(used), size: 26)
+                    WorkbenchHomeValue(value: DeviceFormat.storage(used), size: 24)
                     Text("/ " + DeviceFormat.storage(total)).font(.system(size: 11)).foregroundStyle(HomeFluidPalette.secondary)
                     Spacer(minLength: 4)
-                    Text(UsagePercentage.text(percent)).font(.system(size: 19)).monospacedDigit()
+                    Text(UsagePercentage.text(percent)).font(.system(size: 17, weight: .medium)).monospacedDigit()
+                        .foregroundStyle(percent == nil ? HomeFluidPalette.muted : palette.usageColor(forPercent: percent))
                 }.padding(.top, 5)
                 capacityBar.padding(.top, 12)
+                // The used amount is the main value above; the legend names the
+                // bar's other two parts only.
                 HStack(alignment: .top, spacing: 6) {
-                    capacityLegend("已用", value: used, color: palette.usageColor(forPercent: percent))
-                    capacityLegend("立即可用", value: immediatelyFree, color: HomeFluidPalette.green.opacity(0.20))
-                    capacityLegend("系统可回收", value: reclaimable, color: HomeFluidPalette.green.opacity(0.34))
+                    capacityLegend("立即空闲", value: immediatelyFree, color: HomeFluidPalette.green.opacity(0.20))
+                    capacityLegend("系统可回收（估算）", value: reclaimable, color: HomeFluidPalette.green.opacity(0.34))
                 }.padding(.top, 12)
                 Spacer(minLength: 6)
                 HStack(alignment: .bottom, spacing: 10) {
                     VStack(alignment: .leading, spacing: 5) {
                         Text("可用空间").font(.system(size: 11)).foregroundStyle(HomeFluidPalette.secondary)
-                        WorkbenchHomeValue(value: DeviceFormat.storage(available), size: 18)
+                        WorkbenchHomeValue(value: DeviceFormat.storage(available), size: 17)
                     }
                     Spacer(minLength: 4)
                     VStack(alignment: .trailing, spacing: 5) {
-                        Text(scanIsCurrent ? "建议整理项占用" : "可整理空间")
+                        Text("可清理")
                             .font(.system(size: 11)).foregroundStyle(HomeFluidPalette.secondary)
                         if scanIsCurrent {
-                            WorkbenchHomeValue(value: DeviceFormat.storage(cleaning.recommendedAllocatedBytes), size: 18)
+                            WorkbenchHomeValue(value: DeviceFormat.storage(cleaning.recommendedAllocatedBytes), size: 17)
                                 .foregroundStyle(HomeFluidPalette.green)
                         } else {
                             Text(cleaning.screen == .scanning ? "扫描中" : cleaning.requiresRescan ? "重新扫描后查看" : "扫描后查看")
@@ -229,10 +231,10 @@ struct WorkbenchHomeStorageCard: View {
         .accessibilityLabel("打开空间清理")
         .accessibilityValue("磁盘已用 " + DeviceFormat.storage(used) + " / " + DeviceFormat.storage(total)
             + "，" + UsagePercentage.text(percent) + "，可用 " + DeviceFormat.storage(available)
-            + "，立即可用 " + DeviceFormat.storage(immediatelyFree) + "，系统可回收估算 " + DeviceFormat.storage(reclaimable))
+            + "，立即空闲 " + DeviceFormat.storage(immediatelyFree) + "，系统可回收（估算） " + DeviceFormat.storage(reclaimable))
         .accessibilityIdentifier("home-open-cleaning")
         .accessibilityElement(children: .contain)
-        .help("可用空间包含 macOS 可按需回收的估算。系统可回收不是方寸建议删除的文件；整理项占用仅来自已完成扫描，实际释放量以系统读数为准。")
+        .help("可用空间包含 macOS 可按需回收的估算。系统可回收不是方寸建议删除的文件；可清理仅来自已完成扫描，实际释放量以系统读数为准。")
     }
     private var capacityBar: some View {
         GeometryReader { geometry in
@@ -249,15 +251,15 @@ struct WorkbenchHomeStorageCard: View {
                     }
                 }
             }.clipShape(Capsule())
-        }.frame(height: 7)
+        }.frame(height: 5)
             .accessibilityLabel("磁盘已用" + UsagePercentage.text(percent))
             .accessibilityIdentifier("home-storage-progress")
     }
     private func capacityLegend(_ title: String, value: UInt64?, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 4) {
-                Circle().fill(color).frame(width: 4, height: 4)
-                Text(title).font(.system(size: 10.5)).lineLimit(1)
+                Circle().fill(color).frame(width: 5, height: 5)
+                Text(title).font(.system(size: 11)).lineLimit(1)
             }
             Text(DeviceFormat.storage(value)).font(.system(size: 11)).monospacedDigit().foregroundStyle(HomeFluidPalette.muted).lineLimit(1).padding(.leading, 8)
         }.frame(maxWidth: .infinity, alignment: .leading)
@@ -320,7 +322,7 @@ struct WorkbenchHomeNetworkCard: View {
     private func rate(_ title: String, value: Double?, alignment: HorizontalAlignment) -> some View {
         VStack(alignment: alignment, spacing: 6) {
             Text(title).font(.system(size: 11)).foregroundStyle(HomeFluidPalette.secondary)
-            WorkbenchHomeValue(value: DeviceFormat.rate(value), size: 25)
+            WorkbenchHomeValue(value: DeviceFormat.rate(value), size: 24)
         }
     }
 }
@@ -497,8 +499,8 @@ private struct WorkbenchHomeStatus: View {
     var title: String
     var color: Color
     var body: some View {
-        Text(title).font(.system(size: 10, weight: .medium)).lineLimit(1)
-            .foregroundStyle(color).padding(.horizontal, 6).padding(.vertical, 3)
+        Text(title).font(.system(size: 11)).lineLimit(1)
+            .foregroundStyle(color).padding(.horizontal, 7).padding(.vertical, 2)
             .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 5))
     }
 }

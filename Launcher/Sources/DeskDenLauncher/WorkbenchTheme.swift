@@ -17,7 +17,9 @@ struct ThemePalette: Sendable {
 
     var nsText: NSColor { color(light ? 0x172D33 : 0xF3FCFF) }
     var nsSecondary: NSColor { color(light ? 0x50676D : 0xD4E2E6) }
-    var nsMuted: NSColor { color(light ? 0x62757A : 0xB4C6CC) }
+    // Muted text keeps at least 4.5:1 on the light card; warning red is one
+    // shared value for every page instead of a pink dark variant per module.
+    var nsMuted: NSColor { color(light ? 0x5C6F74 : 0xB4C6CC) }
     var nsAccent: NSColor { color(light ? 0x197460 : 0x8BEAD1) }
     var text: Color { Color(nsColor: nsText) }
     var secondary: Color { Color(nsColor: nsSecondary) }
@@ -26,7 +28,7 @@ struct ThemePalette: Sendable {
     var cool: Color { token(light ? 0x655CA8 : 0xC4BEFF) }
     var success: Color { accent }
     var warning: Color { token(light ? 0x9E6113 : 0xFFDA93) }
-    var critical: Color { token(light ? 0xB03851 : 0xFFBBC8) }
+    var critical: Color { token(light ? 0xBF3B37 : 0xF16C62) }
     var materialOpacity: Double { light ? 0.87 : 0.72 }
     var surface: Color { token(light ? 0xFFFFFF : 0x091116, materialOpacity) }
     var raised: Color { token(light ? 0xFFFFFF : 0x182127, light ? 0.95 : 0.78) }
@@ -44,6 +46,9 @@ struct ThemePalette: Sendable {
     var control: Color { token(light ? 0xFFFFFF : 0xD4E2E6, light ? 0.66 : 0.07) }
     var controlBorder: Color { token(light ? 0x50676D : 0xD4E2E6, light ? 0.24 : 0.22) }
     var progressTrack: Color { token(light ? 0x3D7882 : 0x9EC6C1, light ? 0.12 : 0.13) }
+    /// Backing for text placed outside cards: page titles and footnotes.
+    var note: Color { token(light ? 0xFFFFFF : 0x091116, light ? 0.68 : 0.60) }
+    var noteBorder: Color { token(0xFFFFFF, light ? 0.62 : 0.14) }
     var shadow: Color { token(0x061014, light ? 0.04 : 0.12) }
     var highlight: Color { token(0xFFFFFF, light ? 0.16 : 0.08) }
 
@@ -113,7 +118,7 @@ private struct WorkbenchThemeEnvironmentModifier: ViewModifier {
 /// visual effect samples the app's own scene; the approved tint supplies the
 /// readable 50–90% surface, independently from the foreground content.
 struct WorkbenchMaterialSurface: View {
-    enum Kind { case card, panel, chrome, sidebar, shell, control, selected }
+    enum Kind { case card, panel, chrome, sidebar, shell, control, selected, note }
     var kind: Kind = .card
     var radius: CGFloat = 15
     var behindWindow = false
@@ -122,7 +127,7 @@ struct WorkbenchMaterialSurface: View {
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         ZStack {
-            if kind == .card || kind == .panel || kind == .selected {
+            if kind == .card || kind == .panel || kind == .selected || kind == .note {
                 // All surfaces share the scene material and tint. The modal
                 // host softens the underlying page separately so translucent
                 // panels do not expose competing, readable text.
@@ -137,6 +142,7 @@ struct WorkbenchMaterialSurface: View {
             case .shell: shape.fill(palette.shell)
             case .control: shape.fill(palette.control)
             case .selected: shape.fill(palette.navSelectedGradient)
+            case .note: shape.fill(palette.note)
             }
         }
         .clipShape(shape)
@@ -149,6 +155,8 @@ struct WorkbenchMaterialSurface: View {
                     }
             } else if kind == .selected {
                 shape.strokeBorder(palette.navBorder, lineWidth: 1)
+            } else if kind == .note {
+                shape.strokeBorder(palette.noteBorder, lineWidth: 1)
             }
         }
         .shadow(color: kind == .card || kind == .panel ? palette.shadow : .clear, radius: kind == .panel ? 16 : 4, x: 0, y: kind == .panel ? 8 : 2)

@@ -396,9 +396,10 @@ import LauncherCore
         let viewport = window.convertToScreen(host.convert(host.bounds, to: nil))
         guard let disk = frame("home-open-cleaning", in: host), let network = frame("home-network-detail", in: host),
               let reminders = frame("fc.home.reminders", in: host) else { return false }
-        // A small footer holds the version. AX group bounds may omit their
-        // painted padding, so keep enough tolerance for the reminder's 14 pt inset.
-        return [disk, network, reminders].allSatisfy { (28...49).contains($0.minY - viewport.minY) }
+        // The page keeps a 24 pt bottom inset (the version moved to the top bar).
+        // AX group bounds may omit their painted padding, so keep enough
+        // tolerance for the reminder's 14 pt inset.
+        return [disk, network, reminders].allSatisfy { (20...41).contains($0.minY - viewport.minY) }
             && abs(disk.minY - network.minY) < 3 && abs(network.minY - reminders.minY) < 17
     }
     private static func pendingRemindersRemainVisible(in host: NSView) -> Bool {

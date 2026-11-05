@@ -61,7 +61,7 @@ struct SpaceCleaningHomeView: View {
                 WorkbenchScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         VStack(alignment: .leading, spacing: compact ? 8 : 10) {
-                            Text("扫描方式").font(.system(size: 14, weight: .semibold))
+                            Text("扫描方式").font(.system(size: 13, weight: .medium))
                             modeChoices(width: contentWidth)
                             if model.scanMode == .largeFiles { largeFileControls }
                         }
@@ -93,7 +93,9 @@ struct SpaceCleaningHomeView: View {
         let columns = width >= 650 ? 3 : width >= 440 ? 2 : 1
         let tileHeight: CGFloat = columns == 3
             ? (denseOptions ? 68 : min(132, max(82, 82 + (columnHeight - 545) * 0.16)))
-            : (denseOptions ? 52 : compact ? 60 : 82)
+            // Two-column compact tiles hold one title and a two-line summary; the
+            // header and footer notes now sit on backings, so keep their height tight.
+            : (denseOptions ? 52 : compact ? 56 : 82)
         return VStack(alignment: .leading, spacing: compact ? 8 : 12) {
             ViewThatFits(in: .horizontal) {
                 HStack { scopeHeading; Spacer(minLength: 8); scopeChoices }
@@ -326,7 +328,7 @@ private struct SpaceCleaningModeChoice: View {
                 Image(systemName: mode == .cleanup ? "viewfinder" : "doc.text.magnifyingglass")
                     .font(.system(size: 26, weight: .regular)).foregroundStyle(palette.accent).frame(width: 40, height: 40)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(mode == .cleanup ? "常规扫描" : "大文件扫描").font(.system(size: 14, weight: .semibold))
+                    Text(mode == .cleanup ? "常规扫描" : "大文件扫描").font(.system(size: 15, weight: .medium))
                     Text(mode == .cleanup ? "检查缓存与待整理文件" : "按体积寻找占用较大的文件")
                         .font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(2)
                 }.frame(maxWidth: .infinity, alignment: .leading)
@@ -334,12 +336,12 @@ private struct SpaceCleaningModeChoice: View {
                     .font(.system(size: 13)).foregroundStyle(selected ? palette.accent : palette.secondary).frame(width: 14)
             }.padding(.horizontal, 14).frame(height: height)
                 .background {
-                    RoundedRectangle(cornerRadius: 12).fill(palette.soft.opacity(selected ? 1 : 0.36))
-                    if selected { RoundedRectangle(cornerRadius: 12).fill(palette.accent.opacity(palette.light ? 0.06 : 0.08)) }
+                    RoundedRectangle(cornerRadius: 10).fill(palette.soft.opacity(selected ? 1 : 0.36))
+                    if selected { RoundedRectangle(cornerRadius: 10).fill(palette.accent.opacity(palette.light ? 0.06 : 0.08)) }
                 }
-                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(palette.controlBorder.opacity(0.7), lineWidth: 1))
-                .contentShape(RoundedRectangle(cornerRadius: 12))
-        }.buttonStyle(WBSelectableButtonStyle(selected: selected, cornerRadius: 12, drawsSelection: false, showsBorder: false))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(palette.controlBorder.opacity(0.7), lineWidth: 1))
+                .contentShape(RoundedRectangle(cornerRadius: 10))
+        }.buttonStyle(WBSelectableButtonStyle(selected: selected, cornerRadius: 10, drawsSelection: false, showsBorder: false))
             .accessibilityIdentifier("space-cleaning-mode-" + mode.rawValue)
             .accessibilityValue(selected ? "已选择" : "未选择")
     }
@@ -362,20 +364,15 @@ private struct SpaceCleaningScopeTile: View {
                 Group {
                     if stacked {
                         VStack(alignment: .leading, spacing: 6) {
-                            HStack(spacing: 8) { symbol; title; Spacer(minLength: 0); disclosure }
+                            HStack(spacing: 8) { symbol; title; Spacer(minLength: 0) }
                             summary
-                            if height >= 112 {
-                                Text(group.pathDescription).font(.system(size: 11)).foregroundStyle(palette.secondary)
-                                    .lineLimit(1).truncationMode(.middle).help(group.pathDescription)
-                                    .padding(.top, 4)
-                            }
+                            if height >= 112 { pathPreview.padding(.top, 4) }
                         }
                     } else {
                         HStack(spacing: 10) {
                             symbol.frame(width: 36)
                             VStack(alignment: .leading, spacing: 3) { title; summary }
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                            disclosure
                         }
                     }
                 }.padding(.leading, 12).padding(.trailing, custom ? 0 : 12).frame(height: height).contentShape(Rectangle())
@@ -392,12 +389,29 @@ private struct SpaceCleaningScopeTile: View {
                     .accessibilityLabel("扫描" + group.title).accessibilityValue(included ? "已包含" : "未包含")
                     .accessibilityIdentifier("space-cleaning-scope-toggle-" + group.rawValue)
             }
+        // "Viewing" highlights the whole tile with a thin border; inclusion in a
+        // custom scope keeps its own check control. Tiles do not navigate, so
+        // they carry no chevron.
         }.background(RoundedRectangle(cornerRadius: 10).fill(palette.soft.opacity(active ? 1 : 0.24)))
-            .overlay(alignment: .leading) {
-                if active { Capsule().fill(palette.accent).frame(width: 2, height: 22).padding(.leading, 1).allowsHitTesting(false) }
-            }
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(palette.accent.opacity(active ? 0.35 : 0), lineWidth: 1).allowsHitTesting(false))
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .accessibilityElement(children: .contain)
+    }
+    /// Whole path segments only, then "等 N 处"; never cut inside a word.
+    private var pathPreview: some View {
+        let parts = group.pathDescription.components(separatedBy: " · ")
+        func candidate(_ count: Int) -> some View {
+            Text(parts.prefix(count).joined(separator: " · ") + (count < parts.count ? " 等 \(parts.count) 处" : ""))
+                .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+        }
+        return ViewThatFits(in: .horizontal) {
+            if parts.count >= 3 { candidate(3) }
+            if parts.count >= 2 { candidate(2) }
+            candidate(1)
+            Text(parts.first ?? "").lineLimit(1).truncationMode(.tail)
+        }.font(.system(size: 11)).foregroundStyle(palette.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading).help(group.pathDescription)
+            .accessibilityIdentifier("space-cleaning-scope-paths-" + group.rawValue)
     }
     private var symbol: some View {
         Image(systemName: group.symbol).font(.system(size: 24, weight: .regular))
@@ -407,9 +421,6 @@ private struct SpaceCleaningScopeTile: View {
     private var summary: some View {
         Text(group.summary).font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(2)
             .frame(maxWidth: .infinity, alignment: .leading)
-    }
-    @ViewBuilder private var disclosure: some View {
-        if !custom { Image(systemName: "chevron.right").font(.system(size: 10)).foregroundStyle(palette.secondary).frame(width: 12) }
     }
 }
 
@@ -487,23 +498,21 @@ struct SpaceCleaningCapacityCard: View {
         guard let total = validTotal, let used else { return nil }
         return Double(used) / Double(total) * 100
     }
-    private var usageTint: Color {
-        guard let percent, percent >= 90 else { return palette.usageColor(forPercent: percent) }
-        return palette.light ? Color(red: 217 / 255, green: 68 / 255, blue: 62 / 255) : Color(red: 241 / 255, green: 108 / 255, blue: 98 / 255)
-    }
+    /// The shared usage colors, including the one warning red for 90% and above.
+    private var usageTint: Color { palette.usageColor(forPercent: percent) }
     private var usedGradient: LinearGradient {
         LinearGradient(colors: [usageTint.opacity(0.72), usageTint], startPoint: .top, endPoint: .bottom)
     }
     private var freeTint: Color { palette.accent.opacity(palette.light ? 0.84 : 0.80) }
     private var reclaimTint: Color { palette.accent.opacity(palette.light ? 0.35 : 0.32) }
     private var note: String {
-        if validAvailable == nil { return "暂未取得有效容量读数。实际可整理的内容，仍需扫描后逐项确认。" }
+        if validAvailable == nil { return "暂未取得有效容量读数。实际可清理的内容，仍需扫描后逐项确认。" }
         if validReclaimable == nil {
             return validAvailable == validFree
-                ? "系统未提供按需回收估算；可用空间按立即空闲显示。实际可整理内容仍需扫描后逐项确认。"
-                : "系统未提供有效的按需回收估算，暂不绘制容量构成。实际可整理内容仍需扫描后逐项确认。"
+                ? "系统未提供系统可回收估算；可用空间按立即空闲显示。实际可清理的内容仍需扫描后逐项确认。"
+                : "系统未提供有效的系统可回收估算，暂不绘制容量构成。实际可清理的内容仍需扫描后逐项确认。"
         }
-        return "可用空间包含 macOS 按需回收估算。实际可整理的内容，仍需扫描后逐项确认。"
+        return "可用空间包含 macOS 的系统可回收估算。实际可清理的内容，仍需扫描后逐项确认。"
     }
 
     var body: some View {
@@ -526,7 +535,7 @@ struct SpaceCleaningCapacityCard: View {
             HStack(spacing: 10) {
                 Image(systemName: "internaldrive").font(.system(size: 24, weight: .regular)).foregroundStyle(palette.accent)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(volumeName ?? "当前用户目录所在卷").font(.system(size: 14, weight: .semibold)).lineLimit(1)
+                    Text(volumeName ?? "当前用户目录所在卷").font(.system(size: 13, weight: .medium)).lineLimit(1)
                         .accessibilityIdentifier("space-cleaning-home-heading")
                     Text("当前用户所在卷").font(.system(size: 11)).foregroundStyle(palette.secondary)
                 }
@@ -561,7 +570,7 @@ struct SpaceCleaningCapacityCard: View {
                     VStack(spacing: compact ? 18 : 26) {
                         SpaceCleaningCapacityLine(title: "已用空间", bytes: used, tint: usageTint, identifier: "used")
                         SpaceCleaningCapacityLine(title: "立即空闲", bytes: validFree, tint: freeTint, identifier: "free")
-                        SpaceCleaningCapacityLine(title: "系统按需回收", bytes: validReclaimable, tint: reclaimTint, identifier: "reclaimable")
+                        SpaceCleaningCapacityLine(title: "系统可回收", bytes: validReclaimable, tint: reclaimTint, identifier: "reclaimable")
                     }
                 }.frame(maxWidth: .infinity)
             }.frame(width: geometry.size.width, height: geometry.size.height)
@@ -579,7 +588,7 @@ struct SpaceCleaningCapacityCard: View {
                             .accessibilityIdentifier("space-cleaning-disk-segment-free")
                         if let reclaim = validReclaimable {
                             Rectangle().fill(reclaimTint).frame(height: geometry.size.height * fraction(reclaim, total))
-                                .accessibilityElement(children: .ignore).accessibilityLabel("系统按需回收容量段")
+                                .accessibilityElement(children: .ignore).accessibilityLabel("系统可回收容量段")
                                 .accessibilityIdentifier("space-cleaning-disk-segment-reclaimable")
                         }
                         Rectangle().fill(usedGradient).frame(height: geometry.size.height * fraction(used, total))
@@ -594,7 +603,7 @@ struct SpaceCleaningCapacityCard: View {
     }
     private var percentageLabel: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(percent.map { UsagePercentage.text($0) } ?? "—").font(.system(size: 30, weight: .medium)).monospacedDigit()
+            Text(percent.map { UsagePercentage.text($0) } ?? "—").font(.system(size: 30, weight: .regular)).monospacedDigit()
                 .lineLimit(1).minimumScaleFactor(0.72)
                 .accessibilityIdentifier("space-cleaning-disk-percentage")
             Text(percent == nil ? "暂无读数" : "空间已用").font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(1)
@@ -602,7 +611,7 @@ struct SpaceCleaningCapacityCard: View {
     }
     private func availableBreakdown(compact: Bool) -> some View {
         VStack(alignment: .leading, spacing: compact ? 8 : 12) {
-            SpaceCleaningCapacityLine(title: "当前可用空间", bytes: validAvailable, tint: nil, identifier: "available", numberSize: 19)
+            SpaceCleaningCapacityLine(title: "可用空间", bytes: validAvailable, tint: nil, identifier: "available", numberSize: 17)
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     Capsule().fill(palette.progressTrack)
@@ -616,11 +625,11 @@ struct SpaceCleaningCapacityCard: View {
                         } else if free == available { Rectangle().fill(freeTint) }
                     }
                 }.clipShape(Capsule())
-            }.frame(height: 8).accessibilityIdentifier("space-cleaning-disk-available-breakdown")
+            }.frame(height: 5).accessibilityIdentifier("space-cleaning-disk-available-breakdown")
             HStack(spacing: 8) {
                 legend("立即空闲", tint: freeTint)
                 Spacer(minLength: 0)
-                legend(validReclaimable == nil ? "回收估算未提供" : "按需回收估算", tint: reclaimTint)
+                legend(validReclaimable == nil ? "系统可回收估算未提供" : "系统可回收（估算）", tint: reclaimTint)
             }
         }.padding(.top, compact ? 4 : 12)
     }
@@ -638,7 +647,7 @@ private struct SpaceCleaningCapacityLine: View {
     let bytes: UInt64?
     let tint: Color?
     let identifier: String
-    var numberSize: CGFloat = 18
+    var numberSize: CGFloat = 17
     @Environment(\.workbenchPalette) private var palette
     private var parts: [String] { DeviceStorageCapacity.formatted(bytes).components(separatedBy: " ") }
 

@@ -538,7 +538,7 @@ public enum SpaceCleaningTransaction {
         do { try persist(record) }
         catch {
             record.state = .needsReview
-            record.explanation += " 处理记录未能保存，自动处理已停止：" + error.localizedDescription
+            record.explanation += " 清理记录未能保存，自动处理已停止：" + error.localizedDescription
         }
         return record
     }

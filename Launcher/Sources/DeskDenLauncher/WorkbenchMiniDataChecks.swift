@@ -85,7 +85,7 @@ import LauncherCore
             snapshot.allNetwork.downloadBytesPerSecond = 0; snapshot.allNetwork.uploadBytesPerSecond = 0
             snapshot.allNetwork.todayCoverageSeconds = 10
             let live = WorkbenchMiniDeviceData(snapshot: snapshot, openedAt: now, unit: .fahrenheit, now: now)
-            check(live.memoryFraction == 0.5 && live.memoryPressureState == .normal && live.diskFraction == 0.7 && live.disk.contains("1 TB"), "device fractions and decimal storage use the actual capacity snapshot")
+            check(live.memoryFraction == 0.5 && live.memoryPressureState == .normal && live.diskFraction == 0.7 && live.disk.contains("1.0 TB"), "device fractions and decimal storage use the actual capacity snapshot")
             check(live.temperature == "122°F" && live.gpuTemperature == "104°F" && live.leftFan == "0 RPM" && live.rightFan == "—", "sensor units and genuine zero RPM remain distinct from unavailable readings")
             check(live.download == DeviceFormat.rate(0) && live.todayTraffic == DeviceFormat.storage(0), "Mini uses all-interface rates even when the workbench selects a different interface; covered zero remains valid")
             let cachedReopened=WorkbenchMiniDeviceData(snapshot:snapshot,openedAt:now.addingTimeInterval(2),unit:.fahrenheit,now:now.addingTimeInterval(3))
