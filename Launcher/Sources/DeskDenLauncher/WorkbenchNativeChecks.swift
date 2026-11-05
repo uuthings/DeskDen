@@ -138,33 +138,6 @@ enum WorkbenchNativeChecks {
             check(model.route == .settings && model.settingsTab == .general && owner.workbenchController === workbench,
                   "general settings and launcher settings share the existing workbench")
 
-            workbench.present(route:.settings,settingsTab:.material)
-            let materialSlider: NSSlider?
-            if let window = workbench.window {materialSlider = await findMountedOpacitySlider(in: window)}
-            else {materialSlider = nil}
-            if let window=workbench.window,let root=window.contentView,
-               let control=materialSlider {
-                let point=control.convert(NSPoint(x:control.bounds.midX,y:control.bounds.midY),to:root.superview)
-                let hit=root.hitTest(point)
-                check(hit === control || hit?.isDescendant(of:control) == true,"material slider receives pointer hit testing through the shared surfaces")
-                print("DETAIL material hit=\(hit.map{String(describing:type(of:$0))} ?? "nil") windowKey=\(window.isKeyWindow) acceptedFocus=\(window.makeFirstResponder(control))")
-                print("DETAIL material slider point=\(point) frame=\(control.frame) bounds=\(control.bounds) hidden=\(control.isHiddenOrHasHiddenAncestor) enabled=\(control.isEnabled)")
-                print("DETAIL material descendant=\(hit.map{control.isDescendant(of:$0)} ?? false) modal=\(model.modals.isPresented) confirming=\(model.confirmingQuit) quitting=\(model.quitting)")
-                if let hit {var ancestor:NSView?=hit;var path:[String]=[];while let current=ancestor {path.append("\(type(of:current)) \(current.frame)");ancestor=current.superview};print("DETAIL material hit path="+path.joined(separator:" / "))}
-                var sliderAncestor:NSView?=control
-                while let current=sliderAncestor,let parent=current.superview {
-                    let local=control.convert(NSPoint(x:control.bounds.midX,y:control.bounds.midY),to:parent)
-                    let result=current.hitTest(local)
-                    print("DETAIL slider ancestor \(type(of:current)) frame=\(current.frame) point=\(local) hit=\(result.map{String(describing:type(of:$0))} ?? "nil")")
-                    sliderAncestor=parent
-                }
-                let before=control.doubleValue
-                let key=NSEvent.keyEvent(with:.keyDown,location:.zero,modifierFlags:[],timestamp:0,windowNumber:window.windowNumber,context:nil,characters:"",charactersIgnoringModifiers:"",isARepeat:false,keyCode:124)!
-                control.keyDown(with:key)
-                check(abs(control.doubleValue-min(0.90,before+0.01))<0.000_001 && abs(model.opacity-control.doubleValue)<0.000_001,"material slider keyboard step saves through its live settings binding")
-                model.changeOpacity(0.70)
-            } else {check(false,"workbench material slider exists in the production view hierarchy")}
-
             if let window = workbench.window {
                 workbench.present(route: .calendar, settingsTab: .launcher)
                 let sheet = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 280, height: 120), styleMask: [.titled], backing: .buffered, defer: false)
@@ -218,62 +191,16 @@ enum WorkbenchNativeChecks {
             model.confirmingQuit=false
 
             do {
-                // This renderer/keyboard fixture owns its temporary launcher and
-                // popup. Native activation handoffs must not trigger the separate
-                // auto-hide feature while these controls are being exercised.
-                let previousFocusTransition = owner.focusTransitionUntil
-                owner.focusTransitionUntil = .distantFuture
-                defer { owner.focusTransitionUntil = previousFocusTransition }
-                // Observe actual renderer output rather than copying its opacity formula into a test.
-                Palette.isLight = false
-                owner.show()
-                if let trigger = descendants(owner.content).compactMap({ $0 as? ActionButton }).first(where: { $0.accessibilityLabel() == "全局透明度" }) {
-                    trigger.performClick(nil)
-                }
-                let opacityControlReady: Bool
-                if let popup = owner.editorPanel {opacityControlReady = await findMountedOpacitySlider(in: popup) != nil}
-                else {opacityControlReady = false}
-                let opacityCard = (owner.editorPanel?.contentView as? BindingPopoverSurface)?.card as? GlobalOpacityMenuView
-                check(opacityControlReady && opacityCard != nil && opacityCard?.window === owner.editorPanel && owner.editorPanel?.isVisible == true && owner.menu == nil,
-                      "the launcher opacity control opens its native glass popover rather than a system menu")
-                if let slider = opacityCard?.slider {
-                    slider.doubleValue = 0.55
-                    let actionSent = slider.action.map { NSApp.sendAction($0, to: slider.target, from: slider) } ?? false
-                    let saved = try owner.store.load()
-                    check(actionSent && saved?.settings.glassOpacity == 0.55 && owner.configuration.settings.glassOpacity == 0.55,
-                          "the opacity popover slider saves through its actual native control action")
-                } else { check(false, "the native opacity popover exposes its working slider") }
-                let tints = owner.editorPanel?.contentView.map { descendants($0).compactMap { $0 as? GlassTint } } ?? []
-                check(!tints.isEmpty, "global appearance fixture contains the production glass tint renderer")
-                tints.forEach { $0.needsDisplay = false }
+                // 现行规范 3.1: the interface opacity has no entry in the launcher
+                // or Settings and no longer changes any surface. Its stored value
+                // is only kept for configuration compatibility.
                 let lowSaved = owner.setGlobalGlassOpacity(0.50)
-                // Layer-backed AppKit views may transfer their display request to CALayer
-                // before this read; either pending invalidation is a real redraw request.
-                let invalidated = tints.contains { $0.needsDisplay || $0.layer?.needsDisplay() == true }
-                let lowPixel = tints.first.flatMap(renderCenterAlpha)
-                if !lowSaved || !invalidated {
-                    let registered = owner.editorPanel.map { panel in NSApp.windows.contains { $0 === panel } } ?? false
-                    print("DETAIL opacity redraw: saved=\(lowSaved), tints=\(tints.count), popupRegistered=\(registered), invalidated=\(invalidated)")
-                }
-                check(lowSaved && invalidated, "global opacity entry invalidates existing native glass surfaces")
                 let highSaved = owner.setGlobalGlassOpacity(0.90)
-                let highPixel = tints.first.flatMap(renderCenterAlpha)
                 let persisted = try XCTValue(owner.store.load())
-                check(highSaved && abs(persisted.settings.glassOpacity - 0.90) < 0.000_001 && abs(Palette.glassOpacity - 0.90) < 0.000_001,
+                check(lowSaved && highSaved && abs(persisted.settings.glassOpacity - 0.90) < 0.000_001 && abs(Palette.glassOpacity - 0.90) < 0.000_001,
                       "global opacity persists through an independent load and updates the live palette")
-                check(lowPixel != nil && highPixel != nil && highPixel! > lowPixel! + 0.20,
-                      "higher global opacity changes the actual tint bitmap instead of only a stored number")
                 await settle()
                 check(abs(model.opacity - 0.90) < 0.000_001, "workbench appearance observes launcher configuration updates")
-                if let popup = owner.editorPanel {
-                    let before = "launcherVisible=\(owner.panel.isVisible), popupVisible=\(popup.isVisible), popupKey=\(popup.isKeyWindow), active=\(NSApp.isActive), picker=\(owner.pickerActive), menu=\(owner.menu != nil), responder=\(String(describing: popup.firstResponder)), marked=\((popup.firstResponder as? NSTextView)?.hasMarkedText() == true)"
-                    let dismissed = owner.route(key(window: popup, keyCode: 53, characters: "\u{1b}", flags: []))
-                    if !dismissed || owner.editorPanel != nil || !owner.panel.isVisible {
-                        print("DETAIL opacity Escape before=[\(before)] after=[handled=\(dismissed), editorPanelPresent=\(owner.editorPanel != nil), launcherVisible=\(owner.panel.isVisible), launcherKey=\(owner.panel.isKeyWindow), quitting=\(model.quitting)]")
-                    }
-                    check(dismissed && owner.editorPanel == nil && owner.panel.isVisible,
-                          "Escape closes the opacity popover while leaving the launcher open")
-                } else { check(false, "opacity popover remains available for keyboard dismissal") }
             }
 
             let validBytes = try Data(contentsOf: owner.store.url)
@@ -305,29 +232,6 @@ enum WorkbenchNativeChecks {
     }
 
     private static func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
-    /// SwiftUI mounts its AppKit control asynchronously after a route change.
-    /// Wait for the production control to be attached and laid out, rather than
-    /// assuming that one 25 ms UI turn is sufficient in every signed build.
-    private static func findMountedOpacitySlider(in window: NSWindow) async -> NSSlider? {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-        repeat {
-            window.contentView?.layoutSubtreeIfNeeded()
-            if let root = window.contentView,
-               let slider = descendants(root).compactMap({ $0 as? NSSlider }).first(where: {
-                   $0.accessibilityLabel() == "界面不透明度" && $0.window === window
-                       && !$0.isHiddenOrHasHiddenAncestor && $0.isEnabled
-                       && $0.bounds.width > 0 && $0.bounds.height > 0
-               }) {
-                await settle()
-                root.layoutSubtreeIfNeeded()
-                if slider.window === window && !slider.isHiddenOrHasHiddenAncestor && slider.isEnabled
-                    && slider.bounds.width > 0 && slider.bounds.height > 0 {return slider}
-            }
-            await settle()
-        } while ContinuousClock.now < deadline
-        print("DETAIL opacity slider readiness timed out: visible=\(window.isVisible), key=\(window.isKeyWindow), root=\(String(describing: window.contentView)), policy=\(NSApp.activationPolicy().rawValue)")
-        return nil
-    }
     private static func checkLauncherSettingsResizing(window:NSWindow,recorder:NSButton) async -> [(Bool,String)] {
         guard let root=window.contentView else {return [(false,"launcher recorder has a real window hierarchy for resizing")]}
         let originalFrame=window.frame
@@ -395,19 +299,6 @@ enum WorkbenchNativeChecks {
         NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0,
                         windowNumber: window.windowNumber, context: nil, characters: characters,
                         charactersIgnoringModifiers: characters, isARepeat: false, keyCode: keyCode)!
-    }
-    private static func renderCenterAlpha(_ tint: GlassTint) -> CGFloat? {
-        let oldFrame = tint.frame
-        defer { tint.frame = oldFrame }
-        guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 120, pixelsHigh: 120,
-            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
-              let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return nil }
-        NSGraphicsContext.saveGraphicsState(); defer { NSGraphicsContext.restoreGraphicsState() }
-        NSGraphicsContext.current = context; context.cgContext.clear(CGRect(x: 0, y: 0, width: 120, height: 120))
-        tint.frame = NSRect(x: 0, y: 0, width: 120, height: 120)
-        tint.draw(tint.bounds); context.flushGraphics()
-        return bitmap.colorAt(x: 60, y: 60)?.alphaComponent
     }
     private static func XCTValue<T>(_ value: T?) throws -> T {
         guard let value else { throw LauncherError.storage("测试配置未能重新加载。") }; return value

@@ -99,16 +99,18 @@ enum WorkbenchResponsiveLayoutChecks {
         count += persistentHome.count; failures += persistentHome.failures
         // These route checks intentionally remount pages. The separate Home
         // sequence above keeps its state alive throughout every size transition.
+        // 现行规范 6.1: the page is the window width less its 1 pt border and
+        // 24 pt side margins, at most 1360 pt; 1409–1411 straddle that limit.
         let sizes: [(window: NSSize, page: CGFloat)] = [
-            (.init(width: 1120, height: 758), 864),
-            (.init(width: 960, height: 720), 704),
-            (.init(width: 1349, height: 900), 1093),
-            (.init(width: 1350, height: 900), 1094),
-            (.init(width: 1351, height: 900), 1095),
+            (.init(width: 1120, height: 758), 1070),
+            (.init(width: 960, height: 720), 910),
+            (.init(width: 1409, height: 900), 1359),
+            (.init(width: 1410, height: 900), 1360),
+            (.init(width: 1411, height: 900), 1360),
             (.init(width: 1728, height: 993), 1360),
             (.init(width: 1920, height: 1080), 1360),
-            (.init(width: 1120, height: 758), 864),
-            (.init(width: 960, height: 720), 704)
+            (.init(width: 1120, height: 758), 1070),
+            (.init(width: 960, height: 720), 910)
         ]
         var calendarWidths: [(page: CGFloat, month: CGFloat, side: CGFloat)] = []
         for sample in sizes {
@@ -124,28 +126,27 @@ enum WorkbenchResponsiveLayoutChecks {
                 let effectiveRoute:WorkbenchRoute = route == .cards ? .settings : route
                 model.navigate(route)
                 _ = await wait(window) {
-                    frame("workbench-sidebar", in: host) != nil && frame("workbench-chrome", in: host) != nil
+                    frame("workbench-top-navigation", in: host) != nil && frame("workbench-chrome", in: host) != nil
                         && frame(effectiveRoute == .settings ? "settings-navigation-general" : "navigation-" + route.rawValue, in: host) != nil
                         && (effectiveRoute != .settings || model.settingsTab != .general || frame("updates-current-version", in: host) != nil)
                 }
-                let chrome = frame("workbench-chrome", in: host), sidebar = frame("workbench-sidebar", in: host)
+                let chrome = frame("workbench-chrome", in: host), strip = frame("workbench-top-navigation", in: host)
                 let navigation = frames(prefix: effectiveRoute == .settings ? "settings-navigation-" : "navigation-", in: host)
                 let hostScreen = window.convertToScreen(host.convert(host.bounds, to: nil))
-                // SwiftUI exposes a containing AX group's children as its
-                // frame, so the chrome's accessibility height can be its 32 pt
-                // controls rather than the full surface. Measure the real
-                // content boundary below it, independent of the control glyphs.
-                let chromeHeight = sidebar.map { hostScreen.maxY - $0.maxY - 1 }
-                let chromeSurface = sidebar.map { CGRect(x: hostScreen.minX + 1, y: $0.maxY,
-                    width: hostScreen.width - 2, height: hostScreen.maxY - $0.maxY - 1) }
-                check(chromeHeight.map { abs($0 - 46) < 1 } == true
-                      && sidebar.map { abs($0.width - 184) < 1 && abs($0.minX - hostScreen.minX - 1) < 1 } == true
-                      && chromeSurface.flatMap { surface in chrome.map { surface.insetBy(dx: -0.5, dy: -0.5).contains($0) } } == true,
-                      "\(route.rawValue) preserves its 46 pt chrome and 184 pt sidebar across resize in \(label)")
+                // 现行规范 6.1/6.2: a 58 pt top navigation inside the window's
+                // 1 pt border, its content limited to the page's centred width.
+                // SwiftUI reports the chrome group as the union of its 32 pt
+                // controls, so measure where they sit within that band.
+                let bar = CGRect(x: hostScreen.minX + 1, y: hostScreen.maxY - 59, width: hostScreen.width - 2, height: 58)
+                check(frame("workbench-sidebar", in: host) == nil
+                      && chrome.map { bar.insetBy(dx: -0.5, dy: -0.5).contains($0) && abs($0.midY - bar.midY) < 1
+                          && abs($0.width - sample.page) < 2 && abs($0.midX - bar.midX) < 1 } == true
+                      && strip.map { abs($0.midY - bar.midY) < 1 && abs($0.midX - bar.midX) < 1 } == true,
+                      "\(route.rawValue) keeps the 58 pt top navigation within the centred page width and no sidebar in \(label)")
                 let outerViewport = route == .cleaning ? nil : outerPageScrollView(in: host).map { $0.convert($0.bounds, to: host) }
-                print("DETAIL responsive shell \(route.rawValue) \(label) hostScreen=\(hostScreen) chromeAX=\(String(describing: chrome)) sidebarAX=\(String(describing: sidebar)) measuredChromeHeight=\(String(describing: chromeHeight)) outerViewport=\(String(describing: outerViewport))")
-                check(!navigation.isEmpty && navigation.allSatisfy { abs($0.height - 42) < 1 },
-                      "\(route.rawValue) keeps 42 pt navigation rows across resize in \(label)")
+                print("DETAIL responsive shell \(route.rawValue) \(label) hostScreen=\(hostScreen) chromeAX=\(String(describing: chrome)) navigationAX=\(String(describing: strip)) outerViewport=\(String(describing: outerViewport))")
+                check(!navigation.isEmpty && navigation.allSatisfy { abs($0.height - 32) < 1 },
+                      "\(route.rawValue) keeps 32 pt navigation controls across resize in \(label)")
                 check(frame("navigation-cards", in: host) == nil && (effectiveRoute != .settings || frame("settings-navigation-widgets", in: host) != nil),
                       "desktop widgets live only in Settings across resize in \(label)")
                 check(frame("navigation-health", in: host) == nil && !containsAccessibilityText("体检中心", in: host),
@@ -153,9 +154,6 @@ enum WorkbenchResponsiveLayoutChecks {
                 let version = "v" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")
                 check(accessibilityText("window-brand", in: host).contains(version),
                       "\(route.rawValue) keeps the version's lowercase v prefix in the shared brand in \(label)")
-                let globalContext=frame("home-weather-settings",in:host)
-                check(chromeSurface.flatMap{surface in globalContext.map{surface.insetBy(dx:-1,dy:-1).contains($0)}} == true,
-                      "\(route.rawValue) keeps the selected city's date, time and weather in the shared chrome in \(label)")
                 if route == .settings && model.settingsTab == .general {
                     check(accessibilityText("updates-current-version", in: host).contains("方寸 " + version),
                           "software update settings show the same lowercase version prefix in \(label)")
@@ -164,47 +162,44 @@ enum WorkbenchResponsiveLayoutChecks {
 
             model.navigate(.overview)
             _ = await wait(window) {
-                frame("home-open-cleaning",in:host) != nil && frame("home-device-detail",in:host) != nil
-                    && frame("home-network-detail",in:host) != nil
+                ["home-open-cleaning","home-device-detail","home-network-detail","fc.home.calendar","fc.home.reminders"].allSatisfy { frame($0,in:host) != nil }
             }
-            let status=frame("home-open-cleaning",in:host),thermal=frame("home-device-detail",in:host),network=frame("home-network-detail",in:host)
-            check(accessibilityText("home-open-cleaning",in:host).contains("磁盘已用比例")
-                  && accessibilityText("home-device-detail",in:host).contains("运行内存已用比例"),
-                  "home retains labeled disk and memory progress inside whole-card actions in \(label)")
-            check(thermal.flatMap { left in status.flatMap { middle in network.map { right in
-                abs(left.maxY-middle.maxY)<1 && abs(middle.maxY-right.maxY)<1
-                    && abs(middle.minX-left.maxX-12)<1 && abs(right.minX-middle.maxX-12)<1
-                    && abs(left.width+middle.width+right.width+24-sample.page)<3
-                    && [left,middle,right].allSatisfy { abs($0.height-264)<1 }
-                    && abs(left.width-middle.width)<1 && abs(middle.width-right.width)<1
-            } } } == true,
-                  "home device, disk and realtime-network cards form an equal three-column row in \(label)")
-            let thermalText=accessibilityText("home-device-detail",in:host),networkText=accessibilityText("home-network-detail",in:host)
-            check(thermalText.contains("CPU 温度") && thermalText.contains("GPU 温度") && thermalText.contains("运行内存")
+            let homeDevice=frame("home-device-detail",in:host),homeDisk=frame("home-open-cleaning",in:host),homeNetwork=frame("home-network-detail",in:host)
+            let homeMonth=frame("fc.home.calendar",in:host),homeReminders=frame("fc.home.reminders",in:host)
+            // 现行规范 4.2 and 8: a whole-card action is labelled with where it
+            // leads and states its readings in words; the bars inside it are
+            // part of that one element rather than separately labelled.
+            let deviceText=accessibilityText("home-device-detail",in:host),diskText=accessibilityText("home-open-cleaning",in:host)
+            check(diskText.contains("打开空间清理") && diskText.contains("磁盘已用") && diskText.contains("可用")
+                  && deviceText.contains("查看设备状态") && deviceText.contains("内存"),
+                  "home whole-card actions name their destination and state disk and memory use in words in \(label)")
+            // 现行规范 9.1 (H1): both home rows share three equal columns with
+            // 12 pt gaps. This Mac sits over the disk card and the month over
+            // the reminders, at least 12 pt above the lower row. The grouped
+            // month and reminder cards may report their children's union, so
+            // they only have to stay inside the third column.
+            let homeViewport=window.convertToScreen(host.convert(host.bounds,to:nil))
+            let pageLeft=homeViewport.midX-sample.page/2,pageRight=pageLeft+sample.page,column=(sample.page-24)/3
+            check(homeDevice.flatMap { top in homeDisk.flatMap { left in homeNetwork.flatMap { middle in homeMonth.flatMap { upper in homeReminders.map { right in
+                abs(left.minX-pageLeft)<1 && abs(left.width-column)<1 && abs(middle.width-column)<1
+                    && abs(middle.minX-left.maxX-12)<1 && abs(middle.minY-left.minY)<1
+                    && right.minX>=middle.maxX+11 && right.maxX<=pageRight+1
+                    && abs(top.minX-left.minX)<1 && abs(top.width-column)<1 && top.minY>=left.maxY+11
+                    && upper.minX>=middle.maxX+11 && upper.maxX<=pageRight+1 && upper.minY>=right.maxY+11
+            } } } } } == true,
+                  "home aligns This Mac and the month with the equal three-column disk, network and reminder row in \(label)")
+            let networkText=accessibilityText("home-network-detail",in:host)
+            check(deviceText.contains("CPU") && deviceText.contains("GPU") && deviceText.contains("内存")
+                  && ["正在充电","已连接电源","使用电池","电源读数不可用"].contains { deviceText.contains($0) }
                   && networkText.contains("下载") && networkText.contains("上传"),
                   "home detail cards retain their real thermal, battery and live network labels in \(label)")
-            print("DETAIL home-summary \(label) capacity=\(String(describing:status)) thermal=\(String(describing:thermal)) network=\(String(describing:network))")
-            let events = frame("fc.home.agenda.events", in: host), reminders = frame("fc.home.agenda.reminders", in: host)
-            let listHeight: CGFloat = 112
-            check(events.map { abs($0.height - listHeight) < 1 } == true && reminders.map { abs($0.height - listHeight) < 1 } == true,
-                  "mounted home schedule and reminder scroll viewports keep their independent 112 pt height in \(label)")
-            if sample.window.width == 1120 && sample.window.height == 758 {
-                let visible=window.convertToScreen(host.bounds)
-                check(events.map{visible.intersection($0).height>=80} == true && reminders.map{visible.intersection($0).height>=80} == true,
-                      "the default home window exposes at least eighty points of both agenda lists before scrolling")
-            }
-            if sample.page > 1200 {
-                let agenda = frame("fc.home.agenda", in: host)
-                check(agenda.flatMap { card in
-                    frame("fc.home.calendar.strip", in: host).map { strip in card.contains(strip) &&
-                        events.map { card.contains($0) } == true && reminders.map { card.contains($0) } == true }
-                } == true, "large home agenda fits the shared date tiles and both independent lists without clipping")
-                print("DETAIL responsive home \(label) agenda=\(String(describing: agenda)) events=\(String(describing: events)) reminders=\(String(describing: reminders))")
-            }
+            // 现行规范 9.1: the home month lays out its six weeks in 36 pt rows.
+            let homeRows=Set(frames(prefix:"fc.home.calendar.day.2",in:host).map { ($0.midY*2).rounded()/2 }).sorted()
+            let homeRowPitch=zip(homeRows,homeRows.dropFirst()).map { $1-$0 }
+            print("DETAIL home-summary \(label) device=\(String(describing:homeDevice)) month=\(String(describing:homeMonth)) disk=\(String(describing:homeDisk)) network=\(String(describing:homeNetwork)) reminders=\(String(describing:homeReminders)) dateRows=\(homeRows)")
 
             let day = model.calendar.displayCalendar.dateComponents([.year, .month, .day], from: Date())
             let dayKey = String(format: "%04d-%02d-%02d", day.year ?? 0, day.month ?? 0, day.day ?? 0)
-            let homeDay = frame("fc.home.calendar.day." + dayKey, in: host)
             model.calendar.goToToday(); model.calendar.presentationMode = .month
             model.navigate(.calendar)
             _ = await wait(window) {
@@ -224,10 +219,9 @@ enum WorkbenchResponsiveLayoutChecks {
             }
             let month = frame("fc.calendar.monthCard", in: host), side = frame("fc.calendar.sideColumn", in: host)
             let monthDay = frame("fc.calendar.day." + dayKey, in: host)
-            check(homeDay.flatMap { home in monthDay.map { month in
-                abs(home.height - 54) < 1 && month.height >= 54 && month.height <= 72 &&
-                (0.85...1.4).contains(month.width / month.height)
-            } } == true, "home uses compact date tiles while the full calendar retains readable proportions in \(label)")
+            check(homeRows.count == 6 && homeRowPitch.allSatisfy { abs($0 - 36) < 1 } && monthDay.map { month in
+                month.height >= 54 && month.height <= 72 && (0.85...1.4).contains(month.width / month.height)
+            } == true, "home uses 36 pt date rows while the full calendar retains readable proportions in \(label)")
             let selected=frame("fc.calendar.selectedAgenda",in:host)
             let upcoming=frame("fc.calendar.upcomingAgenda",in:host)
             let pending=frame("fc.calendar.pendingReminders",in:host)
@@ -252,7 +246,7 @@ enum WorkbenchResponsiveLayoutChecks {
                 } } } } == true,
                       "compact calendar stacks month, selected day, seven-day arrangements and long-term reminders in order")
             }
-            print("DETAIL calendar proportions \(label) month=\(String(describing: month)) side=\(String(describing: side)) homeDay=\(String(describing: homeDay)) monthDay=\(String(describing: monthDay))")
+            print("DETAIL calendar proportions \(label) month=\(String(describing: month)) side=\(String(describing: side)) monthDay=\(String(describing: monthDay))")
 
             model.navigate(.network)
             _ = await wait(window) { !frames(prefix: "fc.network.day-label.", in: host).isEmpty }
@@ -260,8 +254,11 @@ enum WorkbenchResponsiveLayoutChecks {
             check(!dates.isEmpty && dates.allSatisfy { $0.width > 0 && $0.height <= 16 },
                   "mounted network day labels, including the current day marker, remain a single line in \(label)")
         }
-        if let regular = calendarWidths.first(where: { $0.page == 864 }), let large = calendarWidths.first(where: { $0.page == 1360 }) {
-            check(large.side > regular.side + 240 && large.month <= 610 && large.month > regular.month + 150,
+        if let regular = calendarWidths.first(where: { $0.page == 1070 }), let large = calendarWidths.first(where: { $0.page == 1360 }) {
+            // The ordinary page is now 1070 pt rather than 864, so the extra
+            // width up to 1360 pt is smaller; the agenda still gains more of it.
+            let monthGrowth = large.month - regular.month, agendaGrowth = large.side - regular.side
+            check(large.month <= 610 && monthGrowth > 0 && agendaGrowth > monthGrowth,
                   "wide workbenches preserve the bounded calendar and allocate the larger share to the agenda")
         } else { check(false, "calendar width verification covers both normal and large windows") }
         let scrolling = await checkFullPageScrolling(model: model, window: window, host: host)
@@ -290,23 +287,26 @@ enum WorkbenchResponsiveLayoutChecks {
         let selectedID=dayID(selectedDate)
         check(press(selectedID,in:host),"persistent Home resize selects a day through its mounted calendar action")
         _ = await wait(window) {accessibilityText(selectedID,in:host).contains("已选择")}
+        // 现行规范 6.1 and 9.1: the page keeps 24 pt side margins inside the
+        // window's 1 pt border, is at most 1360 pt wide and centred. From the
+        // 840 pt home breakpoint up, both rows share three equal columns with
+        // 12 pt gaps: This Mac sits over the disk card, the network card
+        // follows it, and the rows stay at least 12 pt apart.
         func fitsViewport()->Bool {
             guard window.contentView === host,
                   abs(host.bounds.width-window.contentRect(forFrameRect:window.frame).width)<1,
-                  let left=frame("home-device-detail",in:host),let middle=frame("home-open-cleaning",in:host),let right=frame("home-network-detail",in:host),
+                  let device=frame("home-device-detail",in:host),let disk=frame("home-open-cleaning",in:host),let network=frame("home-network-detail",in:host),
                   let scroll=outerPageScrollView(in:host) else {return false}
-            let page=min(1360,max(0,host.bounds.width-2-184-70))
+            let page=min(1360,max(0,host.bounds.width-2-48))
             let viewport=window.convertToScreen(host.convert(host.bounds,to:nil))
-            let cards=[left,middle,right]
-            guard cards.allSatisfy({abs($0.height-264)<1 && $0.minX>=viewport.minX+184+35 && $0.maxX<=viewport.maxX-35}),
+            let left=viewport.midX-page/2
+            guard [device,disk,network].allSatisfy({$0.minX>=left-1 && $0.maxX<=left+page+1}),
                   (scroll.documentView?.bounds.width ?? .infinity)<=scroll.contentSize.width+1 else {return false}
-            if page<680 {
-                return cards.allSatisfy{abs($0.width-page)<2} && middle.maxY<=left.minY-10 && right.maxY<=middle.minY-10
-            }
-            return abs(left.width+middle.width+right.width+24-page)<3
-                && abs(left.width-middle.width)<1 && abs(middle.width-right.width)<1
-                && abs(left.maxY-middle.maxY)<1 && abs(middle.maxY-right.maxY)<1
-                && abs(middle.minX-left.maxX-12)<1 && abs(right.minX-middle.maxX-12)<1
+            guard page>=840 else {return true}
+            let column=(page-24)/3
+            return abs(disk.minX-left)<1 && abs(disk.width-column)<1 && abs(network.width-column)<1
+                && abs(network.minX-disk.maxX-12)<1 && abs(network.minY-disk.minY)<1
+                && abs(device.minX-disk.minX)<1 && abs(device.width-disk.width)<1 && device.minY>=disk.maxY+11
         }
         let sizes:[NSSize]=[
             .init(width:1120,height:758),.init(width:1920,height:1080),.init(width:1728,height:993),
@@ -376,8 +376,8 @@ enum WorkbenchResponsiveLayoutChecks {
         // Cleaning is a viewport-sized workspace with a fixed page header and
         // footer. Its intentional card-internal scroll regions have separate checks.
         let routes: [(WorkbenchRoute, String)] = [(.overview, "fc.page.home"), (.device, "fc.page.device"), (.calendar, "fc.page.calendar"), (.ai, "fc.page.usage"), (.network, "fc.page.network"), (.vault, "fc.page.vault"), (.cards, "fc.page.settings.widgets"), (.settings, "fc.page.settings.general")]
-        let samples: [(NSSize, CGFloat)] = [(.init(width: 1120, height: 758), 184), (.init(width: 960, height: 720), 184), (.init(width: 1728, height: 993), 184)]
-        for (size, sidebarWidth) in samples {
+        let samples: [NSSize] = [.init(width: 1120, height: 758), .init(width: 960, height: 720), .init(width: 1728, height: 993)]
+        for size in samples {
             window.setContentSize(size)
             let label = "\(Int(size.width))×\(Int(size.height))"
             for (route, identifier) in routes {
@@ -393,9 +393,19 @@ enum WorkbenchResponsiveLayoutChecks {
                     check(false, "\(route.rawValue) mounts its actual outer scroll viewport in \(label)"); continue
                 }
                 let viewport = scroll.convert(scroll.bounds, to: host)
-                check(abs(viewport.minX - (host.bounds.minX + sidebarWidth + 1)) <= 1
-                      && abs(viewport.maxX - (host.bounds.maxX - 1)) <= 1,
-                      "\(route.rawValue) viewport spans from the sidebar to the window edge, allowing only its 1 pt border in \(label)")
+                // 现行规范 6.1: the page scroller fills the content area below
+                // the 58 pt navigation (and Settings' category row), leaving
+                // only the window's 1 pt border, so its overlay scrollbar sits
+                // at the window's right edge.
+                let screen = window.convertToScreen(scroll.convert(scroll.bounds, to: nil))
+                let hostScreen = window.convertToScreen(host.convert(host.bounds, to: nil))
+                let settingsTabs = frames(prefix: "settings-navigation-", in: host)
+                let belowNavigation = route == .settings || route == .cards
+                    ? hostScreen.maxY - screen.maxY > 59 && !settingsTabs.isEmpty && settingsTabs.allSatisfy { $0.minY >= screen.maxY - 0.5 }
+                    : abs(hostScreen.maxY - screen.maxY - 59) <= 1
+                check(abs(screen.minX - hostScreen.minX - 1) <= 1 && abs(hostScreen.maxX - screen.maxX - 1) <= 1
+                      && abs(screen.minY - hostScreen.minY - 1) <= 1 && belowNavigation,
+                      "\(route.rawValue) viewport fills the window below the 58 pt navigation, allowing only its 1 pt border in \(label)")
                 check(scroll.hasVerticalScroller && scroll.scrollerStyle == .overlay,
                       "\(route.rawValue) uses the outer overlay scrollbar rather than reserving a card-edge track in \(label)")
                 let track = scroll.verticalScroller.map { $0.convert($0.bounds, to: host) }

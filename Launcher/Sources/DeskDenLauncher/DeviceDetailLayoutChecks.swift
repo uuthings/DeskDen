@@ -39,9 +39,11 @@ import LauncherCore
             model.deviceDetail = originalDetail; model.navigate(originalRoute)
             window.setFrame(originalFrame, display: false)
         }
+        // 现行规范 6.1: the shared page is the window width less its 1 pt
+        // border and 24 pt side margins, at most 1360 pt.
         let samples: [(size: NSSize, pageWidth: CGFloat)] = [
-            (.init(width: 1120, height: 758), 864),
-            (.init(width: 960, height: 720), 704),
+            (.init(width: 1120, height: 758), 1070),
+            (.init(width: 960, height: 720), 910),
             (.init(width: 1728, height: 993), 1360)
         ]
         for sample in samples {

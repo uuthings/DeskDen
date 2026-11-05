@@ -201,8 +201,14 @@ import LauncherCore
                 let module = frame("space-cleaning", in: host)
                 check(module.map { abs($0.width - contentWidth) < 3 } == true,
                       "\(name) cleaning uses the shared content width without a second gutter")
-                check(!exists("workbench-sidebar", in: host) && frame("workbench-chrome", in: host).map { abs($0.height - metrics.chromeHeight) < 2 } == true,
-                      "\(name) cleaning preserves the shared top navigation without adding a sidebar")
+                // 现行规范 6.1: a 58 pt navigation inside the 1 pt window border.
+                // The chrome group reports the union of its 32 pt controls, so
+                // check that they sit centred in that band.
+                let viewport = window.convertToScreen(host.convert(host.bounds, to: nil))
+                let navigationBand = NSRect(x: viewport.minX + 1, y: viewport.maxY - 59, width: viewport.width - 2, height: 58)
+                check(!exists("workbench-sidebar", in: host) && frame("workbench-chrome", in: host).map {
+                    navigationBand.insetBy(dx: -0.5, dy: -0.5).contains($0) && abs($0.midY - navigationBand.midY) < 1
+                } == true, "\(name) cleaning preserves the shared top navigation without adding a sidebar")
                 check(host.bounds.size == size, "\(name) cleaning keeps the native viewport size")
                 for result in homeLayoutChecks(in: host) { check(result.0, "\(name) global home " + result.1) }
                 for result in scopeTileLayoutChecks(in: host) { check(result.0, "\(name) global home " + result.1) }
@@ -219,6 +225,7 @@ import LauncherCore
                         abs(before.width - after.width) < 1 && abs(before.height - after.height) < 1
                     } } == true
                 }, "\(name) changing scan mode leaves the overview and mode controls at the same position and size")
+                print("DETAIL \(name) scan-mode geometry ids=\(stableOverviewIDs) cleanup=\(ordinaryOverviewFrames[name] ?? []) largeFiles=\(stableOverviewIDs.map { frame($0, in: host) })")
                 for result in largeFileControlChecks(in: host) { check(result.0, "\(name) large-file setup " + result.1) }
                 check(enabled("space-cleaning-start", in: host) == true && cleaning.items.isEmpty,
                       "\(name) large-file setup keeps scanning explicit and its primary action available")
@@ -248,12 +255,15 @@ import LauncherCore
             cleaning.addDraftDirectories([home.appendingPathComponent("Downloads")]); cleaning.applyScope()
             for (name, size) in sizes {
                 window.setContentSize(size)
-                _ = await settle(window) { exists("space-cleaning-location-Downloads", in: host) }
+                _ = await settle(window) { exists("space-cleaning-configuration-card", in: host) }
+                let body = configurationBody(in: host)
+                _ = await reveal("space-cleaning-location-Downloads", in: body, host: host, window: window)
                 check(cleaning.scopeChoice == .custom && cleaning.customDirectories.count == 1 &&
                       exists("space-cleaning-home-locations", in: host) && exists("space-cleaning-location-Downloads", in: host),
                       "\(name) custom home displays its selected folder as a location card")
                 for result in homeLayoutChecks(in: host) { check(result.0, "\(name) custom home " + result.1) }
                 try capture(host: host, name: "home-custom-\(name)", output: output)
+                if let body { move(body, fraction: 0) }
             }
             // Layout-only locations are siblings of Home, so they cannot change
             // the later global scan fixture or its classification counts.
@@ -269,12 +279,15 @@ import LauncherCore
             cleaning.addDraftDirectories(locations); cleaning.applyScope()
             for (name, size) in sizes {
                 window.setContentSize(size)
-                _ = await settle(window) { exists("space-cleaning-location-" + locationNames[0], in: host) }
+                _ = await settle(window) { exists("space-cleaning-configuration-card", in: host) }
+                let body = configurationBody(in: host)
+                _ = await reveal("space-cleaning-location-" + locationNames[0], in: body, host: host, window: window)
                 check(cleaning.customDirectories.count == locations.count && exists("space-cleaning-manage-locations", in: host) &&
                       exists("space-cleaning-location-" + locationNames[0], in: host),
                       "\(name) multiple-location home retains every selected directory and displays its long-name card")
                 for result in homeLayoutChecks(in: host) { check(result.0, "\(name) multiple-location home " + result.1) }
                 try capture(host: host, name: "home-multiple-\(name)", output: output)
+                if let body { move(body, fraction: 0) }
             }
             cleaning.selectScope(.global)
             // Restore the original empty custom draft for the existing scope
@@ -416,12 +429,18 @@ import LauncherCore
             cleaning.showResults(.recommended)
             cleaning.clearSelection(); cleaning.toggleItem(item.id)
             _ = await settle(window) { exists("space-cleaning-select-" + item.id.uuidString, in: host) }
-            check(exists("space-cleaning-file-date-" + item.id.uuidString, in: host)
-                  && exists("space-cleaning-file-" + item.id.uuidString, in: host),
-                  "result rows retain separate date content and the complete filename detail action")
+            // Since the split results workspace (11-03) the name, type, date and
+            // size columns form one detail button, so the date is read as part
+            // of its label, with date and time on one line (现行规范 5.3).
+            let zone = app.context.dateContext.timeZone
+            let rowDate = SpaceCleaningFormat.day(item.modifiedDate, timeZone: zone) + " " + SpaceCleaningFormat.time(item.modifiedDate, timeZone: zone)
+            let rowLabel = accessibilityText("space-cleaning-file-" + item.id.uuidString, in: host)
+            check(rowLabel.contains(item.name) && rowLabel.contains(rowDate),
+                  "result rows read the date and time on one line within the complete filename detail action")
+            if !rowLabel.contains(rowDate) { print("DETAIL result row expected=\(String(reflecting: rowDate)) label=\(String(reflecting: rowLabel))") }
             check(try await hoverBackground("space-cleaning-file-row-" + item.id.uuidString, host: host, window: window, output: output,
-                  geometryIdentifiers: ["space-cleaning-file-" + item.id.uuidString, "space-cleaning-file-date-" + item.id.uuidString,
-                                        "space-cleaning-select-" + item.id.uuidString, "space-cleaning-results-surface"]),
+                  geometryIdentifiers: ["space-cleaning-file-" + item.id.uuidString, "space-cleaning-select-" + item.id.uuidString,
+                                        "space-cleaning-results-surface"]),
                   "result hover uses a faint complete row surface and preserves its geometry")
             guard scroll("space-cleaning-result-list", in: host) != nil else { throw SpaceCleaningFixtureError.invalid("internal result scroll missing") }
             let navigationBefore = frame("workbench-chrome", in: host)
@@ -858,6 +877,7 @@ import LauncherCore
         let module = frame("space-cleaning", in: host)
         let start = frame("space-cleaning-start", in: host)
         let occupancy = frame("space-cleaning-disk-occupancy", in: host)
+        let percentage = frame("space-cleaning-disk-percentage", in: host)
         let volume = frame("space-cleaning-volume-card", in: host)
         let configuration = frame("space-cleaning-configuration-card", in: host)
         let wide = (viewport?.width ?? 0) >= 760
@@ -875,8 +895,11 @@ import LauncherCore
              "bounds the preparation scroll viewport by the actual available module"),
             (actions.flatMap { buttons in configuration.map { $0.insetBy(dx: -1, dy: -1).contains(buttons) } } ?? false,
              "keeps scan actions in the configuration card's fixed footer"),
-            (occupancy.flatMap { ring in volume.map { $0.contains(ring) && abs(ring.width - 174) < 2 && abs(ring.height - 174) < 2 } } ?? false,
-             "keeps the larger disk occupancy ring inside its dedicated capacity card"),
+            // The 174 pt occupancy ring was replaced by the vertical capacity
+            // column with the used percentage beside it (现行规范 9.1).
+            (occupancy.flatMap { column in volume.map { $0.contains(column) && column.height > column.width } } ?? false
+                && percentage.flatMap { label in volume.map { $0.contains(label) } } == true,
+             "keeps the capacity column and used percentage inside its dedicated capacity card"),
             (["used", "available", "total"].allSatisfy { exists("space-cleaning-disk-" + $0, in: host) },
              "retains actual used, available and total storage values")
         ]
@@ -893,8 +916,12 @@ import LauncherCore
         let sameRowWithinGroups = [presetFrames, fieldFrames].allSatisfy { group in
             group.count == 3 && group.allSatisfy { abs($0.midY - group[0].midY) < 1 }
         }
+        // The confirmed Round 1 layout sets these cards' height by window size
+        // instead of the earlier 100 pt minimum; both keep their explanation.
+        let modeCopy = modeIDs.map { accessibilityText($0, in: host, includeDescendants: true) }.joined(separator: " ")
         return [
-            (modeFrames.count == 2 && modeFrames.allSatisfy { $0.height >= 100 && abs($0.width - modeFrames[0].width) < 2 },
+            (modeFrames.count == 2 && modeFrames.allSatisfy { abs($0.width - modeFrames[0].width) < 2 && abs($0.height - modeFrames[0].height) < 1 }
+                && ["检查缓存与待整理文件", "按体积寻找占用较大的文件"].allSatisfy { modeCopy.contains($0) },
              "uses equally sized scan mode cards with their explanatory copy"),
             (presetFrames.count == 3 && fieldFrames.count == 3 && all.allSatisfy { abs($0.height - 32) < 1 },
              "gives presets, range inputs and unit selection the same 32-point height"),
@@ -904,17 +931,20 @@ import LauncherCore
              "keeps every size control inside its options container")
         ]
     }
+    /// Every scan range now has its own card (现行规范 9.1), replacing the four
+    /// cards and the sentence that listed the remaining categories.
     private static func scopeTileLayoutChecks(in host: NSView) -> [(Bool, String)] {
-        let names = ["downloads", "caches", "documents", "desktop"]
-        let tiles = names.compactMap { frame("space-cleaning-scope-tile-" + $0, in: host) }
+        let groups = CleaningScopeGroup.allCases
+        let tiles = groups.compactMap { frame("space-cleaning-scope-tile-" + $0.rawValue, in: host) }
         let copy = accessibilityText("space-cleaning-global-locations", in: host, includeDescendants: true)
+        let columns = tiles.filter { abs($0.maxY - tiles[0].maxY) < 1 }.count
         return [
-            (tiles.count == 4 && tiles.allSatisfy { abs($0.width - tiles[0].width) < 1 && abs($0.height - tiles[0].height) < 1 && $0.height >= 52 },
-             "uses four equal compact scope cards with room for their paths"),
-            (tiles.count == 4 && abs(tiles[0].maxY - tiles[1].maxY) < 1 && abs(tiles[2].maxY - tiles[3].maxY) < 1,
-             "aligns the two rows of scope cards"),
-            (copy.contains("图片影音") && copy.contains("开发构建") && copy.contains("用户应用") && copy.contains("归档"),
-             "keeps the remaining scan categories explicit without adding more scope cards")
+            (tiles.count == groups.count && tiles.allSatisfy { abs($0.width - tiles[0].width) < 1 && abs($0.height - tiles[0].height) < 1 && $0.height >= 52 },
+             "uses equal compact scope cards with room for their paths"),
+            (tiles.count == groups.count && columns >= 2 && tiles.indices.allSatisfy { abs(tiles[$0].maxY - tiles[$0 - $0 % columns].maxY) < 1 },
+             "aligns the rows of scope cards"),
+            (groups.allSatisfy { copy.contains($0.title) },
+             "names every scan range on its own card")
         ]
     }
     private static func selectionAligned(item: UUID, in host: NSView) -> Bool {
@@ -945,6 +975,25 @@ import LauncherCore
         let y = document.bounds.minY + extent * (document.isFlipped ? fraction : 1 - fraction)
         scroll.contentView.scroll(to: CGPoint(x: scroll.contentView.bounds.minX, y: y))
         scroll.reflectScrolledClipView(scroll.contentView)
+    }
+    /// In regular and narrower windows the scan configuration scrolls inside
+    /// its card (现行规范 9.1); this is the largest scroll view within it.
+    private static func configurationBody(in host: NSView) -> NSScrollView? {
+        guard let card = frame("space-cleaning-configuration-card", in: host), let window = host.window else { return nil }
+        return objects(host).compactMap { $0 as? NSScrollView }.filter { scroll in
+            !scroll.isHiddenOrHasHiddenAncestor && scroll.documentView != nil
+                && card.insetBy(dx: -1, dy: -1).contains(window.convertToScreen(scroll.convert(scroll.bounds, to: nil)))
+        }.max { $0.bounds.width * $0.bounds.height < $1.bounds.width * $1.bounds.height }
+    }
+    /// Lazy grids mount their cards only once scrolled into view.
+    private static func reveal(_ identifier: String, in body: NSScrollView?, host: NSView, window: NSWindow) async -> Bool {
+        if exists(identifier, in: host) { return true }
+        guard let body else { return false }
+        for fraction: CGFloat in [0.25, 0.5, 0.75, 1] {
+            move(body, fraction: fraction)
+            if await settle(window, until: { exists(identifier, in: host) }) { return true }
+        }
+        return false
     }
     private static func capture(host: NSView, name: String, output: URL) throws {
         host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
