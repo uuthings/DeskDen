@@ -82,8 +82,10 @@ struct SpaceCleaningHomeView: View {
         let columns = width >= 440 ? 2 : 1
         return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: columns), spacing: 10) {
             ForEach(SpaceCleaningScanMode.allCases, id: \.self) { mode in
+                // Keep the card just clicked in place: large-file options open
+                // below it and only the later sections tighten.
                 SpaceCleaningModeChoice(mode: mode, selected: model.scanMode == mode,
-                                        height: denseOptions ? 68 : compact ? 78 : 92) { model.selectScanMode(mode) }
+                                        height: compact ? 78 : 92) { model.selectScanMode(mode) }
                     .disabled(model.isBusy || editingScope)
             }
         }
