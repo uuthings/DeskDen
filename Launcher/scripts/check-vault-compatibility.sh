@@ -3,8 +3,8 @@ set -euo pipefail
 task_root="${0:A:h:h}"
 check_dir="$(mktemp -d "${TMPDIR:-/tmp}/deskden-vault-compatibility-build.XXXXXX")"
 trap 'rm -rf "$check_dir"' EXIT
-# Schema-v1 fixture derived from VaultCore.swift at 564d5c141c161454181cc0390317b4d3fb3cfb8a.
-# Commit 77477a399259815ab28cabd101b94b0ae4a109f4 changed only its format/AAD
+# Schema-v1 fixture derived from VaultCore.swift at dc4a7b2172ded99d0281cda563f85d93671fc4ea.
+# Commit 2f2b7606585ec9e94eef2ed22dd46a2ebdb5a92a changed only its format/AAD
 # names and restore extension to DeskDen; this is not the original release bytes.
 fixture="$task_root/Tests/WorkbenchChecks/VaultV1CompatibilityCore.swift"
 fixture_hash="$(shasum -a 256 "$fixture" | cut -d ' ' -f 1)"

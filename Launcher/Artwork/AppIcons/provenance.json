@@ -33,7 +33,7 @@
       "prompt": "Use case: precise-object-edit. Asset type: premium macOS application icon for 方寸 (DeskDen). Input image is the edit target. Keep its intricate Chinese immortal mountain world, cloud sea, miniature pavilion, waterfalls, atmospheric depth and jade green peaks, cyan crystal reflections and luminous early morning mist. Change ONLY the outer water droplet form into a perfectly centered front-facing ROUNDED SQUARE crystal water mirror. Equal width and height, four gently bowed straight sides, smooth continuous rounded corners about 22% radius, absolutely NO pointed tip and NO teardrop silhouette, no diamond rotation. The entire mountain world remains enclosed in this luminous clear glass water square, polished refractive water-glass rim, subtle brilliant specular highlights, no bulky bezel or device frame. Balanced icon centered on square canvas with equal 8% transparent safe margin on all four sides. This must read clearly as a rounded-square sheet of water holding a world, with almost edge-to-edge interior scenery. Preserve the original highly finished realistic 3D material and refined saturated mountain details. No letters, no wordmark, no text, no UI, no extra background. Real transparent alpha outside the rounded-square icon.",
       "sourcePixelsUnchanged": true,
       "referenceArtwork": {
-        "gitCommit": "564d5c141c161454181cc0390317b4d3fb3cfb8a",
+        "gitCommit": "dc4a7b2172ded99d0281cda563f85d93671fc4ea",
         "path": "Launcher/Artwork/AppIcons/qingbi-chenwu.png",
         "sha256": "160cf1a013d4ea742dd94c2aee20090d4f20ef7732009096f8a43e73a804d6b0"
       }
@@ -54,7 +54,7 @@
       "prompt": "Use case: precise-object-edit. Asset type: premium macOS application icon for 方寸 (DeskDen). Input image is the edit target. Keep its intricate Chinese immortal mountain world, cloud sea, miniature pavilion, waterfalls, atmospheric depth and cool silver-blue moonlit peaks, pearl-white cloud seas and delicate blue-violet crystal reflections. Change ONLY the outer water droplet form into a perfectly centered front-facing ROUNDED SQUARE crystal water mirror. Equal width and height, four gently bowed straight sides, smooth continuous rounded corners about 22% radius, absolutely NO pointed tip and NO teardrop silhouette, no diamond rotation. The entire mountain world remains enclosed in this luminous clear glass water square, polished refractive water-glass rim, subtle brilliant specular highlights, no bulky bezel or device frame. Balanced icon centered on square canvas with equal 8% transparent safe margin on all four sides. This must read clearly as a rounded-square sheet of water holding a world, with almost edge-to-edge interior scenery. Preserve the original highly finished realistic 3D material and refined saturated mountain details. No letters, no wordmark, no text, no UI, no extra background. Real transparent alpha outside the rounded-square icon.",
       "sourcePixelsUnchanged": true,
       "referenceArtwork": {
-        "gitCommit": "564d5c141c161454181cc0390317b4d3fb3cfb8a",
+        "gitCommit": "dc4a7b2172ded99d0281cda563f85d93671fc4ea",
         "path": "Launcher/Artwork/AppIcons/yuebai-yunhai.png",
         "sha256": "98c8b40ab61bf492896cadfd002ec19df4b889a255eb8104e251560fba637e18"
       }
@@ -75,7 +75,7 @@
       "prompt": "Use case: precise-object-edit. Asset type: premium macOS application icon for 方寸 (DeskDen). Input image is the edit target. Keep its intricate Chinese immortal mountain world, cloud sea, miniature pavilion, waterfalls, atmospheric depth and warm peach-gold sunset light, verdant hanging mountain peaks and softly glowing cream clouds. Change ONLY the outer water droplet form into a perfectly centered front-facing ROUNDED SQUARE crystal water mirror. Equal width and height, four gently bowed straight sides, smooth continuous rounded corners about 22% radius, absolutely NO pointed tip and NO teardrop silhouette, no diamond rotation. The entire mountain world remains enclosed in this luminous clear glass water square, polished refractive water-glass rim, subtle brilliant specular highlights, no bulky bezel or device frame. Balanced icon centered on square canvas with equal 8% transparent safe margin on all four sides. This must read clearly as a rounded-square sheet of water holding a world, with almost edge-to-edge interior scenery. Preserve the original highly finished realistic 3D material and refined saturated mountain details. No letters, no wordmark, no text, no UI, no extra background. Real transparent alpha outside the rounded-square icon.",
       "sourcePixelsUnchanged": true,
       "referenceArtwork": {
-        "gitCommit": "564d5c141c161454181cc0390317b4d3fb3cfb8a",
+        "gitCommit": "dc4a7b2172ded99d0281cda563f85d93671fc4ea",
         "path": "Launcher/Artwork/AppIcons/nuanxia-xuanshan.png",
         "sha256": "c49bada2d6e129ae83f7c8bb5b022a1da417c09bdc2d6b947055734cd718c9f4"
       }
