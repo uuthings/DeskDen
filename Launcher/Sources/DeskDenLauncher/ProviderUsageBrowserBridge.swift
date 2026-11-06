@@ -145,15 +145,10 @@ enum ProviderUsageBrowserHost {
         let mailbox = ProviderUsageBrowserMailbox(directory: directory)
         let input = FileHandle.standardInput, output = FileHandle.standardOutput
         do {
-            while let prefix = try readExactly(input, count: 4) {
-                let length = prefix.withUnsafeBytes { Int($0.loadUnaligned(as: UInt32.self).littleEndian) }
-                guard length > 0, length <= ProviderUsageBrowserProtocol.maximumMessageBytes,
-                      let body = try readExactly(input, count: length) else { break }
-                let response = try ProviderUsageBrowserNativeProtocol.handle(body, mailbox: mailbox)
-                var size = UInt32(response.count).littleEndian
-                try output.write(contentsOf: withUnsafeBytes(of: &size) { Data($0) })
-                try output.write(contentsOf: response)
-            }
+            // One pool per message. No run loop exists here to drain one, and Chrome
+            // keeps a single host polling every few seconds for as long as it runs;
+            // without it every read buffer and JSON object stays until the host exits.
+            while try autoreleasepool(invoking: { try exchangeMessage(input: input, output: output, mailbox: mailbox) }) {}
         } catch { /* Never emit raw JSON, paths, or site data to stdout/stderr. */ }
         return true
     }
@@ -169,6 +164,18 @@ enum ProviderUsageBrowserHost {
         let base = review ?? environment["DESKDEN_DATA_DIRECTORY"].map { URL(fileURLWithPath: $0) }
             ?? test ?? support.appendingPathComponent("DeskDen/Launcher", isDirectory: true)
         return base.appendingPathComponent("Workbench/ProviderUsage/BrowserBridge", isDirectory: true)
+    }
+    /// Answers one framed message. False ends the session: input closed or an invalid frame length.
+    private static func exchangeMessage(input: FileHandle, output: FileHandle, mailbox: ProviderUsageBrowserMailbox) throws -> Bool {
+        guard let prefix = try readExactly(input, count: 4) else { return false }
+        let length = prefix.withUnsafeBytes { Int($0.loadUnaligned(as: UInt32.self).littleEndian) }
+        guard length > 0, length <= ProviderUsageBrowserProtocol.maximumMessageBytes,
+              let body = try readExactly(input, count: length) else { return false }
+        let response = try ProviderUsageBrowserNativeProtocol.handle(body, mailbox: mailbox)
+        var size = UInt32(response.count).littleEndian
+        try output.write(contentsOf: withUnsafeBytes(of: &size) { Data($0) })
+        try output.write(contentsOf: response)
+        return true
     }
     private static func readExactly(_ handle: FileHandle, count: Int) throws -> Data? {
         var data = Data()
