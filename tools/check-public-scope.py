@@ -34,7 +34,7 @@ ALLOWED = [
 ]
 # Earlier immutable commits retain their original paths. This does not permit
 # reintroducing them in the current index or commits after the naming change.
-HISTORICAL_NAMES_REF = 'e795099f081fd3369c9dfd293a4137001b3a5ee6'
+HISTORICAL_NAMES_REF = '59aaf73cf999e5f38160b8f7e8abd7e8ac7bbe2f'
 HISTORICAL_ALLOWED = [
     r"Fangcun\.xcodeproj/(?:project\.pbxproj|xcshareddata/xcschemes/Fangcun\.xcscheme|project\.xcworkspace/xcshareddata/swiftpm/Package\.resolved)",
     r"Launcher/Sources/FangcunLauncher/[A-Za-z0-9_]+\.swift",
