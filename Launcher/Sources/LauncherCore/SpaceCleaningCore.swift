@@ -595,22 +595,27 @@ private final class Worker {
         }
         for pending in rebuildableCandidates + otherCandidates {
             guard !cancelled() else { break }
-            stage = stageFor(pending.scope.kind)
-            emit(scope: pending.scope, url: pending.url)
-            if Scanner.captureIdentity(at: pending.url) == pending.identity,
-               pending.ancestors.allSatisfy({
-                   Scanner.captureIdentity(at: $0.url)?.fileKey == $0.identity.fileKey && Scanner.canonicalURL($0.url)?.path == $0.url.path
-               }) {
-                if let candidate = makeCandidate(pending.url, identity: pending.identity, scope: pending.scope,
-                    root: pending.root, rootIdentity: pending.rootIdentity, ancestors: pending.ancestors) {
-                    candidates.append(candidate)
-                    recordedBytes = saturatingAdd(recordedBytes, candidate.logicalBytes)
+            // The scan is one synchronous call, so nothing drains the caller's pool
+            // until it returns. A pool per candidate keeps Foundation temporaries
+            // from path and identity checks bounded to that candidate.
+            autoreleasepool {
+                stage = stageFor(pending.scope.kind)
+                emit(scope: pending.scope, url: pending.url)
+                if Scanner.captureIdentity(at: pending.url) == pending.identity,
+                   pending.ancestors.allSatisfy({
+                       Scanner.captureIdentity(at: $0.url)?.fileKey == $0.identity.fileKey && Scanner.canonicalURL($0.url)?.path == $0.url.path
+                   }) {
+                    if let candidate = makeCandidate(pending.url, identity: pending.identity, scope: pending.scope,
+                        root: pending.root, rootIdentity: pending.rootIdentity, ancestors: pending.ancestors) {
+                        candidates.append(candidate)
+                        recordedBytes = saturatingAdd(recordedBytes, candidate.logicalBytes)
+                    }
+                } else {
+                    issue(pending.scope, pending.url, .changed, "发现后文件发生变化，已跳过；请重新扫描。")
                 }
-            } else {
-                issue(pending.scope, pending.url, .changed, "发现后文件发生变化，已跳过；请重新扫描。")
+                completedItems += 1
+                emit(scope: pending.scope, url: pending.url)
             }
-            completedItems += 1
-            emit(scope: pending.scope, url: pending.url)
         }
         let wasCancelled = cancelled()
         phase = .finished
@@ -635,47 +640,54 @@ private final class Worker {
         // Iteration avoids retaining a maximum-sized sibling array at every recursion depth.
         var pending: [(URL, [SpaceCleaningPathIdentity], Int)] = [(directory, ancestors, depth)]
         while let (current, chain, currentDepth) = pending.popLast() {
-            guard !cancelled(), !phaseLimited else { return }
-            // A deep directory is skipped on its own; its siblings and later scopes
-            // are still discovered, and the report keeps the coverage gap visible.
-            guard currentDepth <= options.maximumDepth else {
-                limit = true; issue(scope, current, .depthLimit, "已到达扫描深度上限，未展开此目录。"); continue
-            }
-            guard let children = readChildren(current, scope: scope) else { continue }
-            // In cleanup mode a project tree is searched for recognized items
-            // (build output, test results, environments, release folders and
-            // installers); individual source files are neither cleanup targets
-            // nor allowed to exhaust the shared discovery budget.
-            let projectTree = options.mode == .cleanup && within(current, "Developer")
-            for child in children {
-                if visitedRoots.contains(where: { Scanner.contains(child.path, in: $0) }) { continue }
-                if projectTree {
-                    if !child.hasDirectoryPath, !["pkg", "dmg"].contains(child.pathExtension.lowercased()) { checked += 1; continue }
-                    guard visitProjectEntry(child, scope: scope) else { return }
-                } else {
-                    guard visit(child, scope: scope) else { break }
+            // A pool per directory: path and identity checks on its entries leave
+            // Foundation temporaries that would otherwise last until the scan returns.
+            // The closure returns false to stop the whole walk.
+            let proceed = autoreleasepool { () -> Bool in
+                guard !cancelled(), !phaseLimited else { return false }
+                // A deep directory is skipped on its own; its siblings and later scopes
+                // are still discovered, and the report keeps the coverage gap visible.
+                guard currentDepth <= options.maximumDepth else {
+                    limit = true; issue(scope, current, .depthLimit, "已到达扫描深度上限，未展开此目录。"); return true
                 }
-                guard let identity = Scanner.captureIdentity(at: child) else { issue(scope, child, .unreadable, "文件已消失或无法读取元数据。"); continue }
-                if child.path == simulatorDeviceSetPath, Scanner.isDirectory(identity), !Scanner.isSymbolicLink(identity) {
-                    if options.mode == .cleanup, identity.device == rootIdentity.device, Scanner.canonicalURL(child)?.path == child.path {
-                        discoverSimulators(scope, root: child, rootIdentity: identity)
+                guard let children = readChildren(current, scope: scope) else { return true }
+                // In cleanup mode a project tree is searched for recognized items
+                // (build output, test results, environments, release folders and
+                // installers); individual source files are neither cleanup targets
+                // nor allowed to exhaust the shared discovery budget.
+                let projectTree = options.mode == .cleanup && within(current, "Developer")
+                for child in children {
+                    if visitedRoots.contains(where: { Scanner.contains(child.path, in: $0) }) { continue }
+                    if projectTree {
+                        if !child.hasDirectoryPath, !["pkg", "dmg"].contains(child.pathExtension.lowercased()) { checked += 1; continue }
+                        guard visitProjectEntry(child, scope: scope) else { return false }
+                    } else {
+                        guard visit(child, scope: scope) else { break }
                     }
-                    visitedRoots.append(child.path); continue
-                }
-                if options.mode == .largeFiles, Scanner.isRegular(identity),
-                   developmentReason(child, identity: identity) == nil, !cloudPlaceholder(child),
-                   (identity.sizeBytes < options.minimumFileBytes || options.maximumFileBytes.map({ identity.sizeBytes > $0 }) == true) { continue }
-                if Scanner.isDirectory(identity), !Scanner.isSymbolicLink(identity), !cloudPlaceholder(child), !shouldAggregate(child, scope: scope, identity: identity) {
-                    guard identity.device == rootIdentity.device, Scanner.canonicalURL(child)?.path == child.path else {
-                        issue(scope, child, .unsafePath, "跨卷目录或路径已变化，未继续扫描。"); continue
+                    guard let identity = Scanner.captureIdentity(at: child) else { issue(scope, child, .unreadable, "文件已消失或无法读取元数据。"); continue }
+                    if child.path == simulatorDeviceSetPath, Scanner.isDirectory(identity), !Scanner.isSymbolicLink(identity) {
+                        if options.mode == .cleanup, identity.device == rootIdentity.device, Scanner.canonicalURL(child)?.path == child.path {
+                            discoverSimulators(scope, root: child, rootIdentity: identity)
+                        }
+                        visitedRoots.append(child.path); continue
                     }
-                    pending.append((child, chain + [.init(url: child, identity: identity)], currentDepth + 1))
-                } else {
-                    pendingCandidates.append(.init(url: child, identity: identity, scope: scope, root: root,
-                                                   rootIdentity: rootIdentity, ancestors: chain))
+                    if options.mode == .largeFiles, Scanner.isRegular(identity),
+                       developmentReason(child, identity: identity) == nil, !cloudPlaceholder(child),
+                       (identity.sizeBytes < options.minimumFileBytes || options.maximumFileBytes.map({ identity.sizeBytes > $0 }) == true) { continue }
+                    if Scanner.isDirectory(identity), !Scanner.isSymbolicLink(identity), !cloudPlaceholder(child), !shouldAggregate(child, scope: scope, identity: identity) {
+                        guard identity.device == rootIdentity.device, Scanner.canonicalURL(child)?.path == child.path else {
+                            issue(scope, child, .unsafePath, "跨卷目录或路径已变化，未继续扫描。"); continue
+                        }
+                        pending.append((child, chain + [.init(url: child, identity: identity)], currentDepth + 1))
+                    } else {
+                        pendingCandidates.append(.init(url: child, identity: identity, scope: scope, root: root,
+                                                       rootIdentity: rootIdentity, ancestors: chain))
+                    }
+                    emit(scope: scope, url: child)
                 }
-                emit(scope: scope, url: child)
+                return true
             }
+            guard proceed else { return }
         }
     }
 
@@ -1003,66 +1015,72 @@ private final class Worker {
         let strongRoot = isStrongReleaseProtected(root)
         let measurementLimit = protectedBudget ? min(10_000, options.maximumEntries) : options.maximumEntries
         var measuredEntries = 0
-        measurementLoop: while let (directory, depth) = pending.popLast() {
-            guard !cancelled(), !phaseLimited else { result.complete = false; break }
-            if cloudPlaceholder(directory) {
-                result.complete = false; result.cloudContent = true
-                issue(scope, directory, .cloudPlaceholder, "目录尚未下载到本机，未读取其中内容。"); continue
-            }
-            // A per-item bound leaves only this candidate unverified; the shared
-            // verification budget (visit) still stops the phase when exhausted.
-            guard depth <= options.maximumDepth else {
-                if !protectedBudget { limit = true; result.exceededItemBound = true }
-                result.complete = false; issue(scope, directory, .depthLimit, "已到达目录内容核验深度上限。"); break
-            }
-            guard let identity = Scanner.captureIdentity(at: directory), Scanner.isDirectory(identity), identity.device == rootIdentity.device,
-                  Scanner.canonicalURL(directory)?.path == directory.path else { result.complete = false; break }
-            identities.append((directory, identity))
-            guard let children = readChildren(directory, scope: scope, maximumNames: measurementLimit - measuredEntries + 1) else { result.complete = false; break }
-            for child in children {
-                guard measuredEntries < measurementLimit else {
-                    result.complete = false
-                    if !protectedBudget { limit = true; result.exceededItemBound = true }
-                    issue(scope, root, .entryLimit, protectedBudget ? "受保护目录仅完成有界容量统计，文件继续保留。" : "此目录内容超过单项核验上限，本次保留；其他项目继续核验。")
-                    break measurementLoop
-                }
-                guard visit(child, scope: scope) else { result.complete = false; break }
-                measuredEntries += 1
-                guard let childIdentity = Scanner.captureIdentity(at: child) else { result.complete = false; break }
-                // Files, not folders: compressing old records rewrites folders
-                // while each file keeps its own modification time.
-                if Scanner.isRegular(childIdentity) { result.latestModified = max(result.latestModified, childIdentity.modifiedSeconds) }
-                if !allowsDevelopmentNames, developmentReason(child, identity: childIdentity) != nil {
-                    result.complete = false; result.unsafe = true; result.developmentContent = true
-                    continue
-                }
-                let relative = String(child.path.dropFirst(root.path.count + 1))
-                let record = "\(relative.utf8.count):\(relative):\(childIdentity.device):\(childIdentity.inode):\(childIdentity.sizeBytes):\(childIdentity.allocatedBytes):\(childIdentity.modifiedSeconds):\(childIdentity.modifiedNanoseconds):\(childIdentity.changedSeconds):\(childIdentity.changedNanoseconds):\(childIdentity.linkCount):\(childIdentity.mode)\n"
-                hash.update(data: Data(record.utf8))
-                if cloudPlaceholder(child) {
+        while let (directory, depth) = pending.popLast() {
+            // A pool per directory, as in discovery: one candidate can hold many
+            // thousands of entries. The closure returns false to end the measurement.
+            let proceed = autoreleasepool { () -> Bool in
+                guard !cancelled(), !phaseLimited else { result.complete = false; return false }
+                if cloudPlaceholder(directory) {
                     result.complete = false; result.cloudContent = true
-                    issue(scope, child, .cloudPlaceholder, "内容尚未下载到本机，未展开、读取或计入容量。")
-                    continue
+                    issue(scope, directory, .cloudPlaceholder, "目录尚未下载到本机，未读取其中内容。"); return true
                 }
-                if childIdentity.device != rootIdentity.device { result.unsafe = true; continue }
-                if strongRoot || entryAddsStrongReleaseProtection(child) || (!generated && !allowBundleLinks && hasReleaseMaterialName(child)) { result.releaseContent = true }
-                if Scanner.isSymbolicLink(childIdentity) {
-                    let target = (try? FileManager.default.destinationOfSymbolicLink(atPath: child.path)) ?? ""
-                    hash.update(data: Data("link:\(target.utf8.count):\(target)\n".utf8))
-                    if !allowsInternalLinks || target.isEmpty || target.hasPrefix("/") ||
-                        !(Scanner.canonicalURL(child).map { Scanner.contains($0.path, in: root.path) } ?? false) { result.unsafe = true }
-                } else if Scanner.isDirectory(childIdentity) {
-                    pending.append((child, depth + 1))
-                } else if Scanner.isRegular(childIdentity) {
-                    if childIdentity.linkCount > 1 { result.unsafe = true }
-                    if localSeen.insert(childIdentity.fileKey).inserted, visitedFiles.insert(childIdentity.fileKey).inserted {
-                        result.logical = saturatingAdd(result.logical, childIdentity.sizeBytes)
-                        result.allocated = saturatingAdd(result.allocated, childIdentity.allocatedBytes)
+                // A per-item bound leaves only this candidate unverified; the shared
+                // verification budget (visit) still stops the phase when exhausted.
+                guard depth <= options.maximumDepth else {
+                    if !protectedBudget { limit = true; result.exceededItemBound = true }
+                    result.complete = false; issue(scope, directory, .depthLimit, "已到达目录内容核验深度上限。"); return false
+                }
+                guard let identity = Scanner.captureIdentity(at: directory), Scanner.isDirectory(identity), identity.device == rootIdentity.device,
+                      Scanner.canonicalURL(directory)?.path == directory.path else { result.complete = false; return false }
+                identities.append((directory, identity))
+                guard let children = readChildren(directory, scope: scope, maximumNames: measurementLimit - measuredEntries + 1) else { result.complete = false; return false }
+                for child in children {
+                    guard measuredEntries < measurementLimit else {
+                        result.complete = false
+                        if !protectedBudget { limit = true; result.exceededItemBound = true }
+                        issue(scope, root, .entryLimit, protectedBudget ? "受保护目录仅完成有界容量统计，文件继续保留。" : "此目录内容超过单项核验上限，本次保留；其他项目继续核验。")
+                        return false
                     }
-                    if !allowBundleLinks && !allowsLockFiles && unsafeCacheFileName(child.lastPathComponent) { result.unsafe = true }
-                } else { result.unsafe = true }
-                emit(scope: scope, url: child)
+                    guard visit(child, scope: scope) else { result.complete = false; break }
+                    measuredEntries += 1
+                    guard let childIdentity = Scanner.captureIdentity(at: child) else { result.complete = false; break }
+                    // Files, not folders: compressing old records rewrites folders
+                    // while each file keeps its own modification time.
+                    if Scanner.isRegular(childIdentity) { result.latestModified = max(result.latestModified, childIdentity.modifiedSeconds) }
+                    if !allowsDevelopmentNames, developmentReason(child, identity: childIdentity) != nil {
+                        result.complete = false; result.unsafe = true; result.developmentContent = true
+                        continue
+                    }
+                    let relative = String(child.path.dropFirst(root.path.count + 1))
+                    let record = "\(relative.utf8.count):\(relative):\(childIdentity.device):\(childIdentity.inode):\(childIdentity.sizeBytes):\(childIdentity.allocatedBytes):\(childIdentity.modifiedSeconds):\(childIdentity.modifiedNanoseconds):\(childIdentity.changedSeconds):\(childIdentity.changedNanoseconds):\(childIdentity.linkCount):\(childIdentity.mode)\n"
+                    hash.update(data: Data(record.utf8))
+                    if cloudPlaceholder(child) {
+                        result.complete = false; result.cloudContent = true
+                        issue(scope, child, .cloudPlaceholder, "内容尚未下载到本机，未展开、读取或计入容量。")
+                        continue
+                    }
+                    if childIdentity.device != rootIdentity.device { result.unsafe = true; continue }
+                    if strongRoot || entryAddsStrongReleaseProtection(child) || (!generated && !allowBundleLinks && hasReleaseMaterialName(child)) { result.releaseContent = true }
+                    if Scanner.isSymbolicLink(childIdentity) {
+                        let target = (try? FileManager.default.destinationOfSymbolicLink(atPath: child.path)) ?? ""
+                        hash.update(data: Data("link:\(target.utf8.count):\(target)\n".utf8))
+                        if !allowsInternalLinks || target.isEmpty || target.hasPrefix("/") ||
+                            !(Scanner.canonicalURL(child).map { Scanner.contains($0.path, in: root.path) } ?? false) { result.unsafe = true }
+                    } else if Scanner.isDirectory(childIdentity) {
+                        pending.append((child, depth + 1))
+                    } else if Scanner.isRegular(childIdentity) {
+                        if childIdentity.linkCount > 1 { result.unsafe = true }
+                        if localSeen.insert(childIdentity.fileKey).inserted, visitedFiles.insert(childIdentity.fileKey).inserted {
+                            result.logical = saturatingAdd(result.logical, childIdentity.sizeBytes)
+                            result.allocated = saturatingAdd(result.allocated, childIdentity.allocatedBytes)
+                        }
+                        if !allowBundleLinks && !allowsLockFiles && unsafeCacheFileName(child.lastPathComponent) { result.unsafe = true }
+                    } else { result.unsafe = true }
+                    emit(scope: scope, url: child)
+                }
+                return true
             }
+            guard proceed else { break }
         }
         if result.complete {
             for (url, identity) in identities where Scanner.captureIdentity(at: url) != identity { result.complete = false; break }
