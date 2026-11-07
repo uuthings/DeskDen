@@ -46,6 +46,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     @Published private(set) var theme:LauncherTheme = .arWorld
     @Published private(set) var backgroundMotion=true
     @Published private(set) var reduceMotion=false
+    @Published private(set) var remembersWindowSize=false
     @Published var brandMenuPresented=false
     @Published var confirmingQuit=false {
         didSet {
@@ -101,6 +102,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         buttonHoverCursor=owner.configuration.settings.buttonHoverCursor
         light=appearance == .light || (appearance == .system && NSApp.effectiveAppearance.bestMatch(from:[.aqua,.darkAqua]) == .aqua)
         theme=owner.configuration.settings.workbenchTheme;backgroundMotion=owner.configuration.settings.backgroundMotionEnabled;reduceMotion=owner.configuration.settings.reduceMotion
+        remembersWindowSize=owner.configuration.settings.remembersWorkbenchWindowSize
         do {preferences=try preferenceStore.load()} catch {message=error.localizedDescription}
         if Bundle.main.object(forInfoDictionaryKey:"DeskDenDeviceAcceptance") as? Bool == true {route = .device}
         widgets=DesktopWidgetsController(device:self.device,calendar:self.calendar,ai:self.ai,open:{[weak self] route in self?.navigate(route);self?.revealWindow?()},onChange:{[weak self] card in self?.updateCard(card)})
@@ -247,6 +249,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         if theme != settings.workbenchTheme {theme=settings.workbenchTheme}
         if backgroundMotion != settings.backgroundMotionEnabled {backgroundMotion=settings.backgroundMotionEnabled}
         if reduceMotion != settings.reduceMotion {reduceMotion=settings.reduceMotion}
+        if remembersWindowSize != settings.remembersWorkbenchWindowSize {remembersWindowSize=settings.remembersWorkbenchWindowSize}
         if cleaning.reduceMotion != reduceMotion {cleaning.reduceMotion=reduceMotion}
         Palette.workbenchTheme=theme;Palette.isLight=light;Palette.glassOpacity=opacity
         let appearanceName:NSAppearance.Name?=appearance == .system ? nil:(light ? .aqua:.darkAqua)
@@ -339,6 +342,10 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     func returnFromSettings() {navigate(settingsReturnRoute)}
     func changeReduceMotion(_ value:Bool) {
         guard let owner,owner.updateSettings({$0.reduceMotion=value}) else {message=owner?.lastSaveError;return}
+        syncAppearance()
+    }
+    func changeRemembersWindowSize(_ value:Bool) {
+        guard let owner,owner.updateSettings({$0.remembersWorkbenchWindowSize=value}) else {message=owner?.lastSaveError;return}
         syncAppearance()
     }
     func changeSampleInterval(_ value:Double) {var p=preferences;p.sampleInterval=value;savePreferences(p)}
@@ -500,7 +507,26 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         presentationGeneration += 1
         finishingClose = false
         restoreOrdinaryHost()
+        applyOpeningSize(window)
         present(window, route: route, settingsTab: settingsTab, fromTop: false)
+    }
+    static let defaultContentSize = NSSize(width: 1120, height: 758)
+    /// Unless 「记住窗口大小」 is on, every opening returns to the ordinary
+    /// 1120 × 758 window; resizing and full screen still work while it is open
+    /// (现行规范 6.1). Only the size resets: the top-left corner stays where the
+    /// person left it, moved back inside the screen if needed. A visible,
+    /// minimised or full-screen window keeps its frame.
+    private func applyOpeningSize(_ window: NSWindow) {
+        guard !model.remembersWindowSize, !window.isVisible, !window.isMiniaturized,
+              !window.styleMask.contains(.fullScreen) else { return }
+        let size = window.frameRect(forContentRect: NSRect(origin: .zero, size: Self.defaultContentSize)).size
+        guard window.frame.size != size else { return }
+        var frame = NSRect(x: window.frame.minX, y: window.frame.maxY - size.height, width: size.width, height: size.height)
+        if let visible = (window.screen ?? NSScreen.main)?.visibleFrame {
+            frame.origin.x = min(max(frame.minX, visible.minX), max(visible.minX, visible.maxX - frame.width))
+            frame.origin.y = min(max(frame.minY, visible.minY), max(visible.minY, visible.maxY - frame.height))
+        }
+        window.setFrame(frame, display: false)
     }
     func presentFromTopEntry(originFrame: NSRect? = nil) {
         cancelPendingPresentationActivation()

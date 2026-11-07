@@ -50,8 +50,11 @@ struct WorkbenchSettingsView: View {
                             WorkbenchTopEntrySelection(controller: controller).frame(width: 174)
                         }
                     }
-                    settingsRow("工作台快捷键", "随时打开工作台", last: true) {
+                    settingsRow("工作台快捷键", "随时打开工作台") {
                         if let owner = model.owner { WorkbenchShortcutSetting(owner: owner) }
+                    }
+                    settingsRow("记住窗口大小", "关闭时每次打开都恢复默认大小；开启后沿用上次的大小", last: true) {
+                        settingToggle("记住窗口大小", get: { model.remembersWindowSize }, set: model.changeRemembersWindowSize)
                     }
                 }
             }

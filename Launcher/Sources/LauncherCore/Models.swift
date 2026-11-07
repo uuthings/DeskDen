@@ -173,8 +173,10 @@ public struct LauncherSettings: Codable, Equatable, Sendable {
     public var actionsEnabled = true
     public var applicationsEnabled = true
     public var scrollSwitchesViews = true
+    /// Off by default: every opening starts from the ordinary 1120 × 758 window.
+    public var remembersWorkbenchWindowSize = false
     public init() {}
-    private enum CodingKeys: String, CodingKey { case display, hotKey, launcherHotKey, hideOnLaunch, resultLayout, reduceMotion, buttonHoverCursor, lightAppearance, glassOpacity, workbenchTheme, workbenchAppearance, backgroundMotionEnabled, interfaceMaterialVersion, appSort, directLaunchPrefix, applicationViewHotKey, workbenchHotKey, defaultSearchInputMode, defaultView, hideUnboundKeys, actionsEnabled, applicationsEnabled, scrollSwitchesViews }
+    private enum CodingKeys: String, CodingKey { case display, hotKey, launcherHotKey, hideOnLaunch, resultLayout, reduceMotion, buttonHoverCursor, lightAppearance, glassOpacity, workbenchTheme, workbenchAppearance, backgroundMotionEnabled, interfaceMaterialVersion, appSort, directLaunchPrefix, applicationViewHotKey, workbenchHotKey, defaultSearchInputMode, defaultView, hideUnboundKeys, actionsEnabled, applicationsEnabled, scrollSwitchesViews, remembersWorkbenchWindowSize }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         display = try values.decodeIfPresent(DisplayMode.self, forKey: .display) ?? .name
@@ -211,6 +213,7 @@ public struct LauncherSettings: Codable, Equatable, Sendable {
         actionsEnabled = try values.decodeIfPresent(Bool.self, forKey: .actionsEnabled) ?? true
         applicationsEnabled = try values.decodeIfPresent(Bool.self, forKey: .applicationsEnabled) ?? true
         scrollSwitchesViews = try values.decodeIfPresent(Bool.self, forKey: .scrollSwitchesViews) ?? true
+        remembersWorkbenchWindowSize = try values.decodeIfPresent(Bool.self, forKey: .remembersWorkbenchWindowSize) ?? false
     }
 }
 public struct LauncherConfiguration: Codable, Equatable, Sendable {

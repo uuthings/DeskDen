@@ -415,6 +415,15 @@ final class LauncherCoreTests: XCTestCase {
         configured.defaultSearchInputMode = .text; configured.actionsEnabled = false; configured.scrollSwitchesViews = false
         XCTAssertEqual(try JSONDecoder().decode(LauncherSettings.self,from:JSONEncoder().encode(configured)),configured)
     }
+    /// 现行规范 6.1: existing and new settings open at the default window size
+    /// until 「记住窗口大小」 is turned on.
+    func testWindowSizeMemoryStartsOffAndRoundTrips() throws {
+        XCTAssertFalse(LauncherSettings().remembersWorkbenchWindowSize)
+        let old = Data(#"{"display":"name","hotKey":"controlOptionSpace"}"#.utf8)
+        XCTAssertFalse(try JSONDecoder().decode(LauncherSettings.self,from:old).remembersWorkbenchWindowSize)
+        var configured = LauncherSettings(); configured.remembersWorkbenchWindowSize = true
+        XCTAssertTrue(try JSONDecoder().decode(LauncherSettings.self,from:JSONEncoder().encode(configured)).remembersWorkbenchWindowSize)
+    }
     func testAtLeastOnePanelMustRemainEnabled() throws {
         var config = LauncherConfiguration()
         config.settings.actionsEnabled = false

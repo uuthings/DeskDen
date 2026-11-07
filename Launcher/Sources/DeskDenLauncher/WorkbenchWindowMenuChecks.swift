@@ -174,6 +174,26 @@ import LauncherCore
         check(sheetRestored && window.attachedSheet === sheet && text.stringValue == "Unsaved fixture",
               "foreground restoration preserves the native sheet and returns keyboard focus to its unsaved form")
         window.endSheet(sheet);sheet.orderOut(nil);sheet.close()
+
+        // 现行规范 6.1: with 「记住窗口大小」 off (the default), each opening returns
+        // to the ordinary 1120 × 758 size and keeps the top-left corner; turning it
+        // on keeps the size the person chose.
+        let defaultContent=WorkbenchWindowController.defaultContentSize
+        let contentSize={ window.contentRect(forFrameRect:window.frame).size }
+        window.setContentSize(NSSize(width:1300,height:860))
+        let topLeft=NSPoint(x:window.frame.minX,y:window.frame.maxY)
+        model.closeWindow?();_=await wait {!window.isVisible}
+        controller.present();_=await wait {window.isVisible}
+        check(!model.remembersWindowSize && contentSize() == defaultContent && window.frame.minX == topLeft.x && window.frame.maxY == topLeft.y,
+              "reopening returns to the default 1120 × 758 size at the same top-left corner unless window size memory is on")
+        model.changeRemembersWindowSize(true)
+        window.setContentSize(NSSize(width:1300,height:860))
+        let remembered=window.frame
+        model.closeWindow?();_=await wait {!window.isVisible}
+        controller.present();_=await wait {window.isVisible}
+        check(model.remembersWindowSize && owner.configuration.settings.remembersWorkbenchWindowSize && window.frame == remembered,
+              "with window size memory on, reopening keeps the size the person chose")
+        model.changeRemembersWindowSize(false);window.setContentSize(defaultContent)
         check(!model.device.isSampling && system.requests == 0 && system.reads == 0 && notifications.requests == 0,
               "window verification leaves real calendar access, reminders and hardware sampling untouched")
         return(count,failures)
