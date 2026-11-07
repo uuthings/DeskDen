@@ -151,6 +151,7 @@ struct WorkbenchSceneView: View {
     @ViewBuilder private var content: some View {
         if model.route == .device {
             DeviceModuleView(model: model.device, onOpenNetwork:{model.navigate(.network)},onOpenCleaning:{model.navigate(.cleaning)}, requestedDetail:$model.deviceDetail,requestedDetailReturnTitle:model.requestedReadingReturnTitle,onCloseRequestedDetail:model.closeRequestedDeviceDetail)
+                .environment(\.timeZone, model.context.dateContext.timeZone)
                 .frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.top)
         } else if model.route == .cleaning {
             SpaceCleaningModuleView(model:model.cleaning)

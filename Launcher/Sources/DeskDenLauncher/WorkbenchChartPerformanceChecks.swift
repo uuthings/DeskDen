@@ -32,7 +32,8 @@ enum WorkbenchChartPerformanceChecks {
         let both = DeviceHistoryChartData(points: [point(0, 1_000, 3_000_000)], kind: .network, minutes: 5, networkScale: true)
         check(both.maxValue == 4_194_304, "network axis includes upload peaks and rounds to the established unit")
         let thermal = DeviceHistoryChartData(points: [point(0, 46, 79)], kind: .thermal, minutes: 5, networkScale: false)
-        check(thermal.minValue == 35 && thermal.maxValue == 90, "thermal axis keeps its temperature-specific padding")
+        // 现行规范 9.2: ten-degree bounds keep the labelled middle gridline on a whole degree.
+        check(thermal.minValue == 40 && thermal.maxValue == 90, "thermal axis uses padded ten-degree bounds")
         let cpu = DeviceHistoryChartData(points: [point(0, 20), point(2, 140)], kind: .cpu, minutes: 5, networkScale: false)
         check(cpu.maxValue == 100 && cpu.minValue == 0 && cpu.series[0].last?.location?.y == 0, "percentage charts keep their 0–100 range and clip oversized readings")
         let history = (0...1800).map { index in point(Double(index * 2), Double(index % 79) * 100_000, Double(index % 37) * 10_000) }

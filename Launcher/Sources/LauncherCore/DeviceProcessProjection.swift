@@ -53,7 +53,7 @@ public struct DeviceProcessProjection: Sendable {
         var totals = Dictionary(uniqueKeysWithValues: DeviceProcessFilter.allCases.map { ($0, DeviceProcessFilterCount()) })
         entries = buckets.map { key, members in
             let application = grouped ? members.first?.application : nil
-            let group = DeviceProcessGroup(id: key, name: application?.name ?? members[0].name,
+            let group = DeviceProcessGroup(id: key, name: application?.name ?? members[0].displayName,
                                            application: application, processes: members.sorted { $0.pid < $1.pid })
             let entry = Entry(group: group, cpu: group.cpuPercent, memory: group.residentBytes,
                               minimumPID: group.processes.first?.pid ?? 0,
@@ -74,7 +74,7 @@ public struct DeviceProcessProjection: Sendable {
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let matches = entries.filter { entry in
             entry.includes(filter) && (term.isEmpty || entry.group.name.localizedStandardContains(term)
-                || entry.group.processes.contains { $0.name.localizedStandardContains(term) || String($0.pid).contains(term) })
+                || entry.group.processes.contains { $0.name.localizedStandardContains(term) || $0.displayName.localizedStandardContains(term) || String($0.pid).contains(term) })
         }
         func precedes(_ a: Entry, _ b: Entry) -> Bool {
             switch sort {

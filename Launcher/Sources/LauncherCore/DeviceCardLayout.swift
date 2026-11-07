@@ -51,9 +51,14 @@ public struct DeviceCardPreference: Codable, Equatable, Identifiable, Sendable {
     }
 }
 public struct DeviceDashboardLayout: Codable, Equatable, Sendable {
-    public var schemaVersion = 4
+    public var schemaVersion = 5
     public var cards: [DeviceCardPreference]
+    /// The profile is a 100-point information strip so the default dashboard
+    /// fits an ordinary window (现行规范 9.2).
     public static var defaultCards: [DeviceCardPreference] {
+        [.init(.profile, columns: 12, rows: 2), .init(.memory, columns: 4), .init(.storage, columns: 4), .init(.thermal, columns: 4), .init(.cpu, columns: 6), .init(.processes, columns: 6), .init(.traffic, columns: 4, visible: false), .init(.network, columns: 4, visible: false)]
+    }
+    private static var versionFourDefault: [DeviceCardPreference] {
         [.init(.profile, columns: 12, rows: 3), .init(.memory, columns: 4), .init(.storage, columns: 4), .init(.thermal, columns: 4), .init(.cpu, columns: 6), .init(.processes, columns: 6), .init(.traffic, columns: 4, visible: false), .init(.network, columns: 4, visible: false)]
     }
     private static var versionThreeDefault: [DeviceCardPreference] {
@@ -71,7 +76,7 @@ public struct DeviceDashboardLayout: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let version = try container.decode(Int.self, forKey: .schemaVersion)
         let decoded = try container.decode([DeviceCardPreference].self, forKey: .cards)
-        guard (1...4).contains(version) else { throw LauncherError.storage("设备卡片布局版本暂不支持，原文件已保留。") }
+        guard (1...5).contains(version) else { throw LauncherError.storage("设备卡片布局版本暂不支持，原文件已保留。") }
         if version == 1 {
             let oldIDs = Set(DeviceCardID.allCases.filter { $0 != .traffic })
             guard decoded.count == oldIDs.count, Set(decoded.map(\.id)) == oldIDs,
@@ -83,12 +88,15 @@ public struct DeviceDashboardLayout: Codable, Equatable, Sendable {
             cards = Self.defaultCards
         } else if version == 3, decoded == Self.versionThreeDefault {
             cards = Self.defaultCards
+        } else if version == 4, decoded == Self.versionFourDefault {
+            // Only the untouched previous default moves to the shorter profile strip.
+            cards = Self.defaultCards
         } else { cards = decoded }
-        schemaVersion = 4
+        schemaVersion = 5
         try validate()
     }
     public func validate() throws {
-        guard schemaVersion == 4, cards.count == DeviceCardID.allCases.count,
+        guard schemaVersion == 5, cards.count == DeviceCardID.allCases.count,
               Set(cards.map(\.id)) == Set(DeviceCardID.allCases),
               cards.allSatisfy({ (3...12).contains($0.columns) && (2...9).contains($0.rows) }) else {
             throw LauncherError.storage("设备卡片布局格式无效，原文件已保留。")
@@ -123,6 +131,8 @@ public enum DeviceDashboardGrid {
     public static let gap: CGFloat = 12
     public static let rowHeight: CGFloat = 44
     public static let summaryHeight: CGFloat = 200
+    /// The trend band takes the page's remaining height within this range.
+    public static let trendHeights: ClosedRange<CGFloat> = 200...272
     public static let compactProfileHeight: CGFloat = 224.5
     public struct Metrics: Equatable, Sendable {
         public let scale: CGFloat
@@ -148,6 +158,7 @@ public enum DeviceDashboardGrid {
         // Logical row spans preserve saved layouts. Summary bands use one shared
         // height; expansion is reserved for trend and process content.
         let useful: Set<DeviceCardID> = [.cpu, .network, .processes]
+        var trendRows: [Int] = []
         for y in 0..<rows {
             let occupants = cards.filter { $0.row <= y && y < $0.row + $0.rows }
             guard !occupants.isEmpty else { continue }
@@ -161,7 +172,17 @@ public enum DeviceDashboardGrid {
                 heights[y] = (compactProfileHeight - 3 * gap) / 4
             } else if occupants.allSatisfy({ useful.contains($0.id) && $0.rows == 4 }) {
                 heights[y] = ((wide ? 272 : 240) - 3 * gap) / 4
+                trendRows.append(y)
             }
+        }
+        // With a known page height, trend rows take what the other rows leave,
+        // within their readable range; a larger window keeps the rest as wallpaper.
+        if minimumHeight.isFinite, minimumHeight > 0, !trendRows.isEmpty {
+            let others = heights.indices.filter { !trendRows.contains($0) }.reduce(CGFloat(0)) { $0 + heights[$1] }
+                + CGFloat(max(0, rows - 1)) * gap
+            let lower = (trendHeights.lowerBound - 3 * gap) / 4, upper = (trendHeights.upperBound - 3 * gap) / 4
+            let value = min(upper, max(lower, (minimumHeight - others) / CGFloat(trendRows.count)))
+            for y in trendRows { heights[y] = value }
         }
         return Metrics(scale: 1, gap: gap, rowHeight: row, columnStep: ((width.isFinite ? max(0, width) : 0) + gap) / 12, expanded: wide, rowHeights: heights)
     }

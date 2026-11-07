@@ -27,7 +27,6 @@ struct DeviceModuleView: View {
     @State private var ascending = false
     @State private var sheet: DeviceSheet?
     @State private var gridHeight: CGFloat = 620
-    @State private var contentWidth: CGFloat = 864
     private var s: DeviceSnapshot { model.snapshot }
     init(model: DeviceStatusModel, onOpenNetwork: @escaping () -> Void = {}, onOpenCleaning: @escaping () -> Void = {}, initialDetail: DeviceCardID? = nil, requestedDetail: Binding<DeviceCardID?> = .constant(nil), requestedDetailReturnTitle: String = "返回设备状态", onCloseRequestedDetail: @escaping () -> Void = {}) {
         self.model = model; self.onOpenNetwork = onOpenNetwork; self.onOpenCleaning = onOpenCleaning
@@ -41,9 +40,21 @@ struct DeviceModuleView: View {
             VStack(alignment: .leading, spacing: 0) {
                 if let detail { detailPage(detail) }
                 else {
-                    WBPageHeader(title: "设备状态", subtitle: "\(s.deviceName) · \(s.chipName)") {
+                    // The sampling note and page actions live in the header, so the
+                    // default dashboard fits the window without a footer (现行规范 9.2).
+                    WBPageHeader(title: "设备状态", subtitle: "本机状态 · 每 \(Int(model.samplingInterval)) 秒更新") {
                         HStack(spacing: 8) {
-                            if editing { Button { library = true } label: { Label("添加卡片", systemImage: "plus") }.buttonStyle(WBButtonStyle()) }
+                            if editing {
+                                if model.undoLayout != nil {
+                                    Button { model.undoLayoutChange() } label: { Label("撤销布局修改", systemImage: "arrow.uturn.backward") }
+                                        .buttonStyle(WBButtonStyle()).accessibilityIdentifier("device-layout-undo")
+                                }
+                                Button("恢复默认布局") { resetLayout = true }.buttonStyle(WBButtonStyle()).accessibilityIdentifier("device-layout-reset")
+                                Button { library = true } label: { Label("添加卡片", systemImage: "plus") }.buttonStyle(WBButtonStyle())
+                            } else {
+                                Button { sheet = .sensors } label: { Label("数据来源", systemImage: "info.circle") }
+                                    .buttonStyle(WBButtonStyle()).accessibilityIdentifier("device-data-sources")
+                            }
                             Button { editing.toggle(); library = false } label: { Label(editing ? "完成" : "编辑布局", systemImage: editing ? "checkmark" : "slider.horizontal.3") }
                                 .buttonStyle(WBButtonStyle(primary: editing)).accessibilityIdentifier("fc.action.device.edit")
                         }
@@ -51,7 +62,7 @@ struct DeviceModuleView: View {
                     if let error = model.layoutError ?? model.lastError {
                         Text(error).font(.system(size: 11)).foregroundStyle(palette.warning).padding(.bottom, 12)
                     }
-                    DeviceDashboardRepresentable(model: model, editing: editing, scale: 1, expanded: expanded, minimumHeight: 0, open: { card in
+                    DeviceDashboardRepresentable(model: model, editing: editing, scale: 1, expanded: expanded, minimumHeight: dashboardHeight, open: { card in
                         if card == .traffic || card == .network { onOpenNetwork() }
                         else { detail = card; thermalSettings = false }
                     }, heightChanged: { height in if abs(height - gridHeight) > 0.5 { gridHeight = height } })
@@ -59,22 +70,12 @@ struct DeviceModuleView: View {
                     if model.dashboardLayout.cards.allSatisfy({ !$0.visible }) {
                         Button("从卡片库添加信息") { editing = true; library = true }.buttonStyle(WBButtonStyle()).padding(.top, 12)
                     }
-                    WBPageNote(symbol: "waveform.path.ecg") {
-                        HStack(spacing: 10) {
-                            Text("本机状态 · 每 \(Int(model.samplingInterval)) 秒更新")
-                            Spacer()
-                            if editing { Button("恢复默认布局") { resetLayout = true }.buttonStyle(WBQuietButtonStyle()) }
-                            if model.undoLayout != nil { Button("撤销布局修改") { model.undoLayoutChange() }.buttonStyle(WBQuietButtonStyle()) }
-                            Button("数据来源") { sheet = .sensors }.buttonStyle(WBQuietButtonStyle())
-                        }
-                    }.padding(.top, 14)
                 }
             }.frame(maxWidth: .infinity, alignment: .topLeading).foregroundStyle(palette.text)
-                .background(GeometryReader { proxy in Color.clear.preference(key: DeviceContentWidth.self, value: proxy.size.width) })
                 .workbenchPageCanvas()
                 .id("device-page-top")
                 .accessibilityElement(children:.contain).accessibilityIdentifier(detail.map { "fc.page.device.\($0.rawValue)" } ?? "fc.page.device")
-        }.onPreferenceChange(DeviceContentWidth.self) { contentWidth = $0 }.scrollContentBackground(.hidden).scrollBounceBehavior(.basedOnSize)
+        }.scrollContentBackground(.hidden).scrollBounceBehavior(.basedOnSize)
             .task { monitoringDrafts.load(model); await model.refreshNotificationPermission() }
             .onAppear { detailWasRequested = requestedDetail != nil; detail = requestedDetail ?? initialDetail }
             .onChange(of: requestedDetail) { _, value in if detail != value { detailWasRequested = value != nil; detail = value } }
@@ -101,30 +102,38 @@ struct DeviceModuleView: View {
         detailWasRequested = false; detail = nil; requestedDetail = nil
         if returnToSource { onCloseRequestedDetail() }
     }
+    /// Page height below the header (62 + 12) and any status line; the trend
+    /// row of the default dashboard takes what the other rows leave.
+    private var errorLineHeight: CGFloat { (model.layoutError ?? model.lastError) == nil ? 0 : 28 }
+    private var dashboardHeight: CGFloat { max(0, viewportHeight - 74 - errorLineHeight) }
+    /// The model phrases a source as "返回首页"; the header names only the destination.
+    private var backTitle: String {
+        guard detailWasRequested else { return "设备状态" }
+        return requestedDetailReturnTitle.hasPrefix("返回") ? String(requestedDetailReturnTitle.dropFirst(2)) : requestedDetailReturnTitle
+    }
     private var cardLibrary: some View {
         DeviceDialog(title: "卡片库", dismiss: { library = false }) {
-            VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
                 ForEach(DeviceDashboardLayout.defaultCards.map(\.id), id: \.self) { id in
                     HStack(spacing: 8) {
-                        WorkbenchContentIcon(device: id, size: 16)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(id.title).font(.system(size: 12))
-                            if id == .network || id == .traffic { Text("也可在网络监控集中查看").font(.system(size: 11)).foregroundStyle(palette.muted) }
-                        }
+                        WorkbenchContentIcon(device: id, size: 16).foregroundStyle(palette.accent)
+                        Text(id.title).font(.system(size: 12))
                         Spacer(minLength: 8)
                         let added = model.dashboardLayout.cards.first { $0.id == id }?.visible == true
                         if added { Text("已显示").font(.system(size: 11)).foregroundStyle(palette.muted) }
                         else { Button("添加") { model.changeCard(id) { $0.visible = true }; library = false }.buttonStyle(WBButtonStyle(compact: true)).accessibilityLabel("添加" + id.title) }
-                    }.frame(height: 48).overlay(alignment: .bottom) { palette.line.frame(height: 1) }
+                    }.frame(height: 36).overlay(alignment: .bottom) { palette.line.frame(height: 1) }
                 }
+                Text("网络速度和今日流量也可在网络监控集中查看。").font(.system(size: 11)).foregroundStyle(palette.muted).padding(.top, 10)
             }
         } actions: { Button("完成") { library = false }.buttonStyle(WBButtonStyle(primary: true)).keyboardShortcut(.defaultAction) }
     }
     @ViewBuilder private func detailPage(_ card: DeviceCardID) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button(action: closeDetail) { Label(detailWasRequested ? requestedDetailReturnTitle : "返回设备状态", systemImage: "arrow.left") }
-                .buttonStyle(WBButtonStyle(compact: true)).keyboardShortcut(.cancelAction).padding(.bottom, 12).accessibilityIdentifier("device-detail-back")
-            WBPageHeader(title: card.title, subtitle: "\(s.deviceName) · \(s.chipName)") {
+            // The way back sits before the title and the subtitle says what the
+            // page shows (现行规范 4.1, 9.2).
+            WBPageHeader(title: card.title, subtitle: detailDescription(card),
+                         back: WBPageBack(title: backTitle, identifier: "device-detail-back", escapes: true, action: closeDetail)) {
                 if card == .storage { Button { onOpenCleaning() } label: { Label("空间清理", systemImage: "internaldrive") }.buttonStyle(WBButtonStyle(primary: true)).accessibilityIdentifier("device-detail-open-cleaning") }
                 else if card == .thermal { Button { temperatureOpen = true } label: { Label("温度提醒", systemImage: "bell") }.buttonStyle(WBButtonStyle()) }
                 else if card == .processes { Button { model.refresh() } label: { Label("刷新", systemImage: "arrow.clockwise") }.buttonStyle(WBButtonStyle()) }
@@ -146,12 +155,11 @@ struct DeviceModuleView: View {
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
             .environment(\.workbenchControlBorders, card != .processes)
-            .focusEffectDisabled(card == .processes)
     }
     private func detailDescription(_ card: DeviceCardID) -> String {
         switch card {
         case .profile: "硬件配置与系统信息"
-        case .cpu: "\(s.chipName) · \(s.physicalCPUCount) 核中央处理器"
+        case .cpu: s.physicalCPUCount > 0 ? "\(s.chipName) · \(s.physicalCPUCount) 核中央处理器" : "中央处理器的使用率与负载"
         case .memory: "统一内存的使用、组成与压力"
         case .storage: "启动磁盘、共享容器与卷信息"
         case .thermal: "温度、风扇、电源状态与持续高温提醒"
@@ -169,15 +177,15 @@ struct DeviceModuleView: View {
                     DeviceFact(label: "芯片", value: s.chipName)
                     DeviceFact(label: "CPU", value: "\(s.physicalCPUCount) 核 · \(s.logicalCPUCount) 个逻辑处理器")
                     DeviceFact(label: "核心构成", value: s.performanceCores.flatMap { p in s.efficiencyCores.map { "\(p) 个性能核 + \($0) 个能效核" } } ?? "系统未提供").accessibilityIdentifier("device-profile-core-composition")
-                    DeviceFact(label: "统一内存", value: DeviceFormat.bytes(s.memory?.total))
+                    DeviceFact(label: "统一内存", value: DeviceFormat.capacity(s.memory?.total))
                     DeviceFact(label: "显示器", value: NSScreen.screens.map(\.localizedName).joined(separator: "、"))
                 }
                 DeviceDetailCard(title: "系统与存储", symbol: "internaldrive", spacing: 12) {
-                    DeviceFact(label: "操作系统", value: ProcessInfo.processInfo.operatingSystemVersionString)
+                    DeviceFact(label: "操作系统", value: DeviceFormat.systemVersion)
                     DeviceFact(label: "系统卷", value: s.disk?.name ?? "暂无读数")
                     DeviceFact(label: "文件系统", value: s.disk?.fileSystem ?? "暂无读数")
-                    DeviceFact(label: "启动卷容量", value: DeviceFormat.storage(s.disk?.total))
-                    DeviceFact(label: "可用容量", value: DeviceFormat.storage(s.disk?.available))
+                    DeviceFact(label: "总容量", value: DeviceFormat.storage(s.disk?.total))
+                    DeviceFact(label: "可用空间", value: DeviceFormat.storage(s.disk?.available))
                     DeviceFact(label: "运行时间", value: DeviceFormat.duration(s.uptime))
                 }
             }
@@ -186,85 +194,114 @@ struct DeviceModuleView: View {
     }
     private func performanceDetail(memory: Bool) -> some View {
         VStack(spacing: 12) {
+            // First-row page readings are 30, secondary readings in the same
+            // row 24 (现行规范 9.2).
             DeviceDetailColumns(minimumCardHeight: 128.25) {
-                DeviceDetailCard(title: "当前使用率", symbol: "cpu") { DeviceReading(value: DeviceFormat.percent(s.cpuPercent), size: 36); Text("以全部 CPU 总算力为 100%").font(.system(size: 11)).foregroundStyle(palette.muted) }
+                DeviceDetailCard(title: "当前使用率", symbol: "cpu") { DeviceReading(value: DeviceFormat.percent(s.cpuPercent), size: 30); Text("以全部 CPU 总算力为 100%").font(.system(size: 11)).foregroundStyle(palette.muted) }
                 DeviceDetailCard(title: "用户进程", symbol: "macwindow") { DeviceReading(value: DeviceFormat.percent(s.cpuUserPercent)); Text("当前应用与后台任务").font(.system(size: 11)).foregroundStyle(palette.muted) }
                 DeviceDetailCard(title: "系统", symbol: "gearshape") { DeviceReading(value: DeviceFormat.percent(s.cpuSystemPercent)); Text("系统内核与系统服务").font(.system(size: 11)).foregroundStyle(palette.muted) }
             }
             WBCard {
-                HStack { Label("CPU 使用率趋势", systemImage: "waveform.path.ecg").font(.system(size: 12, weight: .medium)); Spacer(); rangePicker }
+                chartTitle("CPU 使用率趋势")
                 DeviceHistoryChart(points: model.history, kind: .cpu, minutes: minutes).frame(height: expanded ? 260 : 190)
             }
             DeviceDetailColumns {
-                DeviceDetailCard(title: "处理器", symbol: "cpu", spacing: 12, identifier: "fc.device.detail.card.cpu-processor") {
+                DeviceDetailCard(title: "处理器", symbol: "cpu", identifier: "fc.device.detail.card.cpu-processor") {
                     DeviceFact(label: "芯片", value: s.chipName)
-                    DeviceFact(label: "CPU 核心", value: "\(s.physicalCPUCount) 核")
-                    DeviceFact(label: "当前空闲", value: DeviceFormat.percent(s.cpuPercent.map { 100 - $0 }))
+                    DeviceFact(label: "CPU 核心", value: s.physicalCPUCount > 0 ? "\(s.physicalCPUCount) 核" : "读取中")
+                    DeviceFact(label: "核心构成", value: s.performanceCores.flatMap { p in s.efficiencyCores.map { "\(p) 个性能核 + \($0) 个能效核" } } ?? "系统未提供")
                 }
-                DeviceLinkedDetailCard(title: "相关进程", symbol: "macwindow", identifier: "fc.device.detail.card.cpu-processes", actionTitle: "查看全部进程", spacing: 0, action: { detail = .processes }) {
+                DeviceLinkedDetailCard(title: "相关进程", symbol: "macwindow", identifier: "fc.device.detail.card.cpu-processes", actionTitle: "查看全部进程", trailing: "查看全部进程", spacing: 0, action: { detail = .processes }) {
                     VStack(spacing: 0) {
+                        DevicePreviewHeader(leading: "名称", trailing: "CPU 占用")
                         ForEach(DeviceProcess.filtered(s.processes, query: "", sort: .cpu).prefix(3)) { process in
-                            HStack(spacing: 8) { DeviceProcessIcon(path: process.executablePath).frame(width: 19, height: 19); Text(process.name).lineLimit(1); Spacer(); Text(DeviceFormat.percent(process.cpuPercent)).monospacedDigit() }.font(.system(size: 11)).frame(height: 23)
+                            HStack(spacing: 8) {
+                                DeviceProcessIcon(path: process.executablePath).frame(width: 16, height: 16)
+                                Text(process.displayName).lineLimit(1).help(process.displayName); Spacer()
+                                Text(DeviceFormat.percent(process.cpuPercent)).monospacedDigit().foregroundStyle(palette.secondary)
+                            }.font(.system(size: 12)).frame(height: 24)
                         }
                     }
                 }
             }
         }
     }
+    // Both first-row cards carry a title row; the second table became a preview
+    // that leads to the process page, where quitting is handled (现行规范 9.2).
     private var memoryDetail: some View {
         VStack(spacing: 12) {
             DeviceDetailColumns(firstFraction: 1.1 / 2.1) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("统一内存").font(.system(size: 11)).foregroundStyle(palette.muted)
-                    HStack(alignment: .firstTextBaseline, spacing: 4) { DeviceReading(value: DeviceFormat.capacity(s.memory?.used), size: 30); Text("/ \(DeviceFormat.capacity(s.memory?.total))").font(.system(size: 12)).foregroundStyle(palette.secondary) }
-                    DeviceMemoryComposition(memory: s.memory).frame(height: 9)
-                    HStack(spacing: 11) {
-                        Text("应用 \(DeviceFormat.capacity(s.memory?.application))")
-                        Text("固定 \(DeviceFormat.capacity(s.memory?.wired))")
-                        Text("压缩 \(DeviceFormat.capacity(s.memory?.compressed))")
-                        Text("可用 \(DeviceFormat.capacity(s.memory?.available))")
-                    }.font(.system(size: 11)).foregroundStyle(palette.muted)
-                }.padding(14).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading).background(DeviceCardSurface())
-                HStack(spacing: 14) {
-                    Image(systemName: "waveform.path.ecg").font(.system(size: 22)).foregroundStyle(palette.success).frame(width: 45, height: 45).background(palette.success.opacity(0.10), in: RoundedRectangle(cornerRadius: 14))
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text("内存压力").font(.system(size: 11)).foregroundStyle(palette.muted)
-                        Text(DeviceFormat.pressure(s.memory?.pressure ?? .unknown)).font(.system(size: 21, weight: .medium)).foregroundStyle((s.memory?.pressure == .normal ? palette.success : DeviceAppearance.pressure(s.memory?.pressure, palette: palette)))
-                        Text("交换 \(DeviceFormat.capacity(s.memory?.swapUsed)) · 缓存文件 \(DeviceFormat.capacity(s.memory?.cached))").font(.system(size: 11)).foregroundStyle(palette.secondary)
-                        Text(s.memory?.pressure == .normal ? "macOS 会利用空闲内存缓存。当前无需主动清空。" : "结合持续压力与交换空间判断，先保存工作，再按需复核应用。").font(.system(size: 11)).foregroundStyle(palette.muted).fixedSize(horizontal: false, vertical: true)
-                    }
-                }.padding(14).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading).background(DeviceCardSurface())
+                DeviceDetailCard(title: "统一内存", symbol: "memorychip", identifier: "fc.device.detail.card.memory-usage") {
+                    HStack(alignment: .firstTextBaseline, spacing: 4) { DeviceReading(value: DeviceFormat.capacity(s.memory?.used), size: 30); Text("/ \(DeviceFormat.capacity(s.memory?.total))").font(.system(size: 11)).foregroundStyle(palette.secondary) }
+                    DeviceMemoryComposition(memory: s.memory).frame(height: 5).padding(.top, 2)
+                    HStack(spacing: 14) {
+                        DeviceLegendItem(title: "应用", value: DeviceFormat.capacity(s.memory?.application), color: palette.accent)
+                        DeviceLegendItem(title: "固定", value: DeviceFormat.capacity(s.memory?.wired), color: palette.cool)
+                        DeviceLegendItem(title: "压缩", value: DeviceFormat.capacity(s.memory?.compressed), color: palette.warning)
+                        DeviceLegendItem(title: "可用", value: DeviceFormat.capacity(s.memory?.available), color: palette.progressTrack)
+                    }.padding(.top, 2)
+                }
+                DeviceDetailCard(title: "内存压力", symbol: "waveform.path.ecg", identifier: "fc.device.detail.card.memory-pressure") {
+                    Text(DeviceFormat.pressure(s.memory?.pressure ?? .unknown)).font(.system(size: 17, weight: .medium)).foregroundStyle((s.memory?.pressure == .normal ? palette.success : DeviceAppearance.pressure(s.memory?.pressure, palette: palette)))
+                    Text("交换 \(DeviceFormat.capacity(s.memory?.swapUsed)) · 缓存文件 \(DeviceFormat.capacity(s.memory?.cached))").font(.system(size: 11)).foregroundStyle(palette.secondary)
+                    Text(s.memory?.pressure == .normal ? "macOS 会利用空闲内存做缓存，当前无需主动清空。" : "结合持续压力与交换空间判断，先保存工作，再按需复核应用。").font(.system(size: 11)).foregroundStyle(palette.muted).fixedSize(horizontal: false, vertical: true)
+                }
             }
-            DeviceProcessExplorerView(processes: s.processes, systemCount: s.processTotalCount, query: $query, sort: $processSort, ascending: $ascending, open: { sheet = .process($0) }, leave: { detail = nil }, memoryFocused: true)
-                .frame(height: 505)
+            DeviceLinkedDetailCard(title: "内存占用最多", symbol: "macwindow", identifier: "fc.device.detail.card.memory-top", actionTitle: "查看全部进程", trailing: "查看全部进程", spacing: 0,
+                                   action: { processSort = .memory; ascending = false; detail = .processes }) {
+                VStack(spacing: 0) {
+                    HStack(spacing: 12) {
+                        Text("名称").frame(maxWidth: .infinity, alignment: .leading)
+                        Text("进程数").frame(width: 90, alignment: .trailing)
+                        Text("内存").frame(width: 90, alignment: .trailing)
+                    }.font(.system(size: 11)).foregroundStyle(palette.secondary).frame(height: 28)
+                    ForEach(topMemoryGroups) { group in
+                        HStack(spacing: 12) {
+                            HStack(spacing: 8) {
+                                DeviceProcessIcon(path: group.application?.executablePath ?? group.processes.first?.executablePath).frame(width: 20, height: 20)
+                                Text(group.name).font(.system(size: group.application == nil ? 12 : 13, weight: group.application == nil ? .regular : .medium))
+                                    .lineLimit(1).help(group.name)
+                            }.frame(maxWidth: .infinity, alignment: .leading)
+                            Text(group.application == nil ? "单个进程" : "\(group.processes.count) 个进程").font(.system(size: 11)).foregroundStyle(palette.muted).frame(width: 90, alignment: .trailing)
+                            Text(DeviceFormat.bytes(group.residentBytes)).font(.system(size: 12)).monospacedDigit().frame(width: 90, alignment: .trailing)
+                        }.frame(height: 36).overlay(alignment: .top) { palette.line.frame(height: 1) }
+                    }
+                    if topMemoryGroups.isEmpty {
+                        Text("正在读取可访问的进程").font(.system(size: 11)).foregroundStyle(palette.muted).frame(maxWidth: .infinity, alignment: .leading).frame(height: 36)
+                    }
+                }
+            }
         }
+    }
+    /// The eight applications or independent processes using the most memory.
+    private var topMemoryGroups: [DeviceProcessGroup] {
+        Array(DeviceProcessExplorer.groups(s.processes, grouped: true, filter: .all, query: "", sort: .memory, ascending: false).prefix(8))
     }
     private var thermalDetail: some View {
         let status = DeviceThermalPresentation(snapshot: s, rule: model.temperatureRule)
         return VStack(spacing: 12) {
+            // Temperature alerts open only from the header; the status card and
+            // fan card no longer repeat each other (现行规范 9.2).
             DeviceDetailColumns(minimumCardHeight: 128.25) {
-                DeviceDetailCard(title: "CPU 温度", symbol: "thermometer.medium") { DeviceReading(value: DeviceFormat.temperature(s.cpuTemperature), size: 36).foregroundStyle(status.cpuLevel == .normal ? palette.text : status.cpuLevel.color(palette: palette)); Text(s.cpuTemperature == nil ? "暂无有效读数" : "提醒阈值 \(model.temperatureRule.cpuThreshold.formatted())°C").font(.system(size: 11)).foregroundStyle(palette.muted) }
-                DeviceDetailCard(title: "GPU 温度", symbol: "thermometer.medium") { DeviceReading(value: DeviceFormat.temperature(s.gpuTemperature), size: 36).foregroundStyle(status.gpuLevel == .normal ? palette.text : status.gpuLevel.color(palette: palette)); Text(s.gpuTemperature == nil ? "暂无有效读数" : "提醒阈值 \(model.temperatureRule.gpuThreshold.formatted())°C").font(.system(size: 11)).foregroundStyle(palette.muted) }
+                DeviceDetailCard(title: "CPU 温度", symbol: "thermometer.medium") { DeviceReading(value: DeviceFormat.temperature(s.cpuTemperature), size: 30).foregroundStyle(status.cpuLevel == .normal ? palette.text : status.cpuLevel.color(palette: palette)); Text(s.cpuTemperature == nil ? "暂无有效读数" : "提醒阈值 \(model.temperatureRule.cpuThreshold.formatted())°C").font(.system(size: 11)).foregroundStyle(palette.muted) }
+                DeviceDetailCard(title: "GPU 温度", symbol: "thermometer.medium") { DeviceReading(value: DeviceFormat.temperature(s.gpuTemperature), size: 30).foregroundStyle(status.gpuLevel == .normal ? palette.text : status.gpuLevel.color(palette: palette)); Text(s.gpuTemperature == nil ? "暂无有效读数" : "提醒阈值 \(model.temperatureRule.gpuThreshold.formatted())°C").font(.system(size: 11)).foregroundStyle(palette.muted) }
                 DeviceDetailCard(title: "散热状态", symbol: status.symbol) {
                     DeviceThermalStatusBadge(status: status)
-                    Text("macOS：\(DeviceFormat.thermal(s.thermalState))").font(.system(size: 11)).foregroundStyle(palette.secondary)
-                    Button("调整温度提醒") { temperatureOpen = true }.buttonStyle(WBButtonStyle(compact: true))
+                    Text("macOS 报告：\(DeviceFormat.thermal(s.thermalState))").font(.system(size: 11)).foregroundStyle(palette.secondary)
                 }
             }
             WBCard {
-                HStack { Label("温度趋势", systemImage: "waveform.path.ecg").font(.system(size: 12, weight: .medium)); Spacer(); rangePicker }
+                chartTitle("温度趋势")
                 DeviceHistoryChart(points: model.history, kind: .thermal, minutes: minutes).frame(height: expanded ? 260 : 190)
             }
             DeviceDetailColumns {
-                DeviceDetailCard(title: "风扇与系统散热", symbol: "fan") {
+                DeviceDetailCard(title: "风扇", symbol: "fan") {
                     DeviceFanRows(snapshot: s)
-                    DeviceFact(label: "系统热状态", value: DeviceFormat.thermal(s.thermalState))
                     DeviceFact(label: "控制方式", value: "系统自动")
                     DeviceFact(label: "CPU / GPU 峰值", value: "\(DeviceFormat.temperature(peak(\.cpuTemperature))) / \(DeviceFormat.temperature(peak(\.gpuTemperature)))")
                 }
                 DeviceDetailCard(title: "电池与供电", symbol: "battery.75percent") {
-                    DevicePowerLine(snapshot: s, compact: false)
-                    DeviceFact(label: "电源来源", value: s.battery.map { $0.isPluggedIn ? "电源适配器" : "电池" } ?? "外部电源")
+                    DevicePowerLine(snapshot: s, compact: false, prominent: true)
                     DeviceFact(label: "电池健康", value: s.battery.map { DeviceFormat.batteryHealth($0.health) } ?? "无内置电池")
                     DeviceFact(label: "循环计数", value: (s.battery?.cycleCount).map { String($0) } ?? "系统未提供").accessibilityIdentifier("device-battery-cycle-count")
                     DeviceFact(label: "低电量模式", value: ProcessInfo.processInfo.isLowPowerModeEnabled ? "开启" : "关闭")
@@ -311,33 +348,50 @@ struct DeviceModuleView: View {
     }
     private var storageDetail: some View {
         VStack(spacing: 12) {
+            // Same drawing as the home disk card; the volume card reads its mount
+            // point from the system and names volumes by role (现行规范 9.2).
             DeviceDetailColumns(minimumCardHeight: 218.0625) {
                 DeviceDetailCard(title: s.disk?.name ?? "启动磁盘", symbol: "internaldrive", identifier: "fc.device.detail.card.storage-usage") {
                     Text("已用空间").font(.system(size: 11)).foregroundStyle(palette.muted)
-                    DeviceReading(value: DeviceFormat.storage(s.disk?.used), size: 36)
-                    DeviceUsageBar(value: s.disk?.percent, tone: DeviceAppearance.storage(s.disk?.percent, palette: palette))
-                    DeviceFact(label: "可用空间", value: DeviceFormat.storage(s.disk?.available))
-                    DeviceFact(label: "启动卷容量", value: DeviceFormat.storage(s.disk?.total))
-                    DeviceFact(label: "已用比例", value: DeviceFormat.percent(s.disk?.percent))
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        DeviceReading(value: DeviceFormat.storage(s.disk?.used), size: 30)
+                        Text("/ \(DeviceFormat.storage(s.disk?.total))").font(.system(size: 11)).foregroundStyle(palette.secondary)
+                        Spacer(minLength: 8)
+                        Text(DeviceFormat.percent(s.disk?.percent)).font(.system(size: 17, weight: .medium)).monospacedDigit()
+                            .foregroundStyle(DeviceAppearance.storage(s.disk?.percent, palette: palette))
+                    }
+                    DeviceStorageBar(disk: s.disk)
+                    HStack(spacing: 14) {
+                        DeviceLegendItem(title: "已用", value: DeviceFormat.storage(s.disk?.used), color: DeviceAppearance.storage(s.disk?.percent, palette: palette))
+                        DeviceLegendItem(title: "系统可回收（估算）", value: DeviceFormat.storage(s.disk?.reclaimableEstimate), color: DeviceStorageBar.reclaimableTone(palette))
+                        DeviceLegendItem(title: "立即空闲", value: DeviceFormat.storage(s.disk?.immediatelyFree), color: DeviceStorageBar.freeTone(palette))
+                    }
+                    DeviceFact(label: "可用空间", value: DeviceFormat.storage(s.disk?.available)).padding(.top, 4)
+                    DeviceFact(label: "总容量", value: DeviceFormat.storage(s.disk?.total))
                 }
                 DeviceDetailCard(title: "卷信息", symbol: "externaldrive") {
                     DeviceFact(label: "文件系统", value: s.disk?.fileSystem ?? "暂无读数")
-                    DeviceFact(label: "挂载位置", value: "/System/Volumes/Data")
-                    DeviceFact(label: "立即空闲", value: DeviceFormat.storage(s.disk?.immediatelyFree))
-                    DeviceFact(label: "系统可回收估算", value: DeviceFormat.storage(s.disk?.reclaimableEstimate))
-                    DeviceFact(label: "实时磁盘速率", value: "↓ \(DeviceFormat.rate(s.disk?.readBytesPerSecond)) / ↑ \(DeviceFormat.rate(s.disk?.writeBytesPerSecond))")
-                    ForEach(DeviceVolumes.current, id: \.path) { volume in DeviceFact(label: volume.name, value: "\(volume.format) · \(volume.role)") }
+                    DeviceFact(label: "挂载位置", value: s.disk?.mountPoint ?? "暂无读数")
+                    ForEach(DeviceVolumes.current, id: \.path) { volume in DeviceFact(label: volume.role, value: "\(volume.name) · \(volume.format)") }
+                    DeviceFact(label: "磁盘读写", value: "读取 \(DeviceFormat.rate(s.disk?.readBytesPerSecond)) · 写入 \(DeviceFormat.rate(s.disk?.writeBytesPerSecond))")
                 }
             }
-            DeviceRuleHelp(text: "存储按十进制显示（1 GB = 10 亿字节），容量约 30 秒刷新。可用空间优先采用系统含按需可回收空间的估算；无法取得估算时显示立即空闲。已用与比例按同一口径计算。这里是启动卷可用容量，APFS 共享容器空间，不等于硬盘标称容量；可回收估算不代表方寸可删除这些文件。", notice: true).accessibilityIdentifier("device-detail-storage-notice")
+            DeviceRuleHelp(text: "存储按十进制显示（1 GB = 10 亿字节），约 30 秒刷新。可用空间 = 立即空闲 + 系统可回收（估算）；读不到估算时只计立即空闲。这里是启动卷的容量，APFS 卷共享容器空间，不等于硬盘标称容量；系统可回收不是方寸可以删除的文件。", notice: true).accessibilityIdentifier("device-detail-storage-notice")
         }
     }
     private var processesDetail: some View {
         DeviceProcessExplorerView(processes: s.processes, systemCount: s.processTotalCount, query: $query, sort: $processSort, ascending: $ascending, open: { sheet = .process($0) }, leave: closeDetail)
-            .frame(height: min(650, max(260, viewportHeight - (contentWidth < 800 ? 144 : 146) - ((model.layoutError ?? model.lastError) == nil ? 0 : 46))))
+            .frame(height: min(650, max(260, viewportHeight - 74 - errorLineHeight)))
     }
     private var rangePicker: some View {
         WBSelect("趋势时间范围", selection: $minutes, options: [(5, "最近 5 分钟"), (30, "最近 30 分钟"), (60, "最近 1 小时")]).frame(width: 146)
+    }
+    private func chartTitle(_ title: String) -> some View {
+        HStack(spacing: 7) {
+            WorkbenchContentIcon(symbol: "waveform.path.ecg", size: 16).foregroundStyle(palette.accent)
+            Text(title).font(.system(size: 13, weight: .medium))
+            Spacer(); rangePicker
+        }
     }
 }
 
@@ -363,26 +417,45 @@ struct DeviceMemoryComposition: View {
         }.accessibilityLabel(memory.map { "应用 \(DeviceFormat.capacity($0.application))，固定 \(DeviceFormat.capacity($0.wired))，压缩 \(DeviceFormat.capacity($0.compressed))，可用 \(DeviceFormat.capacity($0.available))" } ?? "内存构成暂无读数")
     }
 }
-private struct DeviceContentWidth: PreferenceKey {
-    static let defaultValue: CGFloat = 864
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-}
 /// A related summary has one destination across its complete card surface.
 private struct DeviceLinkedDetailCard<Content: View>: View {
     let title: String
     let symbol: String
     let identifier: String
     let actionTitle: String
+    /// A visible text cue in the title row; the whole card stays the target.
+    var trailing: String? = nil
     var spacing: CGFloat = 8
     let action: () -> Void
     @ViewBuilder let content: Content
     var body: some View {
         Button(action: action) {
-            DeviceDetailCard(title: title, symbol: symbol, spacing: spacing) { content }
+            DeviceDetailCard(title: title, symbol: symbol, spacing: spacing, trailing: trailing.map { $0 + " ›" }) { content }
                 .contentShape(RoundedRectangle(cornerRadius: 15))
         }.buttonStyle(ClickablePlainButtonStyle())
             .help(actionTitle).accessibilityHint(actionTitle)
             .accessibilityIdentifier(identifier)
+    }
+}
+/// The header of a read-only preview list inside a card (现行规范 4.5 exception).
+struct DevicePreviewHeader: View {
+    let leading: String, trailing: String
+    @Environment(\.workbenchPalette) private var palette
+    var body: some View {
+        HStack { Text(leading); Spacer(); Text(trailing) }
+            .font(.system(size: 11)).foregroundStyle(palette.muted).frame(height: 16).padding(.bottom, 4)
+    }
+}
+/// A colored dot names one segment of a bar.
+struct DeviceLegendItem: View {
+    let title: String, value: String, color: Color
+    @Environment(\.workbenchPalette) private var palette
+    var body: some View {
+        HStack(spacing: 5) {
+            Circle().fill(color).frame(width: 6, height: 6)
+            Text(title).foregroundStyle(palette.secondary)
+            Text(value).monospacedDigit().foregroundStyle(palette.text)
+        }.font(.system(size: 11)).lineLimit(1).fixedSize()
     }
 }
 /// Accepts the row's proposed height before drawing its surface. An outer frame
@@ -392,18 +465,21 @@ struct DeviceDetailCard<Content: View>: View {
     var symbol: String?
     var spacing: CGFloat = 8
     var identifier: String?
+    var trailing: String?
     let content: Content
     @Environment(\.workbenchPalette) private var palette
-    init(title: String? = nil, symbol: String? = nil, spacing: CGFloat = 8, identifier: String? = nil, @ViewBuilder content: () -> Content) {
-        self.title = title; self.symbol = symbol; self.spacing = spacing; self.identifier = identifier; self.content = content()
+    init(title: String? = nil, symbol: String? = nil, spacing: CGFloat = 8, identifier: String? = nil, trailing: String? = nil, @ViewBuilder content: () -> Content) {
+        self.title = title; self.symbol = symbol; self.spacing = spacing; self.identifier = identifier; self.trailing = trailing; self.content = content()
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let title {
+                // The shared card title: 16-point icon and 13 medium (现行规范 4.2).
                 HStack(spacing: 7) {
-                    if let symbol { WorkbenchContentIcon(symbol: symbol).foregroundStyle(palette.accent) }
-                    Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(palette.text)
+                    if let symbol { WorkbenchContentIcon(symbol: symbol, size: 16).foregroundStyle(palette.accent) }
+                    Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(palette.text)
                     Spacer(minLength: 0)
+                    if let trailing { Text(trailing).font(.system(size: 11)).foregroundStyle(palette.accent) }
                 }.frame(height: 22).padding(.bottom, 10)
             }
             VStack(alignment: .leading, spacing: spacing) { content }
@@ -448,6 +524,7 @@ struct DeviceVolumes {
             guard let v = try? url.resourceValues(forKeys: [.volumeNameKey]) else { return nil }
             var info = statfs(); guard statfs(path, &info) == 0 else { return nil }
             let format = withUnsafeBytes(of: info.f_fstypename) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }.uppercased()
+            // Both APFS volumes often share one name, so the role is the label.
             return Self(path: path, name: v.volumeName ?? path, format: format, role: path == "/" ? "系统卷" : "数据卷")
         }
     }
@@ -456,11 +533,12 @@ struct DeviceVolumes {
 enum DeviceSheet: Identifiable {
     case coverage, sensors, thresholds, networkOptions, process(DeviceProcess)
     var id: String { switch self { case .coverage: "coverage"; case .sensors: "sensors"; case .thresholds: "thresholds"; case .networkOptions: "networkOptions"; case .process(let p): "process-\(p.pid)" } }
-    var title: String { switch self { case .coverage: "网络采集详情"; case .sensors: "设备数据来源"; case .thresholds: "状态颜色规则"; case .networkOptions: "网络统计设置"; case .process(let p): p.name } }
+    var title: String { switch self { case .coverage: "网络采集详情"; case .sensors: "设备数据来源"; case .thresholds: "状态颜色规则"; case .networkOptions: "网络统计设置"; case .process(let p): p.displayName } }
 }
 
 struct DeviceSheetView: View {
     @Environment(\.workbenchPalette) private var palette
+    @Environment(\.timeZone) private var timeZone
     let item: DeviceSheet
     @ObservedObject var model: DeviceStatusModel
     var dismiss: () -> Void
@@ -548,7 +626,13 @@ struct DeviceSheetView: View {
             explanation("这是打开详情时的样本。CPU 以整台设备的处理能力为 100%，不是单个核心百分比；驻留内存可能包含共享页。可从进程列表右侧的操作菜单请求退出；应用优先正常退出，强制结束需要另行确认。")
         }
     }
-    private func date(_ value: Date?) -> String { value?.formatted(date: .abbreviated, time: .standard) ?? "尚无有效记录" }
+    /// Dates follow the workbench city's time zone (现行规范 5.3).
+    private func date(_ value: Date?) -> String {
+        guard let value else { return "尚无有效记录" }
+        let formatter = DateFormatter(); formatter.locale = Locale(identifier: "zh_CN"); formatter.timeZone = timeZone
+        formatter.dateFormat = "yyyy年MM月dd日 HH:mm"
+        return formatter.string(from: value)
+    }
     private func explanation(_ text: String) -> some View { Text(text).font(.system(size: 11)).foregroundStyle(palette.muted).lineSpacing(4).fixedSize(horizontal: false, vertical: true).padding(.top, 14) }
 }
 
@@ -561,7 +645,7 @@ struct DeviceFact: View {
             Spacer(minLength: 0)
             Text(value).multilineTextAlignment(.trailing).textSelection(.enabled).monospacedDigit()
                 .frame(maxWidth: .infinity, alignment: .trailing)
-        }.font(.system(size: 11)).frame(minHeight: 16).fixedSize(horizontal: false, vertical: true)
+        }.font(.system(size: 12)).frame(minHeight: 18).fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -585,19 +669,30 @@ struct DeviceProcessIcon: View {
 
 enum DeviceFormat {
     static func storage(_ value: UInt64?) -> String { DeviceStorageCapacity.formatted(value) }
+    /// Memory keeps the system's binary units; GB and TB keep one decimal and
+    /// MB and smaller are whole numbers, moving up a unit at 1,000 (现行规范 5.2).
     static func capacity(_ value: UInt64?) -> String {
         guard let value else { return "—" }
         var number = Double(value), unit = 0
         let units = ["B", "KB", "MB", "GB", "TB"]
-        while number >= 1024 && unit < units.count - 1 { number /= 1024; unit += 1 }
-        let formatted = String(format: "%.1f", number)
-        return (formatted.hasSuffix(".0") ? String(formatted.dropLast(2)) : formatted) + " " + units[unit]
+        func text(_ number: Double, _ unit: Int) -> String { unit >= 3 ? String(format: "%.1f", number) : String(format: "%.0f", number) }
+        while unit < units.count - 1, (Double(text(number, unit)) ?? 0) >= 1_000 { number /= 1024; unit += 1 }
+        return text(number, unit) + " " + units[unit]
     }
 
     static func temperature(_ value: Double?) -> String { value.map { String(format: "%.0f °C", $0) } ?? "暂无读数" }
-    static func bytes(_ value: UInt64?) -> String {
-        guard let value else { return "—" }
-        return ByteCountFormatter.string(fromByteCount: Int64(min(value, UInt64(Int64.max))), countStyle: .binary)
+    /// Process and memory sizes share the capacity format, so one column never
+    /// mixes "4.66 GB" with "860 MB".
+    static func bytes(_ value: UInt64?) -> String { capacity(value) }
+    /// "macOS 27.0（26A428）", with the build number read from the kernel.
+    static var systemVersion: String {
+        let v = ProcessInfo.processInfo.operatingSystemVersion
+        let version = "macOS \(v.majorVersion).\(v.minorVersion)\(v.patchVersion > 0 ? ".\(v.patchVersion)" : "")"
+        var size = 0
+        guard sysctlbyname("kern.osversion", nil, &size, nil, 0) == 0, size > 1 else { return version }
+        var buffer = [CChar](repeating: 0, count: size)
+        guard sysctlbyname("kern.osversion", &buffer, &size, nil, 0) == 0 else { return version }
+        return version + "（" + String(cString: buffer) + "）"
     }
     static func rate(_ value: Double?) -> String {
         guard let value, value.isFinite, value >= 0 else { return "—" }

@@ -291,6 +291,8 @@ struct WBPageBack {
     var symbol = "chevron.left"
     var disabled = false
     var identifier = "workbench-page-back"
+    /// Escape also leaves a detail page that has no other cancel action.
+    var escapes = false
     let action: () -> Void
 }
 
@@ -308,6 +310,7 @@ struct WBPageHeader<Trailing:View>:View {
             if let back {
                 Button(action:back.action) { Label(back.title,systemImage:back.symbol) }
                     .buttonStyle(WBButtonStyle()).disabled(back.disabled).fixedSize()
+                    .keyboardShortcut(back.escapes ? KeyboardShortcut.cancelAction : nil)
                     .accessibilityIdentifier(back.identifier)
             }
             VStack(alignment:.leading,spacing:6) {

@@ -3,6 +3,8 @@ import Darwin
 import LauncherCore
 
 /// Live readings never continuously reshuffle the table; only the result rows scroll.
+/// Sorting lives only in the column headers and rows are a single 36-point line
+/// (现行规范 4.5, 9.2).
 struct DeviceProcessExplorerView: View {
     let processes: [DeviceProcess]
     let systemCount: Int
@@ -11,14 +13,9 @@ struct DeviceProcessExplorerView: View {
     @Binding var ascending: Bool
     let open: (DeviceProcess) -> Void
     var leave: () -> Void = {}
-    var memoryFocused = false
     @Environment(\.workbenchPalette) private var palette
     @StateObject private var presentation = DeviceProcessPresentationModel()
-    @State private var contentWidth: CGFloat = 864
-    private var pidWidth: CGFloat { memoryFocused ? (contentWidth < 800 ? 48 : 64) : 62 }
-    private var memoryWidth: CGFloat { memoryFocused ? (contentWidth < 800 ? 72 : 88) : 65 }
-    private var actionWidth: CGFloat { memoryFocused ? (contentWidth < 800 ? 100 : 112) : 76 }
-    private var sortSelection: Binding<DeviceProcessSort> { Binding(get: { sort }, set: { sort = $0; ascending = $0 == .name || $0 == .pid }) }
+    private let cpuWidth: CGFloat = 58, memoryWidth: CGFloat = 65, pidWidth: CGFloat = 62, actionWidth: CGFloat = 76
     @State private var filter: DeviceProcessFilter = .all
     @State private var grouped = true
     @State private var expandedGroups = Set<String>()
@@ -38,24 +35,15 @@ struct DeviceProcessExplorerView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            Group {
-            if memoryFocused { resultCard }
-            else {
-                HStack(alignment: .top, spacing: 12) {
-                    filterRail(compact: geometry.size.height < 430).frame(width: geometry.size.width < 800 ? 145 : 166)
-                    resultCard.frame(maxWidth: .infinity, maxHeight: .infinity)
-                }.frame(height: geometry.size.height)
-            }
-            }.onChange(of: geometry.size.width, initial: true) { _, width in contentWidth = width }
-        }
-        .onAppear {
-            if memoryFocused { sort = .memory; ascending = false }
+            HStack(alignment: .top, spacing: 12) {
+                filterRail.frame(width: geometry.size.width < 800 ? 145 : 166)
+                resultCard.frame(maxWidth: .infinity, maxHeight: .infinity)
+            }.frame(height: geometry.size.height)
         }
         .onChange(of: presentationKey, initial: true) { _, _ in refreshPresentation() }
         .environment(\.workbenchControlBorders, false)
-        .focusEffectDisabled()
         .workbenchModal(item: $actionRequest) { request in
-            DeviceProcessActionDialog(request: request, memoryFocused: memoryFocused,
+            DeviceProcessActionDialog(request: request, memoryFocused: false,
                                       dismiss: { actionRequest = nil },
                                       force: { actionRequest = .init(name: request.name, processes: request.processes, mode: .force, wholeApplication: request.wholeApplication) },
                                       perform: perform)
@@ -63,7 +51,7 @@ struct DeviceProcessExplorerView: View {
         .workbenchModal(isPresented: Binding(get: { processProtection != nil }, set: { if !$0 { processProtection = nil } }), width: 440) {
             WorkbenchDialogFrame(title: "进程保护说明", dismiss: { processProtection = nil }) {
                 VStack(alignment: .leading, spacing: 12) {
-                    Label(processProtection?.name ?? "进程", systemImage: "lock.shield").font(.system(size: 14, weight: .medium))
+                    Label(processProtection?.name ?? "进程", systemImage: "lock.shield").font(.system(size: 13, weight: .medium))
                     Text(processProtection?.reason ?? "进程身份暂不可核验，请重新选择。")
                         .font(.system(size: 12)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
                     Text(processProtection?.guidance ?? "你仍可查看进程详情。")
@@ -84,15 +72,15 @@ struct DeviceProcessExplorerView: View {
         }
     }
 
-    private func filterRail(compact: Bool) -> some View {
+    private var filterRail: some View {
         VStack(alignment: .leading, spacing: 4) {
             filterButton(.all, title: "全部进程", subtitle: "当前可访问的进程")
             filterButton(.applications, title: "应用进程", subtitle: "含所属辅助进程")
             filterButton(.highCPU, title: "CPU 较高", subtitle: grouped ? "应用合计 ≥ 5%" : "单进程 ≥ 5%")
-            filterButton(.highMemory, title: "内存较高", subtitle: grouped ? "应用合计 ≥ 500 MiB" : "单进程 ≥ 500 MiB")
+            filterButton(.highMemory, title: "内存较高", subtitle: grouped ? "应用合计 ≥ 500 MB" : "单进程 ≥ 500 MB")
             filterButton(.background, title: "独立后台", subtitle: "未归属应用包")
             palette.line.frame(height: 1).padding(.vertical, 8)
-            Text("\(grouped ? "应用合计" : "单进程") CPU ≥ 5%\n\(grouped ? "应用合计" : "单进程") ≥ 500 MiB\n独立后台按单进程计算\n\n数值更新时保持顺序。\n系统进程仅供查看。")
+            Text("\(grouped ? "应用合计" : "单进程") CPU ≥ 5%\n\(grouped ? "应用合计" : "单进程") ≥ 500 MB\n独立后台按单进程计算\n\n数值更新时保持顺序。\n系统进程仅供查看。")
                 .font(.system(size: 11)).foregroundStyle(palette.muted).lineSpacing(3).padding(.horizontal, 8).padding(.vertical, 6)
             if hasFilter { Button("清除筛选与搜索") { filter = .all; query = "" }.buttonStyle(WBQuietButtonStyle()).padding(.horizontal, 8).accessibilityIdentifier("process-filter-reset") }
         }.padding(10).frame(maxWidth: .infinity, alignment: .topLeading).background(DeviceCardSurface())
@@ -102,34 +90,26 @@ struct DeviceProcessExplorerView: View {
         let groupCount = counts?.groupCount ?? 0, processCount = counts?.processCount ?? 0
         return Button { filter = value } label: {
             HStack(spacing: 7) {
-                Text(title).lineLimit(1)
+                Text(title).font(.system(size: 12)).lineLimit(1)
                 Spacer(minLength: 1)
-                Text(displayedGrouped ? "\(groupCount) 组" : "\(processCount) 项").monospacedDigit().foregroundStyle(palette.muted).fixedSize()
-            }.font(.system(size: 11)).padding(.horizontal, 8).frame(height: 36)
-                .background(filter == value ? palette.soft : Color.clear, in: RoundedRectangle(cornerRadius: 6))
-        }.buttonStyle(WBSelectableButtonStyle(selected: filter == value, cornerRadius: 6, drawsSelection: false, showsBorder: false)).foregroundStyle(filter == value ? palette.text : palette.secondary)
+                Text(displayedGrouped ? "\(groupCount) 组" : "\(processCount) 项").font(.system(size: 11)).monospacedDigit().foregroundStyle(palette.muted).fixedSize()
+            }.padding(.horizontal, 8).frame(height: 36)
+                .background(filter == value ? palette.soft : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+        }.buttonStyle(WBSelectableButtonStyle(selected: filter == value, cornerRadius: 8, drawsSelection: false, showsBorder: false)).foregroundStyle(filter == value ? palette.text : palette.secondary)
             .accessibilityLabel("\(title)，\(displayedGrouped ? "\(groupCount) 组，包含" : "")\(processCount) 个进程，\(subtitle)")
             .accessibilityValue(filter == value ? "已选择" : "").accessibilityIdentifier("process-filter-\(value.rawValue)").help(subtitle)
     }
 
     private var resultCard: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if memoryFocused {
-                HStack { Text("哪些应用正在使用内存").font(.system(size: 12, weight: .medium)); Spacer(); Text("\(results.count) \(displayedGrouped ? "个应用与进程组" : "个进程")").font(.system(size: 11)).foregroundStyle(palette.muted) }.padding(.bottom, 12)
-            }
             HStack(spacing: 8) {
-                if memoryFocused {
-                    memoryFilter("全部", .all); memoryFilter("应用", .applications); memoryFilter("系统与后台", .background)
-                }
                 HStack(spacing: 7) {
                     Image(systemName: "magnifyingglass").foregroundStyle(palette.muted)
-                    TextField(memoryFocused ? "搜索应用或 PID" : "搜索名称或 PID", text: $query).textFieldStyle(.plain).onExitCommand { if query.isEmpty { leave() } else { query = "" } }.accessibilityIdentifier("process-search")
+                    TextField("搜索名称或 PID", text: $query).textFieldStyle(.plain).onExitCommand { if query.isEmpty { leave() } else { query = "" } }.accessibilityIdentifier("process-search")
                     if !query.isEmpty { Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(WBIconButtonStyle(size: 28)).accessibilityLabel("清除进程搜索") }
                 }.font(.system(size: 12)).padding(.horizontal, 10).frame(minWidth: 120, maxWidth: .infinity).frame(height: 32).background(WorkbenchMaterialSurface(kind: .control, radius: 8))
                 groupingControl
-                WBSelect("排序", selection: sortSelection, options: memoryFocused ? [(.memory, "内存占用"), (.name, "名称")] : [(.cpu, "CPU 占用"), (.memory, "内存占用"), (.name, "名称"), (.pid, "PID")]).frame(width: 112).accessibilityIdentifier("process-sort")
-                if memoryFocused { Button("重新排序", action: applySort).buttonStyle(WBButtonStyle()).help("按最新读数重新排序；自动读数更新保持行位置") }
-            }.padding(memoryFocused ? 0 : 12).padding(.bottom, memoryFocused ? 12 : 0).overlay(alignment: .bottom) { if !memoryFocused { palette.line.frame(height: 1) } }
+            }.padding(12).overlay(alignment: .bottom) { palette.line.frame(height: 1) }
             tableHeader
             ScrollViewReader { reader in
                 WorkbenchScrollView(.vertical) {
@@ -144,7 +124,7 @@ struct DeviceProcessExplorerView: View {
                         if results.isEmpty {
                             VStack(spacing: 9) {
                                 Image(systemName: "magnifyingglass").font(.system(size: 22, weight: .light)).foregroundStyle(palette.muted)
-                                Text("没有匹配的应用或进程").font(.system(size: 12, weight: .medium))
+                                Text("没有匹配的应用或进程").font(.system(size: 13, weight: .medium))
                                 Text(hasFilter ? "更换筛选条件，或搜索其他名称与 PID。" : "当前尚未读到可访问的进程。").font(.system(size: 11)).foregroundStyle(palette.muted)
                                 if hasFilter { Button("显示全部进程") { filter = .all; query = "" }.buttonStyle(WBButtonStyle(compact: true)) }
                             }.padding(.vertical, 28).frame(maxWidth: .infinity)
@@ -153,15 +133,10 @@ struct DeviceProcessExplorerView: View {
                 }.scrollIndicators(.visible).accessibilityIdentifier("process-results-scroll")
                     .onChange(of: viewportKey) { _, _ in reader.scrollTo("process-list-top", anchor: .top) }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
-            if memoryFocused {
-                Text("读数更新保持顺序；切换排序立即生效。可操作的应用可在确认后退出。")
-                    .font(.system(size: 11)).foregroundStyle(palette.muted).padding(.top, 10)
-            } else {
-                HStack(spacing: 6) {
-                    Text((displayedGrouped ? "\(results.count) 组 · 含 \(matchingCount) 个进程" : "\(matchingCount) 个进程") + " · 共 \(presentation.snapshot.totalCount) 项").monospacedDigit().help("已读取 \(processes.count) / \(max(systemCount, processes.count)) 项；未读取 \(max(0, systemCount - processes.count)) 项")
-                    Spacer(minLength: 0); Button("重新排序", action: applySort).buttonStyle(WBQuietButtonStyle())
-                }.font(.system(size: 11)).foregroundStyle(palette.secondary).padding(.horizontal, 13).frame(height: 34).overlay(alignment: .top) { palette.line.frame(height: 1) }
-            }
+            HStack(spacing: 6) {
+                Text(displayedGrouped ? "\(results.count) 组 · 含 \(matchingCount) 个进程" : "\(matchingCount) 个进程").monospacedDigit().help("已读取 \(processes.count) / \(max(systemCount, processes.count)) 项；未读取 \(max(0, systemCount - processes.count)) 项")
+                Spacer(minLength: 0); Button("重新排序", action: applySort).buttonStyle(WBQuietButtonStyle())
+            }.font(.system(size: 11)).foregroundStyle(palette.secondary).padding(.horizontal, 13).frame(height: 34).overlay(alignment: .top) { palette.line.frame(height: 1) }
             if let actionMessage {
                 HStack(alignment: .top, spacing: 6) {
                     Text(actionMessage).font(.system(size: 11)).foregroundStyle(actionFailed ? palette.warning : palette.secondary).lineLimit(3)
@@ -169,121 +144,100 @@ struct DeviceProcessExplorerView: View {
                     Button { self.actionMessage = nil } label: { Image(systemName: "xmark") }.buttonStyle(WBIconButtonStyle(size: 28)).accessibilityLabel("关闭操作结果")
                 }.padding(12)
             }
-        }.padding(memoryFocused ? EdgeInsets(top: 14, leading: 14, bottom: 10, trailing: 14) : EdgeInsets()).frame(maxWidth: .infinity, maxHeight: .infinity).background(DeviceCardSurface()).foregroundStyle(palette.text)
+        }.frame(maxWidth: .infinity, maxHeight: .infinity).background(DeviceCardSurface()).foregroundStyle(palette.text)
     }
+    /// The shared two-option choice from round 1 (现行规范 4.4).
     private var groupingControl: some View {
         HStack(spacing: 2) {
             groupingOption("按应用", value: true)
             groupingOption("按进程", value: false)
-        }.padding(3).frame(height: 32)
-            .background(palette.control, in: RoundedRectangle(cornerRadius: 8))
+        }.padding(2).frame(width: 136, height: 32)
+            .background(RoundedRectangle(cornerRadius: 8).fill(palette.control))
             .accessibilityElement(children: .contain).accessibilityLabel("进程显示方式")
     }
     private func groupingOption(_ title: String, value: Bool) -> some View {
-        Button { grouped = value } label: {
-            Text(title).font(.system(size: 11, weight: grouped == value ? .medium : .regular))
-                .foregroundStyle(grouped == value ? palette.text : palette.secondary)
-                .frame(width: 52, height: 26)
-                .background(grouped == value ? palette.soft : .clear, in: RoundedRectangle(cornerRadius: 6))
-        }.buttonStyle(WBSelectableButtonStyle(selected: grouped == value, cornerRadius: 6, drawsSelection: false, showsBorder: false))
+        let selected = grouped == value
+        return Button { grouped = value } label: {
+            Text(title).font(.system(size: 12, weight: selected ? .medium : .regular)).lineLimit(1)
+                .foregroundStyle(selected ? palette.text : palette.secondary)
+                .frame(maxWidth: .infinity).frame(height: 26)
+                .background(RoundedRectangle(cornerRadius: 6).fill(selected ? (palette.light ? palette.raised : palette.secondary.opacity(0.16)) : .clear)
+                    .shadow(color: selected && palette.light ? palette.shadow : .clear, radius: 1, y: 1))
+                .contentShape(RoundedRectangle(cornerRadius: 6))
+        }.buttonStyle(WBSegmentOptionStyle(selected: selected))
             .accessibilityIdentifier(value ? "process-mode-applications" : "process-mode-processes")
-            .accessibilityLabel(title).accessibilityValue(grouped == value ? "已选择" : "")
+            .accessibilityLabel(title).accessibilityValue(selected ? "已选择" : "")
+            .accessibilityAddTraits(selected ? .isSelected : [])
             .help(value ? "按真实应用归属聚合；点击应用名称展开其进程" : "每个进程单独一行，不按应用分组")
     }
-    private func memoryFilter(_ title: String, _ value: DeviceProcessFilter) -> some View {
-        Button(title) { filter = value }.buttonStyle(WBButtonStyle(compact: true)).foregroundStyle(filter == value ? palette.accent : palette.secondary)
-    }
+    // Applications are list titles (13 medium); processes are body text (12).
     private func groupRow(_ group: DeviceProcessGroup) -> some View {
-        HStack(spacing: memoryFocused ? 12 : 10) {
-            Button {
-                if expandedGroups.contains(group.id) { expandedGroups.remove(group.id) } else { expandedGroups.insert(group.id) }
-            } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: expandedGroups.contains(group.id) || !query.isEmpty ? "chevron.down" : "chevron.right").font(.system(size: 9)).frame(width: 10)
-                    DeviceProcessIcon(path: group.application?.executablePath).frame(width: 20, height: 20)
-                    if memoryFocused {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(group.name).lineLimit(1).truncationMode(.tail)
-                            Text("\(group.processes.count) 个进程 · 已聚合").font(.system(size: 11)).foregroundStyle(palette.muted)
-                        }
-                    } else {
-                        Text(group.name).lineLimit(1).truncationMode(.tail)
+        DeviceProcessRow {
+            HStack(spacing: 10) {
+                Button {
+                    if expandedGroups.contains(group.id) { expandedGroups.remove(group.id) } else { expandedGroups.insert(group.id) }
+                } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: expandedGroups.contains(group.id) || !query.isEmpty ? "chevron.down" : "chevron.right").font(.system(size: 9)).frame(width: 10)
+                        DeviceProcessIcon(path: group.application?.executablePath).frame(width: 20, height: 20)
+                        Text(group.name).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.tail).help(group.name)
                         Text("\(group.processes.count)").font(.system(size: 10)).foregroundStyle(palette.muted)
-                    }
-                }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-            }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 5, showsBorder: false)).accessibilityLabel("\(group.name)，\(group.processes.count) 个进程，展开或收起")
-            measurements(cpu: group.cpuPercent, memory: group.residentBytes, pid: memoryFocused ? group.processes.first(where: \.isApplicationMain).map { String($0.pid) } ?? "—" : "—")
-            actionMenu(name: group.name, members: group.processes, wholeApplication: true)
-        }.font(.system(size: 11, weight: .medium)).monospacedDigit().padding(.horizontal, memoryFocused ? 10 : 13).frame(height: memoryFocused ? 50 : 38)
-            .background(palette.soft, in: RoundedRectangle(cornerRadius: 5))
+                    }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                }.buttonStyle(ClickablePlainButtonStyle()).accessibilityLabel("\(group.name)，\(group.processes.count) 个进程，展开或收起")
+                measurements(cpu: group.cpuPercent, memory: group.residentBytes, pid: "—")
+                actionMenu(name: group.name, members: group.processes, wholeApplication: true)
+            }.font(.system(size: 12)).monospacedDigit().padding(.horizontal, 13).frame(height: 36)
+        }
     }
     private func processRow(_ process: DeviceProcess, child: Bool) -> some View {
-        HStack(spacing: memoryFocused ? 12 : 10) {
-            Button { open(process) } label: {
-                HStack(spacing: 8) {
-                    if child { Color.clear.frame(width: 12) }
-                    DeviceProcessIcon(path: process.executablePath).frame(width: child ? 17 : 20, height: child ? 17 : 20)
-                    if memoryFocused {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(process.name).lineLimit(1).truncationMode(.tail)
-                            Text(child ? "所属 \(process.application?.name ?? "应用")" : process.application == nil ? "独立后台进程" : "应用").font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
-                        }
-                    } else { Text(process.name).lineLimit(1).truncationMode(.tail) }
-                }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-            }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 5, showsBorder: false)).help("\(process.name) · 点击查看采样详情")
-            measurements(cpu: process.cpuPercent, memory: process.residentBytes, pid: String(process.pid))
-            actionMenu(name: process.name, members: [process], wholeApplication: false)
-        }.font(.system(size: 11)).monospacedDigit().padding(.horizontal, memoryFocused ? 10 : 13).frame(height: memoryFocused ? 50 : 38)
-            .accessibilityElement(children: .contain)
+        DeviceProcessRow {
+            HStack(spacing: 10) {
+                Button { open(process) } label: {
+                    HStack(spacing: 8) {
+                        if child { Color.clear.frame(width: 12) }
+                        DeviceProcessIcon(path: process.executablePath).frame(width: child ? 17 : 20, height: child ? 17 : 20)
+                        Text(process.displayName).lineLimit(1).truncationMode(.tail)
+                    }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                }.buttonStyle(ClickablePlainButtonStyle()).help("\(process.displayName) · 点击查看采样详情")
+                measurements(cpu: process.cpuPercent, memory: process.residentBytes, pid: String(process.pid))
+                actionMenu(name: process.displayName, members: [process], wholeApplication: false)
+            }.font(.system(size: 12)).monospacedDigit().padding(.horizontal, 13).frame(height: 36)
+                .accessibilityElement(children: .contain)
+        }
     }
     @ViewBuilder private func measurements(cpu: Double?, memory: UInt64, pid: String) -> some View {
-        if memoryFocused { Text(pid).frame(width: pidWidth, alignment: .trailing).foregroundStyle(palette.muted) }
-        else { Text(DeviceFormat.percent(cpu)).frame(width: 58, alignment: .trailing) }
+        Text(DeviceFormat.percent(cpu)).frame(width: cpuWidth, alignment: .trailing)
         Text(DeviceFormat.bytes(memory)).frame(width: memoryWidth, alignment: .trailing)
-        if !memoryFocused { Text(pid).frame(width: pidWidth, alignment: .trailing).foregroundStyle(palette.muted) }
+        Text(pid).frame(width: pidWidth, alignment: .trailing).foregroundStyle(palette.muted)
     }
     @ViewBuilder private func actionMenu(name: String, members: [DeviceProcess], wholeApplication: Bool) -> some View {
-        let availability = DeviceProcessActionAvailability(name: name, members: members, wholeApplication: wholeApplication, memoryFocused: memoryFocused)
-        if memoryFocused {
-            HStack(spacing: 4) {
-                Button { if let process = members.first(where: \.isApplicationMain) ?? members.first { open(process) } } label: { Image(systemName: "info.circle") }.buttonStyle(WBIconButtonStyle()).accessibilityLabel("查看\(name)占用")
-                if availability.canQuit {
-                    Button("退出") { actionRequest = .init(name: name, processes: members, mode: .quit, wholeApplication: wholeApplication) }.buttonStyle(WBButtonStyle(compact: true))
-                        .accessibilityIdentifier("device-process-open-quit-" + String(members.first?.pid ?? 0))
-                } else if let protection = availability.protection {
-                    Button("仅查看") { processProtection = protection }.buttonStyle(WBQuietButtonStyle()).help(protection.reason)
-                        .accessibilityLabel("\(name) 仅供查看，了解原因")
-                }
-            }.frame(width: actionWidth, alignment: .trailing)
-        } else {
-            HStack(spacing: 4) {
-                if let protection = availability.protection {
-                    Button(protection.badge) { processProtection = protection }
-                        .buttonStyle(WBQuietButtonStyle()).font(.system(size: 10))
-                        .help(protection.reason + "\n" + protection.guidance)
-                        .accessibilityLabel("\(name) \(protection.badge)，查看保护说明")
-                        .accessibilityIdentifier("fc.device.process.protection.\(members.first?.pid ?? 0)")
-                }
-                DeviceProcessActionsMenu(name: name, wholeApplication: wholeApplication,
-                    canQuit: availability.canQuit, canForce: availability.canForce, textColor: NSColor(palette.text),
-                    viewDetails: { if let process = members.first(where: \.isApplicationMain) ?? members.first { open(process) } },
-                    request: { mode in actionRequest = .init(name: name, processes: members, mode: mode, wholeApplication: wholeApplication) })
-                    .frame(width: 28, height: 28)
-            }.frame(width: actionWidth, alignment: .trailing)
-        }
+        let availability = DeviceProcessActionAvailability(name: name, members: members, wholeApplication: wholeApplication, memoryFocused: false)
+        HStack(spacing: 4) {
+            if let protection = availability.protection {
+                Button(protection.badge) { processProtection = protection }
+                    .buttonStyle(WBQuietButtonStyle())
+                    .help(protection.reason + "\n" + protection.guidance)
+                    .accessibilityLabel("\(name) \(protection.badge)，查看保护说明")
+                    .accessibilityIdentifier("fc.device.process.protection.\(members.first?.pid ?? 0)")
+            }
+            DeviceProcessActionsMenu(name: name, wholeApplication: wholeApplication,
+                canQuit: availability.canQuit, canForce: availability.canForce, textColor: NSColor(palette.text),
+                viewDetails: { if let process = members.first(where: \.isApplicationMain) ?? members.first { open(process) } },
+                request: { mode in actionRequest = .init(name: name, processes: members, mode: mode, wholeApplication: wholeApplication) })
+                .frame(width: 28, height: 28)
+        }.frame(width: actionWidth, alignment: .trailing)
     }
 
     private var tableHeader: some View {
-        HStack(spacing: memoryFocused ? 12 : 10) {
-            sortButton(memoryFocused ? "应用 / 进程" : "进程名称", .name).frame(maxWidth: .infinity, alignment: .leading)
-            if memoryFocused { sortButton("PID", .pid).frame(width: pidWidth, alignment: .trailing) }
-            else { sortButton("CPU", .cpu).frame(width: 58, alignment: .trailing) }
-            sortButton(memoryFocused ? "内存占用" : "内存", .memory).frame(width: memoryWidth, alignment: .trailing)
-            if !memoryFocused { sortButton("PID", .pid).frame(width: pidWidth, alignment: .trailing) }
-            if memoryFocused { Text("操作").frame(width: actionWidth, alignment: .trailing) }
-            else { Color.clear.frame(width: actionWidth) }
-        }.padding(.horizontal, memoryFocused ? 10 : 13).frame(height: memoryFocused ? 30 : 32)
+        HStack(spacing: 10) {
+            sortButton("进程名称", .name).frame(maxWidth: .infinity, alignment: .leading)
+            sortButton("CPU", .cpu).frame(width: cpuWidth, alignment: .trailing)
+            sortButton("内存", .memory).frame(width: memoryWidth, alignment: .trailing)
+            sortButton("PID", .pid).frame(width: pidWidth, alignment: .trailing)
+            Color.clear.frame(width: actionWidth)
+        }.padding(.horizontal, 13).frame(height: 32)
             .font(.system(size: 11)).foregroundStyle(palette.secondary)
+            .overlay(alignment: .bottom) { palette.line.frame(height: 1) }
     }
     private func sortButton(_ title: String, _ value: DeviceProcessSort) -> some View {
         Button {
@@ -296,6 +250,18 @@ struct DeviceProcessExplorerView: View {
             }
         }.buttonStyle(WBTextActionButtonStyle()).accessibilityLabel("按\(title)排序")
             .accessibilityValue(sort == value ? (ascending ? "升序" : "降序") : "")
+    }
+}
+
+/// A whole-row hover wash and a separator; the row's own controls keep their roles.
+private struct DeviceProcessRow<Content: View>: View {
+    @ViewBuilder let content: Content
+    @Environment(\.workbenchPalette) private var palette
+    @State private var hovering = false
+    var body: some View {
+        content.background(hovering ? palette.soft : Color.clear)
+            .overlay(alignment: .bottom) { palette.line.frame(height: 1) }
+            .onHover { hovering = $0 }
     }
 }
 
@@ -316,7 +282,7 @@ struct DeviceProcessActionDialog: View {
     var body: some View {
         DeviceDialog(title: request.mode == .force ? "强制结束 \(request.name)？" : "确认退出 \(request.name)？", dismiss: dismiss) {
             VStack(alignment: .leading, spacing: 12) {
-                Label(request.name, systemImage: "macwindow").font(.system(size: 16, weight: .medium))
+                Label(request.name, systemImage: "macwindow").font(.system(size: 13, weight: .medium))
                 DeviceFact(label: "范围", value: request.wholeApplication ? "此应用及已确认的 \(request.processes.count) 个进程" : "仅所选进程")
                 Text(request.mode == .force ? "强制结束不会等待应用保存内容。仅在正常退出无响应时使用；不会扩大到之后新出现的进程。" : "先请求正常退出，让应用有机会保存内容。不直接强制结束；应用提示保存时会等待你处理。")
                     .font(.system(size: 12)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)

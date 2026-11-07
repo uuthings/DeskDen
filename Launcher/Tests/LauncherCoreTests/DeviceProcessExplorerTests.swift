@@ -6,6 +6,28 @@ final class DeviceProcessExplorerTests: XCTestCase {
     private func process(_ pid: Int32, _ name: String, cpu: Double? = 0, bytes: UInt64 = 0, started: UInt64 = 1, uid: UInt32? = 501, parent: Int32 = 1, app: DeviceProcessApplication? = nil, main: Bool = false) -> DeviceProcess {
         .init(pid: pid, name: name, executablePath: main ? app?.executablePath : "/Applications/Tool.app/Contents/MacOS/\(name)", cpuPercent: cpu, residentBytes: bytes, threadCount: 1, sampledAt: .distantPast, startedMicroseconds: started, parentPID: parent, ownerUID: uid, application: app)
     }
+    /// 现行规范 9.2: a name cut at the kernel's 31-byte limit is completed from
+    /// the executable, and an application's main process shows the application.
+    func testDisplayNameCompletesTruncatedNamesAndNamesTheApplication() {
+        let full = "com.apple.Virtualization.VirtualMachine"
+        let truncated = DeviceProcess(pid: 7, name: String(full.prefix(31)), executablePath: "/System/Library/Frameworks/Virtualization.framework/XPCServices/\(full).xpc/Contents/MacOS/\(full)",
+                                      residentBytes: 0, threadCount: 1, sampledAt: .distantPast)
+        XCTAssertEqual(truncated.displayName, full)
+        let unrelated = DeviceProcess(pid: 8, name: "Google Chrome Helper (Aperitif", executablePath: "/Applications/Chrome.app/Contents/MacOS/Google Chrome Helper (Alerts)",
+                                      residentBytes: 0, threadCount: 1, sampledAt: .distantPast)
+        XCTAssertEqual(unrelated.displayName, "Google Chrome Helper (Aperitif", "a different executable never replaces the name")
+        XCTAssertEqual(process(9, "short").displayName, "short")
+        let main = process(10, "BrowserMain", app: app, main: true)
+        XCTAssertEqual(main.displayName, "Browser")
+        // A translocated app: Foundation resolved its executable without "/private".
+        let translocated = DeviceProcessApplication(bundlePath: "/var/folders/x/AppTranslocation/A/d/Browser.app", bundleIdentifier: "test.browser", name: "Browser",
+                                                    executablePath: "/var/folders/x/AppTranslocation/A/d/Browser.app/Contents/MacOS/Browser")
+        let launched = DeviceProcess(pid: 11, name: "Browser", executablePath: "/private/var/folders/x/AppTranslocation/A/d/Browser.app/Contents/MacOS/Browser",
+                                     residentBytes: 0, threadCount: 1, sampledAt: .distantPast, application: translocated)
+        XCTAssertTrue(launched.isApplicationMain)
+        XCTAssertFalse(process(12, "Helper", app: translocated).isApplicationMain)
+        XCTAssertEqual(DeviceProcess.filtered([truncated], query: "VirtualMachine", sort: .name).count, 1)
+    }
     func testFiveFiltersUseOwnershipAndMeasuredThresholds() {
         XCTAssertEqual(DeviceProcessFilter.allCases.count, 5)
         let values = [process(11, "Missing", cpu: nil), process(12, "Idle"), process(13, "Below", cpu: 4.99), process(14, "Boundary", cpu: 5), process(15, "Busy", cpu: 32), process(16, "Invalid", cpu: .nan)]

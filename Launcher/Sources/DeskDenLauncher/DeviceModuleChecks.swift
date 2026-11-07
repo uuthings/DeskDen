@@ -32,7 +32,7 @@ import LauncherCore
             let legacyURL = legacyDirectory.appendingPathComponent("dashboard-layout.json")
             try legacyData.write(to: legacyURL)
             let migrated = DeviceStatusModel(dataDirectory: legacyDirectory)
-            check(migrated.dashboardLayout.schemaVersion == 4 && migrated.dashboardLayout.cards == legacy && migrated.layoutError == nil,
+            check(migrated.dashboardLayout.schemaVersion == 5 && migrated.dashboardLayout.cards == legacy && migrated.layoutError == nil,
                   "native loading preserves every legacy custom order, network visibility, size and meter choice")
             check((try? Data(contentsOf: legacyURL)) == legacyData && !migrated.isSampling,
                   "native custom-layout migration leaves its source file untouched and never starts sampling")
@@ -43,9 +43,10 @@ import LauncherCore
         grid.layoutSubtreeIfNeeded()
         func mouse(_ point: CGPoint) -> NSEvent { Self.mouse(grid.convert(point, to: nil)) }
         check(grid.cards.count == 6, "native hardware dashboard mounts six independent default cards")
-        check(grid.cards[.profile]?.frame == CGRect(x: 0, y: 0, width: 864, height: 156), "normal device profile uses a full-width readable hardware strip")
-        check(grid.cards[.cpu]?.frame == CGRect(x: 0, y: 380, width: 426, height: 240) && grid.cards[.processes]?.frame == CGRect(x: 438, y: 380, width: 426, height: 240), "CPU and processes share the balanced half-width bottom band")
-        check([DeviceCardID.memory, .storage, .thermal].allSatisfy { grid.cards[$0]?.frame.height == 200 && grid.cards[$0]?.frame.minY == 168 }, "all three hardware summaries share the same compact 200-point band")
+        // 现行规范 9.2: the default profile is a 100-point information strip.
+        check(grid.cards[.profile]?.frame == CGRect(x: 0, y: 0, width: 864, height: 100), "normal device profile uses a full-width readable hardware strip")
+        check(grid.cards[.cpu]?.frame == CGRect(x: 0, y: 324, width: 426, height: 240) && grid.cards[.processes]?.frame == CGRect(x: 438, y: 324, width: 426, height: 240), "CPU and processes share the balanced half-width bottom band")
+        check([DeviceCardID.memory, .storage, .thermal].allSatisfy { grid.cards[$0]?.frame.height == 200 && grid.cards[$0]?.frame.minY == 112 }, "all three hardware summaries share the same compact 200-point band")
         check(grid.cards[.network] == nil && grid.cards[.traffic] == nil && Set(model.dashboardLayout.cards.filter { !$0.visible }.map(\.id)) == [.network, .traffic], "network detail cards remain available as hidden preferences instead of duplicating the network monitor by default")
         let original = model.dashboardLayout
         grid.begin(id: .profile, event: mouse(grid.cards[.profile]!.frame.center), edge: nil)
@@ -111,7 +112,7 @@ import LauncherCore
         grid.frame.size.width = 1360
         grid.configure(model: model, editing: true, light: false, minimumHeight: 740, expanded: true, open: { _ in }, heightChanged: { _ in })
         grid.layoutSubtreeIfNeeded()
-        check(grid.cards[.profile]?.frame.height == 156 && [DeviceCardID.memory, .storage, .thermal].allSatisfy { grid.cards[$0]?.frame.height == 200 }, "wide view keeps profile and hardware summaries at content height")
+        check(grid.cards[.profile]?.frame.height == 112 && [DeviceCardID.memory, .storage, .thermal].allSatisfy { grid.cards[$0]?.frame.height == 200 }, "wide view keeps profile and hardware summaries at content height")
         check(grid.cards[.cpu]?.frame.height == 272 && grid.cards[.processes]?.frame.height == 272 && grid.cards[.network] == nil && grid.cards[.traffic] == nil, "wide view grows only useful CPU and process content without reviving hidden network cards")
         let hideButton = grid.cards[.cpu]!.subviews.compactMap { $0 as? NSButton }.first { $0.accessibilityLabel() == "隐藏CPU 使用率" }
         check(hideButton?.frame.width == 28, "wide view preserves the shared 28-point icon target rather than scaling the entire card")

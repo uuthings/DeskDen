@@ -53,12 +53,16 @@ import LauncherCore
             _ = await wait(window) { frame("fc.device.capacity.memory.bar", in: host) != nil && frame("fc.device.capacity.storage.bar", in: host) != nil }
             // AX exposes the visible glyph union for text groups, not the
             // SwiftUI 16/32 pt allocation. Chinese fallback glyphs at 11 pt
-            // measure 14 pt here; the 28 pt primary glyph measures 33 pt.
-            // Obtain both from AppKit's real font shaping instead of loosening
-            // tolerances or forcing the UI to match a container assumption.
+            // measure 14 pt here; the 24 pt primary glyph (现行规范 9.2)
+            // measures 28 pt. Obtain both from AppKit's real font shaping
+            // instead of loosening tolerances or forcing the UI to match a
+            // container assumption. The primary group spans from the centred
+            // label glyph in its 16 pt row to the centred value glyph in the
+            // 32 pt row below a 4 pt gap: 28 + (value + label) / 2.
             let captionGlyphHeight = nativeGlyphHeight("已用内存", size: 11)
-            let primaryGlyphHeight = nativeGlyphHeight("—", size: 28)
-            for (element, expectedHeight) in [("primary", CGFloat(52)), ("label", captionGlyphHeight), ("value", primaryGlyphHeight), ("bar", CGFloat(5))] {
+            let primaryGlyphHeight = nativeGlyphHeight("—", size: 24)
+            let primaryUnionHeight = 28 + (primaryGlyphHeight + captionGlyphHeight) / 2
+            for (element, expectedHeight) in [("primary", primaryUnionHeight), ("label", captionGlyphHeight), ("value", primaryGlyphHeight), ("bar", CGFloat(5))] {
                 let memory = frame("fc.device.capacity.memory." + element, in: host)
                 let storage = frame("fc.device.capacity.storage." + element, in: host)
                 check(memory.flatMap { lhs in storage.map { rhs in abs(lhs.maxY - rhs.maxY) < 1 && abs(lhs.minY - rhs.minY) < 1 && abs(lhs.height - expectedHeight) < 1 && abs(rhs.height - expectedHeight) < 1 } } == true,
@@ -111,10 +115,10 @@ import LauncherCore
                         return !texts.isEmpty && texts.allSatisfy { surface.insetBy(dx: -1, dy: -1).contains($0) }
                     }, "mounted storage card text remains inside its surface without clipping in \(label)")
                 } else {
-                    // Thermal's approved status card includes a 20 pt badge,
-                    // 14 pt caption, 28 pt compact button and two 8 pt gaps,
-                    // plus the shared 32 pt header and 28 pt card padding.
-                    let expectedHeight: CGFloat = route == .thermal ? 138 : 128.25
+                    // Temperature alerts open only from the header now, so the
+                    // thermal status card fits the shared first-row height
+                    // (现行规范 9.2).
+                    let expectedHeight: CGFloat = 128.25
                     check(cards.count == identifiers.count && cards.allSatisfy { abs($0.height - expectedHeight) < 1 },
                           "mounted \(route.rawValue) cards keep the same compact reading height across window sizes in \(label)")
                 }
@@ -125,13 +129,13 @@ import LauncherCore
                     check(lower.count == 2 && lower.allSatisfy { abs($0.width - (sample.pageWidth - 12) / 2) < 1.5 } &&
                           abs(lower[0].minY - lower[1].minY) < 1 && abs(lower[0].maxY - lower[1].maxY) < 1,
                           "mounted CPU lower cards share equal columns and matching top and bottom edges in \(label)")
-                    // The short-metadata fixture uses three native 16 pt facts,
-                    // two 12 pt gaps, a 22+10 pt title and 28 pt card padding.
-                    // Real longer metadata remains free to grow. This fixture
-                    // does not populate process rows, so their 23 pt cadence
-                    // still requires the actual sampled screenshot review.
-                    check(lower.count == 2 && lower.allSatisfy { abs($0.height - 132) < 1 },
-                          "mounted CPU lower cards retain the native 132 pt short-content structure in \(label)")
+                    // The short-metadata fixture uses three 18 pt facts at 12 pt
+                    // (现行规范 9.2), two 8 pt gaps, a 22+10 pt title and 28 pt
+                    // card padding. Real longer metadata remains free to grow.
+                    // This fixture does not populate process rows, so their
+                    // 24 pt cadence still requires the sampled screenshot review.
+                    check(lower.count == 2 && lower.allSatisfy { abs($0.height - 130) < 1 },
+                          "mounted CPU lower cards retain the native 130 pt short-content structure in \(label)")
                     print("DETAIL device-detail cpu-lower \(label) surfaces=\(lower)")
                     checkLinkedCard("fc.device.detail.card.cpu-processes", peerIdentifier: "fc.device.detail.card.cpu-processor", expectedWidth: (sample.pageWidth - 12) / 2, in: host, label: "CPU related processes \(label)")
                 }
@@ -154,9 +158,9 @@ import LauncherCore
                     let core = frame("device-profile-core-composition", in: host)
                     let hardware = frame("fc.device.detail.card.硬件信息", in: host)
                     check(core.flatMap { text in hardware.map { card in
-                        abs(text.height - nativeGlyphHeight("核心构成", size: 11)) < 1 && text.width > 0 && card.insetBy(dx: -1, dy: -1).contains(text)
-                    } } == true, "mounted hardware profile keeps its native caption-sized CPU core-composition glyphs inside the hardware card in \(label)")
-                    print("DETAIL device-profile-core \(label) nativeGlyphHeight=\(nativeGlyphHeight("核心构成", size: 11)) core=\(String(describing: core)) hardware=\(String(describing: hardware))")
+                        abs(text.height - nativeGlyphHeight("核心构成", size: 12)) < 1 && text.width > 0 && card.insetBy(dx: -1, dy: -1).contains(text)
+                    } } == true, "mounted hardware profile keeps its native body-sized CPU core-composition glyphs inside the hardware card in \(label)")
+                    print("DETAIL device-profile-core \(label) nativeGlyphHeight=\(nativeGlyphHeight("核心构成", size: 12)) core=\(String(describing: core)) hardware=\(String(describing: hardware))")
                 }
             }
             model.deviceDetail = .storage; model.navigate(.device)

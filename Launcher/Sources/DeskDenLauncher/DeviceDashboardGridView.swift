@@ -245,6 +245,12 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
     private var bodyClickOrigin: CGPoint?
     private let bodyCursor = ClickableCursorView(frame: .zero)
     private let hideButton = DeviceCardActionButton(), styleButton = DeviceCardActionButton()
+    private var makeContent: ((Bool, Bool) -> AnyView)?
+    private var hoverArea: NSTrackingArea?
+    // Ordinary mode only: whole-card hover wash and a keyboard-only focus ring
+    // (现行规范 4.2, 8). Neither changes the card's frame.
+    private var hovered = false { didSet { if hovered != oldValue { renderContent() } } }
+    private var keyboardFocused = false { didSet { if keyboardFocused != oldValue { renderContent() } } }
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
     override var canBecomeKeyView: Bool { !isGhost }
@@ -267,14 +273,11 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
         if interactionChanged { bodyClickOrigin = nil }
         self.editing = editing; self.scale = scale
         setAccessibilityRole(editing ? .group : .button)
-        let content = AnyView(DeviceCardContent(card: preference, snapshot: snapshot, history: history, editing: editing, trafficSummary: trafficSummary, budget: budget, temperatureRule: temperatureRule, expanded: expanded)
-            .environment(\.workbenchTheme, theme).environment(\.workbenchOpacity, opacity).preferredColorScheme(light ? .light : .dark))
-        if let host { host.rootView = content }
-        else {
-            let host = NSHostingView(rootView: content); host.sizingOptions = []; self.host = host
-            addSubview(host, positioned: .below, relativeTo: hideButton)
-            addSubview(bodyCursor, positioned: .above, relativeTo: host)
+        makeContent = { hovered, focused in
+            AnyView(DeviceCardContent(card: preference, snapshot: snapshot, history: history, editing: editing, trafficSummary: trafficSummary, budget: budget, temperatureRule: temperatureRule, expanded: expanded, hovered: hovered, keyboardFocused: focused)
+                .environment(\.workbenchTheme, theme).environment(\.workbenchOpacity, opacity).preferredColorScheme(light ? .light : .dark))
         }
+        renderContent()
         bodyCursor.enabled = !editing && !isGhost
         let appearanceName: NSAppearance.Name = light ? .aqua : .darkAqua
         if appearance?.name != appearanceName { appearance = NSAppearance(named: appearanceName) }
@@ -289,6 +292,36 @@ struct DeviceDashboardRepresentable: NSViewRepresentable {
         styleButton.setAccessibilityLabel(id.title + "显示设置"); styleButton.toolTip = "进度显示设置"
         needsLayout = true
         if interactionChanged { window?.invalidateCursorRects(for: self) }
+    }
+    private func renderContent() {
+        guard let makeContent else { return }
+        let content = makeContent(hovered && !editing && !isGhost, keyboardFocused && !editing && !isGhost)
+        if let host { host.rootView = content }
+        else {
+            let host = NSHostingView(rootView: content); host.sizingOptions = []; self.host = host
+            addSubview(host, positioned: .below, relativeTo: hideButton)
+            addSubview(bodyCursor, positioned: .above, relativeTo: host)
+        }
+    }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
+        addTrackingArea(area); hoverArea = area
+    }
+    override func mouseEntered(with event: NSEvent) { hovered = true }
+    override func mouseExited(with event: NSEvent) { hovered = false }
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        // A pointer press also makes the card first responder; only keyboard
+        // navigation shows the ring.
+        if accepted { keyboardFocused = NSApp.currentEvent?.type == .keyDown }
+        return accepted
+    }
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { keyboardFocused = false }
+        return resigned
     }
     override func layout() {
         super.layout(); host?.frame = bounds

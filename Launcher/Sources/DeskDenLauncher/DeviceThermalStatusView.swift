@@ -22,11 +22,12 @@ struct DeviceThermalStatusBadge: View {
     let status: DeviceThermalPresentation
     @Environment(\.workbenchPalette) private var palette
     var body: some View {
+        // Status tags are capsules with 11-point text (现行规范 2.1, 2.3).
         Label(status.title, systemImage: status.symbol)
-            .font(.system(size: 11, weight: .medium)).lineLimit(1).fixedSize()
+            .font(.system(size: 11)).lineLimit(1).fixedSize()
             .foregroundStyle(status.level.color(palette: palette))
-            .padding(.horizontal, 5).padding(.vertical, 3)
-            .background(status.level.color(palette: palette).opacity(0.12), in: RoundedRectangle(cornerRadius: 5))
+            .padding(.horizontal, 8).frame(height: 20)
+            .background(status.level.color(palette: palette).opacity(0.12), in: Capsule())
             .help(status.detail)
             .accessibilityElement(children: .combine)
             .accessibilityHint(status.detail)

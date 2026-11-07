@@ -21,6 +21,7 @@ struct DeviceDiskSnapshot: Sendable {
     var readBytesPerSecond: Double?, writeBytesPerSecond: Double?
     var recordedRead: UInt64 = 0, recordedWrite: UInt64 = 0
     var immediatelyFree: UInt64? = nil, reclaimableEstimate: UInt64? = nil
+    var mountPoint: String? = nil
     var percent: Double { total > 0 ? Double(used) / Double(total) * 100 : 0 }
 }
 
@@ -762,6 +763,7 @@ private actor DeviceSampler {
         guard let capacity = cachedDiskCapacity else { return nil }
         var fs = statfs(); let ok = statfs(url.path, &fs) == 0
         let fsName = ok ? withUnsafeBytes(of: fs.f_fstypename) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) } : "—"
+        let mountPoint = ok ? withUnsafeBytes(of: fs.f_mntonname) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) } : nil
         var reading: Double?, writing: Double?
         if let counters = diskCounters() {
             if let previousDisk, counters.keys.sorted() == previousDisk.counters.keys.sorted() {
@@ -780,7 +782,7 @@ private actor DeviceSampler {
         return .init(name: capacity.volumeName ?? "启动卷", fileSystem: fsName.uppercased(), total: capacity.total, used: capacity.used,
                      available: capacity.available, readBytesPerSecond: reading, writeBytesPerSecond: writing,
                      recordedRead: diskRead, recordedWrite: diskWrite, immediatelyFree: capacity.immediatelyFree,
-                     reclaimableEstimate: capacity.reclaimableEstimate)
+                     reclaimableEstimate: capacity.reclaimableEstimate, mountPoint: mountPoint?.isEmpty == false ? mountPoint : nil)
     }
 
     private func diskCounters() -> [UInt64: DeviceNetworkCounter]? {

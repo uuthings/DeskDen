@@ -424,16 +424,13 @@ struct DeviceDialog<Content: View, Actions: View>: View {
     var maximumBodyHeight: CGFloat = 480
     @ViewBuilder let content: Content
     @ViewBuilder let actions: Actions
-    @Environment(\.workbenchPalette) private var palette
+    // Device and network dialogs share the workbench frame: 15 medium title
+    // and a 32-point close button (现行规范 4.7).
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack { Text(title).font(.system(size: 14, weight: .medium)); Spacer(); Button(action: dismiss) { Image(systemName: "xmark") }.buttonStyle(WBIconButtonStyle()).accessibilityLabel("关闭") }.padding(18)
-            WorkbenchDialogBody(maximumHeight: maximumBodyHeight) {
-                VStack(alignment: .leading, spacing: 16) { content }
-            }
-            HStack(spacing: 8) { Spacer(); actions }.padding(.horizontal, 18).padding(.vertical, 13).overlay(alignment: .top) { palette.line.frame(height: 1) }
-        }.frame(width: width).foregroundStyle(palette.text)
-            .accessibilityElement(children: .contain).accessibilityLabel(title)
+        WorkbenchDialogFrame(title: title, dismiss: dismiss, maximumBodyHeight: maximumBodyHeight) {
+            VStack(alignment: .leading, spacing: 16) { content }
+        } actions: { Spacer(); actions }
+            .frame(width: width)
     }
 }
 

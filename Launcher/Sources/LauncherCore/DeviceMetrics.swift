@@ -218,7 +218,28 @@ public struct DeviceProcess: Identifiable, Equatable, Sendable {
     public var parentPID: Int32
     public var ownerUID: UInt32?
     public var application: DeviceProcessApplication?
-    public var isApplicationMain: Bool { application.map { $0.executablePath == executablePath } ?? false }
+    public var isApplicationMain: Bool {
+        guard let application, let executablePath else { return false }
+        return Self.comparablePath(application.executablePath) == Self.comparablePath(executablePath)
+    }
+    /// The application's path comes from Foundation's symlink resolution, which
+    /// drops the "/private" of /tmp, /var and /etc paths (for example apps under
+    /// App Translocation); the kernel's process path keeps it.
+    static func comparablePath(_ path: String) -> String {
+        for prefix in ["/private/tmp/", "/private/var/", "/private/etc/"] where path.hasPrefix(prefix) {
+            return String(path.dropFirst("/private".count))
+        }
+        return path
+    }
+    /// The kernel keeps only the first 31 bytes of a process name. When the
+    /// executable's own file name continues that prefix, it is the full name.
+    /// An application's main process uses the application's name.
+    public var displayName: String {
+        if isApplicationMain, let application, !application.name.isEmpty { return application.name }
+        guard name.utf8.count >= 30, let executablePath else { return name }
+        let file = URL(fileURLWithPath: executablePath).lastPathComponent
+        return file.count > name.count && file.hasPrefix(name) ? file : name
+    }
     public init(pid: Int32, name: String, executablePath: String? = nil, cpuPercent: Double? = nil,
                 residentBytes: UInt64, threadCount: Int, sampledAt: Date, startedMicroseconds: UInt64 = 0,
                 parentPID: Int32 = 0, ownerUID: UInt32? = nil, application: DeviceProcessApplication? = nil) {
@@ -228,7 +249,7 @@ public struct DeviceProcess: Identifiable, Equatable, Sendable {
     }
     public static func filtered(_ processes: [Self], query: String, sort: DeviceProcessSort) -> [Self] {
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return processes.filter { term.isEmpty || $0.name.localizedStandardContains(term) || String($0.pid).contains(term) }
+        return processes.filter { term.isEmpty || $0.name.localizedStandardContains(term) || $0.displayName.localizedStandardContains(term) || String($0.pid).contains(term) }
             .sorted { a, b in
                 switch sort {
                 case .cpu: if a.cpuPercent != b.cpuPercent { return (a.cpuPercent ?? -1) > (b.cpuPercent ?? -1) }

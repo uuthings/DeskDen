@@ -265,7 +265,7 @@ struct DeviceTemperatureSettingsView: View {
     var body: some View {
         DevicePanel {
             HStack {
-                Label("温度提醒", systemImage: "bell").font(.system(size: 12, weight: .medium))
+                Label("温度提醒", systemImage: "bell").font(.system(size: 13, weight: .medium))
                 Spacer()
                 Button("恢复默认") { drafts.resetTemperatureDefaults() }.buttonStyle(WBButtonStyle(compact: true))
             }
@@ -291,7 +291,7 @@ struct DeviceNotificationStatusView: View {
     var body: some View {
         DevicePanel {
             HStack {
-                Label("系统通知", systemImage: "bell.badge").font(.system(size: 12, weight: .medium))
+                Label("系统通知", systemImage: "bell.badge").font(.system(size: 13, weight: .medium))
                 Spacer()
                 Text(model.notificationPermission.title).font(.system(size: 11)).foregroundStyle(palette.secondary)
             }
