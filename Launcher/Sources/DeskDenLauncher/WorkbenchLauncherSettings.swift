@@ -74,7 +74,45 @@ import LauncherCore
         if let window=NSApp.keyWindow {panel.beginSheetModal(for:window,completionHandler:finish)}else{panel.begin(completionHandler:finish)}
     }
     func cancelPicker(){picker?.cancel(nil);picker=nil;pickerBusy=false;owner?.pickerActive=false}
-    func moreSettings(){guard let owner else{return};if owner.settingsWindowController == nil{owner.settingsWindowController=LauncherSettingsWindowController(owner:owner)};owner.settingsWindowController?.present()}
+    static let defaultScanDirectories=["/Applications","/System/Applications",NSHomeDirectory()+"/Applications"]
+    static let prefixOptions:[KeyShortcutPrefix?]={
+        var result:[KeyShortcutPrefix?]=[nil]
+        for flags in [1,2,8,3,9,10,11,5,6,12,7,13,14,15]{result.append(KeyShortcutPrefix(control:flags & 1 != 0,option:flags & 2 != 0,shift:flags & 4 != 0,command:flags & 8 != 0))}
+        return result
+    }()
+    var prefixIndex:Int{Self.prefixOptions.firstIndex{$0 == configuration.settings.directLaunchPrefix} ?? 0}
+    func setPrefix(index:Int){
+        guard let owner,Self.prefixOptions.indices.contains(index) else{return}
+        if owner.setDirectLaunchPrefix(Self.prefixOptions[index]){owner.render();error=nil}else{error=owner.lastSaveError ?? "快捷键发生冲突，原设置已保留。"}
+        sync()
+    }
+    func addScanDirectories(){
+        guard let owner,!owner.pickerActive,!pickerBusy else{return}
+        let panel=NSOpenPanel();panel.title="添加扫描目录";panel.prompt="添加";panel.canChooseDirectories=true;panel.canChooseFiles=false;panel.allowsMultipleSelection=true;panel.canCreateDirectories=false
+        picker=panel;pickerBusy=true;owner.pickerActive=true
+        let finish: @MainActor (NSApplication.ModalResponse) -> Void = { [weak self,weak panel,weak owner] response in
+            self?.picker=nil;self?.pickerBusy=false;owner?.pickerActive=false
+            guard let self,let owner,response == .OK,let urls=panel?.urls else{return}
+            var candidate=owner.configuration
+            let defaults=Set(Self.defaultScanDirectories)
+            for url in urls{
+                let path=url.resolvingSymlinksInPath().standardizedFileURL.path
+                if candidate.scanDirectories.count<100,!defaults.contains(path),!candidate.scanDirectories.contains(path){candidate.scanDirectories.append(path)}
+            }
+            guard candidate.scanDirectories != owner.configuration.scanDirectories else{return}
+            if owner.save(candidate){owner.refreshApplications(force:true);error=nil;status="扫描范围已更新";sync()}else{error=owner.lastSaveError ?? "无法保存扫描范围。"}
+        }
+        if let window=NSApp.keyWindow{panel.beginSheetModal(for:window,completionHandler:finish)}else{panel.begin(completionHandler:finish)}
+    }
+    func removeScanDirectory(_ path:String){
+        guard let owner else{return}
+        var candidate=owner.configuration;candidate.scanDirectories.removeAll{$0 == path}
+        if owner.save(candidate){owner.refreshApplications(force:true);error=nil;status="扫描范围已更新";sync()}else{error=owner.lastSaveError ?? "无法保存扫描范围。"}
+    }
+    func recoverConfiguration(){
+        guard let owner else{return}
+        if owner.recoverConfiguration(){owner.render();error=nil;status="已恢复上一次有效配置";sync()}else{error=owner.lastSaveError ?? "恢复失败，当前配置已保留。"}
+    }
 }
 
 private enum LocalizedStandardComparator {
@@ -86,32 +124,86 @@ struct WorkbenchLauncherSettings:View {
     let adjustMaterial:()->Void
     @StateObject private var model:WorkbenchLauncherSettingsModel
     @State private var bindingsOpen=false
+    @State private var moreOpen=false
     @Environment(\.workbenchPalette) private var palette
+    @Environment(\.workbenchToast) private var toast
     init(owner:LauncherController,adjustMaterial:@escaping()->Void){self.owner=owner;self.adjustMaterial=adjustMaterial;_model=StateObject(wrappedValue:WorkbenchLauncherSettingsModel(owner:owner))}
     var body:some View{
         VStack(alignment:.leading,spacing:12){
-            WBCard(title:"主面板",symbol:"command",spacing:10){VStack(spacing:0){
-                row("唤出快捷键","在任何应用中打开启动器"){WorkbenchShortcutSetting(owner:owner,target:.launcher)}
-                row("默认视图","Tab 键可切换按键与应用"){WBSelect("默认视图",selection:setting(\.defaultView),options:LauncherDefaultView.allCases.map{($0,$0.title)}).frame(width:174)}
+            if owner.storageProblem != nil {
+                WBCard(title:"配置恢复",symbol:"exclamationmark.triangle",spacing:0){
+                    WBSettingRow(title:"上一次有效配置",subtitle:owner.storageProblem ?? "当前配置读取失败",showsDivider:false,subtitleColor:palette.warning){
+                        Button("恢复配置",action:model.recoverConfiguration).buttonStyle(WBButtonStyle(compact:true))
+                    }
+                }
+            }
+            WBCard(title:"主面板",symbol:"command",spacing:0){
+                row("唤出快捷键","在任何应用中打开启动器",first:true){WorkbenchShortcutSetting(owner:owner,target:.launcher)}
+                row("默认视图","Tab 键切换按键与应用，⌘F 进入文字输入"){WBSelect("默认视图",selection:setting(\.defaultView),options:LauncherDefaultView.allCases.map{($0,$0.title)}).frame(width:174)}
                 row("卡片布局","绑定与未绑定项目使用一致尺寸"){WBSelect("卡片布局",selection:setting(\.display),options:displayOptions).frame(width:174)}
-                row("数字快速启动","搜索后用数字键打开候选应用"){Toggle("数字快速启动",isOn:Binding(get:{model.configuration.settings.defaultSearchInputMode == .quick},set:{value in model.change{$0.defaultSearchInputMode=value ? .quick:.text}})).labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.small).tint(palette.accent)}
-                row("背景材质","与全局外观同步",last:true){Button("外观设置",action:adjustMaterial).buttonStyle(WBButtonStyle(compact:true))}
-            }}
-            WBCard(title:"绑定与搜索",symbol:"keyboard",spacing:10){VStack(spacing:0){
-                row("按键绑定","管理应用、网址、文件及快捷动作"){Button("管理绑定"){model.error=nil;bindingsOpen=true}.buttonStyle(WBButtonStyle(compact:true)).accessibilityIdentifier("fc.settings.launcher.bindings")}
+                row("数字快速启动","搜索后用数字键打开候选应用"){toggle("数字快速启动",Binding(get:{model.configuration.settings.defaultSearchInputMode == .quick},set:{value in model.change{$0.defaultSearchInputMode=value ? .quick:.text}}))}
+            }
+            WBCard(title:"绑定与搜索",symbol:"keyboard",spacing:0){
+                row("按键绑定","管理应用、网址、文件及快捷动作",first:true){Button("管理绑定"){model.error=nil;bindingsOpen=true}.buttonStyle(WBButtonStyle(compact:true)).accessibilityIdentifier("fc.settings.launcher.bindings")}
                 row("应用列表","未找到新安装的应用时，重新扫描"){
                     Button {Task {await model.rescanApplications()}} label: {
                         HStack(spacing:6){if model.rescanningApplications {ProgressView().controlSize(.small)};Text(model.rescanningApplications ? "正在扫描":"重新扫描应用")}
                     }.buttonStyle(WBButtonStyle(compact:true)).disabled(model.rescanningApplications)
                         .accessibilityIdentifier("fc.settings.launcher.rescan")
                 }
-                row("隐藏未绑定按键","仅影响启动器按键视图",last:true){Toggle("隐藏未绑定按键",isOn:setting(\.hideUnboundKeys)).labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.small).tint(palette.accent)}
-            }}
-            HStack(spacing:12){Button("更多启动器选项",action:model.moreSettings).buttonStyle(WBQuietButtonStyle()).help("应用扫描、面板开关、独立快捷键、直达前缀与配置恢复");Spacer();Button("打开启动器"){owner.show()}.buttonStyle(WBQuietButtonStyle())}.font(.system(size:11)).environment(\.workbenchOnBackdrop,true)
-            if let error=model.error{Text(error).font(.system(size:11)).foregroundStyle(palette.critical)}
-            if let status=model.status{HStack{Text(status);Spacer();if owner.lastRemoved != nil{Button("撤销移除",action:model.undoRemoval).buttonStyle(WBQuietButtonStyle())}}.font(.system(size:11)).foregroundStyle(.white.opacity(0.92)).shadow(color:.black.opacity(0.45),radius:2,y:1).environment(\.workbenchOnBackdrop,true)}
+                row("隐藏未绑定按键","仅影响启动器按键视图"){toggle("隐藏未绑定按键",setting(\.hideUnboundKeys))}
+                // Problems stay in the card; one-off results go to the Toast (G3).
+                if let error=model.error{Text(error).font(.system(size:11)).foregroundStyle(palette.critical).fixedSize(horizontal:false,vertical:true).padding(.top,8)}
+            }
+            moreOptions
         }.workbenchModal(isPresented:$bindingsOpen){WorkbenchBindingManager(model:model){bindingsOpen=false}}
+            .onChange(of:model.status){_,status in
+                guard let status else{return}
+                if status.hasPrefix("已移除"),owner.lastRemoved != nil{toast(status,actionTitle:"撤销",action:model.undoRemoval)}else{toast(status)}
+                model.status=nil
+            }
             .onAppear{model.sync()}.accessibilityElement(children:.contain).accessibilityIdentifier("fc.settings.launcher")
+    }
+    /// The former separate window's own options, opened in place (现行规范 9.4, L1).
+    private var moreOptions:some View{
+        WBCard(spacing:0){
+            Button{moreOpen.toggle()}label:{
+                HStack(spacing:7){
+                    Image(systemName:"slider.horizontal.3").font(.system(size:16)).foregroundStyle(palette.accent)
+                    Text("更多启动器选项").font(.system(size:13,weight:.medium)).foregroundStyle(palette.text)
+                    Text("面板开关、键位直达、扫描范围").font(.system(size:11)).foregroundStyle(palette.muted)
+                    Spacer(minLength:0)
+                    Image(systemName:moreOpen ? "chevron.up":"chevron.down").font(.system(size:11,weight:.medium)).foregroundStyle(palette.secondary)
+                }.frame(height:22).contentShape(Rectangle())
+            }.buttonStyle(ClickablePlainButtonStyle()).accessibilityValue(moreOpen ? "已展开":"已折叠").accessibilityIdentifier("fc.settings.launcher.more")
+            if moreOpen{
+                VStack(alignment:.leading,spacing:0){
+                    row("按键面板","通过键位打开绑定的应用和内容",first:true){toggle("按键面板",setting(\.actionsEnabled))}
+                    row("应用面板","搜索和浏览已扫描的应用"){toggle("应用面板",setting(\.applicationsEnabled))}
+                    row("滚动切换","横向翻页时，左右滚动在两个面板之间切换"){toggle("滚动切换",setting(\.scrollSwitchesViews))}
+                    row("应用排列","应用面板横向翻页或纵向滚动"){WBSelect("应用排列",selection:Binding(get:{model.configuration.settings.resultLayout},set:{value in if model.change({$0.resultLayout=value}){owner.resetSearchSelection();owner.render()}}),options:[(ResultLayout.grid,"横向翻页"),(ResultLayout.list,"纵向滚动")]).frame(width:174)}
+                    row("启动后收起","打开项目后收起启动器"){toggle("启动后收起",setting(\.hideOnLaunch))}
+                    row("应用面板快捷键","在任何应用中直接打开应用面板"){WorkbenchShortcutSetting(owner:owner,target:.applications)}
+                    row("键位直达","按「前缀 + 键位」直接打开绑定；单独设置的键位快捷键优先"){WBSelect("键位直达前缀",selection:Binding(get:{model.prefixIndex},set:model.setPrefix),options:WorkbenchLauncherSettingsModel.prefixOptions.enumerated().map{($0.offset,$0.element.map{$0.title+" + 键位"} ?? "关闭")}).frame(width:174)}
+                    Text("应用扫描范围").font(.system(size:13,weight:.medium)).padding(.top,16).padding(.bottom,4)
+                    ForEach(WorkbenchLauncherSettingsModel.defaultScanDirectories+model.configuration.scanDirectories,id:\.self){path in directoryRow(path)}
+                    HStack{
+                        Button("添加目录",action:model.addScanDirectories).buttonStyle(WBButtonStyle(compact:true)).disabled(model.configuration.scanDirectories.count >= 100 || model.pickerBusy)
+                            .accessibilityIdentifier("fc.settings.launcher.add-directory")
+                        Spacer()
+                    }.padding(.top,10)
+                }.padding(.top,10)
+            }
+        }
+    }
+    /// One directory per 52-point row: name and path (现行规范 4.5).
+    private func directoryRow(_ path:String)->some View{
+        let isDefault=WorkbenchLauncherSettingsModel.defaultScanDirectories.contains(path)
+        let name=path == "/Applications" ? "应用程序":path == "/System/Applications" ? "系统应用程序":path == NSHomeDirectory()+"/Applications" ? "用户应用程序":URL(fileURLWithPath:path).lastPathComponent
+        return WBSettingRow(title:name,subtitle:path.replacingOccurrences(of:NSHomeDirectory(),with:"~",options:[.anchored]),subtitleTruncation:.middle){
+            if isDefault{WBStatusPill(title:"默认")}
+            else{Button{model.removeScanDirectory(path)}label:{Image(systemName:"minus.circle")}.buttonStyle(WBIconButtonStyle(size:28,danger:true)).accessibilityLabel("移除扫描目录 "+name)}
+        }
     }
     private var displayOptions:[(value:DisplayMode,title:String)]{
         var values:[(value:DisplayMode,title:String)]=[(.name,"图标与名称"),(.icon,"仅图标"),(.list,"列表")]
@@ -119,8 +211,9 @@ struct WorkbenchLauncherSettings:View {
         return values
     }
     private func setting<T:Equatable>(_ key:WritableKeyPath<LauncherSettings,T>)->Binding<T>{Binding(get:{model.configuration.settings[keyPath:key]},set:{value in model.change{$0[keyPath:key]=value}})}
-    private func row<T:View>(_ title:String,_ subtitle:String,last:Bool=false,@ViewBuilder trailing:()->T)->some View{
-        VStack(spacing:0){HStack(spacing:16){VStack(alignment:.leading,spacing:4){Text(title).font(.system(size:12,weight:.medium)).frame(minHeight:17.4,alignment:.leading);Text(subtitle).font(.system(size:11)).foregroundStyle(palette.muted).lineSpacing(2).fixedSize(horizontal:false,vertical:true).frame(minHeight:15.95,alignment:.leading)}.frame(maxWidth:560,alignment:.leading);Spacer(minLength:8);trailing().fixedSize(horizontal:true,vertical:false)}.frame(maxWidth:.infinity,alignment:.leading).padding(.top,13).padding(.bottom,last ? 0:13);if !last{Rectangle().fill(palette.line).frame(height:1)}}
+    private func toggle(_ label:String,_ value:Binding<Bool>)->some View{Toggle(label,isOn:value).labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.mini).tint(palette.accent)}
+    private func row<T:View>(_ title:String,_ subtitle:String,first:Bool=false,@ViewBuilder trailing:()->T)->some View{
+        WBSettingRow(title:title,subtitle:subtitle,showsDivider:!first){trailing().fixedSize(horizontal:true,vertical:false)}
     }
 }
 
@@ -151,7 +244,7 @@ struct WorkbenchBindingManager:View{
         WorkbenchDialogFrame(title:"按键绑定",dismiss:dismiss,maximumBodyHeight:380){
             VStack(spacing:0){ForEach(KeyboardLayout.keys,id:\.self){key in
                 let binding=model.configuration.bindings[key]
-                HStack(spacing:12){Text(key).font(.system(size:12,weight:.medium)).frame(width:30,height:24).background(palette.soft,in:RoundedRectangle(cornerRadius:5));VStack(alignment:.leading,spacing:4){Text(binding?.title ?? "未绑定").font(.system(size:12)).lineLimit(1);if let binding{Text(binding.target.kind.title).font(.system(size:11)).foregroundStyle(palette.muted)}};Spacer();Button(binding == nil ? "绑定":"修改"){open(key)}.buttonStyle(WBButtonStyle(compact:true)).accessibilityIdentifier("fc.launcher.binding.manage.\(key)")}.frame(minHeight:58).overlay(alignment:.bottom){palette.line.frame(height:1)}
+                HStack(spacing:12){Text(key).font(.system(size:12,weight:.medium)).frame(width:30,height:24).background(palette.soft,in:RoundedRectangle(cornerRadius:5));VStack(alignment:.leading,spacing:4){Text(binding?.title ?? "未绑定").font(.system(size:binding == nil ? 12:13,weight:binding == nil ? .regular:.medium)).foregroundStyle(binding == nil ? palette.muted:palette.text).lineLimit(1);if let binding{Text(binding.target.kind.title).font(.system(size:11)).foregroundStyle(palette.muted)}};Spacer();Button(binding == nil ? "绑定":"修改"){open(key)}.buttonStyle(WBButtonStyle(compact:true)).accessibilityIdentifier("fc.launcher.binding.manage.\(key)")}.frame(height:binding == nil ? 36:52).overlay(alignment:.bottom){palette.line.frame(height:1)}
             }}
         }actions:{Text("38 个键位 · 已绑定 \(model.configuration.bindings.count)").font(.system(size:11)).foregroundStyle(palette.muted);Spacer();Button("完成",action:dismiss).buttonStyle(WBButtonStyle(primary:true)).keyboardShortcut(.defaultAction)}
             .workbenchModal(item:$editing,onRequestDismiss:{model.editorCloseRequest += 1}){request in WorkbenchBindingEditor(model:model,key:request.id,dismiss:{editing=nil},openAdvanced:{kind in editing=nil;dismiss();DispatchQueue.main.async{guard let owner=model.owner else{return};owner.show();owner.openEditor(request.id,kind:kind)}},inspection:inspection)}
@@ -260,7 +353,7 @@ private struct WorkbenchBindingEditor:View{
             WorkbenchScrollView{LazyVStack(spacing:7){ForEach(model.filteredApplications(query)){target in
                 Button{var value=draft;value.selected=target;value.location=target.location;value.name=target.name;drafts[kind]=value;if !moreOptions{save()}}label:{HStack(spacing:8){WorkbenchBindingIcon(target:target).frame(width:18,height:18);Text(target.name).font(.system(size:12)).lineLimit(1);Spacer();if draft.selected?.id == target.id{Image(systemName:"checkmark").font(.system(size:11)).foregroundStyle(palette.accent)}}.padding(.horizontal,10).frame(height:32).frame(maxWidth:.infinity,alignment:.leading).background(WorkbenchMaterialSurface(kind:.control,radius:8))}.buttonStyle(WBSelectableButtonStyle(selected: draft.selected?.id == target.id, cornerRadius: 8, drawsSelection: false, showsBorder: false))
             };if model.filteredApplications(query).isEmpty{Text("没有匹配的应用").font(.system(size:11)).foregroundStyle(palette.muted).padding(.vertical,20)}}}.frame(height:200)
-            HStack{Button("选择应用…"){choose(.app)}.buttonStyle(WBButtonStyle(compact:true));Spacer();Button("刷新列表"){Task{await model.refreshApplications(force:true)}}.buttonStyle(WBQuietButtonStyle())}
+            HStack{Button("选择应用"){choose(.app)}.buttonStyle(WBButtonStyle(compact:true));Spacer();Button("刷新列表"){Task{await model.refreshApplications(force:true)}}.buttonStyle(WBQuietButtonStyle())}
         case .web:
             field("网址"){input("https://example.com",text:fieldBinding(\.location)).accessibilityIdentifier("fc.launcher.binding.url")}
             Text("可在网址路径或查询中使用 {变量}，打开时会要求填写。").font(.system(size:11)).foregroundStyle(palette.muted)
@@ -278,13 +371,13 @@ private struct WorkbenchBindingEditor:View{
         case .tool:Text("此工具目标尚不可用，请选择快捷指令或本地脚本。").font(.system(size:11)).foregroundStyle(palette.warning)
         }
     }
-    private var fileField:some View{field(kind == .shell ? "脚本路径":"文件路径"){HStack(spacing:8){input("选择本机目标",text:fieldBinding(\.location));Button("选择…"){choose(kind)}.buttonStyle(WBButtonStyle())}}}
+    private var fileField:some View{field(kind == .shell ? "脚本路径":"文件路径"){HStack(spacing:8){input("选择本机目标",text:fieldBinding(\.location));Button("选择"){choose(kind)}.buttonStyle(WBButtonStyle())}}}
     private var advancedFields:some View{
         VStack(alignment:.leading,spacing:16){
             field("显示名称"){input("留空使用目标名称",text:fieldBinding(\.alias))}
             field("搜索关键词"){input("名称、首字母或自定义关键词",text:fieldBinding(\.keywords))}
             if kind == .web{field("网页名称"){input("留空使用网站域名",text:fieldBinding(\.name))}}
-            Button("完整目标选项…"){requestClose(advanced:true)}.buttonStyle(WBQuietButtonStyle()).help("打开已有目标编辑器，管理自定义图标、变量与目标快捷键")
+            Button("完整目标选项"){requestClose(advanced:true)}.buttonStyle(WBQuietButtonStyle()).help("打开已有目标编辑器，管理自定义图标、变量与目标快捷键")
         }
     }
     private func field<V:View>(_ label:String,@ViewBuilder content:()->V)->some View{VStack(alignment:.leading,spacing:6){Text(label).font(.system(size:12)).foregroundStyle(palette.secondary);content()}}

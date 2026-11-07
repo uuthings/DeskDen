@@ -363,17 +363,13 @@ import LauncherCore
                 check(await settle(owner.panel) { model.light != light && owner.configuration.settings.workbenchAppearance == (light ? .dark : .light) }, "\(light): launcher toggle changes both workbench preference and actual appearance")
                 owner.hide(restore:false); window.makeKeyAndOrderFront(nil)
                 model.changeLight(light)
-                let advanced = LauncherSettingsWindowController(owner:owner, autosavesFrame:false)
-                advanced.present()
-                if let settingsWindow = advanced.window, let root = settingsWindow.contentView {
-                    let appearancePopup = objects(in:root).compactMap { $0 as? NSPopUpButton }.first { $0.itemTitles == LauncherAppearance.allCases.map(\.title) }
-                    check(appearancePopup?.titleOfSelectedItem == (light ? "浅色" : "深色"), "\(light): advanced launcher settings reflect the same appearance preference")
-                    try NativeUIFixtureAccessibility.saveView(root, name:"interface-advanced-launcher-\(light ? "light" : "dark").png")
-                    appearancePopup?.selectItem(withTitle:"跟随系统")
-                    if let popup=appearancePopup, let action=popup.action { NSApp.sendAction(action,to:popup.target,from:popup) }
-                    check(await settle(settingsWindow) { model.appearance == .system && owner.configuration.settings.workbenchAppearance == .system }, "\(light): the actual advanced settings control persists Follow System")
-                } else { check(false,"advanced launcher settings create a native window") }
-                advanced.close(); model.changeLight(light); window.makeKeyAndOrderFront(nil)
+                model.navigate(.settings); model.settingsTab = .material
+                check(await settle(window) { element("fc.settings.appearance." + (light ? "light" : "dark"), in: host) != nil }
+                      && string("accessibilityValue", of: element("fc.settings.appearance." + (light ? "light" : "dark"), in: host) ?? NSObject()) == "已选择",
+                      "\(light): the appearance cards reflect the same appearance preference")
+                check(press("fc.settings.appearance.system", in: host), "\(light): the Follow System card is a real control")
+                check(await settle(window) { model.appearance == .system && owner.configuration.settings.workbenchAppearance == .system }, "\(light): the actual appearance card persists Follow System")
+                model.changeLight(light); window.makeKeyAndOrderFront(nil)
             }
         }
         return (count, failures)

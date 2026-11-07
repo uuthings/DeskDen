@@ -19,7 +19,16 @@ struct WorkbenchSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            WBPageHeader(title: model.settingsTab.title, subtitle: subtitle)
+            WBPageHeader(title: model.settingsTab.title, subtitle: subtitle) {
+                // The page action sits in the header, like every other page (9.4, S7).
+                if model.settingsTab == .widgets {
+                    Button { model.showDesktop?() } label: { Label("查看桌面", systemImage: "macwindow.on.rectangle") }
+                        .buttonStyle(WBButtonStyle()).accessibilityIdentifier("fc.settings.widgets.show-desktop")
+                } else if model.settingsTab == .launcher, let owner = model.owner {
+                    Button { owner.show() } label: { Label("打开启动器", systemImage: "keyboard") }
+                        .buttonStyle(WBButtonStyle()).accessibilityIdentifier("fc.settings.launcher.open")
+                }
+            }
             switch model.settingsTab {
             case .general: general
             case .material: material
@@ -34,86 +43,94 @@ struct WorkbenchSettingsView: View {
         .accessibilityElement(children:.contain).accessibilityIdentifier("fc.page.settings."+model.settingsTab.rawValue)
     }
 
+    // Every settings row is the shared setting row (现行规范 4.5 G1, 9.4 S1).
     private var general: some View {
         VStack(alignment: .leading, spacing: 12) {
             if let owner = model.owner { WorkbenchUpdateSettings(updates: owner.updates) }
-            WBCard(title: "启动与入口", symbol: "power", spacing: 10) {
-                VStack(spacing: 0) {
-                    settingsRow("登录时启动", model.loginNeedsApproval ? "需要在系统设置的登录项中批准" : "随系统登录在后台运行", first: true) {
-                        settingToggle("登录时启动", get: { model.loginEnabled }, set: model.setLogin)
-                    }
-                    settingsRow("显示菜单栏图标", "通过菜单栏快速打开工作台") {
-                        settingToggle("显示菜单栏图标", get: { model.preferences.menuBarVisible }, set: model.changeMenuBar)
-                    }
-                    if let controller = model.owner?.topEntryController {
-                        settingsRow("顶部入口", "靠近屏幕顶部，查看简要信息或进入工作台") {
-                            WorkbenchTopEntrySelection(controller: controller).frame(width: 174)
-                        }
-                    }
-                    settingsRow("工作台快捷键", "随时打开工作台") {
-                        if let owner = model.owner { WorkbenchShortcutSetting(owner: owner) }
-                    }
-                    settingsRow("记住窗口大小", "关闭时每次打开都恢复默认大小；开启后沿用上次的大小", last: true) {
-                        settingToggle("记住窗口大小", get: { model.remembersWindowSize }, set: model.changeRemembersWindowSize)
-                    }
+            WBCard(title: "启动与入口", symbol: "power", spacing: 0) {
+                settingsRow("登录时启动", model.loginNeedsApproval ? "需要在系统设置的登录项中批准" : "随系统登录在后台运行", first: true) {
+                    settingToggle("登录时启动", get: { model.loginEnabled }, set: model.setLogin)
                 }
-            }
-            WBCard(title: "操作反馈", symbol: "cursorarrow", spacing: 10) {
-                settingsRow("按钮悬停指针", "默认使用小手，提示按钮、选项与导航可以点击", first: true, last: true) {
-                    WBSelect("按钮悬停指针", selection: Binding(get: { model.buttonHoverCursor }, set: model.changeButtonHoverCursor), options: ButtonHoverCursor.allCases.map { (value: $0, title: $0.title) }).frame(width: 174)
+                settingsRow("显示菜单栏图标", "通过菜单栏快速打开工作台") {
+                    settingToggle("显示菜单栏图标", get: { model.preferences.menuBarVisible }, set: model.changeMenuBar)
+                }
+                if let controller = model.owner?.topEntryController {
+                    WorkbenchTopEntryRow(controller: controller)
+                }
+                settingsRow("工作台快捷键", "随时打开工作台") {
+                    if let owner = model.owner { WorkbenchShortcutSetting(owner: owner) }
+                }
+                settingsRow("记住窗口大小", "关闭时每次打开都恢复默认大小；开启后沿用上次的大小") {
+                    settingToggle("记住窗口大小", get: { model.remembersWindowSize }, set: model.changeRemembersWindowSize)
                 }
             }
             if let controller = model.owner?.topEntryController {
                 WorkbenchMiniDisplaySettings(controller: controller, providers: model.providerUsage, balances: model.apiBalance)
             }
-            WBCard(title: "数据更新", symbol: "arrow.clockwise", spacing: 10) {
-                VStack(spacing: 0) {
-                    settingsRow("设备采样间隔", "隐藏时降低性能采样频率，保留网络累计", first: true) {
-                        WBSelect("设备采样间隔", selection: Binding(get: { model.preferences.sampleInterval }, set: model.changeSampleInterval), options: [1.0, 2, 5].map { (value: $0, title: "\(Int($0)) 秒") }).frame(width: 174)
-                    }
-                    settingsRow("本机数据目录", "管理配置与本机历史记录", last: true) {
-                        Button("在访达中打开") { model.revealDataDirectory() }.buttonStyle(WBButtonStyle())
-                    }
+            WBCard(title: "数据更新", symbol: "arrow.clockwise", spacing: 0) {
+                settingsRow("设备采样间隔", "隐藏时降低性能采样频率，保留网络累计", first: true) {
+                    WBSelect("设备采样间隔", selection: Binding(get: { model.preferences.sampleInterval }, set: model.changeSampleInterval), options: [1.0, 2, 5].map { (value: $0, title: "\(Int($0)) 秒") }).frame(width: 174)
+                }
+                settingsRow("本机数据目录", "管理配置与本机历史记录") {
+                    Button("在访达中打开") { model.revealDataDirectory() }.buttonStyle(WBButtonStyle(compact: true))
                 }
             }
         }
     }
 
+    /// One card: the appearance is chosen on the cards themselves (9.4 S5);
+    /// the pointer choice joins it instead of a card of its own (S3).
     private var material: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            WorkbenchApplicationIconSettings()
-            materialControls
-        }
-    }
-
-    private var materialControls: some View {
-        WBCard(title: "共享外观", symbol: "circle.lefthalf.filled", spacing: 14) {
-            settingsRow("外观", "工作台、启动器、Mini 与弹窗同步切换", first: true) {
-                WBSelect("外观", selection: Binding(get: { model.appearance }, set: model.changeAppearance), options: LauncherAppearance.allCases.map { (value: $0, title: $0.title) }).frame(width: 174)
-            }
+        WBCard(title: "共享外观", symbol: "circle.lefthalf.filled", spacing: 0) {
             HStack(spacing: 12) {
-                appearancePreview(light: true, title: "浅色 · 青蓝琥珀")
-                appearancePreview(light: false, title: "深色 · 墨金")
-            }
-            Text("使用统一的背景、卡片与文字材质，随外观自动配对。")
-                .font(.system(size: 11)).foregroundStyle(palette.muted)
-            settingsRow("减少动态效果", "停用欢迎文字动效并简化界面过渡；系统设置始终优先", last: true) {
+                appearanceCard(.light, title: "浅色", detail: "青蓝琥珀 · 奶白半透明表面")
+                appearanceCard(.dark, title: "深色", detail: "墨金 · 炭黑半透明表面")
+                appearanceCard(.system, title: "跟随系统", detail: "随 macOS 外观切换")
+            }.padding(.bottom, 14)
+                .accessibilityElement(children: .contain).accessibilityLabel("外观")
+                .accessibilityIdentifier("fc.settings.appearance")
+            settingsRow("减少动态效果", "停用欢迎文字动效并简化界面过渡；系统设置始终优先") {
                 settingToggle("减少动态效果", get: { model.reduceMotion }, set: model.changeReduceMotion)
             }
+            settingsRow("按钮悬停指针", "默认使用小手，提示按钮、选项与导航可以点击") {
+                WBSelect("按钮悬停指针", selection: Binding(get: { model.buttonHoverCursor }, set: model.changeButtonHoverCursor), options: ButtonHoverCursor.allCases.map { (value: $0, title: $0.title) }).frame(width: 174)
+            }
         }
     }
 
-    private func appearancePreview(light: Bool, title: String) -> some View {
-        ZStack(alignment: .bottomLeading) {
-            WorkbenchFluidBackground().environment(\.colorScheme, light ? .light : .dark)
-            VStack(alignment: .leading, spacing: 5) {
-                Text(title).font(.system(size: 12, weight: .medium))
-                Text(light ? "奶白半透明表面" : "炭黑半透明表面").font(.system(size: 11))
-            }.foregroundStyle(.white).padding(14)
-        }.frame(maxWidth: .infinity).frame(height: 112)
+    /// A selectable appearance card with a visible selection mark (现行规范 4.4 D8).
+    private func appearanceCard(_ value: LauncherAppearance, title: String, detail: String) -> some View {
+        let selected = model.appearance == value
+        return Button { model.changeAppearance(value) } label: {
+            VStack(alignment: .leading, spacing: 0) {
+                Group {
+                    if value == .system {
+                        HStack(spacing: 0) {
+                            WorkbenchFluidBackground().environment(\.colorScheme, .light)
+                            WorkbenchFluidBackground().environment(\.colorScheme, .dark)
+                        }
+                    } else {
+                        WorkbenchFluidBackground().environment(\.colorScheme, value == .light ? .light : .dark)
+                    }
+                }.frame(maxWidth: .infinity).frame(height: 84).clipped().accessibilityHidden(true)
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(palette.text)
+                        Text(detail).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle").font(.system(size: 16))
+                        .foregroundStyle(selected ? palette.accent : palette.muted).accessibilityHidden(true)
+                }.padding(.horizontal, 12).frame(height: 52)
+            }
+            .background(WorkbenchMaterialSurface(kind: .control, radius: 12))
             .clipShape(RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(palette.border, lineWidth: 1))
-            .accessibilityElement(children: .combine)
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(selected ? palette.accent : palette.border, lineWidth: selected ? 2 : 1))
+            .contentShape(RoundedRectangle(cornerRadius: 12))
+        }.buttonStyle(ClickablePlainButtonStyle())
+            .accessibilityLabel(title).accessibilityValue(selected ? "已选择" : "")
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            .accessibilityIdentifier("fc.settings.appearance." + value.rawValue)
     }
 
     private var launcher: some View {
@@ -125,90 +142,58 @@ struct WorkbenchSettingsView: View {
     }
 
     private var privacy: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            WBCard(title: "内容保护", symbol: "checkmark.shield", spacing: 10) {
-                VStack(spacing: 0) {
-                    settingsRow("私密空间", "独立密码、离页锁定与加密备份", first: true) {
-                        Button("保护设置") {
-                            model.navigate(.vault)
-                            model.vault.showProtection(fromSettings:true)
-                        }.buttonStyle(WBButtonStyle(compact: true))
-                    }
-                    settingsRow("日历与提醒", "按来源分别授权，拒绝不影响本机提醒") {
-                        Button("来源管理") {
-                            model.calendar.openSources(fromSettingsPrivacy:true); model.navigate(.calendar)
-                        }.buttonStyle(WBButtonStyle(compact: true))
-                    }
-                    settingsRow("AI 数据", "只读取计量元数据，不读取对话正文与密钥") {
-                        Button("来源管理") { model.ai.openSources(fromSettingsPrivacy:true);model.navigate(.ai) }.buttonStyle(WBButtonStyle(compact: true))
-                    }
-                    settingsRow("服务流量额度", "实例凭据存入钥匙串；浏览器连接只同步额度", last: true) {
-                        Button("管理来源") {model.openUsageOverview()}.buttonStyle(WBButtonStyle(compact:true))
-                    }
-                }
+        WBCard(title: "内容保护", symbol: "checkmark.shield", spacing: 0) {
+            settingsRow("私密空间", "独立密码、离页锁定与加密备份", first: true) {
+                Button("保护与备份") {
+                    model.navigate(.vault)
+                    model.vault.showProtection(fromSettings:true)
+                }.buttonStyle(WBButtonStyle(compact: true))
             }
-            WBCard(title: "诊断范围", symbol: "doc.badge.gearshape", spacing: 10) {
-                VStack(spacing: 0) {
-                    settingsRow("状态诊断", "不包含提醒正文、私密文字和认证内容", first: true, last: true) {
-                        Button("查看审计") { model.settingsTab = .audit }.buttonStyle(WBButtonStyle(compact: true))
-                    }
-                }
+            settingsRow("日历与提醒", "按来源分别授权，拒绝不影响本机提醒") {
+                Button("管理来源") {
+                    model.calendar.openSources(fromSettingsPrivacy:true); model.navigate(.calendar)
+                }.buttonStyle(WBButtonStyle(compact: true))
+            }
+            settingsRow("AI 数据", "只读取计量元数据，不读取对话正文与密钥") {
+                Button("管理来源") { model.ai.openSources(fromSettingsPrivacy:true);model.navigate(.ai) }.buttonStyle(WBButtonStyle(compact: true))
+            }
+            settingsRow("服务流量额度", "实例凭据存入钥匙串；浏览器连接只同步额度") {
+                Button("管理来源") {model.openUsageOverview()}.buttonStyle(WBButtonStyle(compact:true))
             }
         }
     }
 
+    /// Setting rows with a status capsule; the technical detail stays in the export (9.4 S9).
     private var audit: some View {
-        WBCard(title: "功能与来源状态", symbol: "checklist", spacing: 10) {
-            VStack(alignment: .leading, spacing: 0) {
-                Text("检查连接、权限与本机持久化状态。")
-                    .font(.system(size: 11)).foregroundStyle(palette.muted).padding(.bottom, 12)
-                ForEach(model.auditEntries) { entry in
-                    HStack(alignment: .center, spacing: 16) {
-                        Text(entry.title).font(.system(size: 12)).frame(width: 118, alignment: .leading)
-                        Text(entry.detail).font(.system(size: 11)).foregroundStyle(palette.muted)
-                            .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
-                        Text(entry.state).font(.system(size: 11)).foregroundStyle(palette.secondary)
-                            .padding(.horizontal, 7).padding(.vertical, 3)
-                            .background(palette.soft, in: RoundedRectangle(cornerRadius: 5))
-                            .frame(maxWidth: 155, alignment: .trailing)
-                    }.padding(.vertical, 12)
-                    if entry.id != model.auditEntries.last?.id { Rectangle().fill(palette.line).frame(height: 1) }
+        VStack(alignment: .leading, spacing: 12) {
+            WBCard(title: "功能与来源状态", symbol: "checklist", spacing: 0) {
+                let entries = model.auditEntries
+                ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                    WBSettingRow(title: entry.title, subtitle: entry.summary.isEmpty ? entry.detail : entry.summary, showsDivider: index > 0) {
+                        WBStatusPill(title: entry.state, good: entry.isGood)
+                    }.accessibilityIdentifier("fc.settings.audit." + entry.id)
                 }
                 HStack(spacing: 8) {
                     Button { model.runStorageAudit() } label: { Label("重新检查", systemImage: "arrow.clockwise") }.buttonStyle(WBButtonStyle())
                     Spacer()
                     Button { model.exportAudit() } label: { Label("导出诊断", systemImage: "arrow.down.to.line") }.buttonStyle(WBButtonStyle())
                 }.padding(.top, 12)
-                if let date = model.lastAudit {
-                    Text("本机存储检查于 " + date.formatted(date: .abbreviated, time: .shortened))
-                        .font(.system(size: 11)).foregroundStyle(palette.muted).padding(.top, 10)
-                }
-                Text("导出包含功能与连接状态，不包含提醒正文、聊天内容、私密文字或认证信息。")
-                    .font(.system(size: 11)).foregroundStyle(palette.muted).padding(.top, 10)
+            }
+            WBPageNote {
+                Text((model.lastAudit.map { "本机存储检查于 " + WorkbenchDateText.fullWithTime($0, calendar: .current) + "。" } ?? "")
+                     + "导出包含功能与连接状态，不包含提醒正文、聊天内容、私密文字或认证信息。")
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 
     private func settingToggle(_ label: String, get: @escaping @MainActor @Sendable () -> Bool, set: @escaping @MainActor @Sendable (Bool) -> Void) -> some View {
-        Toggle(label, isOn: Binding(get: get, set: set)).labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.small)
+        Toggle(label, isOn: Binding(get: get, set: set)).labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.mini)
             .tint(palette.accent)
     }
 
-    private func settingsRow<T: View>(_ title: String, _ subtitle: String, first: Bool = false, last: Bool = false, @ViewBuilder trailing: () -> T) -> some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 16) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(palette.text).frame(minHeight:17.4,alignment:.leading)
-                    Text(subtitle).font(.system(size: 11)).foregroundStyle(palette.muted)
-                        .lineSpacing(2).fixedSize(horizontal: false, vertical: true).frame(minHeight:15.95,alignment:.leading)
-                }.frame(maxWidth: 560, alignment: .leading)
-                Spacer(minLength: 8)
-                trailing().fixedSize(horizontal: true, vertical: false)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, 13).padding(.bottom, last ? 0 : 13)
-            if !last { Rectangle().fill(palette.line).frame(height: 1) }
-        }
+    private func settingsRow<T: View>(_ title: String, _ subtitle: String, first: Bool = false, @ViewBuilder trailing: () -> T) -> some View {
+        WBSettingRow(title: title, subtitle: subtitle, showsDivider: !first) { trailing().fixedSize(horizontal: true, vertical: false) }
     }
 }
 
@@ -223,9 +208,9 @@ private struct WorkbenchMiniDisplaySettings: View {
         return Array(repeating: GridItem(.flexible(minimum: 0), spacing: 12, alignment: .leading), count: count)
     }
     var body: some View {
-        WBCard(title: "Mini 显示内容", symbol: "rectangle.topthird.inset.filled", spacing: 14) {
+        WBCard(title: "Mini 显示内容", symbol: "rectangle.topthird.inset.filled", spacing: 12) {
             HStack {
-                Text("顶部信息").font(.system(size: 11, weight: .medium)).foregroundStyle(palette.secondary)
+                group("顶部信息")
                 Spacer()
                 Button("恢复默认", action: controller.restoreMiniSections).buttonStyle(WBButtonStyle(compact: true))
                     .accessibilityIdentifier("mini-display-restore-defaults")
@@ -236,12 +221,12 @@ private struct WorkbenchMiniDisplaySettings: View {
                 Toggle("城市天气", isOn: Binding(get: { controller.preferences.showWeather }, set: { controller.setMiniHeader(date: controller.preferences.showDate, weather: $0) }))
                     .accessibilityIdentifier("mini-display-weather")
             }
-            Text("卡片内容").font(.system(size: 11, weight: .medium)).foregroundStyle(palette.secondary)
+            group("卡片内容")
             LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
                 ForEach(WorkbenchMiniCardID.builtIn) { card in cardToggle(card, title: card.title) }
             }
             if !providers.sources.isEmpty || !balances.sources.isEmpty {
-                Text("服务额度").font(.system(size: 11, weight: .medium)).foregroundStyle(palette.secondary)
+                group("服务额度")
                 WorkbenchScrollView {
                     LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
                         ForEach(providers.sources) { source in cardToggle(.provider(source.id), title: source.name) }
@@ -249,11 +234,15 @@ private struct WorkbenchMiniDisplaySettings: View {
                     }.padding(.vertical, 2)
                 }.frame(maxHeight: 180)
             }
-            Text("在 Mini 编辑模式中拖动或使用方向键调整顺序。每张卡片宽 220 点，空间不足时分页；城市、时区和温度单位沿用首页设置。")
+            Text("在 Mini 的编辑模式中拖动卡片调整顺序；城市、时区和温度单位沿用首页设置。")
                 .font(.system(size: 11)).foregroundStyle(palette.muted)
             if let error = controller.error { Text(error).font(.system(size: 11)).foregroundStyle(palette.warning) }
         }.toggleStyle(WBCheckboxToggleStyle())
             .accessibilityElement(children: .contain).accessibilityIdentifier("mini-display-settings")
+    }
+    /// Group titles use the 13-medium step (现行规范 2.1, 9.4 S10).
+    private func group(_ title: String) -> some View {
+        Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(palette.text)
     }
     private func cardToggle(_ card: WorkbenchMiniCardID, title: String) -> some View {
         Toggle(title, isOn: Binding(get: { controller.preferences.activeCards(available: controller.availableMiniCards).contains(card) }, set: { controller.setMiniCard(card, visible: $0) }))
@@ -261,8 +250,10 @@ private struct WorkbenchMiniDisplaySettings: View {
     }
 }
 
-private struct WorkbenchTopEntrySelection: View {
+/// The top entry's reason for being unavailable goes into the row's description (G1).
+private struct WorkbenchTopEntryRow: View {
     @ObservedObject var controller: WorkbenchTopEntryController
+    @Environment(\.workbenchPalette) private var palette
     private enum Choice: String, CaseIterable {
         case summary, workbench, disabled
         var title: String {
@@ -271,91 +262,14 @@ private struct WorkbenchTopEntrySelection: View {
     }
     private var selection: Choice { controller.preferences.enabled ? (controller.preferences.mode == .summary ? .summary : .workbench) : .disabled }
     var body: some View {
-        VStack(alignment: .trailing, spacing: 4) {
+        WBSettingRow(title: "顶部入口", subtitle: controller.error ?? "靠近屏幕顶部，查看简要信息或进入工作台", subtitleColor: controller.error == nil ? nil : palette.warning) {
             WBSelect("顶部入口", selection: Binding(get: { selection }, set: { value in
                 if value == .disabled { controller.setEnabled(false) }
                 else {
                     controller.setMode(value == .summary ? .summary : .workbench)
                     if controller.error == nil { controller.setEnabled(true) }
                 }
-            }), options: Choice.allCases.map { (value: $0, title: $0.title) })
-            if let error = controller.error {
-                Text(error).font(.system(size: 11)).foregroundStyle(WorkbenchStyle.warning).fixedSize(horizontal: false, vertical: true)
-            }
+            }), options: Choice.allCases.map { (value: $0, title: $0.title) }).frame(width: 174)
         }
     }
-}
-
-/// This AppKit control keeps the same responder throughout a continuous drag.
-/// Updating the surrounding model therefore cannot replace the knob mid-gesture.
-private struct WorkbenchOpacitySlider: NSViewRepresentable {
-    @Binding var value: Double
-    @Environment(\.isEnabled) private var isEnabled
-    @Environment(\.workbenchPalette) private var palette
-    func makeCoordinator() -> Coordinator { Coordinator(value: $value) }
-    func makeNSView(context: Context) -> NSSlider {
-        let slider = WorkbenchInterfaceOpacityControl(value: value, minValue: 0.50, maxValue: 0.90, target: context.coordinator, action: #selector(Coordinator.changed(_:)))
-        slider.isContinuous = true
-        slider.altIncrementValue = 0.01
-        slider.controlSize = .regular
-        slider.setAccessibilityLabel("界面不透明度")
-        slider.setAccessibilityHelp("50% 更通透，90% 更清晰；使用方向键按 1% 调整")
-        return slider
-    }
-    func updateNSView(_ slider: NSSlider, context: Context) {
-        context.coordinator.value = $value
-        slider.isEnabled = isEnabled
-        if abs(slider.doubleValue - value) > 0.000_001 { slider.doubleValue = value }
-        slider.trackFillColor = palette.nsAccent
-        slider.setAccessibilityValueDescription("\(Int((value * 100).rounded()))%")
-    }
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSSlider, context: Context) -> CGSize? {
-        CGSize(width: proposal.width ?? 170, height: 32)
-    }
-    @MainActor final class Coordinator: NSObject {
-        var value: Binding<Double>
-        init(value: Binding<Double>) { self.value = value }
-        @objc func changed(_ sender: NSSlider) {
-            value.wrappedValue = (sender.doubleValue * 100).rounded() / 100
-        }
-    }
-}
-
-private final class WorkbenchInterfaceOpacityControl: NSSlider {
-    override var mouseDownCanMoveWindow:Bool {false}
-    override var acceptsFirstResponder:Bool {true}
-    override func acceptsFirstMouse(for event:NSEvent?)->Bool {true}
-    override func mouseDown(with event:NSEvent) {
-        window?.makeFirstResponder(self)
-        super.mouseDown(with:event)
-    }
-    override func keyDown(with event: NSEvent) {
-        guard !event.modifierFlags.contains(.command) else { super.keyDown(with: event); return }
-        let next: Double
-        switch event.keyCode {
-        case 123, 125: next = doubleValue - 0.01
-        case 124, 126: next = doubleValue + 0.01
-        case 115: next = minValue
-        case 119: next = maxValue
-        default: super.keyDown(with: event); return
-        }
-        doubleValue = min(maxValue, max(minValue, (next * 100).rounded() / 100))
-        sendAction(action, to: target)
-    }
-}
-
-struct LauncherSettingsEmbeddedView:NSViewRepresentable {
-    let owner:LauncherController
-    let section:Int
-    final class Coordinator {var controller:LauncherSettingsWindowController;init(_ controller:LauncherSettingsWindowController){self.controller=controller}}
-    func makeCoordinator()->Coordinator {
-        if owner.settingsWindowController == nil {owner.settingsWindowController=LauncherSettingsWindowController(owner:owner)}
-        return Coordinator(owner.settingsWindowController!)
-    }
-    func makeNSView(context:Context)->NSView {context.coordinator.controller.embeddedPage(section:section)}
-    func updateNSView(_ view:NSView,context:Context) {_=context.coordinator.controller.embeddedPage(section:section)}
-    func sizeThatFits(_ proposal:ProposedViewSize,nsView:NSView,context:Context)->CGSize? {
-        context.coordinator.controller.embeddedSize(width:proposal.width ?? max(485,nsView.bounds.width))
-    }
-    static func dismantleNSView(_ view:NSView,coordinator:Coordinator) {coordinator.controller.stopEmbedding()}
 }

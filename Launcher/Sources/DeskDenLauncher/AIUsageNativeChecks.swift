@@ -185,56 +185,52 @@ import SwiftUI
             scroll.contentView.scroll(to: NSPoint(x: 0, y: y)); scroll.reflectScrolledClipView(scroll.contentView)
         }
         let history = AIQuotaDailyHistory.build(model.quotaHistory, provider: provider)
+        // One combined chart: one set of day cells, a line per quota window (9.4, D6).
         let ready = await wait(window) {
-            history.series.allSatisfy { series in
-                series.days.filter(\.isInRange).allSatisfy {
-                    inspection.frame(dailyCellID(provider, duration: series.durationMinutes, day: $0.date)) != nil
-                }
-            }
+            history.days.filter(\.isInRange).allSatisfy { inspection.frame(dailyCellID(provider, day: $0.date)) != nil }
         }
-        check(!history.series.isEmpty && ready, "all 31 real calendar day cells mount for every actual quota duration")
+        check(!history.series.isEmpty && ready, "all 31 real calendar day cells mount in the combined chart")
+        let grid = inspection.frame("fc.ai.history." + provider.rawValue + ".quota.grid")
+        let mounted = history.days.filter(\.isInRange).enumerated().compactMap { index, day -> (Int, AIQuotaDailyCell, NSRect)? in
+            guard let frame = inspection.frame(dailyCellID(provider, day: day.date)) else { return nil }
+            return (index, day, frame)
+        }
+        check(grid.map { $0.width > 500 && abs($0.height - 88) < 0.5 } == true && mounted.count == 31 &&
+              mounted.allSatisfy { $0.2.width > 8 && abs($0.2.height - 88) < 0.5 },
+              "the combined chart has 31 date columns on a responsive 88 pt quota plot")
+        check(grid.map { bounds in mounted.allSatisfy { index, _, cell in
+            abs(cell.minX - bounds.minX - CGFloat(index) * (bounds.width + 5) / 31) < 0.5 && abs(bounds.minY - cell.minY) < 0.5
+        } } == true, "daily columns share one baseline and 5 pt gaps")
+        check(history.days.filter { !$0.isInRange }.allSatisfy { inspection.frame(dailyCellID(provider, day: $0.date)) == nil },
+              "week-alignment padding creates no false observed or missing day cells")
         let objects = accessibilityObjects(in: host)
         for series in history.series {
             let prefix = "fc.ai.history." + provider.rawValue + "." + String(series.durationMinutes)
-            let grid = inspection.frame(prefix + ".grid")
-            let mounted = series.days.filter(\.isInRange).enumerated().compactMap { index, day -> (Int, AIQuotaDailyCell, NSRect)? in
-                guard day.isInRange, let frame = inspection.frame(dailyCellID(provider, duration: series.durationMinutes, day: day.date)) else { return nil }
-                return (index, day, frame)
-            }
-            check(grid.map { $0.width > 500 && abs($0.height - 88) < 0.5 } == true && mounted.count == 31 &&
-                  mounted.allSatisfy { $0.2.width > 8 && abs($0.2.height - 88) < 0.5 },
-                  "\(series.title) has 31 date columns on a responsive 88 pt bar plot")
-            check(grid.map { bounds in mounted.allSatisfy { index, _, cell in
-                abs(cell.minX - bounds.minX - CGFloat(index) * (bounds.width + 5) / 31) < 0.5 &&
-                    abs(bounds.maxY - cell.maxY) < 0.5
-            } } == true, "\(series.title) daily bars have a common baseline and 5 pt gaps")
-            check(mounted.allSatisfy { _, day, _ in
-                let bar = inspection.frame(prefix + ".bar." + String(Int(day.date.timeIntervalSince1970)))
-                guard let amount = day.reading?.window.usedPercent else { return bar == nil }
-                return bar.map { abs($0.height - max(2, 88 * amount / 100)) < 0.5 } == true
-            }, "\(series.title) paints real percentage heights, distinct zero marks and absent bars for missing readings")
-            check(series.days.filter { !$0.isInRange }.allSatisfy {
-                inspection.frame(dailyCellID(provider, duration: series.durationMinutes, day: $0.date)) == nil
-            }, "\(series.title) week-alignment padding creates no false observed or missing day cells")
+            check(grid.map { bounds in mounted.allSatisfy { _, day, cell in
+                let point = inspection.frame(prefix + ".point." + String(Int(day.date.timeIntervalSince1970)))
+                guard let amount = series.days.first(where: { $0.date == day.date })?.reading?.window.usedPercent else { return point == nil }
+                return point.map { abs($0.midY - (bounds.minY + 88 * amount / 100)) < 0.75 && abs($0.midX - cell.midX) < 0.75 } == true
+            } } == true, "\(series.title) plots real percentages on its line and leaves missing readings as gaps")
             let labelsMatch = mounted.allSatisfy { _, day, _ in
-                let id = prefix + ".day." + String(Int(day.date.timeIntervalSince1970))
+                let id = "fc.ai.history." + provider.rawValue + ".quota.day." + String(Int(day.date.timeIntervalSince1970))
                 let descriptions = objects.filter { string("accessibilityIdentifier", from: $0) == id }
                     .compactMap { string("accessibilityLabel", from: $0) }
+                let reading = series.days.first { $0.date == day.date }?.reading
                 return descriptions.contains { description in
-                    day.reading == nil ? description.contains("无额度读数") : description.contains("当天最后观测") && description.contains(day.reading!.source.title)
+                    reading == nil ? description.contains(series.title + "无额度读数") : description.contains("当天最后观测") && description.contains(reading!.source.title)
                 }
             }
             check(labelsMatch, "\(series.title) exposes actual observations and missing days as distinct accessible states")
-            print("DETAIL daily bar chart \(label) duration=\(series.durationMinutes) grid=\(String(describing: grid)) cells=\(mounted.count) observedDays=\(series.observedDayCount)")
+            print("DETAIL daily chart \(label) duration=\(series.durationMinutes) grid=\(String(describing: grid)) cells=\(mounted.count) observedDays=\(series.observedDayCount)")
         }
         if provider == .claude, let short = history.series.first(where: { $0.durationMinutes == 300 }),
            let zero = short.days.first(where: { $0.reading?.window.usedPercent == 0 }),
            let missing = short.days.first(where: { $0.isInRange && $0.reading == nil }),
-           let zeroFrame = inspection.frame(dailyCellID(provider, duration: 300, day: zero.date)),
-           inspection.frame(dailyCellID(provider, duration: 300, day: missing.date)) != nil {
-            check(inspection.frame("fc.ai.history.claude.300.bar." + String(Int(zero.date.timeIntervalSince1970))).map { abs($0.height - 2) < 0.5 } == true &&
-                  inspection.frame("fc.ai.history.claude.300.bar." + String(Int(missing.date.timeIntervalSince1970))) == nil,
-                  "a real observed zero paints a baseline mark while a missing observation has no bar")
+           let zeroFrame = inspection.frame(dailyCellID(provider, day: zero.date)),
+           inspection.frame(dailyCellID(provider, day: missing.date)) != nil {
+            check(inspection.frame("fc.ai.history.claude.300.point." + String(Int(zero.date.timeIntervalSince1970))).map { point in grid.map { abs(point.midY - $0.minY) < 0.75 } == true } == true &&
+                  inspection.frame("fc.ai.history.claude.300.point." + String(Int(missing.date.timeIntervalSince1970))) == nil,
+                  "a real observed zero sits on the baseline while a missing observation has no point")
             let primaryTop = NSScreen.screens.first?.frame.maxY ?? 0
             CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
                 mouseCursorPosition: CGPoint(x: zeroFrame.midX, y: primaryTop - zeroFrame.midY), mouseButton: .left)?.post(tap: .cghidEventTap)
@@ -244,7 +240,7 @@ import SwiftUI
             captionDate.calendar = .current
             captionDate.timeZone = captionDate.calendar.timeZone
             captionDate.setLocalizedDateFormatFromTemplate("Md")
-            let expectedCaption = captionDate.string(from: zero.date) + " · 窗口已用 0%"
+            let expectedCaption = captionDate.string(from: zero.date) + " · " + short.title + " 0%"
             let showsObservation = await wait(window) {
                 dailyCaptionText(in: host).contains { normalizedDailyCaption($0.text).contains(normalizedDailyCaption(expectedCaption)) }
             }
@@ -252,11 +248,11 @@ import SwiftUI
             // the explicit day descriptions expose AXLabel. A containing
             // accessibility group may join the caption's two visible lines.
             // Check the actual visible text fields, never the day's help text.
-            let captionFields = dailyCaptionText(in: host).filter { normalizedDailyCaption($0.text).contains("窗口已用") }
+            let captionFields = dailyCaptionText(in: host).filter { normalizedDailyCaption($0.text).contains(short.title) }
             print("DETAIL daily hover \(label) expected=\(String(reflecting: expectedCaption)) actual=" +
                 captionFields.prefix(12).map { $0.field + "=" + String(reflecting: $0.text) }.joined(separator: " | "))
             check(showsObservation, "hovering a daily cell shows that day's last real observation rather than an inferred daily total")
-            let after = inspection.frame(dailyCellID(provider, duration: 300, day: zero.date))
+            let after = inspection.frame(dailyCellID(provider, day: zero.date))
             check(after.map { abs($0.minX - zeroFrame.minX) < 0.5 && abs($0.minY - zeroFrame.minY) < 0.5 && abs($0.width - zeroFrame.width) < 0.5 && abs($0.height - zeroFrame.height) < 0.5 } == true,
                   "daily hover leaves the bar target and neighboring date columns stable")
         }
@@ -267,8 +263,8 @@ import SwiftUI
         return (count, failures)
     }
 
-    private static func dailyCellID(_ provider: AIProvider, duration: Int, day: Date) -> String {
-        "fc.ai.history." + provider.rawValue + "." + String(duration) + ".cell." + String(Int(day.timeIntervalSince1970))
+    private static func dailyCellID(_ provider: AIProvider, day: Date) -> String {
+        "fc.ai.history." + provider.rawValue + ".quota.cell." + String(Int(day.timeIntervalSince1970))
     }
     private static func dailyCaptionText(in host: NSView) -> [(field: String, text: String)] {
         accessibilityObjects(in: host).flatMap { object in

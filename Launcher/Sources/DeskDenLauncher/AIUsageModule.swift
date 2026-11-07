@@ -587,7 +587,7 @@ final class AIUsageModel: ObservableObject {
                                  detail: result.snapshots.isEmpty ? "本次未读取到有效额度，保留最后读数并等待来源恢复。" : stale ? "保留最后有效读数；超过 15 分钟或窗口已重置，等待来源更新。" : "额度来自所标注来源，不由 Token 数推算。")
                 }
                 let detail = config.provider == .claude
-                    ? (config.quotaPath == nil ? "在配置用量中点击“连接本机订阅”，自动接入 Claude 额度。" : "已连接本机来源，等待 Claude Code 提供真实额度；收到后自动更新。")
+                    ? (config.quotaPath == nil ? "在配置用量中点击「连接本机订阅」，自动接入 Claude 额度。" : "已连接本机来源，等待 Claude Code 提供真实额度；收到后自动更新。")
                     : "尚未找到额度字段。使用已登录的 Codex 完成一次请求后刷新，或选择会话目录。"
                 return .init(provider: config.provider, state: result.sourceExists || config.quotaPath != nil ? .unavailable : .disconnected, snapshot: nil, detail: detail)
             }.map { summary in

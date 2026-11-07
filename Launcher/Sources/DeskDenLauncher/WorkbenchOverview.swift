@@ -143,7 +143,7 @@ struct WorkbenchHomeContextHeader: View {
                     Text(context.time(timeline.date,seconds:true)).font(.system(size:compact ? 24:28,weight:.regular)).monospacedDigit()
                     VStack(alignment:.leading,spacing:3) {
                         if let date=try? context.dateContext.display(at:timeline.date) {
-                            Text("\(displayCalendar.component(.month,from:timeline.date)) 月 \(displayCalendar.component(.day,from:timeline.date)) 日  "+date.weekdayText).font(.system(size:compact ? 11:12)).foregroundStyle(palette.secondary)
+                            Text(WorkbenchDateText.monthDay(timeline.date,calendar:displayCalendar)+" "+date.weekdayText).font(.system(size:compact ? 11:12)).foregroundStyle(palette.secondary)
                         }
                         HStack(spacing:4){Text(context.locationTitle+" · "+WorkbenchContextModel.utcOffset(context.effectiveTimeZoneIdentifier,at:timeline.date));Image(systemName:"chevron.down").font(.system(size:9))}.font(.system(size:11)).foregroundStyle(palette.muted)
                     }

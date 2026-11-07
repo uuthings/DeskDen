@@ -237,7 +237,6 @@ private struct CalendarDisplayPreferences:Codable {
     @Published var editor:CalendarReminderDraft?
     @Published var selectedEvent:CalendarEventItem?
     @Published var selectedReminder:ReminderItem?
-    @Published var showNewChoice=false
     @Published var showSources=false
     @Published var sourcesReturnToPrivacy=false
     @Published var showNotifications=false

@@ -225,7 +225,7 @@ private struct VaultUnlockedView:View {
             VStack(alignment:.leading,spacing:14){
                 Text("分类与文本一起加密保存。「未分类」始终保留；删除其他分类时可先选择文本去向。").font(.system(size:12)).foregroundStyle(palette.secondary)
                 WorkbenchScrollView {VStack(spacing:4){ForEach(model.categories){category in
-                    HStack(spacing:10){VStack(alignment:.leading,spacing:3){Text(category.name).font(.system(size:13,weight:.medium));Text("\(model.documents.filter{$0.effectiveCategoryID == category.id}.count) 条文本").font(.system(size:11)).foregroundStyle(palette.muted)};Spacer();Button{editingCategoryID=category.id;categoryName=category.name}label:{Image(systemName:"pencil")}.buttonStyle(WBIconButtonStyle(size:28)).accessibilityLabel("重命名 \(category.name)");Button{moveDestination="unclassified";categoryDeletion=category}label:{Image(systemName:"trash")}.buttonStyle(WBIconButtonStyle(size:28)).foregroundStyle(palette.critical).accessibilityLabel("删除分类 \(category.name)")}.frame(height:52)
+                    HStack(spacing:10){VStack(alignment:.leading,spacing:3){Text(category.name).font(.system(size:13,weight:.medium));Text("\(model.documents.filter{$0.effectiveCategoryID == category.id}.count) 条文本").font(.system(size:11)).foregroundStyle(palette.muted)};Spacer();Button{editingCategoryID=category.id;categoryName=category.name}label:{Image(systemName:"pencil")}.buttonStyle(WBIconButtonStyle(size:28)).accessibilityLabel("重命名 \(category.name)");Button{moveDestination="unclassified";categoryDeletion=category}label:{Image(systemName:"trash")}.buttonStyle(WBIconButtonStyle(size:28,danger:true)).accessibilityLabel("删除分类 \(category.name)")}.frame(height:52)
                 }}}.frame(maxHeight:240)
                 VStack(alignment:.leading,spacing:6){Text(editingCategoryID == nil ? "新增分类":"重命名分类").font(.system(size:12));HStack(spacing:10){TextField("1–30 个字",text:$categoryName).modifier(VaultInputStyle());Button(editingCategoryID == nil ? "新增":"保存"){let saved=editingCategoryID.map{model.renameCategory($0,to:categoryName)} ?? model.addCategory(categoryName);if saved {categoryName="";editingCategoryID=nil}}.buttonStyle(WBButtonStyle(primary:true)).disabled(categoryName.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty);if editingCategoryID != nil {Button("取消"){categoryName="";editingCategoryID=nil}.buttonStyle(WBButtonStyle())}}}
                 VaultSheetError(model:model)
@@ -235,7 +235,7 @@ private struct VaultUnlockedView:View {
     @ViewBuilder private var editor:some View {
         if let document=model.selectedDocument {
             VStack(alignment:.leading,spacing:0) {
-                HStack(spacing:8){TextField("未命名文本",text:Binding(get:{model.selectedDocument?.title ?? ""},set:model.updateTitle)).textFieldStyle(.plain).font(.system(size:17,weight:.medium)).frame(height:32);Button{deletion=VaultDeletionTarget(id:document.id,title:document.title);model.recordActivity()}label:{Image(systemName:"trash")}.buttonStyle(WBIconButtonStyle(size:28)).foregroundStyle(palette.critical).accessibilityLabel("删除文本")}
+                HStack(spacing:8){TextField("未命名文本",text:Binding(get:{model.selectedDocument?.title ?? ""},set:model.updateTitle)).textFieldStyle(.plain).font(.system(size:17,weight:.medium)).frame(height:32);Button{deletion=VaultDeletionTarget(id:document.id,title:document.title);model.recordActivity()}label:{Image(systemName:"trash")}.buttonStyle(WBIconButtonStyle(size:28,danger:true)).accessibilityLabel("删除文本")}
                 HStack(spacing:10){Text("分类").font(.system(size:11)).foregroundStyle(palette.muted);WBSelect("文本分类",selection:Binding(get:{model.selectedDocument?.effectiveCategoryID ?? "unclassified"},set:model.moveSelected),options:model.categoryOptions).frame(width:164);Spacer()}.padding(.top,10).padding(.bottom,10)
                 VaultFormattingToolbar(controller:formatting).disabled(model.busy).padding(.bottom,10)
                 VaultPrivateTextEditor(model:model,document:document,formatting:formatting).disabled(model.busy).id(document.id)
@@ -624,8 +624,8 @@ private struct VaultBackupSheet:View {
             }
         } actions: {
             Spacer()
-            Button("完成",action:model.closeSheet).buttonStyle(WBButtonStyle()).keyboardShortcut(.cancelAction)
-            Button("导出加密备份…",action:model.chooseBackupDestination).buttonStyle(WBButtonStyle(primary:true)).disabled(model.busy || !model.isConfigured)
+            Button("取消",action:model.closeSheet).buttonStyle(WBButtonStyle()).keyboardShortcut(.cancelAction)
+            Button("导出加密备份",action:model.chooseBackupDestination).buttonStyle(WBButtonStyle(primary:true)).disabled(model.busy || !model.isConfigured)
         }.accessibilityIdentifier("fc.modal.vault.export")
     }
 }
@@ -649,7 +649,7 @@ private struct VaultRestoreSheet:View {
                             Text("尚未替换当前资料").font(.system(size:11)).foregroundStyle(palette.muted)
                         }
                         Spacer(minLength:4)
-                        Button("选择文件…",action:model.chooseRestoreSource).buttonStyle(WBButtonStyle())
+                        Button("选择文件",action:model.chooseRestoreSource).buttonStyle(WBButtonStyle())
                     }
                     VaultPasswordField(title:"备份密码",placeholder:"创建这份备份时的密码",text:$password)
                     VaultPrivacyNotice("验证通过后还需确认替换；验证失败不会改动现有资料。")

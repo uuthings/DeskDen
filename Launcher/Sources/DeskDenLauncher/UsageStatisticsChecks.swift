@@ -358,12 +358,14 @@ import LauncherCore
                   "Bandwagon detail explains provider accounting and the timezone conversion")
             let preciseResetText = labels(objects(host))
             let vpsReset = document.states[vps.id]!.snapshot!.resetsAt!
-            check(preciseResetText.contains("工作台时间") && preciseResetText.contains("来源时间")
+            let workbenchStamp = UsageResetTime.timestamp(vpsReset, timeZone: app.context.dateContext.timeZone)
+            let sourceStamp = UsageResetTime.timestamp(vpsReset, timeZone: TimeZone(identifier: "America/Los_Angeles")!)
+            // The same moment in the same zone is written once (现行规范 9.4, D5).
+            check(preciseResetText.contains("工作台时间") && (workbenchStamp == sourceStamp || preciseResetText.contains("来源时间"))
                   && preciseResetText.contains(app.context.dateContext.timeZone.identifier)
                   && preciseResetText.contains("America/Los_Angeles")
-                  && preciseResetText.contains(UsageResetTime.timestamp(vpsReset, timeZone: app.context.dateContext.timeZone))
-                  && preciseResetText.contains(UsageResetTime.timestamp(vpsReset, timeZone: TimeZone(identifier: "America/Los_Angeles")!)),
-                  "a precise provider reset detail displays both the selected workbench zone and the explicitly known source zone")
+                  && preciseResetText.contains(workbenchStamp) && preciseResetText.contains(sourceStamp),
+                  "a precise provider reset detail displays the workbench and the explicitly known source zone, once when they agree")
             if let output { check(save(host, to: output.appendingPathComponent("usage-bandwagon-detail.png")), "Bandwagon detail renders offscreen") }
             app.usagePresentation.add(.bandwagon); await settle(host)
             let connectionDraft = app.usagePresentation.editor!

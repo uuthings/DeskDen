@@ -43,12 +43,14 @@ enum UsageDatePresentation {
         let offset = "GMT" + (seconds >= 0 ? "+" : "−") + String(hours) + (minutes == 0 ? "" : String(format: ":%02d", minutes))
         return location + " · " + offset + " · " + timeZone.identifier
     }
+    /// The full date and minute (现行规范 5.3, G9); the zone belongs in `withZone`.
     static func absolute(_ date: Date, timeZone: TimeZone, location: String) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.timeZone = timeZone
-        formatter.dateFormat = "yyyy年M月d日 HH:mm:ss"
-        return formatter.string(from: date) + " · " + zone(timeZone, location: location, at: date)
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = timeZone
+        return WorkbenchDateText.fullWithTime(date, calendar: calendar)
+    }
+    /// For hover help: the same time with its location and offset.
+    static func withZone(_ date: Date, timeZone: TimeZone, location: String) -> String {
+        absolute(date, timeZone: timeZone, location: location) + " · " + zone(timeZone, location: location, at: date)
     }
 }
 
@@ -60,7 +62,7 @@ struct UsageObservationAgeLabel: View {
     var body: some View {
         UsageResetClock(interval: 1) { current in
             Text(prefix + UsageObservationAge.text(since: date, now: current)).monospacedDigit()
-                .help(UsageDatePresentation.absolute(date, timeZone: timeZone, location: location))
+                .help(UsageDatePresentation.withZone(date, timeZone: timeZone, location: location))
         }
     }
 }
@@ -95,11 +97,14 @@ struct UsageResetDetailsView: View {
             let detail = reset.details(at: current, timeZone: timeZone)
             VStack(alignment: .leading, spacing: 18) {
                 Label(detail.summary, systemImage: "clock")
-                    .font(.system(size: 16, weight: .medium)).foregroundStyle(palette.text)
+                    .font(.system(size: 15, weight: .medium)).foregroundStyle(palette.text)
                     .monospacedDigit()
                 row("工作台时间", value: detail.workbenchValue,
                     zone: reset.resetsAt.map { UsageDatePresentation.zone(timeZone, location: location, at: $0) } ?? (location + " · " + timeZone.identifier))
-                row(detail.sourceLabel, value: detail.sourceValue, zone: detail.sourceZone)
+                // The same moment in the same zone is written once (现行规范 9.4, D5).
+                if detail.sourceValue != detail.workbenchValue {
+                    row(detail.sourceLabel, value: detail.sourceValue, zone: detail.sourceZone)
+                }
                 Text(detail.explanation).font(.system(size: 11)).foregroundStyle(palette.muted)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -111,7 +116,7 @@ struct UsageResetDetailsView: View {
             Text(title).font(.system(size: 12)).foregroundStyle(palette.muted)
                 .frame(width: 94, alignment: .leading)
             VStack(alignment: .leading, spacing: 4) {
-                Text(value).font(.system(size: 14, weight: .medium)).foregroundStyle(palette.text).monospacedDigit()
+                Text(value).font(.system(size: 13, weight: .medium)).foregroundStyle(palette.text).monospacedDigit()
                 if let zone { Text(zone).font(.system(size: 11)).foregroundStyle(palette.muted) }
             }.frame(maxWidth: .infinity, alignment: .leading)
         }

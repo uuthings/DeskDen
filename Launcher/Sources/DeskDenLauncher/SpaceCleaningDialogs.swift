@@ -9,7 +9,6 @@ struct SpaceCleaningDialogContent: View {
     @ViewBuilder var body: some View {
         switch dialog {
         case .rules: SpaceCleaningRulesDialog(dismiss: model.closeDialog)
-        case .scope: scopeDialog
         case .confirm: EmptyView() // Permanent confirmation stays with the result list.
         case .purpose(let id): purposeDialog(id)
         case .restore(let id):
@@ -27,9 +26,6 @@ struct SpaceCleaningDialogContent: View {
             } else { unavailableDialog }
         case .issues: issuesDialog
         }
-    }
-    private var scopeDialog: some View {
-        Text("扫描范围可在空间清理首页直接设置")
     }
     private func purposeDialog(_ id: UUID) -> some View {
         let file = model.items.first { $0.id == id }
@@ -50,37 +46,24 @@ struct SpaceCleaningDialogContent: View {
         }.accessibilityIdentifier("space-cleaning-purpose-dialog")
     }
     private var issuesDialog: some View {
-        WorkbenchDialogFrame(title: "扫描覆盖范围", dismiss: model.closeDialog) {
-            VStack(alignment: .leading, spacing: 14) {
-                Text(model.coverageIssues.isEmpty ? "扫描只覆盖已识别和已选择的位置。未安装软件对应的可选目录会正常跳过。" : "下列位置或项目没有得到完整结果。已检查的数据仍可查看，不能据此认为整台 Mac 都已扫描。")
-                    .font(.system(size: 12)).foregroundStyle(palette.secondary).lineSpacing(5)
-                WorkbenchScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
-                        ForEach(Array(model.coverageIssues.enumerated()), id: \.offset) { _, issue in
-                            Label(issue, systemImage: "info.circle").font(.system(size: 11)).foregroundStyle(palette.muted).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                        }
-                        if !model.coverageNotes.isEmpty {
-                            Text("范围说明").font(.system(size: 12, weight: .medium)).padding(.top, model.coverageIssues.isEmpty ? 0 : 6)
-                            ForEach(Array(model.coverageNotes.enumerated()), id: \.offset) { _, note in
-                                Text(note).font(.system(size: 11)).foregroundStyle(palette.muted).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                }.frame(maxHeight: 280).scrollBounceBehavior(.basedOnSize)
+        VStack(alignment: .leading, spacing: 14) {
+            Text(model.coverageIssues.isEmpty ? "本次扫描已覆盖所选位置。未安装软件对应的可选目录会正常跳过。" : "下列位置或项目没有得到完整结果。已检查的数据仍可使用，处理前会逐项重新核验。")
+                .font(.system(size: 12)).foregroundStyle(palette.secondary).lineSpacing(5)
+            ForEach(Array(model.coverageIssues.enumerated()), id: \.offset) { _, issue in
+                Label(issue, systemImage: "info.circle").font(.system(size: 11)).foregroundStyle(palette.muted).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             }
-        } actions: {
-            Spacer()
-            Button("知道了", action: model.closeDialog).buttonStyle(WBButtonStyle(primary: true))
-        }.accessibilityIdentifier("space-cleaning-issues-dialog")
+            if !model.coverageNotes.isEmpty {
+                Text("范围说明").font(.system(size: 13, weight: .medium)).padding(.top, model.coverageIssues.isEmpty ? 0 : 6)
+                ForEach(Array(model.coverageNotes.enumerated()), id: \.offset) { _, note in
+                    Text(note).font(.system(size: 11)).foregroundStyle(palette.muted).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading).padding(18).accessibilityIdentifier("space-cleaning-issues-dialog")
     }
     private var unavailableDialog: some View {
-        WorkbenchDialogFrame(title: "记录已更新", dismiss: model.closeDialog) {
-            Text("这次的清理记录当前不可用，请返回清理记录重新查看。")
-                .font(.system(size: 12)).foregroundStyle(palette.secondary)
-        } actions: {
-            Spacer()
-            Button("返回记录", action: model.closeDialog).buttonStyle(WBButtonStyle(primary: true))
-        }
+        Text("这次的清理记录已经更新，请返回清理记录重新查看。")
+            .font(.system(size: 12)).foregroundStyle(palette.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading).padding(18)
     }
 }
 
@@ -88,29 +71,24 @@ struct SpaceCleaningRulesDialog: View {
     let dismiss: () -> Void
     @Environment(\.workbenchPalette) private var palette
     var body: some View {
-        WorkbenchDialogFrame(title: "扫描与保护规则", dismiss: dismiss) {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("默认从当前用户的常用位置开始。系统文件、其他用户目录、外接磁盘和云端未下载的内容不自动纳入。")
-                    .font(.system(size: 12)).foregroundStyle(palette.secondary).lineSpacing(5)
-                VStack(spacing: 0) {
-                    rule("已核验的可重建缓存", status: "建议清理 · 默认勾选")
-                    rule("PKG 安装包、下载与桌面中的 DMG", status: "建议整理 · 手动选择")
-                    rule("已满 30 天的诊断记录", status: "建议整理 · 手动选择")
-                    rule("个人文件与普通压缩包", status: "自行选择")
-                    rule("开发依赖、Git 资料与虚拟环境", status: "不展开 · 保留")
-                    rule("大文件扫描", status: "按大小查找 · 全部手选")
-                    rule("测试 App 与测试归档", status: "可见 · 人工选择")
-                    rule("用途不明的归档", status: "保留 · 可确认用途")
-                    rule("正式发布原件与关联材料", status: "可见 · 受保护")
-                    rule("已安装或正在使用的 App", status: "不直接清理")
-                }
-                Text("安装介质不等于已安装残留，DMG 也可能包含个人资料。确认无需保留后再勾选；公证与签名不单独决定发布或测试用途。未获权限的位置会单独显示。")
-                    .font(.system(size: 11)).foregroundStyle(palette.muted).lineSpacing(5)
+        VStack(alignment: .leading, spacing: 16) {
+            Text("默认从当前用户的常用位置开始。系统文件、其他用户目录、外接磁盘和云端未下载的内容不自动纳入。")
+                .font(.system(size: 12)).foregroundStyle(palette.secondary).lineSpacing(5)
+            VStack(spacing: 0) {
+                rule("已核验的可重建缓存", status: "建议清理 · 默认勾选")
+                rule("PKG 安装包、下载与桌面中的 DMG", status: "建议整理 · 手动选择")
+                rule("已满 30 天的诊断记录", status: "建议整理 · 手动选择")
+                rule("个人文件与普通压缩包", status: "自行选择")
+                rule("开发依赖、Git 资料与虚拟环境", status: "不展开 · 保留")
+                rule("大文件扫描", status: "按大小查找 · 全部手选")
+                rule("测试 App 与测试归档", status: "可见 · 人工选择")
+                rule("用途不明的归档", status: "保留 · 可确认用途")
+                rule("正式发布原件与关联材料", status: "可见 · 受保护")
+                rule("已安装或正在使用的 App", status: "不直接清理")
             }
-        } actions: {
-            Spacer()
-            Button("知道了", action: dismiss).buttonStyle(WBButtonStyle(primary: true))
-        }.accessibilityIdentifier("space-cleaning-rules")
+            Text("安装介质不等于已安装残留，DMG 也可能包含个人资料。确认无需保留后再勾选；公证与签名不单独决定发布或测试用途。未获权限的位置会单独显示。")
+                .font(.system(size: 11)).foregroundStyle(palette.muted).lineSpacing(5)
+        }.frame(maxWidth: .infinity, alignment: .leading).padding(18).accessibilityIdentifier("space-cleaning-rules")
     }
     private func rule(_ title: String, status: String) -> some View {
         VStack(spacing: 0) {
@@ -183,7 +161,7 @@ struct SpaceCleaningRestoreDialog: View {
     @State private var renameConflicts = true
     @Environment(\.workbenchPalette) private var palette
     var body: some View {
-        WorkbenchDialogFrame(title: "恢复本次项目", dismiss: dismiss) {
+        VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 16) {
                 Text("将 \(itemCount) 项恢复到原位置。恢复前重新核验废纸篓文件，现有内容不会被覆盖。")
                     .font(.system(size: 12)).foregroundStyle(palette.secondary).lineSpacing(5)
@@ -199,13 +177,13 @@ struct SpaceCleaningRestoreDialog: View {
                     Rectangle().fill(palette.line).frame(height: 1)
                     SpaceCleaningChoiceRow(title: "跳过同名项目", subtitle: "同名项目留在废纸篓，其余项目正常恢复。", selected: !renameConflicts) { renameConflicts = false }
                 }
+            }.padding(18)
+            SpaceCleaningSubpageActions {
+                Button("取消", action: dismiss).buttonStyle(WBButtonStyle())
+                Button("恢复 \(itemCount) 项") { restore(renameConflicts) }.buttonStyle(WBButtonStyle(primary: true))
+                    .disabled(itemCount == 0).accessibilityIdentifier("space-cleaning-confirm-restore")
             }
-        } actions: {
-            Spacer()
-            Button("取消", action: dismiss).buttonStyle(WBButtonStyle())
-            Button("恢复 \(itemCount) 项") { restore(renameConflicts) }.buttonStyle(WBButtonStyle(primary: true))
-                .disabled(itemCount == 0).accessibilityIdentifier("space-cleaning-confirm-restore")
-        }.accessibilityIdentifier("space-cleaning-restore-dialog")
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-restore-dialog")
     }
 }
 
@@ -217,7 +195,7 @@ struct SpaceCleaningPurgeDialog: View {
     @Binding var acknowledged: Bool
     @Environment(\.workbenchPalette) private var palette
     var body: some View {
-        WorkbenchDialogFrame(title: "永久删除本次项目", dismiss: dismiss) {
+        VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 16) {
                 Text("仅删除本次记录中仍在废纸篓的 \(items.count) 项，扫描时磁盘占用共 \(SpaceCleaningFormat.bytes(totalBytes))。实际释放量以系统可用空间为准，不会清空废纸篓中的其他内容。")
                     .font(.system(size: 12)).foregroundStyle(palette.secondary).lineSpacing(5)
@@ -225,12 +203,25 @@ struct SpaceCleaningPurgeDialog: View {
                 Toggle("我理解这一步完成后，这些项目将无法恢复", isOn: $acknowledged)
                     .toggleStyle(.checkbox).clickableCursor().font(.system(size: 11)).foregroundStyle(palette.secondary)
                     .accessibilityIdentifier("space-cleaning-purge-acknowledgement")
+            }.padding(18)
+            SpaceCleaningSubpageActions {
+                Button("取消", action: dismiss).buttonStyle(WBButtonStyle())
+                Button("永久删除本次项目", action: purge).buttonStyle(WBButtonStyle(destructive: true))
+                    .disabled(items.isEmpty || !acknowledged).accessibilityIdentifier("space-cleaning-confirm-purge")
             }
-        } actions: {
-            Spacer()
-            Button("取消", action: dismiss).buttonStyle(WBButtonStyle())
-            Button("永久删除本次项目", action: purge).buttonStyle(WBButtonStyle(destructive: true))
-                .disabled(items.isEmpty || !acknowledged).accessibilityIdentifier("space-cleaning-confirm-purge")
-        }.accessibilityIdentifier("space-cleaning-purge-dialog")
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-purge-dialog")
+    }
+}
+
+/// The action row of a cleaning sub-page: a divider, then the page's own
+/// two choices at the trailing edge; no close button (现行规范 9.4, D1).
+struct SpaceCleaningSubpageActions<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+    @Environment(\.workbenchPalette) private var palette
+    var body: some View {
+        VStack(spacing: 0) {
+            palette.line.frame(height: 1)
+            HStack(spacing: 8) { Spacer(); content() }.padding(.horizontal, 18).padding(.vertical, 14)
+        }
     }
 }

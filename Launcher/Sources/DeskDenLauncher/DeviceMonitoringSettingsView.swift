@@ -254,6 +254,7 @@ struct DeviceBudgetSettingsView: View {
             .padding(.horizontal, 8).frame(height: 32)
             .background(WorkbenchMaterialSurface(kind: .control, radius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(palette.controlBorder, lineWidth: 1))
+            .modifier(WBDisabledFade())
             .accessibilityLabel(title)
     }
 }
@@ -343,6 +344,7 @@ struct DeviceRuleNumberField: View {
                 }.padding(.horizontal, 10).frame(height: 32)
                     .background(WorkbenchMaterialSurface(kind: .control, radius: 8))
                     .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(error == nil ? palette.controlBorder : palette.warning.opacity(0.7), lineWidth: 1))
+                    .modifier(WBDisabledFade())
             }
             if let error { Text(error).font(.system(size: 11)).foregroundStyle(palette.warning).fixedSize(horizontal: false, vertical: true) }
         }.frame(maxWidth: .infinity, alignment: .leading)

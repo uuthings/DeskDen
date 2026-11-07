@@ -1,77 +1,43 @@
 import AppKit
 import SwiftUI
+import LauncherCore
 
 struct WorkbenchUpdateSettings: View {
     @ObservedObject var updates: AppUpdateController
     @Environment(\.workbenchPalette) private var palette
+    private var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—" }
+    /// The last check's result; never "not checked yet" beside a check time (9.4, S2).
+    private var statusLine: String {
+        if updates.hasError { return updates.status }
+        switch updates.phase {
+        case .idle, .upToDate, .cancelled:
+            guard let date = updates.lastChecked else { return updates.status }
+            let when = "上次检查 " + Self.checkTime(date)
+            return updates.phase == .upToDate ? "已是最新版本 · " + when : when
+        default: return updates.status
+        }
+    }
+    static func checkTime(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
+        guard calendar.isDate(date, equalTo: now, toGranularity: .year) else { return WorkbenchDateText.fullWithTime(date, calendar: calendar) }
+        let clock = calendar.dateComponents([.hour, .minute], from: date)
+        return WorkbenchDateText.monthDay(date, calendar: calendar) + " " + String(format: "%02d:%02d", clock.hour ?? 0, clock.minute ?? 0)
+    }
     var body: some View {
-        WBCard(title: "软件更新", symbol: "arrow.down.circle", spacing: 10) {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 16) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("方寸 v" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"))
-                            .font(.system(size: 12, weight: .medium))
-                        Text(updates.status).font(.system(size: 11)).foregroundStyle(updates.hasError ? palette.warning : palette.muted)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }.accessibilityElement(children: .combine).accessibilityIdentifier("updates-current-version")
-                    Spacer(minLength: 8)
-                    Button(updates.release == nil ? "检查更新" : "查看更新") {
-                        if updates.release == nil { updates.checkForUpdates() } else { updates.showUpdateDialog() }
-                    }.buttonStyle(WBButtonStyle())
-                        .disabled(!updates.canCheck && updates.release == nil).accessibilityIdentifier("updates-check")
-                }.padding(.vertical, 13)
-                Rectangle().fill(palette.line).frame(height: 1)
-                HStack(spacing: 16) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("自动检查更新").font(.system(size: 12, weight: .medium))
-                        Text("每天在后台检查；有新版本时显示左下角入口，由你决定下载和安装。")
-                            .font(.system(size: 11)).foregroundStyle(palette.muted).fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 8)
-                    Toggle("自动检查更新", isOn: Binding(get: { updates.automaticallyChecks }, set: updates.setAutomaticallyChecks))
-                        .labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.small).tint(palette.accent)
-                        .disabled(!AppUpdateController.configurationIsValid(Bundle.main.infoDictionary ?? [:]))
-                        .accessibilityIdentifier("updates-automatic")
-                }.padding(.top, 13)
-                if let lastChecked = updates.lastChecked {
-                    Text("上次检查：" + lastChecked.formatted(date: .abbreviated, time: .shortened))
-                        .font(.system(size: 11)).foregroundStyle(palette.muted).padding(.top, 12)
-                }
-                Text("关闭自动检查后，仅在你主动检查时连接更新服务。安装前会处理未保存的更改。")
-                    .font(.system(size: 11)).foregroundStyle(palette.muted).fixedSize(horizontal: false, vertical: true).padding(.top, 12)
+        WBCard(title: "软件更新", symbol: "arrow.down.circle", spacing: 0) {
+            WBSettingRow(title: "方寸 v" + version, subtitle: statusLine, showsDivider: false,
+                         subtitleColor: updates.hasError ? palette.warning : nil, textIdentifier: "updates-current-version") {
+                Button(updates.release == nil ? "检查更新" : "查看更新") {
+                    if updates.release == nil { updates.checkForUpdates() } else { updates.showUpdateDialog() }
+                }.buttonStyle(WBButtonStyle(compact: true))
+                    .disabled(!updates.canCheck && updates.release == nil).accessibilityIdentifier("updates-check")
+            }
+            WBSettingRow(title: "自动检查更新", subtitle: "每天在后台检查，有新版本时顶栏显示「新版本」入口；关闭后只在你主动检查时连接更新服务") {
+                Toggle("自动检查更新", isOn: Binding(get: { updates.automaticallyChecks }, set: updates.setAutomaticallyChecks))
+                    .labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.mini).tint(palette.accent)
+                    .disabled(!AppUpdateController.configurationIsValid(Bundle.main.infoDictionary ?? [:]))
+                    .accessibilityIdentifier("updates-automatic")
             }
         }.accessibilityElement(children: .contain).accessibilityIdentifier("fc.settings.updates")
-    }
-}
-
-/// The entry and the modal observe the same session, even while settings are closed.
-struct WorkbenchUpdateEntry: View {
-    @ObservedObject var updates: AppUpdateController
-    @Environment(\.workbenchPalette) private var palette
-    private var title: String {
-        switch updates.phase {
-        case .downloading: "正在下载更新"
-        case .extracting: "正在准备更新"
-        case .readyToInstall: "待安装 v" + (updates.release?.version ?? "")
-        case .installing: "正在安装更新"
-        default: "新版本 v" + (updates.release?.version ?? "")
-        }
-    }
-    var body: some View {
-        if updates.release != nil {
-            Button(action: updates.showUpdateDialog) {
-                HStack(spacing: 8) {
-                    Image(systemName: "arrow.down.to.line").font(.system(size: 13)).accessibilityHidden(true)
-                    Text(title).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                }.frame(maxWidth: .infinity, minHeight: 32, maxHeight: 32)
-                    .contentShape(RoundedRectangle(cornerRadius: 8))
-                    .background(WorkbenchMaterialSurface(kind: .control, radius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(palette.accent.opacity(0.4)))
-            }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 8, drawsSelection: false))
-                .foregroundStyle(palette.accent).padding(.top, 6)
-                .accessibilityLabel(title).accessibilityHint("打开软件更新窗口")
-                .accessibilityIdentifier("updates-sidebar-entry")
-        }
     }
 }
 
@@ -97,7 +63,8 @@ struct WorkbenchUpdateDialog: View {
     private var showsNotes: Bool { Self.showsNotes(updates.phase) }
     private var title: String {
         switch updates.phase {
-        case .idle, .checking: "正在检查更新"
+        case .idle: "检查更新"
+        case .checking: "正在检查更新"
         case .available: updates.release?.informationOnly == true ? "更新信息" : "发现新版本"
         case .downloading: "正在下载更新"
         case .extracting: "正在准备更新"
@@ -128,7 +95,7 @@ struct WorkbenchUpdateDialog: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
                 WorkbenchBrandMark(pointSize: 32)
-                Text(title).font(.system(size: 18, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
+                Text(title).font(.system(size: 15, weight: .medium)).fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
                 Button(action: updates.dismissDialog) { Image(systemName: "xmark") }
                     .buttonStyle(WBIconButtonStyle(size: 32)).accessibilityLabel("关闭软件更新")
@@ -154,17 +121,14 @@ struct WorkbenchUpdateDialog: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 12) {
                     HStack(spacing: 8) {
-                        Text("v" + release.version).font(.system(size: 16, weight: .semibold))
-                        Text(updates.phase == .readyToInstall ? "已下载" : "新版本")
-                            .font(.system(size: 10)).foregroundStyle(palette.accent)
-                            .padding(.horizontal, 6).frame(height: 19)
-                            .background(palette.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                        Text("v" + release.version).font(.system(size: 17, weight: .medium))
+                        WBStatusPill(title: updates.phase == .readyToInstall ? "已下载" : "新版本", good: true)
                     }
                     Spacer(minLength: 0)
                     if let date = release.publishedAt {
-                        Text(date.formatted(date: .abbreviated, time: .omitted))
+                        Text(WorkbenchDateText.full(date, calendar: .current))
                             .font(.system(size: 12)).foregroundStyle(palette.muted)
-                            .help(date.formatted(date: .complete, time: .shortened))
+                            .help(WorkbenchDateText.fullWithTime(date, calendar: .current))
                     }
                 }
                 Text("当前版本 v" + currentVersion).font(.system(size: 11)).foregroundStyle(palette.muted)
@@ -201,20 +165,25 @@ struct WorkbenchUpdateDialog: View {
     }
     private var taskContent: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(updates.status).font(.system(size: 12)).foregroundStyle(palette.secondary)
-                .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("updates-task-status")
             if updates.phase == .downloading {
                 VStack(spacing: 8) {
                     ProgressView(value: updates.progress).tint(palette.accent)
                         .accessibilityLabel("更新下载进度")
                     HStack {
-                        Text(byteCount(Int64(clamping: updates.downloadedBytes)) + (updates.expectedBytes > 0 ? " / " + byteCount(Int64(clamping: updates.expectedBytes)) : ""))
+                        Text("正在下载 " + byteCount(Int64(clamping: updates.downloadedBytes)) + (updates.expectedBytes > 0 ? " / " + byteCount(Int64(clamping: updates.expectedBytes)) : ""))
+                            .accessibilityIdentifier("updates-task-status")
                         Spacer()
                         if let progress = updates.progress { Text("\(Int(progress * 100))%") }
                     }.font(.system(size: 11)).monospacedDigit().foregroundStyle(palette.muted)
                 }
-            } else if updates.phase == .checking || updates.phase == .extracting || updates.phase == .installing {
-                ProgressView().controlSize(.small).accessibilityLabel(title)
+            } else {
+                if updates.status != title {
+                    Text(updates.status).font(.system(size: 12)).foregroundStyle(palette.secondary)
+                        .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("updates-task-status")
+                }
+                if updates.phase == .checking || updates.phase == .extracting || updates.phase == .installing {
+                    ProgressView().controlSize(.small).accessibilityLabel(title)
+                }
             }
         }.padding(.bottom, 4)
     }

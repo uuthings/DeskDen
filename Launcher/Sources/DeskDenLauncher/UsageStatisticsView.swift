@@ -182,7 +182,7 @@ struct UsageStatisticsView: View {
             UsageAPIBalanceEditorView(editor: editor, model: api, presentation: presentation, appearance: appearance)
         }
         .workbenchModal(item: $presentation.removingAPI, width: 440) { source in
-            WorkbenchDialogFrame(title: "移除“\(source.name)”？", dismiss: { presentation.removingAPI = nil }) {
+            WorkbenchDialogFrame(title: "移除「\(source.name)」？", dismiss: { presentation.removingAPI = nil }) {
                 Text("移除本机连接和对应 Key，不影响 DeepSeek 账户余额或已有消费。").font(.system(size: 12)).foregroundStyle(palette.secondary)
                 if let error = api.errorMessage { Text(error).font(.system(size: 11)).foregroundStyle(palette.warning) }
             } actions: {
@@ -205,7 +205,7 @@ struct UsageStatisticsView: View {
             }
         }
         .workbenchModal(item: $presentation.removing, width: 440, onRequestDismiss: { if !presentation.isRemoving { presentation.removing = nil } }) { source in
-            WorkbenchDialogFrame(title: "移除“\(source.name)”？", dismiss: { if !presentation.isRemoving { presentation.removing = nil } }) {
+            WorkbenchDialogFrame(title: "移除「\(source.name)」？", dismiss: { if !presentation.isRemoving { presentation.removing = nil } }) {
                 Text("停止此来源的查询，并移除方寸保存的额度记录及对应凭据。不会注销、退订或修改服务商账户。").font(.system(size: 12)).foregroundStyle(palette.secondary)
                 if let error = model.errorMessage { Text(error).font(.system(size: 11)).foregroundStyle(palette.warning) }
             } actions: {
@@ -349,8 +349,8 @@ struct UsageStatisticsView: View {
             }.buttonStyle(ClickablePlainButtonStyle()).accessibilityHint("查看 API 余额详情").accessibilityIdentifier("fc.usage.api." + source.id.uuidString)
         }
     }
-    private func apiValue(_ title: String, value: String) -> some View {
-        HStack { Text(title).foregroundStyle(palette.secondary); Spacer(minLength: 12); Text(value).monospacedDigit() }.font(.system(size: 12)).accessibilityElement(children: .combine)
+    private func apiValue(_ title: String, value: String, help: String? = nil) -> some View {
+        HStack { Text(title).foregroundStyle(palette.secondary); Spacer(minLength: 12); Text(value).monospacedDigit().help(help ?? value) }.font(.system(size: 12)).accessibilityElement(children: .combine)
     }
     private func apiDetail(_ source: APIBalanceConfiguration) -> some View {
         let state = api.state(for: source.id)
@@ -359,7 +359,8 @@ struct UsageStatisticsView: View {
                          back: WBPageBack(title: "用量与额度", identifier: "fc.usage.api.back", escapes: true) { presentation.selectedAPIID = nil }) {
                 HStack(spacing: 8) {
                     Button("刷新") { Task { await api.refresh(id: source.id) } }.buttonStyle(WBButtonStyle()).disabled(api.refreshing.contains(source.id))
-                    Button("编辑连接") { presentation.configure(sourceID: UsagePresentationSourceID.api(source.id)) }.buttonStyle(WBButtonStyle())
+                    Button("编辑") { presentation.configure(sourceID: UsagePresentationSourceID.api(source.id)) }.buttonStyle(WBButtonStyle())
+                        .accessibilityLabel("编辑连接")
                     Button("移除") { presentation.removingAPI = source }.buttonStyle(WBButtonStyle(destructive: true))
                 }
             }
@@ -371,7 +372,8 @@ struct UsageStatisticsView: View {
                         Text(balance.totalBalance).font(.system(size: 30)).monospacedDigit()
                         apiValue("赠送余额", value: balance.grantedBalance + " " + balance.currency)
                         apiValue("充值余额", value: balance.toppedUpBalance + " " + balance.currency)
-                        apiValue("查询时间", value: UsageDatePresentation.absolute(snapshot.observedAt, timeZone: context.dateContext.timeZone, location: context.locationTitle))
+                        apiValue("查询时间", value: UsageDatePresentation.absolute(snapshot.observedAt, timeZone: context.dateContext.timeZone, location: context.locationTitle),
+                                 help: UsageDatePresentation.withZone(snapshot.observedAt, timeZone: context.dateContext.timeZone, location: context.locationTitle))
                     }
                 }
             }
@@ -407,7 +409,8 @@ struct UsageStatisticsView: View {
                          back: WBPageBack(title: "用量与额度", identifier: "fc.usage.detail.back", escapes: true) { presentation.selectedSourceID = nil }) {
                 HStack(spacing: 8) {
                     Button("刷新") { model.refresh(id: source.id, manual: true) }.buttonStyle(WBButtonStyle()).disabled(model.refreshing.contains(source.id))
-                    Button("配置用量") { presentation.configure(.service) }.buttonStyle(WBButtonStyle())
+                    Button("编辑") { presentation.edit(source, appearance: display) }.buttonStyle(WBButtonStyle()).accessibilityLabel("编辑来源")
+                    Button("移除") { model.errorMessage = nil; presentation.removing = source }.buttonStyle(WBButtonStyle(destructive: true)).accessibilityLabel("移除来源")
                 }
             }
             // The header keeps its own 12 to the content (现行规范 4.1).
@@ -433,10 +436,12 @@ struct UsageStatisticsView: View {
                             .accessibilityIdentifier("fc.usage.bandwagon.reset-explanation")
                     }
                     detailRow("计量来源", snapshot.sourceDescription)
-                    detailRow("查询时间", UsageDatePresentation.absolute(snapshot.observedAt, timeZone: context.dateContext.timeZone, location: context.locationTitle))
+                    detailRow("查询时间", UsageDatePresentation.absolute(snapshot.observedAt, timeZone: context.dateContext.timeZone, location: context.locationTitle),
+                              help: UsageDatePresentation.withZone(snapshot.observedAt, timeZone: context.dateContext.timeZone, location: context.locationTitle))
                     detailRow("单位口径", snapshot.displayUnit.explanation)
                 }
                 detailRow("连接方式", source.kind == .bandwagon ? "实例 API Key · 本机钥匙串" : "Chrome 网页助手 · 浏览器登录会话")
+                if source.kind == .iproyal { Button("浏览器连接设置") { presentation.showingBrowserSetup = true }.buttonStyle(WBButtonStyle(compact: true)) }
                 if source.kind == .bandwagon {
                     detailRow("统计口径", "按服务商账单口径汇总")
                     Text("总额与用量使用平台系数换算，不额外乘倍。本机流量仅触发更新，不从此余额中扣除。")
@@ -456,12 +461,6 @@ struct UsageStatisticsView: View {
                 detailRow("流量触发", "本机累计 " + ProviderUsageEditor.number(Double(source.refreshPolicy.byteThreshold) / 1_000_000) + " MB，且至少间隔 " + ProviderUsageEditor.number(source.refreshPolicy.minimumInterval / 3600) + " 小时")
                 detailRow("低流量补查", "最长间隔 " + ProviderUsageEditor.number(source.refreshPolicy.maximumInterval / 3600) + " 小时")
                 Text("本机流量只判断是否需要更新，不从服务商余额中扣除。休眠或断网期间不补造数据。").font(.system(size: 11)).foregroundStyle(palette.muted)
-            }
-            HStack {
-                if source.kind == .iproyal { Button("浏览器连接设置") { presentation.showingBrowserSetup = true }.buttonStyle(WBButtonStyle(compact: true)) }
-                Spacer()
-                Button("编辑来源") { presentation.edit(source, appearance: display) }.buttonStyle(WBButtonStyle(compact: true))
-                Button("移除来源") { model.errorMessage = nil; presentation.removing = source }.buttonStyle(WBButtonStyle(destructive: true))
             }
             }
         }.accessibilityElement(children: .contain).accessibilityIdentifier("fc.usage.detail")
@@ -485,6 +484,7 @@ struct UsageStatisticsView: View {
                             Text(ProviderUsageFormatting.amount(snapshot.usedBytes, unit: snapshot.displayUnit) + " / " + ProviderUsageFormatting.amount(snapshot.limitBytes, unit: snapshot.displayUnit) + " GB")
                             Spacer()
                             Text("更新于 " + UsageDatePresentation.absolute(snapshot.observedAt, timeZone: context.dateContext.timeZone, location: context.locationTitle))
+                                .help(UsageDatePresentation.withZone(snapshot.observedAt, timeZone: context.dateContext.timeZone, location: context.locationTitle))
                         }.font(.system(size: 11)).foregroundStyle(palette.muted).monospacedDigit()
                     }
                 }
@@ -506,10 +506,10 @@ struct UsageStatisticsView: View {
             Text("记录查询时看到的变化。服务商统计可能延迟，实际重置时刻与时区尚未确认。").font(.system(size: 11)).foregroundStyle(palette.muted)
         }.padding(.top, 12).overlay(alignment: .top) { Rectangle().fill(palette.line).frame(height: 1) }
     }
-    private func detailRow(_ title: String, _ value: String) -> some View {
+    private func detailRow(_ title: String, _ value: String, help: String? = nil) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 16) {
             Text(title).foregroundStyle(palette.muted).frame(width: 110, alignment: .leading)
-            Text(value).textSelection(.enabled); Spacer(minLength: 0)
+            Text(value).textSelection(.enabled).help(help ?? value); Spacer(minLength: 0)
         }.font(.system(size: 12))
     }
 }

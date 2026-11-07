@@ -123,7 +123,7 @@ extension LauncherController {
         let value = NSMenu(title: "按键显示方式")
         for mode in DisplayMode.allCases { let item = menuItem(mode.title) { [weak self] in self?.setDisplay(mode) }; item.state = configuration.settings.display == mode ? .on : .off; value.addItem(item) }
         value.addItem(.separator())
-        value.addItem(menuItem("编辑绑定…", symbol: "square.and.pencil") { [weak self] in self?.beginEditing() })
+        value.addItem(menuItem("编辑绑定", symbol: "square.and.pencil") { [weak self] in self?.beginEditing() })
         let anchor = content.subviews.first { $0.accessibilityLabel() == "按键显示方式" } ?? content
         popMenu(value, anchor: anchor)
     }
@@ -303,7 +303,7 @@ private final class BindingTypeRow: ClickableButton {
         }
         let symbol = kind == .app ? "app.dashed" : kind == .shortcut ? "sparkles" : kind.symbol
         drawSymbol(symbol, in: NSRect(x: 8, y: 8, width: 18, height: 18), color: Palette.secondary)
-        drawText(kind.title, in: NSRect(x: 34, y: 8.5, width: bounds.width - 40, height: 19), size: 13, color: Palette.text, weight: .semibold)
+        drawText(kind.title, in: NSRect(x: 34, y: 8.5, width: bounds.width - 40, height: 19), size: 13, color: Palette.text, weight: .medium)
     }
 }
 
@@ -378,7 +378,7 @@ final class BindingForm: CardView, NSSearchFieldDelegate, NSTextViewDelegate {
         subviews.forEach { $0.removeFromSuperview() }; headerControls.removeAll(); fieldControls.removeAll(); confirmation = nil
         let width = bounds.width
         let icon = EditorSymbolView(symbol: kind == .app ? "app.dashed" : kind == .shortcut ? "sparkles" : kind.symbol, frame: NSRect(x: 12, y: 24, width: 16, height: 16)); addSubview(icon)
-        owner.label("绑定\(kind.title)", x: 33, y: 23, width: width - 145, height: 22, size: 13, in: self).font = .systemFont(ofSize: 13, weight: .semibold)
+        owner.label("绑定\(kind.title)", x: 33, y: 23, width: width - 145, height: 22, size: 13, in: self).font = .systemFont(ofSize: 13, weight: .medium)
         if kind == .app {
             let folders = owner.button("", symbol: "folder.badge.gearshape", rect: NSRect(x: width - 116, y: 17, width: 28, height: 28), in: self) { [weak self] in self?.showBrowseMenu() }
             folders.setAccessibilityLabel("扫描文件夹或选择应用"); folders.toolTip = "扫描文件夹或选择应用"
@@ -444,7 +444,7 @@ final class BindingForm: CardView, NSSearchFieldDelegate, NSTextViewDelegate {
         owner.label(selectedTarget?.name ?? "选择\(kind.title)", x: 12, y: 61, width: 306, height: 24, size: 14, in: self)
         selectedLabel = owner.label(selectedTarget?.location ?? "从本机重新选择要绑定的目标", x: 12, y: 93, width: 306, height: 36, size: 11, color: Palette.muted, in: self)
         selectedLabel?.maximumNumberOfLines = 2; selectedLabel?.lineBreakMode = .byTruncatingMiddle
-        let choose = owner.button("重新选择…", rect: NSRect(x: 12, y: 170, width: 148, height: 32), border: true, in: self) { [weak self] in self?.browse() }
+        let choose = owner.button("重新选择", rect: NSRect(x: 12, y: 170, width: 148, height: 32), border: true, in: self) { [weak self] in self?.browse() }
         let cancel = owner.button("取消", rect: NSRect(x: 170, y: 170, width: 148, height: 32), border: true, in: self) { [weak owner] in owner?.requestCloseEditor() }
         fieldControls = [choose, cancel]
     }
@@ -561,8 +561,8 @@ final class BindingForm: CardView, NSSearchFieldDelegate, NSTextViewDelegate {
     func showBrowseMenu() {
         guard let owner, let anchor = headerControls.first else { return }
         let menu = NSMenu()
-        menu.addItem(owner.menuItem("扫描文件夹…", symbol: "folder.badge.plus") { [weak self] in self?.scanFolder() })
-        menu.addItem(owner.menuItem("选择应用…", symbol: "app") { [weak self] in self?.browse() })
+        menu.addItem(owner.menuItem("扫描文件夹", symbol: "folder.badge.plus") { [weak self] in self?.scanFolder() })
+        menu.addItem(owner.menuItem("选择应用", symbol: "app") { [weak self] in self?.browse() })
         owner.popMenu(menu, anchor: anchor)
     }
     func browse() {
@@ -735,7 +735,7 @@ final class TargetChoiceRow: ClickableButton {
         let english = launchTarget.kind == .app ? URL(fileURLWithPath: launchTarget.location).deletingPathExtension().lastPathComponent : ""
         let subtitle = showsSubtitle && !english.isEmpty && english.localizedCaseInsensitiveCompare(launchTarget.name) != .orderedSame
         let textX: CGFloat = isShortcut ? 40 : 46
-        drawText(launchTarget.name, in: NSRect(x: textX, y: subtitle ? 4 : isShortcut ? 12 : 13, width: bounds.width - textX - 12, height: 20), size: 13, weight: .semibold)
+        drawText(launchTarget.name, in: NSRect(x: textX, y: subtitle ? 4 : isShortcut ? 12 : 13, width: bounds.width - textX - 12, height: 20), size: 13, weight: .medium)
         if subtitle { drawText(english, in: NSRect(x: textX, y: 23, width: bounds.width - textX - 12, height: 15), size: 11, color: Palette.muted) }
     }
 }
@@ -766,7 +766,7 @@ final class WebVariableForm: CardView, NSTextFieldDelegate {
         super.init(frame: NSRect(x: 0, y: 0, width: 330, height: contentHeight + 128))
         radius = 20
         let icon = EditorSymbolView(symbol: "globe", frame: NSRect(x: 13, y: 20, width: 18, height: 18)); addSubview(icon)
-        owner.label("填写网址变量", x: 39, y: 18, width: 235, height: 22, size: 14, in: self).font = .systemFont(ofSize: 14, weight: .semibold)
+        owner.label("填写网址变量", x: 39, y: 18, width: 235, height: 22, size: 15, in: self).font = .systemFont(ofSize: 15, weight: .medium)
         let close = owner.button("", symbol: "xmark", rect: NSRect(x: 290, y: 15, width: 28, height: 28), in: self) { [weak owner] in owner?.closeOverlay() }
         close.setAccessibilityLabel("取消填写变量")
         let scroll = NSScrollView(frame: NSRect(x: 12, y: 56, width: 306, height: contentHeight)); scroll.drawsBackground = false; scroll.hasVerticalScroller = template.variables.count > 5; scroll.autohidesScrollers = true; scroll.scrollerStyle = .legacy; scroll.verticalScroller = LauncherScroller()
@@ -823,7 +823,7 @@ final class BindingHotKeyForm: CardView {
         self.owner = owner; self.key = key; value = owner.configuration.bindingHotKeys[key]; originalValue = owner.configuration.bindingHotKeys[key]
         super.init(frame: NSRect(x: 0, y: 0, width: 330, height: 198)); radius = 20
         let icon = EditorSymbolView(symbol: "keyboard", frame: NSRect(x: 13, y: 20, width: 18, height: 18)); addSubview(icon)
-        owner.label("设置快捷键", x: 39, y: 18, width: 235, height: 22, size: 14, in: self).font = .systemFont(ofSize: 14, weight: .semibold)
+        owner.label("设置快捷键", x: 39, y: 18, width: 235, height: 22, size: 15, in: self).font = .systemFont(ofSize: 15, weight: .medium)
         let close = owner.button("", symbol: "xmark", rect: NSRect(x: 290, y: 15, width: 28, height: 28), in: self) { [weak owner] in owner?.requestCloseEditor() }; close.setAccessibilityLabel("关闭快捷键设置")
         recorder.value = value?.title; recorder.recording = value == nil; recorder.setAccessibilityLabel("录制快捷键"); addSubview(recorder)
         errorLabel = owner.label("包含 ⌃、⌥ 或 ⌘，按 Esc 取消录制", x: 12, y: 118, width: 306, height: 18, size: 11, color: Palette.muted, in: self)

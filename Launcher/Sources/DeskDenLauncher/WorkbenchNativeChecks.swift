@@ -41,12 +41,10 @@ enum WorkbenchNativeChecks {
             let model = WorkbenchAppModel(owner: owner, calendar: calendar, ai: ai, startServices: false)
             let workbench = WorkbenchWindowController(owner: owner, model: model, autosavesFrame: false)
             owner.workbenchController = workbench
-            let settings = LauncherSettingsWindowController(owner: owner, autosavesFrame: false)
-            owner.settingsWindowController = settings
             defer {
-                owner.closeOverlay(render: false); settings.stopEmbedding(); settings.close(); owner.panel.orderOut(nil)
+                owner.closeOverlay(render: false); owner.panel.orderOut(nil)
                 workbench.window?.close(); model.shutdown()
-                owner.workbenchController = nil; owner.settingsWindowController = nil
+                owner.workbenchController = nil
                 owner.hotKey.unregister(); owner.bindingHotKeys.unregister(); owner.toastTask?.cancel()
             }
 
@@ -91,7 +89,7 @@ enum WorkbenchNativeChecks {
 
             let recorder = await findRecorder(in: workbench.window)
             if let recorder,let window=workbench.window {
-                check(recorder.window === window && settings.window?.isVisible != true && settings.window !== window,
+                check(recorder.window === window,
                       "launcher shortcut control lives in the real workbench settings page without a second window")
                 for (passed,name) in await checkLauncherSettingsResizing(window:window,recorder:recorder) {check(passed,name)}
                 let unchanged=try Data(contentsOf:owner.store.url)
@@ -103,7 +101,6 @@ enum WorkbenchNativeChecks {
                 // transition. Deliver AppKit's production notification and delegate
                 // lifecycle instead; the recorder subscribes to the former.
                 let ownsWindowLifecycle=window.delegate === workbench
-                workbench.windowDidResignKey(Notification(name:NSWindow.didResignKeyNotification,object:window))
                 NotificationCenter.default.post(name:NSWindow.didResignKeyNotification,object:window)
                 await settle()
                 let unrelated=key(window:window,keyCode:15,characters:"r",flags:[.control,.option])

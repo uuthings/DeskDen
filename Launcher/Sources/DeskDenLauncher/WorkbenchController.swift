@@ -14,7 +14,12 @@ enum WorkbenchSettingsTab:String,CaseIterable {
     var subtitle:String {switch self {case .general:"管理启动方式、工作台入口与数据更新";case .material:"工作台、启动器与浮层使用同一套外观";case .launcher:"调整启动方式、按键绑定与搜索";case .widgets:"管理桌面组件的显示、位置与行为";case .privacy:"管理个人内容、数据来源与访问权限";case .audit:"查看各模块的数据来源与可用状态"}}
 }
 
-struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;var state:String;var detail:String}
+/// `detail` keeps the technical description for the exported diagnostics;
+/// `summary` is what the settings page shows (现行规范 9.4, S9).
+struct WorkbenchAuditEntry:Codable,Identifiable {
+    var id:String;var title:String;var state:String;var detail:String;var summary:String=""
+    var isGood:Bool {["读写校验通过","真实采样","已授权","本机配置已加载","已开启","规则已启用","预算已启用"].contains(state)}
+}
 
 @MainActor final class WorkbenchAppModel:ObservableObject {
     weak var owner:LauncherController?
@@ -127,7 +132,6 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         if next != route, modals.isPresented {revealWindow?();return}
         if next != route, let sheet=hostWindow?.attachedSheet {hostWindow?.makeKeyAndOrderFront(nil);sheet.makeKeyAndOrderFront(nil);return}
         if route == .vault && next != .vault { vault.lock(reason:"离开私密资料") }
-        if route == .settings && next != .settings { owner?.settingsWindowController?.stopEmbedding() }
         if next == .settings, route != .settings {settingsReturnRoute=route}
         if destination == .cards { settingsTab = .widgets }
         route=next;updateSamplingVisibility()
@@ -377,20 +381,20 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     var auditEntries:[WorkbenchAuditEntry] {
         let s=device.snapshot
         return [
-            .init(id:"storage",title:"本机存储",state:auditStorageResult,detail:"配置、提醒、计量元数据与加密资料分别存储；损坏数据不被默认值覆盖。"),
-            .init(id:"device",title:"设备状态",state:s.sampledAt == nil ? "等待采样":"真实采样",detail:"CPU、内存、磁盘、网卡与可读进程；温度及风扇使用硬件相关的 AppleSMC 只读接口，缺失时明确标记。GPU 使用率暂不可用。"),
-            .init(id:"device-traffic",title:"流量统计与预算",state:device.budget.enabled ? "预算已启用":"真实采集 · 预算关闭",detail:"网络速度与周期统计分离；按全部物理网络、Wi-Fi、有线分别记录。只计入方寸运行期间的连续采样，间断不补齐；预算不执行限速或断网。"),
-            .init(id:"device-temperature",title:"温度提醒",state:device.temperatureRule.enabled ? "规则已启用":"规则关闭",detail:"CPU/GPU 独立阈值、持续时间和恢复后的冷却去重；传感器缺失与休眠中断计时。系统通知：" + device.notificationPermission.title + "。"),
-            .init(id:"workbench-top-entry",title:"顶部悬浮入口",state:owner?.topEntryController?.preferences.enabled == true ? "已开启":"已关闭",detail:"鼠标在顶部刘海或屏幕中央短暂停留，直接进入工作台或显示真实快速信息；无需辅助功能权限。入口设置独立保存在本机，展开/收起尊重系统减少动态效果。"),
-            .init(id:"calendar",title:"系统日历",state:accessTitle(calendar.calendarAccess),detail:"系统日程只读。当前加载 \(calendar.events.count) 条；不连接也可以使用本机提醒。"),
-            .init(id:"reminders",title:"提醒事项",state:accessTitle(calendar.remindersAccess),detail:"本机 \(calendar.localReminders.count) 条，系统 \(calendar.systemReminders.count) 条；系统来源变更需要授权。"),
-            .init(id:"notifications",title:"系统通知",state:device.notificationPermission.title,detail:"方寸本机日历提醒、流量预算和温度提醒共用系统通知授权；不同模块保持独立通知标识，系统提醒事项由系统管理。"),
-            .init(id:"codex",title:"Codex 额度",state:ai.providerSummaries.first(where:{$0.provider.rawValue == "codex"})?.state.title ?? "无读数",detail:ai.providerSummaries.first(where:{$0.provider.rawValue == "codex"})?.detail ?? "未读取到计量元数据。"),
-            .init(id:"claude",title:"Claude 额度",state:ai.providerSummaries.first(where:{$0.provider.rawValue == "claude"})?.state.title ?? "无读数",detail:"额度与 Token 独立统计；只接入官方状态数据或明确标记的导入数据，不读取认证密钥。"),
-            .init(id:"provider-usage",title:"服务流量额度",state:providerUsage.storageError == nil ? "\(providerUsage.sources.count) 个来源":"记录需要恢复",detail:"搬瓦工使用本机钥匙串保存的实例 API Key；IPRoyal 由限定站点的 Chrome 助手交付额度。各来源独立刷新与周期，不读取 Google 认证资料，不把本机网络量当服务商账单。"),
-            .init(id:"vault",title:"私密资料",state:vault.isUnlocked ? "已解锁":"已锁定",detail:"PBKDF2-SHA256 与 AES-GCM；离开页面、关闭窗口、闲置与系统保护事件撤销会话。"),
-            .init(id:"widgets",title:"桌面组件",state:"\(preferences.cards.filter(\.visible).count) 张已显示",detail:"桌面层/置顶、大小、位置锁定、鼠标穿透和来源可独立保存。"),
-            .init(id:"launcher",title:"启动器",state:owner?.storageProblem == nil ? "本机配置已加载":"配置异常",detail:"统一设置、38 键绑定、全局快捷键、应用搜索与数字快启。")
+            .init(id:"storage",title:"本机存储",state:auditStorageResult,detail:"配置、提醒、计量元数据与加密资料分别存储；损坏数据不被默认值覆盖。",summary:"配置、提醒与加密资料分开存放；数据损坏时不会被默认值覆盖。"),
+            .init(id:"device",title:"设备状态",state:s.sampledAt == nil ? "等待采样":"真实采样",detail:"CPU、内存、磁盘、网卡与可读进程；温度及风扇使用硬件相关的 AppleSMC 只读接口，缺失时明确标记。GPU 使用率暂不可用。",summary:"读取 CPU、内存、磁盘、网络、温度与风扇；暂不提供 GPU 使用率。"),
+            .init(id:"device-traffic",title:"流量统计与预算",state:device.budget.enabled ? "预算已启用":"真实采集 · 预算关闭",detail:"网络速度与周期统计分离；按全部物理网络、Wi-Fi、有线分别记录。只计入方寸运行期间的连续采样，间断不补齐；预算不执行限速或断网。",summary:"只记录方寸运行期间的流量，间断不补；预算只提醒，不限速。"),
+            .init(id:"device-temperature",title:"温度提醒",state:device.temperatureRule.enabled ? "规则已启用":"规则关闭",detail:"CPU/GPU 独立阈值、持续时间和恢复后的冷却去重；传感器缺失与休眠中断计时。系统通知：" + device.notificationPermission.title + "。",summary:"CPU 与 GPU 分别设阈值，持续超温才提醒。系统通知：" + device.notificationPermission.title + "。"),
+            .init(id:"workbench-top-entry",title:"顶部入口",state:owner?.topEntryController?.preferences.enabled == true ? "已开启":"已关闭",detail:"鼠标在顶部刘海或屏幕中央短暂停留，直接进入工作台或显示真实快速信息；无需辅助功能权限。入口设置独立保存在本机，展开/收起尊重系统减少动态效果。",summary:"鼠标停在屏幕顶部时，显示简要信息或直接进入工作台。"),
+            .init(id:"calendar",title:"系统日历",state:accessTitle(calendar.calendarAccess),detail:"系统日程只读。当前加载 \(calendar.events.count) 条；不连接也可以使用本机提醒。",summary:"只读系统日程，当前 \(calendar.events.count) 条；不接入也能用本机提醒。"),
+            .init(id:"reminders",title:"提醒事项",state:accessTitle(calendar.remindersAccess),detail:"本机 \(calendar.localReminders.count) 条，系统 \(calendar.systemReminders.count) 条；系统来源变更需要授权。",summary:"本机 \(calendar.localReminders.count) 条，系统 \(calendar.systemReminders.count) 条。"),
+            .init(id:"notifications",title:"系统通知",state:device.notificationPermission.title,detail:"方寸本机日历提醒、流量预算和温度提醒共用系统通知授权；不同模块保持独立通知标识，系统提醒事项由系统管理。",summary:"日历提醒、流量预算和温度提醒共用系统通知权限。"),
+            .init(id:"codex",title:"Codex 额度",state:ai.configurations.first(where:{$0.provider.rawValue == "codex"})?.enabled == false ? "已关闭":ai.providerSummaries.first(where:{$0.provider.rawValue == "codex"})?.state.title ?? "无读数",detail:ai.providerSummaries.first(where:{$0.provider.rawValue == "codex"})?.detail ?? "未读取到计量元数据。"),
+            .init(id:"claude",title:"Claude 额度",state:ai.configurations.first(where:{$0.provider.rawValue == "claude"})?.enabled == false ? "已关闭":ai.providerSummaries.first(where:{$0.provider.rawValue == "claude"})?.state.title ?? "无读数",detail:"额度与 Token 独立统计；只接入官方状态数据或明确标记的导入数据，不读取认证密钥。",summary:"只读取官方客户端的额度与本机 Token 记录，不读取登录凭据。"),
+            .init(id:"provider-usage",title:"服务流量额度",state:providerUsage.storageError == nil ? "\(providerUsage.sources.count) 个来源":"记录需要恢复",detail:"搬瓦工使用本机钥匙串保存的实例 API Key；IPRoyal 由限定站点的 Chrome 助手交付额度。各来源独立刷新与周期，不读取 Google 认证资料，不把本机网络量当服务商账单。",summary:"实例凭据存入钥匙串；浏览器连接只同步额度。"),
+            .init(id:"vault",title:"私密资料",state:vault.isUnlocked ? "已解锁":"已锁定",detail:"PBKDF2-SHA256 与 AES-GCM；离开页面、关闭窗口、闲置与系统保护事件撤销会话。",summary:"离开页面、关闭窗口或闲置后自动锁定。"),
+            .init(id:"widgets",title:"桌面组件",state:"\(preferences.cards.filter(\.visible).count) 张已显示",detail:"桌面层/置顶、大小、位置锁定、鼠标穿透和来源可独立保存。",summary:"显示方式、大小、位置锁定和鼠标穿透分别保存。"),
+            .init(id:"launcher",title:"启动器",state:owner?.storageProblem == nil ? "本机配置已加载":"配置异常",detail:"统一设置、38 键绑定、全局快捷键、应用搜索与数字快启。",summary:"按键绑定、全局快捷键、应用搜索与数字快速启动。")
         ]
     }
     func runStorageAudit() {
@@ -409,7 +413,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         struct Report:Codable {var format="deskden-function-audit";var date:Date;var entries:[WorkbenchAuditEntry]}
         do {let encoder=JSONEncoder();encoder.outputFormatting=[.prettyPrinted,.sortedKeys];encoder.dateEncodingStrategy = .iso8601;try encoder.encode(Report(date:Date(),entries:auditEntries)).write(to:url,options:.atomic);toast="功能审计已导出。"} catch {message="导出失败：\(error.localizedDescription)"}
     }
-    func shutdown() {apiBalance.shutdown();modals.clear();context.stop();cleaning.cancelAll();vault.lock(reason:"退出方寸");device.stop();widgets.hideAll();owner?.settingsWindowController?.stopEmbedding()}
+    func shutdown() {apiBalance.shutdown();modals.clear();context.stop();cleaning.cancelAll();vault.lock(reason:"退出方寸");device.stop();widgets.hideAll()}
 }
 
 @MainActor final class WorkbenchWindowController:NSWindowController,NSWindowDelegate {
@@ -550,7 +554,6 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         let panel = makeTopEntryPanel()
         let newSession = !isTopEntryPresented
         if !isTopEntryPresented {
-            launcher?.settingsWindowController?.cancelEmbeddedRecording()
             window.makeFirstResponder(nil)
             // A native full-screen Space must never be left with an empty content view.
             // The parked surface contains no cached business or unlocked vault content.
@@ -785,7 +788,6 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     }
     private func restoreOrdinaryHost() {
         guard isTopEntryPresented, let window else { return }
-        launcher?.settingsWindowController?.cancelEmbeddedRecording()
         cancelOpacityTransition(window)
         if let topEntryPanel { cancelOpacityTransition(topEntryPanel) }
         for child in suspendedTopChildren { cancelOpacityTransition(child) }
@@ -836,7 +838,6 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         topEntrySuspended = true
         topEntryDismissing = true
         finishingClose = false
-        launcher?.settingsWindowController?.cancelEmbeddedRecording()
         // The vault has an independent security lifecycle; ordinary form drafts are
         // preserved, but leaving the temporary session cannot keep plaintext alive.
         if model.vault.isUnlocked || model.route == .vault { model.vault.lock(reason: "离开顶部工作台") }
@@ -1001,7 +1002,6 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         pendingMinimizeGeneration=nil
         model.vault.lock(reason:close ? "关闭方寸窗口":"收起方寸窗口")
         model.confirmingQuit=false
-        launcher?.settingsWindowController?.cancelEmbeddedRecording()
         if target === topEntryPanel {
             if close {restoreTopEntryHostAfterClose = true}
             dismissTopEntryForContextChange()
@@ -1036,13 +1036,12 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
         cancelPendingPresentationActivation()
         ordinaryDismissalGeneration=nil
         ordinaryWindowSessionActive=false;updateDockParticipation()
-        model.vault.lock(reason:"关闭工作台");model.setWindowVisible(false);launcher?.settingsWindowController?.stopEmbedding()
+        model.vault.lock(reason:"关闭工作台");model.setWindowVisible(false)
     }
     func windowWillReturnFieldEditor(_ sender:NSWindow,to client:Any?)->Any? {
         guard model.route == .vault || model.vault.sheet != nil else {return nil}
         return VaultClipboard.privateFieldEditor(for:client)
     }
-    func windowDidResignKey(_ notification:Notification) {launcher?.settingsWindowController?.cancelEmbeddedRecording()}
     func windowDidBecomeKey(_ notification: Notification) {
         if isTopEntryPresented, notification.object as? NSWindow === window {
             // Ordering out a temporary host can synchronously make a parked native

@@ -7,6 +7,21 @@ struct SpaceCleaningModuleView: View {
     @Environment(\.workbenchPalette) private var palette
     @Environment(\.timeZone) private var timeZone
     @State private var measuredHeights: [SpaceCleaningMeasuredRegion: CGFloat] = [:]
+    @State private var subpageHeight: CGFloat?
+    /// Rules, coverage, restore and purge open as sub-pages of this page (9.4, D1).
+    private var subpage: CleaningDialog? {
+        guard let dialog = model.dialog, dialog != .confirm, !isPurpose(dialog) else { return nil }
+        return dialog
+    }
+    private var subpageHeading: (title: String, subtitle: String)? {
+        switch subpage {
+        case .rules: ("扫描与保护规则", "默认范围与各类项目的处理方式")
+        case .issues: ("扫描覆盖范围", "没有得到完整结果的位置与范围说明")
+        case .restore: ("恢复本次项目", "恢复到原位置前重新核验")
+        case .purge: ("永久删除本次项目", "删除后无法恢复")
+        default: nil
+        }
+    }
 
     private var isPreparing: Bool { [.start, .scope].contains(model.screen) && model.dialog == nil }
     private func panelHeight(in viewport: CGFloat) -> CGFloat {
@@ -35,6 +50,7 @@ struct SpaceCleaningModuleView: View {
                 VStack(alignment: .leading, spacing: 0) {
                 // Notes outside the cards sit on the shared note backing so they
                 // stay readable on both wallpapers.
+                if subpage == nil {
                 HStack(spacing: 8) {
                     HStack(spacing: 6) {
                         if !isPreparing {
@@ -54,6 +70,7 @@ struct SpaceCleaningModuleView: View {
                         .disabled(model.isBusy).accessibilityIdentifier("space-cleaning-rules-link")
                 }.font(.system(size: 11)).padding(.top, 12)
                     .fixedSize(horizontal: false, vertical: true)
+                }
                 if let message = model.message {
                     HStack(alignment: .top, spacing: 8) {
                         Image(systemName: "info.circle")
@@ -111,23 +128,30 @@ struct SpaceCleaningModuleView: View {
         }
     }
     private var header: some View {
-        WBPageHeader(title: model.screen == .history ? "清理记录" : "空间清理", subtitle: subtitle, back: back) {
-            if model.screen == .results {
+        WBPageHeader(title: subpageHeading?.title ?? (model.screen == .history ? "清理记录" : "空间清理"), subtitle: subpageHeading?.subtitle ?? subtitle, back: back) {
+            if subpage != nil {
+                EmptyView()
+            } else if model.screen == .results {
                 Button(action: model.startScan) { Label("重新扫描", systemImage: "arrow.clockwise") }
                     .buttonStyle(WBButtonStyle()).disabled(model.isBusy).accessibilityIdentifier("space-cleaning-rescan")
             }
-            if model.screen != .history {
+            if subpage == nil, model.screen != .history {
                 Button(action: model.showHistory) { Label("清理记录", systemImage: "clock.arrow.circlepath") }
                     .buttonStyle(WBButtonStyle()).disabled(model.isBusy || model.screen == .scope)
             }
         }.help(capacityExplanation)
     }
     @ViewBuilder private func content(width: CGFloat, height: CGFloat) -> some View {
-        if let dialog = model.dialog, dialog != .confirm, !isPurpose(dialog) {
-            SpaceCleaningSurface {
+        if let dialog = subpage {
+            // The card follows its content and scrolls only when taller than the page.
+            SpaceCleaningSurface(fillHeight: false) {
                 WorkbenchScrollView {
                     SpaceCleaningDialogContent(model: model, dialog: dialog)
+                        .background(GeometryReader { proxy in Color.clear.preference(key: SpaceCleaningSubpageHeight.self, value: proxy.size.height) })
                 }.scrollBounceBehavior(.basedOnSize)
+                    .frame(height: min(subpageHeight ?? height, height))
+            }.onPreferenceChange(SpaceCleaningSubpageHeight.self) { value in
+                if value > 0, abs((subpageHeight ?? 0) - value) > 0.5 { subpageHeight = value }
             }
         } else {
             switch model.screen {
@@ -256,4 +280,9 @@ private extension View {
                 .allowsHitTesting(false)
         })
     }
+}
+
+private struct SpaceCleaningSubpageHeight: PreferenceKey {
+    static var defaultValue: CGFloat { 0 }
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }

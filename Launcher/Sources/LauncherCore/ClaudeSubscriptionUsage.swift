@@ -75,15 +75,15 @@ public enum ClaudeSubscriptionUsage {
         switch authentication {
         case .subscription: nil
         case .signedOut:
-            .loginRequired("本机 Claude Code 尚未登录会员。点击“登录 Claude 会员”，在官方网页完成授权后显示额度。", .signIn)
+            .loginRequired("本机 Claude Code 尚未登录会员。点击「登录 Claude 会员」，在官方网页完成授权后显示额度。", .signIn)
         case .consoleLogin:
             .loginRequired("本机 Claude Code 登录的是 Anthropic Console（API 计费）账号，不是会员登录；Claude 桌面版的会员登录不会同步到这里。请在终端切换为会员登录后重新检测。", .switchInTerminal)
         case .configuredKey:
-            .loginRequired("Claude Code 设置中的 API Key 或 apiKeyHelper 优先于会员登录，无法读取会员额度。可移除该设置，或在“高级连接方式”中为方寸单独登录会员。", .separateLogin)
+            .loginRequired("Claude Code 设置中的 API Key 或 apiKeyHelper 优先于会员登录，无法读取会员额度。可移除该设置，或在「高级连接方式」中为方寸单独登录会员。", .separateLogin)
         case .otherProvider:
-            .loginRequired("本机 Claude Code 当前通过 Bedrock、Vertex 等第三方平台使用，不提供会员额度。可在“高级连接方式”中为方寸单独登录会员。", .separateLogin)
+            .loginRequired("本机 Claude Code 当前通过 Bedrock、Vertex 等第三方平台使用，不提供会员额度。可在「高级连接方式」中为方寸单独登录会员。", .separateLogin)
         case .other:
-            .loginRequired("当前 Claude Code 登录方式不提供会员额度。可在“高级连接方式”中为方寸单独登录会员。", .separateLogin)
+            .loginRequired("当前 Claude Code 登录方式不提供会员额度。可在「高级连接方式」中为方寸单独登录会员。", .separateLogin)
         }
     }
 

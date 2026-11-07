@@ -104,7 +104,7 @@ struct UsageManagedConnection: Identifiable {
             let summary = app.ai.providerSummaries.first { $0.provider == provider }
             let connected = app.ai.configuration(for: provider).enabled && summary?.state == .ready
             return .init(id: key, name: appearance.displayName ?? provider.title,
-                         detail: summary?.effectiveAccountPlan?.title ?? (connected ? "本机来源" : "尚未读取"),
+                         detail: !app.ai.configuration(for: provider).enabled ? "已关闭" : summary?.effectiveAccountPlan?.title ?? (connected ? "本机来源" : "尚未读取"),
                          service: provider == .codex ? .codex : .claude, appearance: appearance, connected: connected)
         }
         entries += app.providerUsage.sources.map { source in

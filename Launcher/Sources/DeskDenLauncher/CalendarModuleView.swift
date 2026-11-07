@@ -193,7 +193,7 @@ struct CalendarModuleView:View {
             }
             if selectedItems.isEmpty {
                 calendarEmpty("这一天还没有安排")
-                HStack {Spacer(minLength:0);Button {model.showNewChoice=true} label:{Label("添加安排",systemImage:"plus")}.buttonStyle(WBButtonStyle(compact:true)).accessibilityIdentifier("fc.calendar.empty.add-action");Spacer(minLength:0)}
+                HStack {Spacer(minLength:0);Button {newMenuOpen=true} label:{Label("添加安排",systemImage:"plus")}.buttonStyle(WBButtonStyle(compact:true)).accessibilityIdentifier("fc.calendar.empty.add-action");Spacer(minLength:0)}
             } else {
                 let items=selectedItems
                 ForEach(Array(items.enumerated()),id:\.element.id) {index,entry in CalendarAgendaRow(model:model,entry:entry,last:index == items.count-1)}
@@ -561,7 +561,6 @@ struct CalendarDialogs:View {
             .workbenchModal(item:$model.selectedReminder) {item in CalendarReminderDetail(model:model,item:item)}
             .workbenchModal(isPresented:$model.showNotifications) {CalendarNotificationsDialog(model:model)}
             .workbenchModal(isPresented:$model.showReminderList) {CalendarReminderList(model:model)}
-            .workbenchModal(isPresented:$model.showNewChoice) {CalendarNewChoice(model:model)}
             .onAppear {syncZone()}
             .onReceive(context?.objectWillChange.eraseToAnyPublisher() ?? Empty<Void,Never>().eraseToAnyPublisher()) {_ in Task {@MainActor in syncZone()}}
             .workbenchModal(isPresented:Binding(get:{model.shouldPresentOperationError},set:{if !$0 {model.errorMessage=nil}}),onRequestDismiss:{model.errorMessage=nil}) {
@@ -663,16 +662,6 @@ private struct CalendarEventDetail:View {
     }
 }
 
-private struct CalendarNewChoice:View {
-    @ObservedObject var model:CalendarModel
-    @Environment(\.workbenchPalette) private var palette
-    var body:some View {CalendarDialog(title:"新建",dismiss:{model.showNewChoice=false}){
-        Button {model.showNewChoice=false;model.openNewReminder()} label:{Label(model.systemRemindersAvailable ? "提醒事项":"新建提醒",systemImage:"checkmark.circle")}.buttonStyle(WBButtonStyle(primary:true))
-        Button {model.openSystemCalendar();model.showNewChoice=false} label:{Label("系统日程",systemImage:"calendar")}.buttonStyle(WBButtonStyle())
-        Text(model.systemRemindersAvailable ? "提醒直接保存到系统列表，与提醒事项保持同步。系统日程交由日历编辑。":"接入系统提醒事项后，新提醒默认保存到系统列表。尚未接入时可明确保存为本机提醒。系统日程交由日历编辑。")
-            .font(.system(size:12)).foregroundStyle(palette.secondary)
-    } actions:{Spacer();Button("取消"){model.showNewChoice=false}.buttonStyle(WBButtonStyle()).keyboardShortcut(.cancelAction)}}
-}
 
 private struct CalendarReminderList:View {
     @ObservedObject var model:CalendarModel

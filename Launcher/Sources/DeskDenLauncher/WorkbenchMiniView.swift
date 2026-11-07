@@ -49,7 +49,7 @@ struct WorkbenchMiniView: View {
                               summary: device.trafficSummary, budget: device.budget, unit: context.settings.temperatureUnit),
                 providers: AIProvider.allCases.map { provider in
                     .init(summary: ai.providerSummaries.first { $0.provider == provider }, provider: provider,
-                          now: timeline.date, displayCalendar: context.dateContext.calendar)
+                          now: timeline.date, displayCalendar: context.dateContext.calendar, enabled: ai.configuration(for: provider).enabled)
                 },
                 externalProviders: providerUsage.sources.map {
                     WorkbenchMiniExternalProviderData(configuration: $0, state: providerUsage.state(for: $0.id),
@@ -217,8 +217,10 @@ struct WorkbenchMiniPanelView: View {
                     }.fixedSize().help("第 \(currentPage + 1) 页，共 \(pages) 页")
                 }
                 if editing || configuring {
-                    Button(configuring ? "返回布局" : "添加卡片") { beginEditing(); configuring.toggle() }
-                        .font(.system(size: 11)).frame(height: 28).accessibilityIdentifier("mini-show-configuration")
+                    Button { beginEditing(); configuring.toggle() } label: {
+                        if configuring { Label("编辑 Mini", systemImage: "chevron.left") } else { Text("添加卡片") }
+                    }.font(.system(size: 11)).frame(height: 28)
+                        .accessibilityLabel(configuring ? "返回编辑 Mini" : "添加卡片").accessibilityIdentifier("mini-show-configuration")
                 } else if current.showDate {
                     Button(action: openContext) {
                         ViewThatFits(in: .horizontal) {
@@ -398,7 +400,7 @@ struct WorkbenchMiniPanelView: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 4) {
                     titleLabel(id)
-                    if device.thermalUpdating { Text("更新中").font(.system(size: 10)).foregroundStyle(palette.muted) }
+                    if device.thermalUpdating { Text("更新中").font(.system(size: 11)).foregroundStyle(palette.muted) }
                     Spacer(minLength: 0)
                     DeviceThermalStatusBadge(status: thermalStatus)
                 }.frame(height: 18)
@@ -413,7 +415,7 @@ struct WorkbenchMiniPanelView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     heading(id, value.isStale ? value.stateText : "")
                     HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        Text(value.remaining).font(.system(size: 17)).monospacedDigit()
+                        Text(value.remaining).font(.system(size: 17, weight: .medium)).monospacedDigit()
                         Text(value.unit + " 剩余").font(.system(size: 11)).foregroundStyle(palette.secondary)
                     }.lineLimit(1).frame(height: 20)
                     valueRow(value.amount, value.usedPercent.map { UsagePercentage.text($0) } ?? percent(value.fraction)); meter(value.fraction, stale: value.isStale)
@@ -426,7 +428,7 @@ struct WorkbenchMiniPanelView: View {
             } else if let value = balances.first(where: { $0.id == id.apiBalanceID }) {
                 VStack(alignment: .leading, spacing: 6) {
                     heading(id, value.isStale ? value.stateText : "")
-                    Text(value.amount).font(.system(size: 18)).monospacedDigit().lineLimit(2)
+                    Text(value.amount).font(.system(size: 17, weight: .medium)).monospacedDigit().lineLimit(2)
                     Text(value.isStale ? "上次余额" : value.stateText).font(.system(size: 11)).foregroundStyle(palette.secondary)
                 }.help(value.detail)
             } else { Text("来源已移除").font(.system(size: 12)) }
@@ -448,7 +450,7 @@ struct WorkbenchMiniPanelView: View {
                 }
                 if provider.windows.isEmpty {
                     Text(provider.emptyMessage).font(.system(size: 12)).foregroundStyle(palette.secondary).lineLimit(2)
-                    Text("取得真实额度后自动显示").font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
+                    if let hint = provider.emptyHint { Text(hint).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1) }
                 } else if let note = provider.availabilityNote {
                     Text(note).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
                 }
@@ -494,7 +496,7 @@ struct WorkbenchMiniPanelView: View {
     private func temperature(_ title: String, _ value: String, level: DeviceThermalLevel, trailing: Bool) -> some View {
         VStack(alignment: trailing ? .trailing : .leading, spacing: 2) {
             Text(title).font(.system(size: 11)).foregroundStyle(palette.secondary)
-            Text(value).font(.system(size: 21)).foregroundStyle(level.color(palette: palette)).lineLimit(1).monospacedDigit()
+            Text(value).font(.system(size: 24)).foregroundStyle(level.color(palette: palette)).lineLimit(1).monospacedDigit()
         }.frame(maxWidth: .infinity, alignment: trailing ? .trailing : .leading)
     }
     private var networkTrend: some View {
@@ -559,7 +561,7 @@ struct WorkbenchMiniPanelView: View {
     }
     private var empty: some View {
         VStack(spacing: 10) {
-            Text("已隐藏全部卡片").font(.system(size: 13))
+            Text("已隐藏全部卡片").font(.system(size: 12))
             Button("配置显示内容") { beginEditing(); configuring = true }.font(.system(size: 12)).buttonStyle(.plain).clickableCursor()
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -589,9 +591,9 @@ struct WorkbenchMiniPanelView: View {
 extension WorkbenchMiniCardID {
     var title: String {
         switch self {
-        case .codex: "Codex"; case .claude: "Claude Code"; case .traffic: "本机流量"
-        case .disk: "磁盘空间"; case .memory: "运行内存"; case .todo: "最近待办"
-        case .network: "实时网络"; case .thermal: "散热状态"; default: "外部用量"
+        case .codex: "Codex"; case .claude: "Claude"; case .traffic: "今日流量"
+        case .disk: "存储空间"; case .memory: "统一内存"; case .todo: "最近待办"
+        case .network: "网络速度"; case .thermal: "散热状态"; default: "外部用量"
         }
     }
 }

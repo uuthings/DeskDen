@@ -195,7 +195,7 @@ actor ClaudeSubscriptionService: ClaudeSubscriptionProviding {
         return await query(dataDirectory: dataDirectory, separate: false)
     }
 
-    private static let separateDirectoryMessage = "方寸单独保存的 Claude 登录目录不可用，请在“高级连接方式”中改回本机登录后重试。"
+    private static let separateDirectoryMessage = "方寸单独保存的 Claude 登录目录不可用，请在「高级连接方式」中改回本机登录后重试。"
     private static func separateConfiguration(_ dataDirectory: URL) -> URL {
         dataDirectory.appendingPathComponent("ClaudeSubscription", isDirectory: true)
     }

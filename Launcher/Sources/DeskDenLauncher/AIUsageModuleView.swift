@@ -345,7 +345,7 @@ struct AIUsageModuleView: View {
                     AIFactRow(title: "来源类型", value: value.sourceDescription)
                     AIFactRow(title: "会员方案", value: value.accountPlanDescription)
                     AIFactRow(title: "最后有效读数", value: value.updatedAt.map { aiShortDateTime($0, timeZone: timeZone) } ?? "尚无读数")
-                        .help(value.updatedAt.map { UsageDatePresentation.absolute($0, timeZone: timeZone, location: displayLocation) } ?? "")
+                        .help(value.updatedAt.map { UsageDatePresentation.withZone($0, timeZone: timeZone, location: displayLocation) } ?? "")
                     // Only a valid reading is colored; other states stay neutral (现行规范 9.3, U2).
                     AIFactRow(title: "当前状态", value: model.configuration(for: provider).enabled ? value.state.title : "自动读取已关闭", color: value.state == .ready && model.configuration(for: provider).enabled ? palette.accent : nil)
                     AIFactRow(title: "过期判定", value: "15 分钟未更新或窗口已重置")
@@ -358,7 +358,7 @@ struct AIUsageModuleView: View {
             }
             resetDetails(value).padding(.top, 12)
             quotaHistory(provider).padding(.top, 12)
-            AINotice(text: "每格为一天最后一次实际读数，并非当日消耗；不同额度窗口分别展示。无读数不代表 0，本机最多保留 31 天。", onBackdrop: true)
+            AINotice(text: "每个点是当天最后一次实际读数，并非当日消耗；不同额度窗口各画一条线。无读数不代表 0，本机最多保留 31 天。", onBackdrop: true)
                 .accessibilityIdentifier("fc.ai.detail.historyNotice").padding(.top, 12)
             AIWeightedColumns(ratio: 1, gap: 12) {
                 providerTokenCard(provider)
@@ -371,14 +371,9 @@ struct AIUsageModuleView: View {
             let index = min(max(0, selectedResetWindow), windows.count - 1)
             WBCard(title: "重置时间", spacing: 14) {
                 if windows.count > 1 {
-                    HStack(spacing: 8) {
-                        ForEach(Array(windows.enumerated()), id: \.offset) { offset, window in
-                            Button(window.title) { selectedResetWindow = offset }
-                                .buttonStyle(WBButtonStyle(primary: index == offset, compact: true))
-                                .accessibilityIdentifier("fc.ai.reset-window." + String(offset))
-                        }
-                        Spacer(minLength: 0)
-                    }
+                    WBSegmentedChoice(selection: Binding(get: { index }, set: { selectedResetWindow = $0 }),
+                                      options: windows.enumerated().map { (value: $0.offset, title: $0.element.title) },
+                                      identifier: "fc.ai.reset-windows", optionIdentifierPrefix: "fc.ai.reset-window.")
                 }
                 UsageResetDetailsView(reset: .init(window: windows[index]), timeZone: timeZone)
             }.accessibilityElement(children: .contain).accessibilityIdentifier("fc.ai.reset-details")
@@ -393,20 +388,8 @@ struct AIUsageModuleView: View {
             AICardTitle(title: "每日额度与 Token", symbol: "chart.bar.xaxis", trailing: "最近 31 天")
             Text("额度是当天最后观测的窗口已用比例；Token 是本机当天记录的消耗。")
                 .aiText(11, color: palette.secondary).padding(.top, 8).padding(.bottom, 16)
-            VStack(alignment: .leading, spacing: 22) {
-                if history.series.isEmpty {
-                    AIDailyUsageBars(days: history.days, title: "额度占用 · 尚无读数", calendar: calendar,
-                        identifier: provider.rawValue + ".empty", tokens: tokens)
-                } else {
-                    ForEach(history.series) { series in
-                        AIDailyUsageBars(days: series.days, title: series.title + " · 已用比例", calendar: calendar,
-                            identifier: provider.rawValue + "." + String(series.durationMinutes), tokens: tokens)
-                    }
-                }
-                AIDailyUsageBars(days: history.days, title: "每日 Token · 本机记录", calendar: calendar,
-                    identifier: provider.rawValue + ".tokens", tokens: tokens, showsTokens: true)
-            }
-            Text("— 表示没有记录，不能视为 0。Token 含输入、输出及缓存；仅覆盖已连接来源，不换算账户额度。")
+            AIDailyQuotaChart(series: history.series, days: history.days, tokens: tokens, calendar: calendar, identifier: provider.rawValue)
+            Text("折线断开或「—」表示没有记录，不能视为 0。Token 含输入、输出及缓存；仅覆盖已连接来源，不换算账户额度。")
                 .aiText(11, color: palette.muted).fixedSize(horizontal: false, vertical: true).padding(.top, 14)
             Text("按工作台时区统计 · " + calendar.timeZone.identifier)
                 .aiText(11, color: palette.muted).padding(.top, 5)
@@ -675,74 +658,113 @@ struct AIProviderLogo: View {
 
 /// Aligned daily bars keep the two independent units explicit. Quota snapshots
 /// never become daily consumption; token counts come only from the local ledger.
-struct AIDailyUsageBars: View {
+/// One chart for a provider's last 31 days: each quota window is a line of its
+/// last observation per day, and local Token use is a bar on the same days,
+/// with one date axis and one caption (现行规范 9.4, D6). A missing day breaks
+/// the line; nothing is added, interpolated or converted into daily usage.
+struct AIDailyQuotaChart: View {
+    let series: [AIQuotaDailyWindowSeries]
     let days: [AIQuotaDailyCell]
-    let title: String
+    let tokens: [Date: AITokenCounts]
     let calendar: Calendar
     let identifier: String
-    let tokens: [Date: AITokenCounts]
-    var showsTokens = false
     @Environment(\.workbenchPalette) private var palette
     @State private var hoveredDate: Date?
     @State private var selectedDate: Date?
-    private let plotHeight: CGFloat = 88
+    private let quotaHeight: CGFloat = 88
+    private let tokenHeight: CGFloat = 56
     private let gap: CGFloat = 5
     private var visibleDays: [AIQuotaDailyCell] { days.filter(\.isInRange) }
-    private var maximum: Double { showsTokens ? max(1, Double(tokens.values.map(\.total).max() ?? 0)) : 100 }
+    private var tokenMaximum: Double { max(1, Double(tokens.values.map(\.total).max() ?? 0)) }
     private var activeDate: Date? { hoveredDate ?? selectedDate }
     private var focusedDay: AIQuotaDailyCell? {
-        visibleDays.first { $0.date == activeDate } ?? visibleDays.last { value($0) != nil } ?? visibleDays.last
+        visibleDays.first { $0.date == activeDate }
+            ?? visibleDays.last { day in series.contains { reading($0, on: day.date) != nil } || tokens[day.date] != nil }
+            ?? visibleDays.last
     }
-    private func value(_ day: AIQuotaDailyCell) -> Double? {
-        showsTokens ? tokens[day.date].map { Double($0.total) } : day.reading?.window.usedPercent
+    private func color(_ index: Int) -> Color { index == 0 ? palette.accent : palette.cool }
+    private func reading(_ item: AIQuotaDailyWindowSeries, on date: Date) -> AIQuotaDailyReading? {
+        item.days.first { $0.date == date }?.reading
     }
-    private func tint(_ amount: Double) -> Color { showsTokens ? palette.cool : palette.usageColor(forPercent: amount) }
+    private func stamp(_ date: Date) -> String { String(Int(date.timeIntervalSince1970)) }
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(title).aiText(13, weight: .medium, color: palette.text)
+            HStack(spacing: 14) {
+                if series.isEmpty {
+                    Text("额度占用 · 尚无读数").aiText(13, weight: .medium, color: palette.text)
+                } else {
+                    ForEach(Array(series.enumerated()), id: \.element.id) { index, item in
+                        HStack(spacing: 6) {
+                            Capsule().fill(color(index)).frame(width: 12, height: 2)
+                            Text(item.title + " · 当天最后观测").aiText(11, color: palette.secondary)
+                        }
+                    }
+                }
                 Spacer()
-                Text(showsTokens ? (tokens.isEmpty ? "暂无 Token 记录" : "已记录 " + aiCount(tokens.values.reduce(Int64(0)) { $0 + $1.total }) + " Token / 31 天") : "0–100%")
-                    .aiText(11, color: palette.muted).monospacedDigit()
+                Text("0–100%").aiText(11, color: palette.muted).monospacedDigit()
             }
             HStack(alignment: .top, spacing: 8) {
-                VStack(alignment: .trailing) {
-                    Text(showsTokens ? aiCount(Int64(maximum)) : "100%")
-                    Spacer(minLength: 0)
-                    Text("0")
-                }.font(.system(size: 11)).foregroundStyle(palette.muted).monospacedDigit().frame(width: 40, height: plotHeight)
+                axis(top: "100%", bottom: "0%", height: quotaHeight)
+                GeometryReader { plot in
+                    let step = (plot.size.width + gap) / CGFloat(max(1, visibleDays.count))
+                    ZStack(alignment: .topLeading) {
+                        Rectangle().fill(palette.line).frame(width: plot.size.width, height: 1).offset(y: quotaHeight - 1)
+                        ForEach(Array(series.enumerated()), id: \.element.id) { index, item in
+                            line(item, step: step).stroke(color(index), style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
+                            ForEach(Array(visibleDays.enumerated()), id: \.element.id) { offset, day in
+                                if let value = reading(item, on: day.date) {
+                                    Circle().fill(palette.usageColor(forPercent: value.window.usedPercent))
+                                        .overlay(Circle().strokeBorder(color(index), lineWidth: 1))
+                                        .frame(width: activeDate == day.date ? 7 : 5, height: activeDate == day.date ? 7 : 5)
+                                        .frame(width: 7, height: 7)
+                                        .aiQuotaMeasuredRegion("fc.ai.history." + identifier + "." + String(item.durationMinutes) + ".point." + stamp(day.date))
+                                        .position(x: center(offset, step: step), y: y(value.window.usedPercent))
+                                }
+                            }
+                        }
+                        HStack(spacing: gap) {
+                            ForEach(visibleDays) { day in
+                                Button { selectedDate = day.date } label: { Color.clear.contentShape(Rectangle()) }
+                                    .buttonStyle(ClickablePlainButtonStyle())
+                                    .aiQuotaMeasuredRegion("fc.ai.history." + identifier + ".quota.cell." + stamp(day.date))
+                                    .accessibilityLabel(description(day))
+                                    .accessibilityIdentifier("fc.ai.history." + identifier + ".quota.day." + stamp(day.date))
+                            }
+                        }.frame(width: plot.size.width, height: quotaHeight)
+                    }.frame(width: plot.size.width, height: quotaHeight, alignment: .topLeading)
+                        .contentShape(Rectangle())
+                        .onContinuousHover { hover($0, width: plot.size.width) }
+                        .aiQuotaMeasuredRegion("fc.ai.history." + identifier + ".quota.grid")
+                }.frame(height: quotaHeight)
+            }
+            HStack(spacing: 6) {
+                RoundedRectangle(cornerRadius: 2).fill(palette.cool).frame(width: 8, height: 8)
+                Text("Token · 本机记录").aiText(11, color: palette.secondary)
+                Spacer()
+                Text(tokens.isEmpty ? "暂无 Token 记录" : "已记录 " + aiCount(tokens.values.reduce(Int64(0)) { $0 + $1.total }) + " Token / 31 天")
+                    .aiText(11, color: palette.muted).monospacedDigit()
+            }.padding(.top, 6)
+            HStack(alignment: .top, spacing: 8) {
+                axis(top: aiCount(Int64(tokenMaximum)), bottom: "0", height: tokenHeight)
                 GeometryReader { plot in
                     VStack(spacing: 6) {
                         HStack(alignment: .bottom, spacing: gap) {
                             ForEach(visibleDays) { day in
-                                Button { selectedDate = day.date } label: {
-                                    VStack(spacing: 0) {
-                                        Spacer(minLength: 0)
-                                        if let amount = value(day) {
-                                            RoundedRectangle(cornerRadius: 2)
-                                                .fill(tint(amount).opacity(activeDate == day.date ? 1 : 0.72))
-                                                .frame(height: max(2, plotHeight * amount / maximum))
-                                                .aiQuotaMeasuredRegion("fc.ai.history." + identifier + ".bar." + String(Int(day.date.timeIntervalSince1970)))
-                                        } else {
-                                            Text("—").font(.system(size: 11)).foregroundStyle(palette.muted).frame(height: 14)
-                                        }
-                                    }.frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(Rectangle())
-                                }.buttonStyle(ClickablePlainButtonStyle())
-                                    .aiQuotaMeasuredRegion("fc.ai.history." + identifier + ".cell." + String(Int(day.date.timeIntervalSince1970)))
-                                    .accessibilityLabel(description(day))
-                                    .accessibilityIdentifier("fc.ai.history." + identifier + ".day." + String(Int(day.date.timeIntervalSince1970)))
+                                VStack(spacing: 0) {
+                                    Spacer(minLength: 0)
+                                    if let count = tokens[day.date] {
+                                        RoundedRectangle(cornerRadius: 2)
+                                            .fill(palette.cool.opacity(activeDate == day.date ? 1 : 0.72))
+                                            .frame(height: max(2, tokenHeight * Double(count.total) / tokenMaximum))
+                                            .aiQuotaMeasuredRegion("fc.ai.history." + identifier + ".tokens.bar." + stamp(day.date))
+                                    } else {
+                                        Text("—").font(.system(size: 11)).foregroundStyle(palette.muted).frame(height: 14)
+                                    }
+                                }.frame(maxWidth: .infinity, maxHeight: .infinity)
                             }
-                        }.frame(height: plotHeight).contentShape(Rectangle())
+                        }.frame(height: tokenHeight).contentShape(Rectangle())
                             .overlay(alignment: .bottom) { Rectangle().fill(palette.line).frame(height: 1).allowsHitTesting(false) }
-                            .onContinuousHover { phase in
-                                switch phase {
-                                case .active(let location):
-                                    guard !visibleDays.isEmpty else { return }
-                                    let step = (plot.size.width + gap) / CGFloat(visibleDays.count)
-                                    hoveredDate = visibleDays[min(visibleDays.count - 1, max(0, Int((location.x + gap / 2) / step)))].date
-                                case .ended: hoveredDate = nil
-                                }
-                            }.aiQuotaMeasuredRegion("fc.ai.history." + identifier + ".grid")
+                            .onContinuousHover { hover($0, width: plot.size.width) }
                         ZStack(alignment: .topLeading) {
                             ForEach(Array(visibleDays.enumerated()), id: \.element.id) { index, day in
                                 if index == 0 || index == 7 || index == 14 || index == 21 || index == visibleDays.count - 1 {
@@ -753,25 +775,56 @@ struct AIDailyUsageBars: View {
                             }
                         }.font(.system(size: 11)).foregroundStyle(palette.muted).frame(height: 14)
                     }
-                }.frame(height: plotHeight + 20)
+                }.frame(height: tokenHeight + 20)
             }
-            VStack(alignment: .leading, spacing: 4) {
-                if let day = focusedDay {
-                    HStack(spacing: 12) {
-                        Text(formatted(day.date, template: "Md") + (showsTokens ? "" : " · " + (day.reading.map {
-                            "窗口已用 " + UsagePercentage.text($0.window.usedPercent)
-                        } ?? "无额度读数")))
-                        Text(tokens[day.date].map { $0.total.formatted() + " Token" } ?? "Token 无记录")
-                        Spacer(minLength: 0)
-                    }.foregroundStyle(palette.text).monospacedDigit()
-                    Text(showsTokens ? tokenDetail(day) : day.reading.map {
-                        "最后观测 " + formatted($0.observedAt, template: "jm") + " · " + $0.source.title + " · 非当日消耗比例"
-                    } ?? "当天没有读取到此窗口的额度，不能视为 0%。")
-                        .foregroundStyle(palette.muted).lineLimit(1)
-                }
-            }.font(.system(size: 11)).frame(height: 34, alignment: .topLeading)
+            caption
         }.frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .contain).accessibilityIdentifier("fc.ai.history." + identifier)
+    }
+    private func axis(top: String, bottom: String, height: CGFloat) -> some View {
+        VStack(alignment: .trailing) {
+            Text(top)
+            Spacer(minLength: 0)
+            Text(bottom)
+        }.font(.system(size: 11)).foregroundStyle(palette.muted).monospacedDigit().frame(width: 40, height: height)
+    }
+    private func center(_ index: Int, step: CGFloat) -> CGFloat { CGFloat(index) * step + (step - gap) / 2 }
+    private func y(_ percent: Double) -> CGFloat { quotaHeight * (1 - CGFloat(min(100, max(0, percent))) / 100) }
+    /// Consecutive observed days are joined; a missing day starts a new segment.
+    private func line(_ item: AIQuotaDailyWindowSeries, step: CGFloat) -> Path {
+        var path = Path(); var drawing = false
+        for (offset, day) in visibleDays.enumerated() {
+            guard let value = reading(item, on: day.date) else { drawing = false; continue }
+            let point = CGPoint(x: center(offset, step: step), y: y(value.window.usedPercent))
+            if drawing { path.addLine(to: point) } else { path.move(to: point); drawing = true }
+        }
+        return path
+    }
+    private func hover(_ phase: HoverPhase, width: CGFloat) {
+        switch phase {
+        case .active(let location):
+            guard !visibleDays.isEmpty else { return }
+            let step = (width + gap) / CGFloat(visibleDays.count)
+            hoveredDate = visibleDays[min(visibleDays.count - 1, max(0, Int((location.x + gap / 2) / step)))].date
+        case .ended: hoveredDate = nil
+        }
+    }
+    private var caption: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let day = focusedDay {
+                HStack(spacing: 12) {
+                    Text(([formatted(day.date, template: "Md")] + series.map { item in
+                        item.title + " " + (reading(item, on: day.date).map { UsagePercentage.text($0.window.usedPercent) } ?? "—")
+                    }).joined(separator: " · "))
+                    Text(tokens[day.date].map { $0.total.formatted() + " Token" } ?? "Token 无记录")
+                    Spacer(minLength: 0)
+                }.foregroundStyle(palette.text).monospacedDigit()
+                Text(series.lazy.compactMap { reading($0, on: day.date) }.first.map {
+                    "最后观测 " + formatted($0.observedAt, template: "jm") + " · " + $0.source.title + " · 非当日消耗比例"
+                } ?? (series.isEmpty ? "尚无额度读数；Token 仍按本机记录显示。" : "当天没有读取到额度，不能视为 0%。"))
+                    .foregroundStyle(palette.muted).lineLimit(1)
+            }
+        }.font(.system(size: 11)).frame(height: 34, alignment: .topLeading)
     }
     private func formatted(_ date: Date, template: String) -> String {
         let formatter = DateFormatter()
@@ -786,11 +839,13 @@ struct AIDailyUsageBars: View {
     }
     private func description(_ day: AIQuotaDailyCell) -> String {
         let date = formatted(day.date, template: "yMMMMEEEEd")
-        let token = tokens[day.date].map { "；本机记录 " + String($0.total) + " Token；" + tokenDetail(day) } ?? "；Token 无记录"
-        if showsTokens { return date + token }
-        guard let reading = day.reading else { return date + "，无额度读数；无读数不代表 0。" + token }
-        let reset = reading.window.resetsAt.map { "；该窗口重置时间 " + UsageResetTime.timestamp($0, timeZone: calendar.timeZone) } ?? "；来源未提供重置时间"
-        return date + "，" + title + " " + UsagePercentage.text(reading.window.usedPercent) + "；当天最后观测 " + UsageResetTime.timestamp(reading.observedAt, timeZone: calendar.timeZone) + "；" + reading.source.title + reset + token
+        let quota = series.map { item -> String in
+            guard let reading = reading(item, on: day.date) else { return item.title + "无额度读数；无读数不代表 0" }
+            let reset = reading.window.resetsAt.map { "；该窗口重置时间 " + UsageResetTime.timestamp($0, timeZone: calendar.timeZone) } ?? "；来源未提供重置时间"
+            return item.title + " " + UsagePercentage.text(reading.window.usedPercent) + "；当天最后观测 " + UsageResetTime.timestamp(reading.observedAt, timeZone: calendar.timeZone) + "；" + reading.source.title + reset
+        }
+        let token = tokens[day.date].map { "本机记录 " + String($0.total) + " Token；" + tokenDetail(day) } ?? "Token 无记录"
+        return ([date] + quota + [token]).joined(separator: "，")
     }
 }
 
@@ -1114,9 +1169,7 @@ private struct AIFieldLabel<Content: View>: View {
 private struct AIFieldStyle: TextFieldStyle {
     @Environment(\.workbenchPalette) private var palette
     func _body(configuration: TextField<Self._Label>) -> some View {
-        configuration.textFieldStyle(.plain).font(.system(size: 12)).foregroundStyle(palette.text).padding(.horizontal, 10).frame(height: 32)
-            .background(WorkbenchMaterialSurface(kind: .control, radius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(palette.controlBorder, lineWidth: 1).allowsHitTesting(false))
+        configuration.textFieldStyle(.plain).foregroundStyle(palette.text).modifier(WBFieldSurface())
     }
 }
 private extension View {
@@ -1276,8 +1329,12 @@ private struct AIUsageDialogContent: View {
                     AISourceRow(title: "选择额度 JSON", detail: "读取已有额度文件") {
                         Button("选择文件") { model.chooseQuotaFile(for: .claude) }.buttonStyle(WBButtonStyle(compact: true)).accessibilityIdentifier("fc.ai.claude.json")
                     }
-                    AISourceRow(title: "导出状态栏适配器", detail: "用于自定义状态栏配置", last: true) {
+                    AISourceRow(title: "导出状态栏适配器", detail: "用于自定义状态栏配置") {
                         Button("导出") { model.exportClaudeAdapter() }.buttonStyle(WBButtonStyle(compact: true)).accessibilityIdentifier("fc.ai.claude.adapter")
+                    }
+                    AISourceRow(title: "Token 会话目录", detail: model.configuration(for: .claude).sessionsPath, last: true) {
+                        Button("更改目录") { model.chooseSessionsDirectory(for: .claude) }.buttonStyle(WBButtonStyle(compact: true))
+                            .accessibilityIdentifier("fc.ai.claude.sessions")
                     }
                     if model.configuration(for: .claude).quotaPath != nil {
                         HStack { Text("已配置额度文件").aiText(11, color: palette.muted); Spacer(); Button("移除连接") { model.removeQuotaFile(for: .claude) }.buttonStyle(WBQuietButtonStyle()) }.padding(.top, 12)
@@ -1288,19 +1345,13 @@ private struct AIUsageDialogContent: View {
                 errorText.padding(.top, model.errorMessage == nil ? 0 : 12)
             }
         } footer: {
-            Menu("会话来源") {
-                Text(model.configuration(for: .claude).sessionsPath)
-                Button("更改 Token 会话目录") { model.chooseSessionsDirectory(for: .claude) }
-                if model.configuration(for: .claude).enabled { Button("断开 Claude 来源") { model.present(.disconnect(.claude)) } }
-                else { Button("恢复读取") { model.setEnabled(true, provider: .claude) } }
-            }.menuStyle(.borderlessButton).fixedSize().font(.system(size: 11)).foregroundStyle(palette.secondary)
             if model.isConnectingClaudeSubscriptionAccount {
                 Button("取消连接") { model.cancelClaudeSubscriptionAccountConnection() }
                     .buttonStyle(WBButtonStyle())
                     .accessibilityIdentifier("fc.ai.claude.cancel-member-login")
             }
             Button("完成") { model.requestDismissDialog() }
-                .buttonStyle(WBButtonStyle(primary: true)).disabled(model.dialogBusy)
+                .buttonStyle(WBButtonStyle()).disabled(model.dialogBusy)
         }.accessibilityIdentifier("fc.modal.ai.claude-connect")
     }
     private func connectClaude(_ action: ClaudeConnectionAction) {
@@ -1323,7 +1374,7 @@ private struct AIUsageDialogContent: View {
                     VStack(spacing: 0) {
                         if preview.quotaFile {
                             AIFactRow(title: "有效读数", value: preview.windows.map { $0.title + " " + UsagePercentage.text($0.usedPercent) }.joined(separator: " · "))
-                            AIFactRow(title: "采集时间", value: preview.observedAt?.formatted(date: .abbreviated, time: .shortened) ?? "未提供")
+                            AIFactRow(title: "采集时间", value: preview.observedAt.map { aiFullDateTime($0, timeZone: timeZone) } ?? "未提供")
                             AIFactRow(title: "读数来源", value: preview.quotaSource?.title ?? "尚无读数", last: true)
                         } else {
                             AIFactRow(title: "有效记录", value: "\(preview.files) 个文件 · \(preview.records) 条计量记录")

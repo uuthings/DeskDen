@@ -258,10 +258,9 @@ struct CleaningHistoryBatchDisplay: Identifiable, Sendable {
 }
 
 enum CleaningDialog: Identifiable, Equatable {
-    case scope, rules, confirm, purpose(UUID), restore(UUID), purge(UUID), issues
+    case rules, confirm, purpose(UUID), restore(UUID), purge(UUID), issues
     var id: String {
         switch self {
-        case .scope: "scope"
         case .rules: "rules"
         case .confirm: "confirm"
         case .purpose(let id): "purpose-\(id)"

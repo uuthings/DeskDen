@@ -158,15 +158,14 @@ private struct ModalLifecycleEditor:View {
         let tokens = AIDailyTokenHistory.totals(records, provider: .codex, now: now, calendar: calendar)
         for width: CGFloat in [736, 864, 1360] {
             let content = VStack(alignment: .leading, spacing: 22) {
-                Text("每日额度与 Token").font(.system(size: 17, weight: .semibold))
+                Text("每日额度与 Token").font(.system(size: 13, weight: .medium))
                 Text("额度是当天最后观测的窗口已用比例；Token 是本机当天记录的消耗。").font(.system(size: 11))
-                AIDailyUsageBars(days: history.series[0].days, title: "5 小时窗口 · 已用比例", calendar: calendar, identifier: "fixture.quota", tokens: tokens)
-                AIDailyUsageBars(days: history.days, title: "每日 Token · 本机记录", calendar: calendar, identifier: "fixture.tokens", tokens: tokens, showsTokens: true)
+                AIDailyQuotaChart(series: history.series, days: history.days, tokens: tokens, calendar: calendar, identifier: "fixture")
             }.padding(14).foregroundStyle(.white).background(WorkbenchMaterialSurface()).padding(24)
                 .background(WorkbenchSceneBackground(motionEnabled: false, active: false))
                 .workbenchThemeEnvironment(theme: .qingbiMist, opacity: 0.7, backgroundMotion: false)
             let image = await capture(content, size: CGSize(width: width, height: 520))
-            check(image != nil, "daily quota and token bar charts render at \(width) pt without activating a window")
+            check(image != nil, "the combined daily quota and token chart renders at \(width) pt without activating a window")
             if let output, let image { try? image.write(to: output.appendingPathComponent("daily-bars-\(Int(width)).png")) }
         }
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("deskden-appearance-\(UUID().uuidString)")

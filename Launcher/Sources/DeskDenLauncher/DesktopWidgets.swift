@@ -267,36 +267,38 @@ private struct DesktopCardContent: View {
         let primary = windows.first { $0.durationMinutes != 10_080 }
         let weekly = windows.first { $0.durationMinutes == 10_080 }
         let current = state == .ready
+        // One status per source, with the real reason (现行规范 9.4 W1, U2).
+        let enabled = ai.configuration(for: provider).enabled
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 AIProviderLogo(provider: provider, size: 17)
                 Text(provider.title).font(.system(size: 11))
                 Spacer()
-                Text(current ? "已用" : state.title)
-                    .font(.system(size: 10)).foregroundStyle(palette.muted)
+                Text(!enabled ? "已关闭" : current ? "已用" : state.title)
+                    .font(.system(size: 11)).foregroundStyle(palette.muted)
             }
             if !windows.isEmpty {
                 quotaRow(primary?.title.replacingOccurrences(of: "窗口", with: "") ?? "短期", window: primary, current: current)
                 quotaRow("每周", window: weekly, current: current)
             } else {
-                Text(state == .disconnected ? "接入后显示额度" : "尚无有效额度读数")
+                Text(!enabled ? "自动读取已关闭" : state == .disconnected ? "接入后显示额度" : "尚无有效额度读数")
                     .font(.system(size: 11)).foregroundStyle(palette.secondary)
             }
-            if !card.small {
-                Text(caption(summary)).font(.system(size: 10)).foregroundStyle(palette.muted).lineLimit(1)
+            if !card.small, summary?.updatedAt != nil {
+                Text(caption(summary)).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
             }
         }
     }
     private func quotaRow(_ title: String, window: AIQuotaWindow?, current: Bool) -> some View {
         HStack(spacing: 6) {
-            Text(title).font(.system(size: 10)).foregroundStyle(palette.secondary).frame(width: 40, alignment: .leading)
+            Text(title).font(.system(size: 11)).foregroundStyle(palette.secondary).frame(width: 40, alignment: .leading)
             if let window {
                 WBProgress(value: window.usedPercent / 100, color: current ? palette.usageColor(forPercent: window.usedPercent) : palette.muted, height: 4)
             } else {
                 Capsule().fill(palette.progressTrack).frame(height: 4)
             }
             Text(UsagePercentage.text(window?.usedPercent))
-                .font(.system(size: 10)).monospacedDigit().frame(width: 30, alignment: .trailing)
+                .font(.system(size: 11)).monospacedDigit().frame(width: 32, alignment: .trailing)
                 .foregroundStyle(current ? palette.usageColor(forPercent: window?.usedPercent) : palette.muted)
         }.frame(height: 14)
     }
@@ -309,8 +311,8 @@ private struct DesktopCardContent: View {
     private var todayContent: some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
             VStack(alignment: .leading, spacing: 12) {
-                Text(context.date.formatted(.dateTime.month().day().weekday(.wide)))
-                    .font(.system(size: 10)).foregroundStyle(palette.muted)
+                Text(WorkbenchDateText.monthDayWeekday(context.date, calendar: calendar.displayCalendar))
+                    .font(.system(size: 11)).foregroundStyle(palette.muted)
                 let items = Array(calendar.todayItems.filter { !$0.isCompleted }.prefix(card.small ? 1 : 3))
                 if items.isEmpty {
                     Text(calendar.isLoading ? "正在读取安排" : "今天暂无未完成安排")
@@ -356,58 +358,44 @@ struct DesktopCardsView: View {
     @ObservedObject var calendar: CalendarModel
     @ObservedObject var ai: AIUsageModel
     var showsHeader = true
-    @State private var editing: DesktopCardPreference?
-    @StateObject private var dialogControl=DesktopCardDialogControl()
     @Environment(\.workbenchPalette) private var palette
 
-    private var desktopButton: some View {
-        Button(action: openDesktop) { Label("查看桌面", systemImage: "rectangle.on.rectangle") }.buttonStyle(WBButtonStyle())
-    }
     private var ordered: [DesktopCardPreference] {
         [.device, .today, .ai].compactMap { kind in cards.first { $0.id == kind } }
     }
+    /// Each widget is set once, in its card; no second dialog (现行规范 9.4, S7).
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if showsHeader {
-                WBPageHeader(title: "桌面组件", subtitle: "把常用信息留在桌面，也可设为悬浮显示") { desktopButton }
-            } else {
-                HStack { Spacer(); desktopButton }.padding(.bottom, 18)
+                WBPageHeader(title: "桌面组件", subtitle: "把常用信息留在桌面，也可设为悬浮显示") {
+                    Button(action: openDesktop) { Label("查看桌面", systemImage: "macwindow.on.rectangle") }.buttonStyle(WBButtonStyle())
+                }
             }
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top, spacing: 12) {
-                    ForEach(ordered) { card in managementCard(card, height: 545.938) }
-                }.frame(minWidth: 790)
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible())], alignment: .leading, spacing: 12) {
-                    ForEach(ordered) { card in
-                        // The AI card has one additional 40 pt source row and
-                        // its 10 pt grid gap in the frozen compact layout.
-                        managementCard(card, minimumHeight: card.id == .ai ? 545.938 : 495.938)
-                    }
+                    ForEach(ordered) { card in managementCard(card).frame(maxHeight: .infinity, alignment: .top) }
+                }.fixedSize(horizontal: false, vertical: true).frame(minWidth: 790)
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12, alignment: .top), GridItem(.flexible(), alignment: .top)], alignment: .leading, spacing: 12) {
+                    ForEach(ordered) { card in managementCard(card) }
                 }.frame(minWidth: 532)
                 VStack(spacing: 12) { ForEach(ordered) { card in managementCard(card) } }
             }
-            Text("开启鼠标穿透后，可从这里关闭穿透并恢复操作。桌面组件与工作台使用同一套材质设置。")
-                .font(.system(size: 11)).foregroundStyle(palette.secondary).lineSpacing(3)
-                .frame(maxWidth: .infinity, alignment: .leading).padding(12)
-                .background(palette.soft, in: RoundedRectangle(cornerRadius: 8)).padding(.top, 12)
-        }
-        .workbenchModal(item: $editing,onRequestDismiss:{dialogControl.closeRequests += 1}) { card in
-            DesktopCardSettings(initial: card, device: device, calendar: calendar, ai: ai,control:dialogControl,
-                                save: { updated in update(updated); editing = nil }, cancel: { editing = nil })
+            WBPageNote {
+                Text("开启鼠标穿透后，可从这里关闭穿透并恢复操作。桌面组件与工作台使用同一套材质设置。")
+                    .fixedSize(horizontal: false, vertical: true)
+            }.padding(.top, 12)
         }
     }
-    private func managementCard(_ card: DesktopCardPreference, height: CGFloat? = nil, minimumHeight: CGFloat? = nil) -> some View {
-        WBCard(spacing: 10) {
+    private func managementCard(_ card: DesktopCardPreference) -> some View {
+        WBCard(spacing: 0) {
             HStack(spacing: 7) {
                 Image(systemName: card.id.symbol).font(.system(size: 16)).foregroundStyle(palette.accent)
-                Text(card.id.title).font(.system(size: 12, weight: .medium))
+                Text(card.id.title).font(.system(size: 13, weight: .medium))
                 Spacer(minLength: 0)
-                Button { editing = card } label: { Image(systemName: "ellipsis") }
-                    .buttonStyle(WBIconButtonStyle(size: 22)).help("更多组件设置")
-                    .accessibilityLabel(card.id.title + "更多设置")
                 Toggle("显示" + card.id.title, isOn: preference(card, \.visible))
-                    .labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.small).tint(palette.accent)
-            }.frame(height: 22)
+                    .labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.mini).tint(palette.accent)
+            }.frame(height: 22).padding(.bottom, 12)
+            // The widget preview itself, without a frame around it (D7).
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Text(card.id.title).font(.system(size: 12, weight: .medium))
@@ -418,88 +406,35 @@ struct DesktopCardsView: View {
             }
                 .frame(width: 174, alignment: .leading).padding(13)
                 .background(WorkbenchMaterialSurface(kind: .card, radius: 11))
-                .frame(maxWidth: .infinity, minHeight: 220, maxHeight: 220, alignment: .center)
-                .background(palette.sidebar, in: RoundedRectangle(cornerRadius: 10))
-            VStack(spacing: 10) {
-                widgetField("显示方式") {
-                    WBSelect("显示方式", selection: preference(card, \.floating), options: [(value: false, title: "桌面"), (value: true, title: "悬浮置顶")])
-                }
-                widgetField("大小") {
-                    WBSelect("组件大小", selection: preference(card, \.small), options: [(value: false, title: "标准"), (value: true, title: "小号")])
-                }
-                widgetField("锁定位置", controlHeight: 20) {
-                    Toggle("锁定" + card.id.title + "位置", isOn: preference(card, \.locked)).labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.small).tint(palette.accent)
-                }
-                widgetField("鼠标穿透", controlHeight: 20) {
-                    Toggle(card.id.title + "鼠标穿透", isOn: preference(card, \.clickThrough)).labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.small).tint(palette.accent)
-                }
-                if card.id == .ai {
-                    widgetField("额度来源") {
-                        WBSelect("额度来源", selection: preference(card, \.source), options: [(value: "both", title: "全部"), (value: "codex", title: "Codex"), (value: "claude", title: "Claude")])
-                    }
+                .frame(maxWidth: .infinity, minHeight: 196, alignment: .center)
+                .padding(.bottom, 8)
+            WBSettingRow(title: "显示方式", subtitle: "桌面层或悬浮置顶") {
+                WBSelect("显示方式", selection: preference(card, \.floating), options: [(value: false, title: "桌面"), (value: true, title: "悬浮置顶")]).frame(width: 112)
+            }
+            WBSettingRow(title: "大小", subtitle: "标准或小号") {
+                WBSelect("组件大小", selection: preference(card, \.small), options: [(value: false, title: "标准"), (value: true, title: "小号")]).frame(width: 112)
+            }
+            if card.id == .ai {
+                WBSettingRow(title: "额度来源", subtitle: "显示哪些 AI 来源") {
+                    WBSelect("额度来源", selection: preference(card, \.source), options: [(value: "both", title: "全部"), (value: "codex", title: "Codex"), (value: "claude", title: "Claude")]).frame(width: 112)
                 }
             }
-            Text(card.id == .device ? "数据与设备状态同步" : card.id == .today ? "数据与日历提醒同步" : "显示来源与过期状态")
-                .font(.system(size: 11)).foregroundStyle(palette.muted).padding(.top, 4)
-                .frame(maxWidth: .infinity, maxHeight: height == nil && minimumHeight == nil ? nil : .infinity, alignment: .bottomLeading)
+            WBSettingRow(title: "锁定位置", subtitle: "不能拖动组件") {
+                Toggle("锁定" + card.id.title + "位置", isOn: preference(card, \.locked)).labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.mini).tint(palette.accent)
+            }
+            WBSettingRow(title: "鼠标穿透", subtitle: "点击会穿过组件") {
+                Toggle(card.id.title + "鼠标穿透", isOn: preference(card, \.clickThrough)).labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.mini).tint(palette.accent)
+            }
+            WBSettingRow(title: "位置", subtitle: card.x == nil && card.y == nil ? "默认位置" : "已拖动到自定位置") {
+                Button("重置位置") { var changed = card; changed.x = nil; changed.y = nil; update(changed) }
+                    .buttonStyle(WBButtonStyle(compact: true)).disabled(card.x == nil && card.y == nil)
+                    .accessibilityIdentifier("fc.settings.widgets.reset." + card.id.rawValue)
+            }
         }
-        .frame(height: height)
-        .frame(minHeight: minimumHeight)
-    }
-    private func widgetField<Control: View>(_ title: String, controlHeight: CGFloat = 32, @ViewBuilder control: () -> Control) -> some View {
-        HStack(spacing: 16) {
-            Text(title).font(.system(size: 11)).foregroundStyle(palette.secondary)
-            Spacer(minLength: 4)
-            control().frame(width: 112, height: controlHeight, alignment: .trailing)
-        }.frame(height: controlHeight).padding(.vertical, 4)
     }
     private func preference<Value>(_ card: DesktopCardPreference, _ keyPath: WritableKeyPath<DesktopCardPreference, Value>) -> Binding<Value> {
         Binding(get: { card[keyPath: keyPath] }, set: { value in
             var changed = card; changed[keyPath: keyPath] = value; update(changed)
         })
     }
-}
-
-@MainActor private final class DesktopCardDialogControl:ObservableObject {@Published var closeRequests=0}
-
-private struct DesktopCardSettings: View {
-    let initial: DesktopCardPreference
-    @ObservedObject var control:DesktopCardDialogControl
-    @ObservedObject var device: DeviceStatusModel
-    @ObservedObject var calendar: CalendarModel
-    @ObservedObject var ai: AIUsageModel
-    var save: (DesktopCardPreference) -> Void
-    var cancel: () -> Void
-    @State private var draft: DesktopCardPreference
-    @State private var confirmDiscard = false
-    @Environment(\.workbenchPalette) private var palette
-    init(initial: DesktopCardPreference, device: DeviceStatusModel, calendar: CalendarModel, ai: AIUsageModel,control:DesktopCardDialogControl,
-         save: @escaping (DesktopCardPreference) -> Void, cancel: @escaping () -> Void) {
-        self.initial = initial; self.device = device; self.calendar = calendar; self.ai = ai; self.control=control; self.save = save; self.cancel = cancel
-        _draft = State(initialValue: initial)
-    }
-    var body:some View {
-        WorkbenchDialogFrame(title:"\(initial.id.title) · 卡片设置",dismiss:requestCancel) {
-            VStack(alignment:.leading,spacing:0) {
-                field("显示方式",selection:$draft.floating,options:[(false,"融入桌面 · 可被窗口遮挡"),(true,"悬浮置顶 · 保持在前")])
-                field("卡片尺寸",selection:$draft.small,options:[(false,"标准"),(true,"小")])
-                if draft.id == .ai {field("显示来源",selection:$draft.source,options:[("both","Codex + Claude"),("codex","仅 Codex"),("claude","仅 Claude")])}
-                VStack(alignment:.leading,spacing:14){Toggle("显示组件",isOn:$draft.visible).clickableCursor();Toggle("锁定位置",isOn:$draft.locked).clickableCursor();Toggle("鼠标穿透",isOn:$draft.clickThrough).clickableCursor()}.toggleStyle(.checkbox)
-                Text("开启穿透后，卡片不接收鼠标操作。请在工作台的“桌面组件”中关闭穿透以恢复交互。").font(.system(size:11)).foregroundStyle(palette.muted).lineSpacing(3).fixedSize(horizontal:false,vertical:true).padding(.top,12)
-            }.font(.system(size:12))
-        }actions:{
-            Button("重置位置"){draft.x=nil;draft.y=nil}.buttonStyle(WBQuietButtonStyle());Spacer();Button("取消",action:requestCancel).buttonStyle(WBButtonStyle());Button("保存设置"){save(draft)}.buttonStyle(WBButtonStyle(primary:true)).keyboardShortcut(.defaultAction)
-        }
-        .onChange(of:control.closeRequests){_,_ in requestCancel()}
-        .workbenchModal(isPresented:$confirmDiscard){WorkbenchDialogFrame(title:"放弃这次修改？",dismiss:{confirmDiscard=false}){Text("未保存的组件设置将被放弃。").foregroundStyle(palette.secondary)}actions:{Spacer();Button("继续编辑"){confirmDiscard=false}.buttonStyle(WBButtonStyle());Button("放弃修改"){confirmDiscard=false;cancel()}.buttonStyle(WBButtonStyle(destructive:true))}}
-    }
-    private func field<Value:Hashable>(_ title:String,selection:Binding<Value>,options:[(Value,String)]) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text(title).foregroundStyle(palette.secondary)
-            WBSelect(title, selection: selection, options: options.map { (value: $0.0, title: $0.1) })
-                .contentShape(RoundedRectangle(cornerRadius:8)).accessibilityLabel(title)
-                .accessibilityValue(options.first(where:{$0.0 == selection.wrappedValue})?.1 ?? "")
-        }.padding(.bottom, 15)
-    }
-    private func requestCancel() { if draft == initial { cancel() } else { confirmDiscard = true } }
 }

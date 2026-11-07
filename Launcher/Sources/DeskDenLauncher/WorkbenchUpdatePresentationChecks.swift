@@ -223,7 +223,7 @@ private struct UpdatePresentationFixtureRoot: View {
                 VStack {
                     Text("方寸").font(.system(size: 12, weight: .medium)).padding(.top, 22)
                     Spacer()
-                    WorkbenchUpdateEntry(updates: updates)
+                    UpdatePresentationFixtureEntry(updates: updates)
                 }.padding(.horizontal, 12).padding(.bottom, 15).frame(width: 184)
                     .background(WorkbenchMaterialSurface(kind: .sidebar, radius: 0))
                 Spacer()
@@ -233,5 +233,37 @@ private struct UpdatePresentationFixtureRoot: View {
             WorkbenchUpdatePresentation(updates: updates)
         }.environment(\.workbenchModals, modals)
             .workbenchThemeEnvironment(theme: .qingbiMist, opacity: 0.7, backgroundMotion: false, appearance: state.light ? .light : .dark)
+    }
+}
+
+/// The former sidebar entry, kept only as this check's trigger: production shows
+/// the update entry in the top bar (现行规范 9.4, X1).
+private struct UpdatePresentationFixtureEntry: View {
+    @ObservedObject var updates: AppUpdateController
+    @Environment(\.workbenchPalette) private var palette
+    private var title: String {
+        switch updates.phase {
+        case .downloading: "正在下载更新"
+        case .extracting: "正在准备更新"
+        case .readyToInstall: "待安装 v" + (updates.release?.version ?? "")
+        case .installing: "正在安装更新"
+        default: "新版本 v" + (updates.release?.version ?? "")
+        }
+    }
+    var body: some View {
+        if updates.release != nil {
+            Button(action: updates.showUpdateDialog) {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.down.to.line").font(.system(size: 13)).accessibilityHidden(true)
+                    Text(title).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                }.frame(maxWidth: .infinity, minHeight: 32, maxHeight: 32)
+                    .contentShape(RoundedRectangle(cornerRadius: 8))
+                    .background(WorkbenchMaterialSurface(kind: .control, radius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(palette.accent.opacity(0.4)))
+            }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 8, drawsSelection: false))
+                .foregroundStyle(palette.accent).padding(.top, 6)
+                .accessibilityLabel(title).accessibilityHint("打开软件更新窗口")
+                .accessibilityIdentifier("updates-sidebar-entry")
+        }
     }
 }

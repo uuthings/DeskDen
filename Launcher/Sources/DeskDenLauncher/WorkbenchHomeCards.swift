@@ -448,7 +448,7 @@ struct WorkbenchHomeWelcome: View {
     private func dateText(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN"); formatter.timeZone = context.dateContext.timeZone
-        formatter.dateFormat = "M月d日 EEEE"
+        formatter.dateFormat = "M月d日 EEE"
         return formatter.string(from: date)
     }
     @ViewBuilder private func weather(at date: Date) -> some View {

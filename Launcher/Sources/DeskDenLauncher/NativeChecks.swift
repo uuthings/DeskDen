@@ -98,40 +98,6 @@ enum NativeChecks {
             check(!policyController.searchView,"reverse navigation from the first application page returns to actions")
             policyController.hide(restore:false)
 
-            do {
-                let settingsOwner = LauncherController(dataDirectory:temporary.appendingPathComponent("settings-window-commands"))
-                try settingsOwner.store.save(settingsOwner.configuration)
-                settingsOwner.configurePanel(); settingsOwner.scanning = true
-                let settings = LauncherSettingsWindowController(owner:settingsOwner)
-                settingsOwner.settingsWindowController = settings
-                defer {
-                    settings.close(); settingsOwner.panel.orderOut(nil); settingsOwner.hotKey.unregister(); settingsOwner.bindingHotKeys.unregister()
-                    settingsOwner.toastTask?.cancel()
-                }
-                settings.present()
-                if let window = settings.window {
-                    func commandW() -> NSEvent {
-                        NSEvent.keyEvent(with:.keyDown,location:.zero,modifierFlags:.command,timestamp:0,windowNumber:window.windowNumber,context:nil,characters:"w",charactersIgnoringModifiers:"w",isARepeat:false,keyCode:13)!
-                    }
-                    check(window.isVisible && settings.handleEvent(commandW()) && !window.isVisible,"Command-W closes the real settings window outside shortcut recording")
-                    settings.present()
-                    func descendants(_ view:NSView) -> [NSView] { [view] + view.subviews.flatMap { descendants($0) } }
-                    if let root = window.contentView,
-                       let pages = descendants(root).compactMap({ $0 as? NSTableView }).first {
-                        pages.selectRowIndexes(IndexSet(integer:1),byExtendingSelection:false)
-                        if let recorder = descendants(root).compactMap({ $0 as? NSButton }).first(where:{ $0.accessibilityLabel() == "设置应用面板快捷键" }) {
-                            recorder.performClick(nil)
-                            let wasRecording = recorder.title == "请按下快捷键…"
-                            let handled = settings.handleEvent(commandW())
-                            let attemptedCapture = settingsOwner.configuration.settings.applicationViewHotKey == BindingHotKey(keyCode:13,command:true) || settingsOwner.lastSaveError != nil
-                            check(wasRecording && handled && window.isVisible && attemptedCapture,"Command-W is captured as a shortcut without closing the settings window while recording")
-                        } else { check(false,"settings shortcut recorder is available") }
-                    } else { check(false,"settings categories are available for shortcut recording") }
-                } else {
-                    check(false,"settings window exists for Command-W close handling")
-                    check(false,"settings window exists for shortcut recording")
-                }
-            }
 
             let controller = LauncherController(dataDirectory:temporary.appendingPathComponent("config"))
             // These temporary controllers exercise binding transactions only. Do

@@ -46,7 +46,7 @@ struct CalendarReminderEditor:View {
         guard let date=try? draft.resolvedDeadline() else {return "请调整期限设置"}
         let formatter=DateFormatter();formatter.locale=Locale(identifier:"zh_CN")
         formatter.calendar=draft.calendar;formatter.timeZone=draft.calendar.timeZone
-        formatter.dateFormat="M月d日 EEEE"
+        formatter.dateFormat="M月d日 EEE"
         var summary=formatter.string(from:date)+" 截止"
         if draft.deadlineMode == .days {
             summary += " · "+draft.countingRule.daysBasis.title
@@ -56,13 +56,13 @@ struct CalendarReminderEditor:View {
         return summary
     }
     var body:some View {
-        CalendarDialog(title:initial.creating ? "新建待办":"编辑待办",dismiss:cancel,width:640) {
+        CalendarDialog(title:initial.creating ? "新建提醒":"编辑提醒",dismiss:cancel,width:640) {
             TextField("要完成什么？",text:$draft.item.title)
                 .textFieldStyle(.plain).font(.system(size:12)).padding(.horizontal,10).frame(height:32)
                 .background(palette.control,in:RoundedRectangle(cornerRadius:8))
                 .overlay(RoundedRectangle(cornerRadius:8).strokeBorder(palette.controlBorder,lineWidth:1))
                 .focused($titleFocused).disabled(!writable)
-                .accessibilityLabel("待办标题").accessibilityIdentifier("fc.calendar.editor.title")
+                .accessibilityLabel("提醒标题").accessibilityIdentifier("fc.calendar.editor.title")
             deadlineSection
             destinationSection
             HStack(alignment:.top,spacing:12) {
@@ -79,7 +79,7 @@ struct CalendarReminderEditor:View {
             if !initial.creating && writable {Button("删除"){confirmDelete=true}.buttonStyle(WBButtonStyle(destructive:true))}
             Spacer()
             Button("取消",action:cancel).buttonStyle(WBButtonStyle()).keyboardShortcut(.cancelAction)
-            Button(initial.creating ? "创建待办":"保存修改"){
+            Button(initial.creating ? "创建提醒":"保存修改"){
                 guard WBEditableComboSurface.commitActive(in:modals?.hostWindow) else {model.errorMessage="请检查日期与时间中的输入。";return}
                 modals?.hostWindow?.makeFirstResponder(nil)
                 Task {_=await model.saveDraft(draft)}
@@ -157,9 +157,9 @@ struct CalendarReminderEditor:View {
                 if draft.creating {
                     WBSelect("选择提醒列表",selection:destination,options:destinationOptions).accessibilityIdentifier("fc.calendar.editor.destination")
                 } else {
+                    // Read-only: plain text, not a filled field (9.4, D3).
                     Text(draft.item.sourceTitle).font(.system(size:12)).foregroundStyle(palette.secondary)
-                        .padding(.horizontal,10).frame(maxWidth:.infinity,minHeight:32,alignment:.leading)
-                        .background(palette.soft,in:RoundedRectangle(cornerRadius:8))
+                        .frame(maxWidth:.infinity,minHeight:32,alignment:.leading)
                 }
             }
             if draft.creating && !model.systemRemindersAvailable {

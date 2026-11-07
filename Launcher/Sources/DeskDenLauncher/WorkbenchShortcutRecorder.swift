@@ -2,9 +2,11 @@ import AppKit
 import SwiftUI
 import LauncherCore
 
-enum WorkbenchShortcutTarget {case workbench,launcher
-    var title:String {self == .workbench ? "工作台":"启动器"}
-    var accessibilityID:String {self == .workbench ? "workbenchShortcut":"launcherShortcut"}
+/// The application panel's shortcut moved here from the retired launcher
+/// settings window (现行规范 9.4, L1).
+enum WorkbenchShortcutTarget {case workbench,launcher,applications
+    var title:String {switch self {case .workbench:"工作台";case .launcher:"启动器";case .applications:"应用面板"}}
+    var accessibilityID:String {switch self {case .workbench:"workbenchShortcut";case .launcher:"launcherShortcut";case .applications:"applicationShortcut"}}
 }
 
 /// Records a candidate without changing the registered shortcuts until Save.
@@ -24,7 +26,11 @@ final class WorkbenchShortcutRecorder: ObservableObject {
         guard !owner.isPreparingToQuit else { return }
         owner.workbenchShortcutRecorder?.cancel()
         self.owner = owner;self.target=target
-        draft = target == .workbench ? owner.configuration.settings.workbenchHotKey:owner.configuration.settings.effectiveLauncherHotKey
+        switch target {
+        case .workbench: draft = owner.configuration.settings.workbenchHotKey
+        case .launcher: draft = owner.configuration.settings.effectiveLauncherHotKey
+        case .applications: draft = owner.configuration.settings.applicationViewHotKey
+        }
         error = nil
         owner.workbenchShortcutRecorder = self
         isPresented = true
@@ -97,7 +103,12 @@ final class WorkbenchShortcutRecorder: ObservableObject {
     func save() -> Bool {
         guard isPresented, let owner, !owner.isPreparingToQuit else { return false }
         if target == .launcher,draft == nil {error="启动器需要保留一个唤出快捷键。";return false}
-        let saved=target == .workbench ? owner.setWorkbenchHotKey(draft):owner.setLauncherHotKey(draft)
+        let saved: Bool
+        switch target {
+        case .workbench: saved = owner.setWorkbenchHotKey(draft)
+        case .launcher: saved = owner.setLauncherHotKey(draft)
+        case .applications: saved = owner.setApplicationViewHotKey(draft)
+        }
         guard saved else {
             error = owner.lastSaveError ?? "快捷键不可用，原设置已保留。"
             return false
@@ -136,8 +147,15 @@ struct WorkbenchShortcutSetting: View {
     let owner: LauncherController
     var target:WorkbenchShortcutTarget = .workbench
     @StateObject private var recorder = WorkbenchShortcutRecorder()
+    private var triggerTitle: String {
+        switch target {
+        case .workbench: owner.configuration.settings.workbenchHotKey?.title ?? "设置快捷键"
+        case .launcher: owner.configuration.settings.effectiveLauncherHotKey.title
+        case .applications: owner.configuration.settings.applicationViewHotKey?.title ?? "设置快捷键"
+        }
+    }
     var body: some View {
-        WorkbenchShortcutTrigger(title:target == .workbench ? owner.configuration.settings.workbenchHotKey?.title ?? "设置快捷键":owner.configuration.settings.effectiveLauncherHotKey.title,
+        WorkbenchShortcutTrigger(title:triggerTitle,
                                  label:"设置\(target.title)快捷键",identifier:"fc.settings.\(target.accessibilityID)") {recorder.begin(owner:owner,target:target)}
             .frame(height:28)
             .workbenchModal(isPresented: $recorder.isPresented, onDismiss: { recorder.cancel() },onRequestDismiss:{recorder.cancel()}) {

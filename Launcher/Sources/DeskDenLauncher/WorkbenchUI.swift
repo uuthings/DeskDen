@@ -339,16 +339,21 @@ struct WBSettingRow<Trailing: View>: View {
     var showsDivider = true
     /// Paths truncate in the middle; the full text stays in the tooltip.
     var subtitleTruncation: Text.TruncationMode = .tail
+    /// A problem written into the description keeps its warning color (G1).
+    var subtitleColor: Color? = nil
+    /// Exposes title and description as one accessibility element.
+    var textIdentifier: String? = nil
     var leading: AnyView? = nil
     @ViewBuilder let trailing: Trailing
     @Environment(\.workbenchPalette) private var palette
     var body: some View {
         HStack(spacing: 16) {
             if let leading { leading }
-            VStack(alignment: .leading, spacing: 3) {
+            let text = VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(palette.text).lineLimit(1)
-                Text(subtitle).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1).truncationMode(subtitleTruncation).help(subtitle)
+                Text(subtitle).font(.system(size: 11)).foregroundStyle(subtitleColor ?? palette.muted).lineLimit(1).truncationMode(subtitleTruncation).help(subtitle)
             }.frame(maxWidth: .infinity, alignment: .leading)
+            if let textIdentifier { text.accessibilityElement(children: .combine).accessibilityIdentifier(textIdentifier) } else { text }
             trailing
         }.frame(maxWidth: .infinity, minHeight: 52, maxHeight: 52)
             .overlay(alignment: .top) { if showsDivider { palette.line.frame(height: 1) } }
@@ -363,10 +368,12 @@ struct WBSegmentedChoice<Value: Hashable>: View {
     let options: [(value: Value, title: String)]
     var optionWidth: CGFloat? = nil
     var identifier: String = ""
+    /// When set, each option is identified as this prefix plus its index.
+    var optionIdentifierPrefix: String? = nil
     @Environment(\.workbenchPalette) private var palette
     var body: some View {
         HStack(spacing: 2) {
-            ForEach(Array(options.enumerated()), id: \.offset) { _, option in
+            ForEach(Array(options.enumerated()), id: \.offset) { index, option in
                 let selected = option.value == selection
                 Button { selection = option.value } label: {
                     Text(option.title).font(.system(size: 12, weight: selected ? .medium : .regular)).lineLimit(1)
@@ -378,6 +385,7 @@ struct WBSegmentedChoice<Value: Hashable>: View {
                 }.buttonStyle(WBSegmentOptionStyle(selected: selected))
                     .accessibilityLabel(option.title).accessibilityValue(selected ? "已选择" : "")
                     .accessibilityAddTraits(selected ? .isSelected : [])
+                    .accessibilityIdentifier(optionIdentifierPrefix.map { $0 + String(index) } ?? "")
             }
         }.padding(2).frame(height: 32).fixedSize(horizontal: true, vertical: false)
             .background(RoundedRectangle(cornerRadius: 8).fill(palette.control))
@@ -388,11 +396,19 @@ struct WBSegmentedChoice<Value: Hashable>: View {
 /// Text inputs share the control face and a neutral hairline (现行规范 4.4, 3.2).
 struct WBFieldSurface: ViewModifier {
     @Environment(\.workbenchPalette) private var palette
+    @Environment(\.isEnabled) private var enabled
     func body(content: Content) -> some View {
         content.font(.system(size: 12)).padding(.horizontal, 10).frame(height: 32)
             .background(WorkbenchMaterialSurface(kind: .control, radius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(palette.controlBorder, lineWidth: 1).allowsHitTesting(false))
+            // A disabled field reads as disabled, like a button (现行规范 4.4, G5).
+            .opacity(enabled ? 1 : 0.4)
     }
+}
+/// Fades a custom input group while it is disabled (现行规范 4.4, G5).
+struct WBDisabledFade: ViewModifier {
+    @Environment(\.isEnabled) private var enabled
+    func body(content: Content) -> some View { content.opacity(enabled ? 1 : 0.4) }
 }
 struct WBTextFieldStyle: TextFieldStyle {
     func _body(configuration: TextField<Self._Label>) -> some View {
@@ -511,6 +527,8 @@ struct WBSegmentOptionStyle: ButtonStyle {
 }
 struct WBIconButtonStyle: ButtonStyle {
     var size: CGFloat = 26
+    /// Delete-like actions keep the warning color (现行规范 4.3, G7).
+    var danger = false
     @Environment(\.workbenchScale) private var displayScale
     @Environment(\.isEnabled) private var enabled
     @Environment(\.workbenchPalette) private var palette
@@ -519,7 +537,7 @@ struct WBIconButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.font(.system(size: 14 * displayScale, weight: .regular))
             .frame(width: size * displayScale, height: size * displayScale, alignment: .center)
-            .foregroundStyle(onBackdrop ? Color.white.opacity(enabled && hovering ? 1 : 0.86) : enabled && hovering ? palette.text : palette.secondary)
+            .foregroundStyle(onBackdrop ? Color.white.opacity(enabled && hovering ? 1 : 0.86) : danger ? palette.critical.opacity(enabled && hovering ? 1 : 0.86) : enabled && hovering ? palette.text : palette.secondary)
             .overlay(WBIconFeedbackSurface(hovering: enabled && hovering, pressed: enabled && configuration.isPressed))
             .contentShape(RoundedRectangle(cornerRadius: 7)).opacity(enabled ? 1 : 0.4)
             .onHover { hovering = $0 }.clickableCursor()

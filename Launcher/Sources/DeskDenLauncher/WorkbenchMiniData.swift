@@ -21,7 +21,7 @@ struct WorkbenchMiniContextData {
 extension WorkbenchMiniContextData {
     @MainActor init(context:WorkbenchContextModel,now:Date,showSeconds:Bool=false) {
         time=context.time(now,seconds:showSeconds)
-        date=WorkbenchMiniFormat.date(now,calendar:context.dateContext.calendar,pattern:"M月d日 · EEEE")
+        date=WorkbenchMiniFormat.date(now,calendar:context.dateContext.calendar,pattern:"M月d日 EEE")
         shortDate=WorkbenchMiniFormat.date(now,calendar:context.dateContext.calendar,pattern:"M月d日")
         weekday=WorkbenchMiniFormat.date(now,calendar:context.dateContext.calendar,pattern:"EEE")
         zoneHelp=context.locationTitle+" · "+WorkbenchContextModel.utcOffset(context.effectiveTimeZoneIdentifier,at:now)
@@ -113,21 +113,26 @@ struct WorkbenchMiniAIData {
     let windows:[WorkbenchMiniQuotaData]
     var availabilityNote: String? = nil
     var emptyMessage = "等待首次额度同步"
+    /// The second line under an empty quota; nil when the message already says it.
+    var emptyHint: String? = "取得真实额度后自动显示"
 
 }
 
 extension WorkbenchMiniAIData {
-    init(summary:AIProviderSummary?,provider:AIProvider,now:Date,displayCalendar:Calendar = .current) {
+    init(summary:AIProviderSummary?,provider:AIProvider,now:Date,displayCalendar:Calendar = .current,enabled:Bool = true) {
         self.provider=provider;title=provider.title
         let summary=summary?.provider == provider ? summary:nil
         let snapshot=summary?.snapshot
         isStale=summary?.state == .stale || summary?.state == .error || snapshot?.isStale(at:now) == true
-        if summary?.state == .error {stateText="读取失败"}
+        // The real reason, said once: the heading names the state, the body
+        // explains it (现行规范 9.4 M2, U2).
+        if !enabled, snapshot == nil {stateText="已关闭"; emptyMessage="自动读取已关闭"; emptyHint="开启读取后显示额度"}
+        else if summary?.state == .error {stateText="读取失败"}
         else if snapshot == nil {
             switch summary?.state {
-            case .disconnected: stateText="未连接"; emptyMessage="连接本机订阅后显示额度"
+            case .disconnected: stateText="未连接"; emptyMessage="连接本机订阅后显示额度"; emptyHint=nil
             case .none: stateText="正在读取"; emptyMessage="正在检查本机额度来源"
-            default: stateText="等待同步"; emptyMessage="等待首次额度同步"
+            default: stateText="等待同步"; emptyMessage="取得真实额度后自动显示"; emptyHint=nil
             }
         }
         else if isStale {stateText="已过期"}
@@ -135,13 +140,13 @@ extension WorkbenchMiniAIData {
         else {stateText=summary?.state == .ready ? "已用":summary?.state.title ?? "正在读取"}
         let rows=snapshot?.availableWindows ?? []
         windows=rows.prefix(2).map {window in
-            let label=window.durationMinutes == 10_080 ? "每周":window.durationMinutes % 60 == 0 ? "\(window.durationMinutes / 60)小时":"\(window.durationMinutes)分钟"
+            let label=window.durationMinutes == 10_080 ? "每周":window.durationMinutes % 60 == 0 ? "\(window.durationMinutes / 60) 小时":"\(window.durationMinutes) 分钟"
             let resetTime = UsageResetTime(window: window)
             let reset = resetTime.summary(at: now, timeZone: displayCalendar.timeZone)
             return WorkbenchMiniQuotaData(label:label,value:UsagePercentage.text(window.usedPercent),fraction:window.usedPercent/100,reset:reset)
         }
         if rows.count == 1 {
-            availabilityNote = rows[0].durationMinutes == 10_080 ? "5小时窗口：来源未提供" : "其他周期：来源未提供"
+            availabilityNote = rows[0].durationMinutes == 10_080 ? "5 小时窗口：来源未提供" : "其他周期：来源未提供"
         }
         if summary?.state == .error, snapshot == nil { emptyMessage = "暂未取得有效额度" }
         var lines=[summary?.detail ?? "正在读取已配置的本机额度来源。"]

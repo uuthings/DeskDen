@@ -63,7 +63,7 @@ public struct WorkbenchDateContext: Equatable, Codable, Sendable {
             .init(month: lm, day: ld, isLeapMonth: lunar.isLeapMonth ?? false)
         } else { nil }
         return .init(instant: instant, dayKey: key, dateText: "\(year) 年 \(month) 月 \(day) 日", timeText: formatter.string(from: instant),
-                     weekdayText: ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"][weekday - 1],
+                     weekdayText: ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][weekday - 1],
                      timeZoneIdentifier: timeZoneIdentifier, timeZoneAbbreviation: timeZone.abbreviation(for: instant) ?? timeZoneIdentifier,
                      secondsFromGMT: timeZone.secondsFromGMT(for: instant), dayInterval: interval, lunarDate: lunarDate,
                      holiday: WorkbenchChinaHolidays.lookup(dayKey: key))

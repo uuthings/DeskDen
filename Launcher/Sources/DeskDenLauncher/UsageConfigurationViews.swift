@@ -66,7 +66,7 @@ struct ClaudeTerminalSwitchNotice: View {
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("在“终端”中粘贴运行以下命令，按提示在浏览器登录 Claude 会员，完成后点“重新检测”。")
+                Text("在「终端」中粘贴运行以下命令，按提示在浏览器登录 Claude 会员，完成后点「重新检测」。")
                     .font(.system(size: 11)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
                 Text(ClaudeSubscriptionUsage.terminalSwitchCommand)
                     .font(.system(size: 11, design: .monospaced)).foregroundStyle(palette.text)
@@ -362,7 +362,7 @@ struct UsageIconPicker: View {
             Button {
                 showingChoices = false
                 appearance.chooseImage { selection = $0 }
-            } label: { Label("选择本地图片…", systemImage: "photo") }
+            } label: { Label("选择本地图片", systemImage: "photo") }
                 .buttonStyle(WBButtonStyle()).accessibilityIdentifier("fc.usage.icon.choose")
             Text("PNG、JPEG 或 WebP · 图标仅用于显示").font(.system(size: 11)).foregroundStyle(palette.muted)
         }.foregroundStyle(palette.text).padding(14).frame(width: 296)
@@ -455,7 +455,7 @@ struct UsageCategoryEditorView: View {
                     Button("新增", action: editor.addCategory).buttonStyle(WBButtonStyle()).disabled(editor.categories.count >= 40)
                         .accessibilityIdentifier("fc.usage.category.add")
                 }
-                Text("“未分类”保留为默认归属。").font(.system(size: 11)).foregroundStyle(palette.muted)
+                Text("「未分类」保留为默认归属。").font(.system(size: 11)).foregroundStyle(palette.muted)
                 if let error = editor.validationMessage ?? appearance.errorMessage { Text(error).font(.system(size: 11)).foregroundStyle(palette.warning) }
             }
         } actions: {

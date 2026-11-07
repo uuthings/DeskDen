@@ -361,7 +361,7 @@ struct WorkbenchWeatherDialog:View {
                                     .accessibilityIdentifier("context-city-"+item.id)
                             }
                             if results.isEmpty {
-                                Text(searching ? "正在搜索城市…":cleanQuery.count < 2 ? "继续输入城市名称，也可使用拼音或英文。":"未找到匹配城市，请尝试去掉“市”或使用拼音、英文名称。")
+                                Text(searching ? "正在搜索城市…":cleanQuery.count < 2 ? "继续输入城市名称，也可使用拼音或英文。":"未找到匹配城市，请尝试去掉「市」或使用拼音、英文名称。")
                                     .font(.system(size:11)).foregroundStyle(palette.muted).lineSpacing(4)
                                     .frame(maxWidth:.infinity,minHeight:100)
                             }

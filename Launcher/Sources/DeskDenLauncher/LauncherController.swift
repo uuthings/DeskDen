@@ -13,7 +13,6 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
     let launcher = TargetLauncher()
     var panel: LauncherPanel!
     var editorPanel: LauncherPanel?
-    var settingsWindowController: LauncherSettingsWindowController?
     var workbenchController: WorkbenchWindowController?
     var notificationRouter: WorkbenchNotificationRouter?
     lazy var updates = AppUpdateController(owner: self)
@@ -126,7 +125,6 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
     func activateGlobalShortcut(_ key:String) {
         guard !isPreparingToQuit else { return }
         if let shortcut = bindingHotKeys.shortcuts[key], workbenchShortcutRecorder?.captureRegisteredHotKey(shortcut) == true { return }
-        if let shortcut = bindingHotKeys.shortcuts[key], settingsWindowController?.captureRegisteredHotKey(shortcut) == true { return }
         if let form = recordingHotKeyForm, let shortcut = bindingHotKeys.shortcuts[key] { form.acceptRecordedHotKey(shortcut); return }
         if key == GlobalBindingHotKeys.workbenchKey { showWorkbench(); return }
         if key == GlobalBindingHotKeys.applicationViewKey { toggleApplicationsView(); return }
@@ -223,7 +221,6 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
         hotKey.pressed = { [weak self] in
             guard let self, !isPreparingToQuit else { return }
             if let shortcut = hotKey.shortcut, workbenchShortcutRecorder?.captureRegisteredHotKey(shortcut) == true { return }
-            if let shortcut = hotKey.shortcut, settingsWindowController?.captureRegisteredHotKey(shortcut) == true { return }
             if let form = recordingHotKeyForm {
                 form.acceptRecordedHotKey(hotKey.shortcut ?? configuration.settings.effectiveLauncherHotKey)
                 return
@@ -955,7 +952,7 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
                 tile.actionBlock = { [weak self, weak tile] in guard let self, let tile else { return }; if let binding = bindings[key], !isEditing, !tile.missing { launch(binding.target) } else { if bindings[key] == nil { showTypeMenu(key,anchor:tile) } else { openEditor(key) } } }
                 tile.removeBlock = { [weak self] in self?.removeBinding(key) }
                 tile.contextBlock = { [weak self, weak tile] in if let self, let tile { showKeyMenu(key,anchor:tile) } }
-                tile.hoverBlock = { [weak self] inside in guard let self else { return }; shortcutHint?.isHidden = inside; hoverLabel?.stringValue = inside ? "\(key)  ·  \(bindings[key]?.title ?? "点击绑定")" : (isEditing ? "点击修改 · 拖动交换位置" : "") }
+                tile.hoverBlock = { [weak self] inside in guard let self else { return }; shortcutHint?.isHidden = inside; hoverLabel?.stringValue = inside ? "键位 \(key) · \(bindings[key]?.title ?? "点击绑定")" : (isEditing ? "点击修改 · 拖动交换位置" : "") }
                 tile.swapBlock = { [weak self] from,to in guard let self else { return }; draft?.swap(from,to); render(); toast("位置已交换 · 完成后保存") }
                 content.addSubview(tile)
             }
@@ -980,7 +977,7 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
         searchInput.textStorage?.addAttribute(.foregroundColor,value:inputColor,range:NSRange(location:0,length:(searchInput.string as NSString).length))
         searchBox.addSubview(searchScroll)
         placeholderLabel = label("搜索名称或首字母",x:43,y:10,width:177,height:20,size:14,color:Palette.isLight ? Palette.secondary : NSColor(calibratedWhite:0.71,alpha:1),in:searchBox)
-        placeholderLabel?.font = .systemFont(ofSize:14,weight:.semibold)
+        placeholderLabel?.font = .systemFont(ofSize:13,weight:.medium)
         placeholderLabel?.isHidden = !query.isEmpty; placeholderLabel?.isSelectable = false
         searchClearButton = nil
         let inputMode = SearchAccessoryButton(.inputMode,frame:NSRect(x:224,y:6,width:28,height:28))

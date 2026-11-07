@@ -434,7 +434,7 @@ private final class LauncherSegmentButton: ClickableButton {
             let selection=NSBezierPath(roundedRect:bounds.insetBy(dx:0.5,dy:0.5),xRadius:13,yRadius:13)
             Palette.ink.withAlphaComponent(isHighlighted ? 0.12 : 0.045).setFill(); selection.fill()
         }
-        let font=NSFont.systemFont(ofSize:12,weight:selectedSegment ? .semibold : .medium)
+        let font=NSFont.systemFont(ofSize:12,weight:selectedSegment ? .medium : .regular)
         let attributes:[NSAttributedString.Key:Any] = [.font:font,.foregroundColor:selectedSegment ? Palette.text : Palette.secondary]
         let text=NSAttributedString(string:title,attributes:attributes), size=text.size()
         let iconWidth:CGFloat = symbol == "keyboard" ? 15 : 12
@@ -502,7 +502,7 @@ private final class LauncherWorkbenchAction: ClickableButton {
             NSBezierPath(roundedRect:bounds,xRadius:bounds.height/2,yRadius:bounds.height/2).fill()
         }
         let color = (active || pressed ? Palette.text : Palette.secondary).withAlphaComponent(isEnabled ? 1 : 0.4)
-        let text=NSAttributedString(string:title,attributes:[.font:NSFont.systemFont(ofSize:12,weight:.semibold),.foregroundColor:color])
+        let text=NSAttributedString(string:title,attributes:[.font:NSFont.systemFont(ofSize:12,weight:.medium),.foregroundColor:color])
         let x=(bounds.width-16-6-text.size().width)/2
         drawSymbol("rectangle.split.2x2",in:NSRect(x:x,y:(bounds.height-16)/2,width:16,height:16),color:color)
         text.draw(at:NSPoint(x:x+22,y:(bounds.height-text.size().height)/2))
@@ -879,10 +879,10 @@ final class KeyTile: ClickableButton {
         if let binding {
             let iconRect = NSRect(x:(size-iconSize)/2,y:(size-iconSize)/2+(isHighlighted ? 1 : 0),width:iconSize,height:iconSize)
             drawTarget(binding.target,in:iconRect,normalized:true,opacity:missing ? 0.45 : 1)
-            if mode.showsKey { drawText(key,in:NSRect(x:tileRect.maxX-17,y:tileRect.maxY-18,width:15,height:17),size:12,alignment:.center,weight:.bold) }
-        } else { drawText(key,in:NSRect(x:0,y:(size-23)/2,width:size,height:23),size:mode.showsKey ? 19 : 16,color:Palette.text,alignment:.center,weight:.semibold) }
+            if mode.showsKey { drawText(key,in:NSRect(x:tileRect.maxX-17,y:tileRect.maxY-18,width:15,height:17),size:12,alignment:.center,weight:.medium) }
+        } else { drawText(key,in:NSRect(x:0,y:(size-23)/2,width:size,height:23),size:mode.showsKey ? 19 : 16,color:Palette.text,alignment:.center,weight:.medium) }
         NSGraphicsContext.restoreGraphicsState()
-        if mode.showsName { drawText(binding?.title ?? "绑定",in:NSRect(x:-2,y:mode == .name ? 79 : 78,width:size+4,height:18),size:11,color:Palette.secondary,alignment:.center,weight:.medium) }
+        if mode.showsName, binding != nil || hovered || focus { drawText(binding?.title ?? "绑定",in:NSRect(x:-2,y:mode == .name ? 79 : 78,width:size+4,height:18),size:11,color:Palette.secondary,alignment:.center,weight:binding == nil ? .regular : .medium) }
         if missing { let dot = NSRect(x:size-12,y:0,width:15,height:15); Palette.warning.setFill(); NSBezierPath(ovalIn:dot).fill(); drawText("!",in:dot,size:11,color:.black,alignment:.center,weight:.medium) }
         if editing && binding != nil { drawSymbol("minus.circle.fill",in:NSRect(x:0,y:0,width:16,height:16),color:Palette.error) }
     }
@@ -1038,7 +1038,7 @@ final class ResultTile: ClickableButton {
             drawText(entry.title,in:NSRect(x:52,y:14,width:bounds.width*0.47,height:20),size:13,weight:.medium)
             drawText(entry.target.location,in:NSRect(x:bounds.width*0.52,y:16,width:bounds.width*0.48-52,height:16),size:11,color:Palette.muted,alignment:.right)
         } else {
-            drawText(entry.title,in:NSRect(x:6,y:91,width:bounds.width-12,height:20),size:13,color:Palette.text,alignment:.center,weight:.semibold)
+            drawText(entry.title,in:NSRect(x:6,y:91,width:bounds.width-12,height:20),size:13,color:Palette.text,alignment:.center,weight:.medium)
             if let subtitle {
                 drawText(subtitle,in:NSRect(x:6,y:111,width:bounds.width-12,height:15),size:10,color:Palette.muted,alignment:.center,weight:.medium)
             }
@@ -1052,7 +1052,7 @@ final class ResultTile: ClickableButton {
             if drawsReturn {
                 drawSymbol("return",in:badgeBox.insetBy(dx:5,dy:5),color:ink)
             } else if let number {
-                drawText(String(number),in:badgeBox.offsetBy(dx:0,dy:2.5),size:10.5,color:ink,alignment:.center,weight:.bold)
+                drawText(String(number),in:badgeBox.offsetBy(dx:0,dy:2.5),size:10,color:ink,alignment:.center,weight:.medium)
             } else {
                 let c = NSPoint(x:badgeBox.midX,y:badgeBox.midY), r:CGFloat = 5.5
                 let star = NSBezierPath(); star.move(to:NSPoint(x:c.x,y:c.y-r))
