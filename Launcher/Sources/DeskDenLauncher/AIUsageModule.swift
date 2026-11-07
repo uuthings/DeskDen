@@ -389,6 +389,8 @@ private actor AIUsageReader {
 
 @MainActor
 final class AIUsageModel: ObservableObject {
+    /// The placeholder detail of an enabled source before its first scan.
+    static let readingDetail = "正在读取本机计量来源。"
     @Published private(set) var providerSummaries: [AIProviderSummary] = []
     @Published private(set) var records: [AITokenRecord] = []
     @Published private(set) var quotaHistory: [AIQuotaSnapshot] = []
@@ -528,7 +530,13 @@ final class AIUsageModel: ObservableObject {
             ledger: tokenLedger, quotaHistory: quotaHistory, canWriteTokens: storageReadErrors["token-ledger.json"] == nil,
             canWriteQuota: storageReadErrors["quota-history.json"] == nil)
         if !storageReadErrors.isEmpty { errorMessage = "AI 本机文件读取失败，原文件已保留并暂停对应写入。请在 AI 用量的数据源中查看恢复说明。" }
-        providerSummaries = AIProvider.allCases.map { .init(provider: $0, state: .unavailable, snapshot: nil, detail: "正在检查本地计量来源。") }
+        // Before the first scan an off source already states why it has no
+        // reading; only an enabled source is "reading" (现行规范 9.3, U2).
+        providerSummaries = AIProvider.allCases.map { provider in
+            configuration(for: provider).enabled
+                ? .init(provider: provider, state: .unavailable, snapshot: nil, detail: Self.readingDetail)
+                : .init(provider: provider, state: .disconnected, snapshot: nil, detail: "自动读取已关闭；历史读数仍保留，可单独手动记录或导入额度。")
+        }
         if startServices {
             refresh()
             timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in Task { @MainActor in self?.refresh() } }
@@ -632,13 +640,14 @@ final class AIUsageModel: ObservableObject {
     }
     /// Returns true only for the external Settings → Privacy entry point.
     func backTitle(overviewTitle: String) -> String {
-        guard let parent = navigationStack.last else { return returnsToSettingsPrivacy ? "返回隐私与锁定" : "返回" + overviewTitle }
+        // The header's back entry names the parent page; "返回" is its accessibility prefix (现行规范 4.1).
+        guard let parent = navigationStack.last else { return returnsToSettingsPrivacy ? "隐私与锁定" : overviewTitle }
         switch parent {
-        case .overview: return "返回" + overviewTitle
-        case .provider(let provider): return "返回" + provider.title + " 用量"
-        case .sources: return "返回来源管理"
-        case .history: return "返回 Token 活动记录"
-        case .prices: return "返回模型单价"
+        case .overview: return overviewTitle
+        case .provider(let provider): return provider.title + " 用量"
+        case .sources: return "AI 数据来源"
+        case .history: return "Token 活动记录"
+        case .prices: return "模型单价"
         }
     }
     @discardableResult func goBack() -> Bool {

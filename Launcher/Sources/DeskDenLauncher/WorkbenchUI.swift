@@ -311,6 +311,7 @@ struct WBPageHeader<Trailing:View>:View {
                 Button(action:back.action) { Label(back.title,systemImage:back.symbol) }
                     .buttonStyle(WBButtonStyle()).disabled(back.disabled).fixedSize()
                     .keyboardShortcut(back.escapes ? KeyboardShortcut.cancelAction : nil)
+                    .accessibilityLabel("返回" + back.title)
                     .accessibilityIdentifier(back.identifier)
             }
             VStack(alignment:.leading,spacing:6) {
@@ -328,6 +329,90 @@ struct WBPageHeader<Trailing:View>:View {
 }
 extension WBPageHeader where Trailing == EmptyView {
     init(title:String,subtitle:String,back:WBPageBack? = nil) { self.init(title:title,subtitle:subtitle,back:back) { EmptyView() } }
+}
+
+/// A row with a title, one line of description and one trailing control or
+/// status (现行规范 4.5, G1). Reasons such as "unavailable" go in the description.
+struct WBSettingRow<Trailing: View>: View {
+    let title: String
+    let subtitle: String
+    var showsDivider = true
+    /// Paths truncate in the middle; the full text stays in the tooltip.
+    var subtitleTruncation: Text.TruncationMode = .tail
+    var leading: AnyView? = nil
+    @ViewBuilder let trailing: Trailing
+    @Environment(\.workbenchPalette) private var palette
+    var body: some View {
+        HStack(spacing: 16) {
+            if let leading { leading }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(palette.text).lineLimit(1)
+                Text(subtitle).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1).truncationMode(subtitleTruncation).help(subtitle)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            trailing
+        }.frame(maxWidth: .infinity, minHeight: 52, maxHeight: 52)
+            .overlay(alignment: .top) { if showsDivider { palette.line.frame(height: 1) } }
+            .accessibilityElement(children: .contain)
+    }
+}
+
+/// The shared segmented choice (现行规范 4.4): 32 high, the selected option
+/// raised, like the two-option choices of rounds 1 and 2.
+struct WBSegmentedChoice<Value: Hashable>: View {
+    @Binding var selection: Value
+    let options: [(value: Value, title: String)]
+    var optionWidth: CGFloat? = nil
+    var identifier: String = ""
+    @Environment(\.workbenchPalette) private var palette
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(Array(options.enumerated()), id: \.offset) { _, option in
+                let selected = option.value == selection
+                Button { selection = option.value } label: {
+                    Text(option.title).font(.system(size: 12, weight: selected ? .medium : .regular)).lineLimit(1)
+                        .foregroundStyle(selected ? palette.text : palette.secondary)
+                        .padding(.horizontal, 10).frame(minWidth: optionWidth).frame(height: 26)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(selected ? (palette.light ? palette.raised : palette.secondary.opacity(0.16)) : .clear)
+                            .shadow(color: selected && palette.light ? palette.shadow : .clear, radius: 1, y: 1))
+                        .contentShape(RoundedRectangle(cornerRadius: 6))
+                }.buttonStyle(WBSegmentOptionStyle(selected: selected))
+                    .accessibilityLabel(option.title).accessibilityValue(selected ? "已选择" : "")
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+        }.padding(2).frame(height: 32).fixedSize(horizontal: true, vertical: false)
+            .background(RoundedRectangle(cornerRadius: 8).fill(palette.control))
+            .accessibilityElement(children: .contain).accessibilityIdentifier(identifier)
+    }
+}
+
+/// Text inputs share the control face and a neutral hairline (现行规范 4.4, 3.2).
+struct WBFieldSurface: ViewModifier {
+    @Environment(\.workbenchPalette) private var palette
+    func body(content: Content) -> some View {
+        content.font(.system(size: 12)).padding(.horizontal, 10).frame(height: 32)
+            .background(WorkbenchMaterialSurface(kind: .control, radius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(palette.controlBorder, lineWidth: 1).allowsHitTesting(false))
+    }
+}
+struct WBTextFieldStyle: TextFieldStyle {
+    func _body(configuration: TextField<Self._Label>) -> some View {
+        configuration.textFieldStyle(.plain).modifier(WBFieldSurface())
+    }
+}
+
+/// A read-only state in a card or row: an 11-point capsule. Category colors
+/// stay on icons; the capsule itself is neutral unless the state is good.
+struct WBStatusPill: View {
+    let title: String
+    var good = false
+    @Environment(\.workbenchPalette) private var palette
+    var body: some View {
+        Text(title).font(.system(size: 11)).lineLimit(1)
+            .foregroundStyle(good ? palette.accent : palette.secondary)
+            .padding(.horizontal, 8).frame(height: 20)
+            .background(Capsule().fill(good ? palette.accent.opacity(0.10) : palette.secondary.opacity(0.13)))
+            .fixedSize()
+    }
 }
 
 struct WBMetric:View {
@@ -372,17 +457,20 @@ struct WBButtonStyle: ButtonStyle {
         let pressed = enabled && configuration.isPressed
         let tone = destructive ? palette.critical : palette.accent
         let shape = RoundedRectangle(cornerRadius: WBControlMetrics.cornerRadius)
+        // A disabled primary button takes the regular face with muted text,
+        // so its label stays readable in both appearances (现行规范 4.3, G4).
+        let filled = primary && enabled
         return configuration.label
-            .font(.system(size: (compact ? 11 : 12) * displayScale, weight: primary ? .medium : .regular))
+            .font(.system(size: (compact ? 11 : 12) * displayScale, weight: filled ? .medium : .regular))
             .multilineTextAlignment(.center)
             .lineLimit(1)
             .padding(.horizontal, (compact ? 8 : 11) * displayScale)
             .frame(height: (compact ? WBControlMetrics.compactHeight : WBControlMetrics.regularHeight) * displayScale, alignment: .center)
-            .foregroundStyle(primary ? palette.primaryText : destructive ? palette.critical : palette.secondary)
-            .background(shape.fill(primary ? palette.primary : palette.control))
-            .overlay(shape.fill(primary ? Color.black.opacity(pressed ? 0.12 : hovered ? 0.06 : 0) : tone.opacity(pressed ? 0.14 : hovered ? 0.08 : 0)).allowsHitTesting(false))
-            .overlay(shape.strokeBorder(primary ? palette.primary : palette.controlBorder, lineWidth: showsBorder ? 1 : 0).allowsHitTesting(false))
-            .contentShape(shape).opacity(enabled ? 1 : 0.4)
+            .foregroundStyle(filled ? palette.primaryText : primary ? palette.muted : destructive ? palette.critical : palette.secondary)
+            .background(shape.fill(filled ? palette.primary : palette.control))
+            .overlay(shape.fill(filled ? Color.black.opacity(pressed ? 0.12 : hovered ? 0.06 : 0) : tone.opacity(pressed ? 0.14 : hovered ? 0.08 : 0)).allowsHitTesting(false))
+            .overlay(shape.strokeBorder(filled ? palette.primary : palette.controlBorder, lineWidth: showsBorder ? 1 : 0).allowsHitTesting(false))
+            .contentShape(shape).opacity(enabled || primary ? 1 : 0.4)
             // The system ring is replaced by one that follows the control's corners.
             .overlay(WBKeyboardFocusRing(radius: WBControlMetrics.cornerRadius))
             .focusEffectDisabled()

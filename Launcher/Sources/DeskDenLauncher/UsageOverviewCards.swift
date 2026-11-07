@@ -2,7 +2,8 @@ import AppKit
 import SwiftUI
 import LauncherCore
 
-/// Equal-width columns expand with the viewport and wrap below their minimum.
+/// Cards follow the home page's three-column grid (现行规范 9.3, U1). Few
+/// sources keep the column width and leave the remaining slots empty.
 struct UsageCardGrid: Layout {
     static let cardSize = CGSize(width: 248, height: 236)
     static let gap: CGFloat = 12
@@ -25,39 +26,24 @@ struct UsageCardGrid: Layout {
     }
     private func columns(for width: CGFloat, count: Int) -> Int {
         guard width.isFinite, width > 0 else { return 1 }
-        return max(1, min(4, max(1, count), Int((width + Self.gap) / (Self.cardSize.width + Self.gap))))
+        return max(1, min(3, Int((width + Self.gap) / (Self.cardSize.width + Self.gap))))
     }
 }
 
+/// A neutral capsule (现行规范 2.3, 3.3): category colors stay on icons.
 struct UsageCategoryTag: View {
     let title: String
     var categoryID: String = "uncategorized"
     @Environment(\.workbenchPalette) private var palette
     private var constrainedTextWidth: CGFloat? {
-        let width = (title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium)]).width
+        let width = (title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11)]).width
         return width > 76 ? 76 : nil
     }
-    private var color: Color {
-        let colors = [palette.cool,
-                      palette.light ? Color(red: 0.17, green: 0.38, blue: 0.61) : Color(red: 0.62, green: 0.80, blue: 0.98),
-                      palette.light ? Color(red: 0.13, green: 0.44, blue: 0.46) : Color(red: 0.61, green: 0.87, blue: 0.85)]
-        switch categoryID {
-        case "ai-subscription": return colors[0]
-        case "traffic-services", "static-isp", "vps-traffic": return colors[1]
-        case "api-balance": return colors[2]
-        case "uncategorized": return palette.muted
-        default:
-            // Stable across launches and renames; Swift's randomized Hasher is unsuitable.
-            let hash = categoryID.utf8.reduce(UInt64(14695981039346656037)) { ($0 ^ UInt64($1)) &* 1099511628211 }
-            return colors[Int(hash % UInt64(colors.count))]
-        }
-    }
     var body: some View {
-        Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(color)
+        Text(title).font(.system(size: 11)).foregroundStyle(palette.secondary)
             .lineLimit(1).help(title).frame(width: constrainedTextWidth, alignment: .leading)
-            .padding(.horizontal, 5).frame(height: 20)
-            .background(color.opacity(0.13), in: RoundedRectangle(cornerRadius: 5))
-            .overlay { RoundedRectangle(cornerRadius: 5).stroke(color.opacity(0.30), lineWidth: 1) }
+            .padding(.horizontal, 8).frame(height: 20)
+            .background(Capsule().fill(palette.secondary.opacity(0.13)))
     }
 }
 
@@ -97,7 +83,7 @@ struct UsageEmptySourceCard: View {
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 12)
             Label(actionTitle, systemImage: "plus")
-                .font(.system(size: 12, weight: .medium)).foregroundStyle(palette.accent)
+                .font(.system(size: 12)).foregroundStyle(palette.accent)
                 .frame(height: 28)
         }
         .padding(14)
@@ -176,8 +162,23 @@ struct UsageAIQuotaCard: View {
     let enabled: Bool
     let timeZone: TimeZone
     var categoryTitle: String = "订阅"
+    var reading = false
+    /// Leaves room for an action the caller lays over the card (see `UsageCardActionAnchor`).
+    var reservesAction = false
     @Environment(\.workbenchPalette) private var palette
     private var name: String { display.displayName ?? summary.title }
+    /// The card states its real reason (现行规范 9.3, U2): "reading" only
+    /// while a scan is running, and an off source says so instead of "checking".
+    private var isReading: Bool { enabled && summary.snapshot == nil && (reading || summary.detail == AIUsageModel.readingDetail) }
+    private var status: String? {
+        if !enabled { return "已关闭" }
+        if isReading { return "读取中" }
+        switch summary.state {
+        case .error: return "读取失败"
+        case .unavailable, .disconnected: return summary.snapshot == nil ? "不可用" : nil
+        case .ready, .stale: return nil
+        }
+    }
     private var subtitle: String {
         let source: String
         switch summary.snapshot?.source {
@@ -188,8 +189,9 @@ struct UsageAIQuotaCard: View {
         case .localSession: source = "本机会话"
         case nil: source = summary.provider == .codex ? "本机会话" : "官方客户端"
         }
-        let plan = summary.effectiveAccountPlan.map { $0.title + (summary.accountPlanIsDeclared ? "（用户设置）" : "") } ?? "会员未提供"
-        return plan + " · " + source
+        // An unknown plan is left out here; the detail page states it (9.3, U2).
+        guard let plan = summary.effectiveAccountPlan else { return source }
+        return plan.title + (summary.accountPlanIsDeclared ? "（用户设置）" : "") + " · " + source
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -201,45 +203,69 @@ struct UsageAIQuotaCard: View {
                     Text(subtitle).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1).help(summary.accountPlanDescription)
                 }
                 Spacer(minLength: 4)
-                Circle().fill(summary.state == .ready ? palette.accent : summary.state == .error ? palette.warning : palette.muted)
-                    .frame(width: 5, height: 5).help(enabled ? summary.state.title : "自动读取关闭")
-            }.frame(height: 36).padding(.bottom, 14)
+                if let status { WBStatusPill(title: status) }
+            }.frame(height: 36).padding(.bottom, 12)
             if let snapshot = summary.snapshot, !snapshot.availableWindows.isEmpty {
                 let windows = snapshot.availableWindows
                 ForEach(Array(windows.prefix(2).enumerated()), id: \.offset) { _, window in
                     UsageAIWindowRow(window: window, timeZone: timeZone)
-                        .frame(height: 58, alignment: .top)
+                        .frame(height: 64, alignment: .top)
                 }
                 if windows.count == 1 {
                     HStack(alignment: .top, spacing: 6) {
                         Image(systemName: summary.hasNoFiveHourLimit ? "checkmark.shield" : "info.circle").font(.system(size: 12))
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(summary.hasNoFiveHourLimit ? "Pro 不设 5 小时限制" : "按来源提供的窗口展示").font(.system(size: 11, weight: .medium))
-                            Text(summary.hasNoFiveHourLimit ? "每周用量以实际读数为准" : "其余周期暂未提供读数").font(.system(size: 10)).foregroundStyle(palette.muted)
+                            Text(summary.hasNoFiveHourLimit ? "Pro 不设 5 小时限制" : "按来源提供的窗口展示").font(.system(size: 11))
+                            Text(summary.hasNoFiveHourLimit ? "每周用量以实际读数为准" : "其余周期暂未提供读数").font(.system(size: 11)).foregroundStyle(palette.muted)
                         }
                     }.foregroundStyle(palette.secondary).padding(.top, 8)
                         .frame(maxWidth: .infinity, minHeight: 51, alignment: .topLeading)
                 }
             } else {
-                VStack(alignment: .leading, spacing: 7) {
-                    Label(summary.state == .unavailable || summary.state == .error ? "额度尚未可用" : "等待额度读数",
-                          systemImage: summary.state == .unavailable || summary.state == .error ? "info.circle" : "arrow.triangle.2.circlepath")
-                        .font(.system(size: 13, weight: .medium)).foregroundStyle(palette.secondary)
-                    Text(summary.detail).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(2)
-                }.frame(maxWidth: .infinity, minHeight: 102, alignment: .center)
+                // One centered group: reason, detail and, for an off source, the
+                // "开启读取" slot right below the detail (现行规范 9.3, U2).
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 7) {
+                        Image(systemName: isReading ? "arrow.triangle.2.circlepath" : "info.circle").font(.system(size: 14)).foregroundStyle(palette.muted)
+                        Text(emptyTitle).font(.system(size: 13, weight: .medium)).foregroundStyle(palette.text)
+                    }
+                    Text(emptyDetail).font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    if reservesAction {
+                        // The card is itself a button, so the real action is laid over this slot.
+                        Color.clear.frame(width: 60, height: 28).anchorPreference(key: UsageCardActionAnchor.self, value: .bounds) { $0 }
+                    }
+                }.padding(.bottom, 8).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             }
-            Spacer(minLength: 0)
-            HStack(spacing: 4) {
-                if let date = summary.updatedAt {
-                    UsageObservationAgeLabel(date: date, prefix: !enabled ? "已暂停 · 上次读数 " : summary.state == .ready ? "更新于 " : summary.state.title + " · 上次读数 ", timeZone: timeZone)
-                } else { Text(!enabled ? "自动读取关闭" : summary.state.title) }
+            if let date = summary.updatedAt {
                 Spacer(minLength: 0)
-            }.font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
-                .padding(.top, 8)
+                HStack(spacing: 4) {
+                    UsageObservationAgeLabel(date: date, prefix: !enabled ? "已暂停 · 上次读数 " : summary.state == .ready ? "更新于 " : summary.state.title + " · 上次读数 ", timeZone: timeZone)
+                    Spacer(minLength: 0)
+                }.font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
+                    .padding(.top, 8)
+            }
         }
         .foregroundStyle(palette.text).padding(14).frame(maxWidth: .infinity).frame(height: UsageCardGrid.cardSize.height, alignment: .topLeading)
         .background(WorkbenchMaterialSurface(kind: .card, radius: 15))
         .contentShape(RoundedRectangle(cornerRadius: 15))
+    }
+}
+
+/// Where a card that is itself a button reserves room for a separate action.
+struct UsageCardActionAnchor: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>? { nil }
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) { value = value ?? nextValue() }
+}
+
+extension UsageAIQuotaCard {
+    private var emptyTitle: String {
+        if !enabled { return "自动读取已关闭" }
+        if isReading { return "读取中" }
+        return summary.state == .error ? "读取失败" : summary.state == .unavailable ? "额度尚未可用" : "等待额度读数"
+    }
+    private var emptyDetail: String {
+        if !enabled { return "开启后读取\(summary.provider == .codex ? "本机会话" : "官方客户端")提供的额度窗口；关闭期间不推算用量。" }
+        return summary.detail
     }
 }
 
@@ -248,16 +274,21 @@ private struct UsageAIWindowRow: View {
     let timeZone: TimeZone
     @Environment(\.workbenchPalette) private var palette
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(window.title).font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(1)
+        // The used share is the card's main reading, 24 regular (现行规范 9.3).
+        let tone = palette.usageColor(forPercent: window.usedPercent)
+        VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(window.title).font(.system(size: 12)).foregroundStyle(palette.secondary).lineLimit(1)
                     Spacer(minLength: 3)
-                    Text("已用 " + UsagePercentage.text(window.usedPercent))
-                        .font(.system(size: 12, weight: .medium)).monospacedDigit()
-                }.frame(height: 20)
-                WBProgress(value: window.usedPercent / 100, color: palette.usageColor(forPercent: window.usedPercent), height: 5)
-                UsageResetLabel(reset: .init(window: window), timeZone: timeZone)
-                    .font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
+                    Text(UsagePercentage.text(window.usedPercent)).font(.system(size: 24)).monospacedDigit()
+                    Text("已用").font(.system(size: 11)).foregroundStyle(palette.muted)
+                }.frame(height: 26)
+                WBProgress(value: window.usedPercent / 100, color: tone, height: 5)
+                HStack(spacing: 6) {
+                    UsageResetLabel(reset: .init(window: window), timeZone: timeZone).lineLimit(1)
+                    Spacer(minLength: 0)
+                    Text("剩余 " + UsagePercentage.text(window.remainingPercent)).foregroundStyle(tone).lineLimit(1)
+                }.font(.system(size: 11)).foregroundStyle(palette.muted)
         }
     }
 }
@@ -283,8 +314,7 @@ struct ProviderQuotaCard: View {
                 }
                 Spacer(minLength: 3)
                 TimelineView(.periodic(from: .now, by: 60)) { tick in
-                    Circle().fill(statusColor(at: tick.date)).frame(width: 5, height: 5)
-                        .help(refreshing ? "更新中" : !source.enabled ? "已暂停" : state.status(at: tick.date, maximumAge: source.refreshPolicy.maximumInterval).title)
+                    if let status = status(at: tick.date) { WBStatusPill(title: status) }
                 }
             }.frame(height: 36).padding(.bottom, 14)
             if let snapshot = state.snapshot {
@@ -292,14 +322,14 @@ struct ProviderQuotaCard: View {
                     Text("本周期已用").foregroundStyle(palette.secondary)
                     Spacer(minLength: 3)
                     Text(UsagePercentage.text(snapshot.usedPercent))
-                        .fontWeight(.medium).monospacedDigit()
+                        .font(.system(size: 13, weight: .medium)).monospacedDigit()
                 }.font(.system(size: 12)).lineLimit(1)
                 Text(ProviderUsageFormatting.amount(snapshot.usedBytes, unit: snapshot.displayUnit) + " GB / " + ProviderUsageFormatting.amount(snapshot.limitBytes, unit: snapshot.displayUnit) + " GB")
                     .font(.system(size: 11)).foregroundStyle(palette.muted).monospacedDigit().lineLimit(1).padding(.top, 4)
                 WBProgress(value: snapshot.usedPercent / 100, color: palette.usageColor(forPercent: snapshot.usedPercent), height: 5)
                     .padding(.top, 6).padding(.bottom, 9)
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    Text(ProviderUsageFormatting.amount(snapshot.remaining, unit: snapshot.displayUnit)).font(.system(size: 22)).monospacedDigit()
+                    Text(ProviderUsageFormatting.amount(snapshot.remaining, unit: snapshot.displayUnit)).font(.system(size: 24)).monospacedDigit()
                     Text("GB 剩余").font(.system(size: 11)).foregroundStyle(palette.muted)
                     Spacer(minLength: 0)
                 }.frame(height: 31).padding(.bottom, 8)
@@ -307,7 +337,7 @@ struct ProviderQuotaCard: View {
                     .font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(2)
             } else {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("—").font(.system(size: 27))
+                    Text("—").font(.system(size: 24))
                     Text(source.kind == .iproyal ? "连接来源后显示订单余额" : "验证连接后显示实例余额").font(.system(size: 11)).foregroundStyle(palette.secondary)
                     Text("总额度与周期尚未确认").font(.system(size: 11)).foregroundStyle(palette.muted)
                 }.frame(maxWidth: .infinity, alignment: .leading)
@@ -325,12 +355,16 @@ struct ProviderQuotaCard: View {
         .background(WorkbenchMaterialSurface(kind: .card, radius: 15))
         .contentShape(RoundedRectangle(cornerRadius: 15))
     }
-    private func statusColor(at date: Date) -> Color {
-        guard source.enabled else { return palette.muted }
+    /// A capsule only for states that need words (现行规范 9.3, U2); a card
+    /// with a fresh reading carries none and its footer gives the update time.
+    private func status(at date: Date) -> String? {
+        if refreshing { return "读取中" }
+        guard source.enabled else { return "已暂停" }
         return switch state.status(at: date, maximumAge: source.refreshPolicy.maximumInterval) {
-        case .ready: palette.accent
-        case .authenticationRequired, .failed: palette.warning
-        case .pending, .stale: palette.muted
+        case .ready, .stale: nil
+        case .authenticationRequired: "需重连"
+        case .failed: "读取失败"
+        case .pending: state.snapshot == nil ? "读取中" : nil
         }
     }
     private func footer(at date: Date) -> String {

@@ -114,12 +114,12 @@ struct UsageConnectionManagerView: View {
             HStack(spacing: 10) {
                 UsageSourceIcon(appearance: appearance, icon: entry.appearance.icon, aiProvider: entry.service.aiProvider,
                                 serviceKind: entry.service.trafficKind, defaultBrand: entry.service == .deepseek ? .deepseek : nil, size: 24)
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(entry.name).font(.system(size: 12)).lineLimit(1)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(entry.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
                     Text(entry.detail).font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(1)
                 }.frame(maxWidth: .infinity, alignment: .leading)
                 Circle().fill(entry.connected ? palette.accent : palette.muted).frame(width: 4, height: 4)
-            }.padding(.horizontal, 10).padding(.vertical, 12)
+            }.padding(.horizontal, 10).frame(height: 52)
                 .background { if manager.selectedSourceID == entry.id { WorkbenchMaterialSurface(kind: .control, radius: 8) } }
                 .contentShape(Rectangle())
         }.buttonStyle(ClickablePlainButtonStyle()).disabled(manager.busy)

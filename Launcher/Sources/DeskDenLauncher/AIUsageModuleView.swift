@@ -113,13 +113,13 @@ struct AIUsageModuleView: View {
     @State private var selectedResetWindow = 1
     @State private var contentWidth: CGFloat = 864
     @State private var selectedBucket: Date?
+    @State private var sourcesMenuOpen = false
     private var visibleRecords: [AITokenRecord] { model.filteredRecords(provider: model.selectedProvider, period: model.selectedPeriod) }
     private var routeID: String {
         switch model.destination { case .overview: "fc.page.ai"; case .provider(let provider): "fc.page.ai." + provider.rawValue; case .sources: "fc.page.ai.sources"; case .history: "fc.page.ai.history"; case .prices: "fc.page.ai.prices" }
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if model.destination != .overview { backRow }
             switch model.destination {
             case .overview: overview
             case .provider(let provider): providerDetail(provider)
@@ -150,11 +150,9 @@ struct AIUsageModuleView: View {
             AIUsageErrorDialog(model: model)
         }
     }
-    private var backRow: some View {
-        HStack {
-            Button { goBack() } label: { Label(model.backTitle(overviewTitle: overviewTitle), systemImage: "chevron.left") }.buttonStyle(WBButtonStyle(compact: true)).accessibilityIdentifier("fc.ai.back")
-            Spacer()
-        }.frame(height: 28).padding(.bottom, 12)
+    /// Sub-pages return from the title's left, named after the parent page (现行规范 4.1, D7).
+    private var pageBack: WBPageBack {
+        WBPageBack(title: model.backTitle(overviewTitle: overviewTitle), identifier: "fc.ai.back", escapes: true) { goBack() }
     }
     private func goBack() {
         if model.destination == .prices && model.hasUnsavedPriceChanges { model.requestPriceBack() }
@@ -200,14 +198,16 @@ struct AIUsageModuleView: View {
         model.providerSummaries.first { $0.provider == provider } ?? .init(provider: provider, state: .unavailable, snapshot: nil, detail: "尚未读取此来源。")
     }
     private func providerCard(_ provider: AIProvider, detail: Bool = false) -> some View {
-        AIProviderQuotaCard(summary: summary(provider), minimumHeight: detail ? (expanded ? 288 : 284) : (expanded ? 288 : 260.83), expanded: expanded, automaticReadingEnabled: model.configuration(for: provider).enabled, showsAction: !detail) {
+        AIProviderQuotaCard(summary: summary(provider), minimumHeight: detail ? (expanded ? 288 : 284) : (expanded ? 288 : 260.83), expanded: expanded, automaticReadingEnabled: model.configuration(for: provider).enabled, showsAction: !detail,
+                            reading: model.isRefreshing, enable: detail ? { model.setEnabled(true, provider: provider) } : nil,
+                            connect: detail && provider == .claude ? { model.present(.claudeConnect) } : nil) {
             if detail { model.openSources() } else { model.show(.provider(provider)) }
         }
     }
     private var activitySectionHeader: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 5) {
-                Text("本机 Token 活动").aiText(12, weight: .medium, color: palette.text)
+                Text("本机 Token 活动").aiText(13, weight: .medium, color: palette.text)
                 Text("当前筛选下的本机记录，不计入订阅额度").aiText(11, color: palette.muted)
             }
             Spacer(minLength: 8)
@@ -256,7 +256,7 @@ struct AIUsageModuleView: View {
         let value = divisor == 1 ? total.formatted() : (Double(total) / divisor).formatted(.number.precision(.fractionLength(0...2)))
         let unit = divisor == 1_000_000 ? "M Token" : divisor == 1_000 ? "K Token" : "Token"
         return HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(value).font(.system(size: 28)).monospacedDigit()
+            Text(value).font(.system(size: 24)).monospacedDigit()
             Text(unit).aiText(11, color: palette.muted)
         }.accessibilityElement(children: .combine).accessibilityIdentifier("fc.ai.tokens.total")
     }
@@ -304,7 +304,7 @@ struct AIUsageModuleView: View {
             HStack(alignment: .firstTextBaseline) {
                 Text("API 等价估算").aiText(11, color: palette.muted)
                 Spacer()
-                Text(estimate.covered == 0 ? "未配置单价" : estimate.amount.formatted(.currency(code: "USD"))).aiText(11, weight: .medium, color: palette.text).monospacedDigit()
+                Text(estimate.covered == 0 ? "未配置单价" : estimate.amount.formatted(.currency(code: "USD"))).aiText(13, weight: .medium, color: palette.text).monospacedDigit()
             }
             Text(estimate.covered == 0 ? "尚未配置单价，不代表账户账单。" : "单价覆盖 \(estimate.covered)/\(estimate.total) 条；估算不代表账户账单。").aiText(11, color: palette.muted).padding(.top, 7)
         }.frame(maxHeight: .infinity, alignment: .top)
@@ -328,7 +328,7 @@ struct AIUsageModuleView: View {
     private func providerDetail(_ provider: AIProvider) -> some View {
         let value = summary(provider)
         return VStack(alignment: .leading, spacing: 0) {
-            WBPageHeader(title: provider.title + " 用量", subtitle: "额度按来源提供的窗口计算；Token 为本机活动计量") {
+            WBPageHeader(title: provider.title + " 用量", subtitle: "额度按来源提供的窗口计算；Token 为本机活动计量", back: pageBack) {
                 Button { model.present(.alert) } label: { Label("提醒设置", systemImage: "bell") }.buttonStyle(WBButtonStyle()).accessibilityIdentifier("fc.ai.alert")
             }
             storageProtection
@@ -338,14 +338,16 @@ struct AIUsageModuleView: View {
                 WBCard(spacing: 0) {
                     HStack(spacing: 7) {
                         Image(systemName: "checkmark.shield").font(.system(size: 16)).frame(width: 16, height: 16).foregroundStyle(palette.accent).accessibilityHidden(true)
-                        Text("来源与有效性").aiText(12, weight: .medium, color: palette.text).accessibilityIdentifier("fc.ai.detail.validity.title")
+                        Text("来源与有效性").aiText(13, weight: .medium, color: palette.text).accessibilityIdentifier("fc.ai.detail.validity.title")
                         Spacer(minLength: 0)
                         Button("管理来源") { model.openSources() }.buttonStyle(WBButtonStyle(compact: true)).accessibilityIdentifier("fc.ai.detail.manageSources")
                     }.frame(height: 22).padding(.bottom, 10)
                     AIFactRow(title: "来源类型", value: value.sourceDescription)
                     AIFactRow(title: "会员方案", value: value.accountPlanDescription)
-                    AIFactRow(title: "最后有效采样", value: value.updatedAt.map { UsageDatePresentation.absolute($0, timeZone: timeZone, location: displayLocation) } ?? "尚无读数")
-                    AIFactRow(title: "当前状态", value: value.state.title + (model.configuration(for: provider).enabled ? "" : " · 自动读取关闭"), color: value.state == .ready ? palette.accent : palette.warning)
+                    AIFactRow(title: "最后有效读数", value: value.updatedAt.map { aiShortDateTime($0, timeZone: timeZone) } ?? "尚无读数")
+                        .help(value.updatedAt.map { UsageDatePresentation.absolute($0, timeZone: timeZone, location: displayLocation) } ?? "")
+                    // Only a valid reading is colored; other states stay neutral (现行规范 9.3, U2).
+                    AIFactRow(title: "当前状态", value: model.configuration(for: provider).enabled ? value.state.title : "自动读取已关闭", color: value.state == .ready && model.configuration(for: provider).enabled ? palette.accent : nil)
                     AIFactRow(title: "过期判定", value: "15 分钟未更新或窗口已重置")
                     AIFactRow(title: "额度提醒", value: model.alertRule.enabled ? "\(model.alertRule.warningPercent)% / \(model.alertRule.criticalPercent)% · " + model.notificationPermission.title : "未开启", last: true)
                     // Keep the surface stretched after moving its action back
@@ -356,7 +358,7 @@ struct AIUsageModuleView: View {
             }
             resetDetails(value).padding(.top, 12)
             quotaHistory(provider).padding(.top, 12)
-            AINotice(text: "每格为一天最后一次实际读数，并非当日消耗；不同额度窗口分别展示。无读数不代表 0，本机最多保留 31 天。")
+            AINotice(text: "每格为一天最后一次实际读数，并非当日消耗；不同额度窗口分别展示。无读数不代表 0，本机最多保留 31 天。", onBackdrop: true)
                 .accessibilityIdentifier("fc.ai.detail.historyNotice").padding(.top, 12)
             AIWeightedColumns(ratio: 1, gap: 12) {
                 providerTokenCard(provider)
@@ -405,9 +407,9 @@ struct AIUsageModuleView: View {
                     identifier: provider.rawValue + ".tokens", tokens: tokens, showsTokens: true)
             }
             Text("— 表示没有记录，不能视为 0。Token 含输入、输出及缓存；仅覆盖已连接来源，不换算账户额度。")
-                .aiText(10, color: palette.muted).fixedSize(horizontal: false, vertical: true).padding(.top, 14)
+                .aiText(11, color: palette.muted).fixedSize(horizontal: false, vertical: true).padding(.top, 14)
             Text("按工作台时区统计 · " + calendar.timeZone.identifier)
-                .aiText(10, color: palette.muted).padding(.top, 5)
+                .aiText(11, color: palette.muted).padding(.top, 5)
         }.aiQuotaMeasuredRegion("fc.ai.history." + provider.rawValue + ".section")
             .accessibilityElement(children: .contain).accessibilityIdentifier("fc.ai.detail.dailyHistory")
     }
@@ -429,7 +431,7 @@ struct AIUsageModuleView: View {
             AIFactRow(title: "本次识别", value: item.map { "\($0.parsedRecords) 条计量记录" } ?? "—")
             AIFactRow(title: "保留历史", value: "\(retained.count) 条 · 最长 31 天", last: true)
             if let first = retained.map(\.timestamp).min(), let last = retained.map(\.timestamp).max() {
-                Text(first.formatted(date: .abbreviated, time: .shortened) + " 至 " + last.formatted(date: .abbreviated, time: .shortened)).aiText(11, color: palette.muted).padding(.top, 12)
+                Text(aiFullDateTime(first, timeZone: timeZone) + " 至 " + aiFullDateTime(last, timeZone: timeZone)).aiText(11, color: palette.muted).padding(.top, 12)
             }
             if model.tokenHistoryCapacityLimited { AINotice(text: "历史达到容量上限，较早记录已移出；统计仅覆盖当前保留范围。", warning: true).padding(.top, 10) }
             if let message = model.tokenHistoryMessage { AINotice(text: message, warning: true).padding(.top, 10) }
@@ -437,76 +439,92 @@ struct AIUsageModuleView: View {
     }
     private var sources: some View {
         VStack(alignment: .leading, spacing: 0) {
-            WBPageHeader(title: "AI 数据来源", subtitle: "只读取用量元数据，不读取密钥或对话正文") {
-                Button { model.present(.manual) } label: { Label("添加记录", systemImage: "plus") }.buttonStyle(WBButtonStyle()).accessibilityIdentifier("fc.ai.manual")
+            WBPageHeader(title: "AI 数据来源", subtitle: "只读取用量元数据，不读取密钥或对话正文", back: pageBack) {
+                HStack(spacing: 8) {
+                    Button { sourcesMenuOpen.toggle() } label: { Label("更多", systemImage: "ellipsis") }.buttonStyle(WBButtonStyle())
+                        .workbenchPopover(isPresented: $sourcesMenuOpen, width: 230, alignment: .trailing) { sourcesMenu }
+                        .accessibilityIdentifier("fc.ai.sources.more")
+                    Button { model.present(.manual) } label: { Label("添加记录", systemImage: "plus") }.buttonStyle(WBButtonStyle()).accessibilityIdentifier("fc.ai.manual")
+                }
             }
             storageProtection
             AIWeightedColumns(ratio: 1, gap: 12) { sourceCard(.codex); sourceCard(.claude) }
-            AINotice(text: "断开只停止继续读取，已记录的 Token 历史会保留。不会读取认证密钥，也不保存提示词或对话正文。").padding(.top, 12)
-            HStack(spacing: 12) {
-                Button("导入单次额度 JSON") { model.importQuota() }.buttonStyle(WBQuietButtonStyle())
-                Button("导出 JSON 模板") { model.exportTemplate() }.buttonStyle(WBQuietButtonStyle())
-                Menu("更多来源操作") {
-                    Button("连接 Codex 额度 JSON") { model.chooseQuotaFile(for: .codex) }
-                    if model.configuration(for: .codex).quotaPath != nil { Button("移除 Codex 额度 JSON 连接") { model.removeQuotaFile(for: .codex) } }
-                }.menuStyle(.borderlessButton).fixedSize().font(.system(size: 11)).foregroundStyle(palette.secondary)
-                Spacer()
-                Button("来源与隐私说明") { model.present(.help) }.buttonStyle(WBQuietButtonStyle())
-            }.padding(.top, 12)
+            // Supporting copy sits on the note backing, never on the wallpaper (现行规范 3.4).
+            WBPageNote {
+                HStack(alignment: .top, spacing: 12) {
+                    Text("断开只停止继续读取，已记录的 Token 历史会保留。不会读取认证密钥，也不保存提示词或对话正文。")
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Button("来源与隐私说明") { model.present(.help) }.buttonStyle(WBQuietButtonStyle())
+                }
+            }.padding(.top, 12).accessibilityIdentifier("fc.ai.sources.note")
         }
+    }
+    /// The JSON actions live in the header's "更多" popover (现行规范 9.3, U3).
+    private var sourcesMenu: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            sourcesMenuItem("导入单次额度 JSON") { model.importQuota() }
+            sourcesMenuItem("导出 JSON 模板") { model.exportTemplate() }
+            sourcesMenuItem("连接 Codex 额度 JSON") { model.chooseQuotaFile(for: .codex) }
+            if model.configuration(for: .codex).quotaPath != nil {
+                sourcesMenuItem("移除 Codex 额度 JSON 连接") { model.removeQuotaFile(for: .codex) }
+            }
+        }.padding(6)
+    }
+    private func sourcesMenuItem(_ title: String, action: @escaping () -> Void) -> some View {
+        Button { sourcesMenuOpen = false; action() } label: {
+            Text(title).font(.system(size: 12)).foregroundStyle(palette.text).frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10).frame(height: 32).contentShape(Rectangle())
+        }.buttonStyle(WBSelectableButtonStyle(cornerRadius: 7, drawsSelection: false, showsBorder: false))
     }
     private func sourceCard(_ provider: AIProvider) -> some View {
         let config = model.configuration(for: provider)
         let value = summary(provider)
-        let actualCoverage = model.coverage[provider]
-        let connectionTitle = !config.enabled ? "自动读取关闭" : actualCoverage == nil ? "尚未读取" : actualCoverage?.sourceAvailable == true ? "已连接" : "来源不可用"
-        let connected = config.enabled && actualCoverage?.sourceAvailable == true
-        let savedReading = config.manualSnapshot.map { $0.source.title + " · " + $0.observedAt.formatted(date: .abbreviated, time: .shortened) }
+        let savedReading = config.manualSnapshot.map { $0.source.title + " · " + aiShortDateTime($0.observedAt, timeZone: timeZone) }
         let sourceDetail = config.enabled ? (model.diagnostics[provider] ?? "尚无采样，等待首次读取") + (savedReading.map { "；另有" + $0 } ?? "") :
-            (savedReading.map { $0 + "；" } ?? "") + "自动读取关闭，不扫描目录或额度文件；历史保留"
+            (savedReading.map { $0 + "；" } ?? "") + "自动读取已关闭，不扫描目录或额度文件；历史保留"
+        // One switch says whether the source is read; turning it off still asks
+        // first, as the former "断开" action did (现行规范 9.3, G1).
+        let automatic = Binding(get: { config.enabled }, set: { enabled in
+            if enabled { model.setEnabled(true, provider: provider) } else { model.present(.disconnect(provider)) }
+        })
         return WBCard(spacing: 0) {
             HStack(spacing: 7) {
                 AIProviderLogo(provider: provider, size: 16)
-                Text(provider.title).aiText(12, weight: .medium, color: palette.secondary)
+                Text(provider.title).aiText(13, weight: .medium, color: palette.text)
                 Spacer()
             }.frame(height: 22).padding(.bottom, 10)
-            AISourceRow(title: provider == .codex ? "本机会话目录" : "本机会话 Token", detail: provider == .codex ? "读取额度与 Token 元数据" : "只提供 Token 记录，不推断订阅额度") {
-                AIStateChip(title: connectionTitle, positive: connected)
+            WBSettingRow(title: "自动读取", subtitle: provider == .codex ? "读取本机会话目录中的额度与 Token 元数据" : "读取官方客户端额度与本机会话 Token；Token 不推断订阅额度", showsDivider: false) {
+                Toggle("自动读取 " + provider.title, isOn: automatic).labelsHidden().toggleStyle(.switch).controlSize(.mini).tint(palette.accent).clickableCursor()
+                    .accessibilityIdentifier("fc.ai.disconnect." + provider.rawValue)
             }
             if provider == .codex {
-                AISourceRow(title: "来源状态", detail: sourceDetail) {
+                WBSettingRow(title: "来源状态", subtitle: sourceDetail) {
                     Button("重新读取") { model.refresh() }.buttonStyle(WBButtonStyle(compact: true)).disabled(model.isRefreshing)
                 }
-                AISourceRow(title: "目录范围", detail: config.sessionsPath) {
+                WBSettingRow(title: "目录范围", subtitle: config.sessionsPath, subtitleTruncation: .middle) {
                     Button("更改目录") { model.chooseSessionsDirectory(for: provider) }.buttonStyle(WBButtonStyle(compact: true))
                 }
-                AISourceRow(title: "断开来源", detail: "保留已有历史，停止后续读取", last: true) {
-                    if config.enabled {
-                        Button("断开") { model.present(.disconnect(provider)) }.buttonStyle(WBButtonStyle(destructive: true, compact: true)).accessibilityIdentifier("fc.ai.disconnect." + provider.rawValue)
-                    } else {
-                        Button("恢复读取") { model.setEnabled(true, provider: provider) }.buttonStyle(WBButtonStyle(compact: true))
-                    }
-                }
             } else {
-                AISourceRow(title: "额度快照", detail: value.snapshot?.source.title ?? "等待 Claude 官方额度读数") {
-                    AIStateChip(title: value.state == .ready ? "有效" + (value.updatedAt.map { " · " + $0.formatted(date: .omitted, time: .shortened) } ?? "") : value.state.title, positive: value.state == .ready)
+                WBSettingRow(title: "额度快照", subtitle: value.snapshot?.source.title ?? "等待 Claude 官方额度读数") {
+                    WBStatusPill(title: value.state == .ready ? "有效" + (value.updatedAt.map { " · " + aiClock($0, timeZone: timeZone) } ?? "") : value.state.title, good: value.state == .ready)
                 }
-                AISourceRow(title: "连接方式", detail: "通过官方客户端查询会员额度", last: true) {
+                WBSettingRow(title: "连接方式", subtitle: "通过官方客户端查询会员额度") {
                     Button("连接设置") { model.present(.claudeConnect) }.buttonStyle(WBButtonStyle(compact: true))
                 }
             }
-        }.frame(minHeight: 305.32, alignment: .top)
+        }
     }
     private var history: some View {
         let records = model.filteredRecords(provider: model.selectedProvider, period: model.selectedPeriod, includeDisconnected: true).sorted { $0.timestamp > $1.timestamp }
         return VStack(alignment: .leading, spacing: 0) {
-            WBPageHeader(title: "Token 活动记录", subtitle: "仅显示用量元数据；已断开来源的历史仍保留") { filters }
+            WBPageHeader(title: "Token 活动记录", subtitle: "仅显示用量元数据；已断开来源的历史仍保留", back: pageBack) { filters }
             WBCard(spacing: 0) {
                 AICardTitle(title: "最近活动", symbol: "clock.arrow.circlepath", trailing: "\(records.count) 条记录")
                 tokenSourceSummary(records).padding(.bottom, 12)
                 AITokenTable(records: records, model: model, compact: contentWidth < 800, scrollHeight: expanded ? 525 : 405)
             }
-            if model.tokenHistoryCapacityLimited { AINotice(text: "历史容量最多 20,000 条，最长保留 31 天。较早记录已移出，当前列表不代表完整账户历史。", warning: true).padding(.top, 12) }
+            if model.tokenHistoryCapacityLimited { WBPageNote(symbol: "exclamationmark.triangle") { Text("历史容量最多 20,000 条，最长保留 31 天。较早记录已移出，当前列表不代表完整账户历史。").fixedSize(horizontal: false, vertical: true) }.padding(.top, 12) }
             monthlyTokenHistory.padding(.top, 12)
             privacyFootnote.padding(.top, 12)
         }
@@ -518,7 +536,7 @@ struct AIUsageModuleView: View {
         let total = totals.reduce(Int64(0)) { $0 + $1.tokens }
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
-                Text("合计 " + aiCount(total) + " Token").aiText(12, weight: .medium, color: palette.text).monospacedDigit()
+                Text("合计 " + aiCount(total) + " Token").aiText(13, weight: .medium, color: palette.text).monospacedDigit()
                 Spacer(minLength: 8)
                 ForEach(totals, id: \.provider) { source in
                     let share = total > 0 ? Double(source.tokens) / Double(total) : 0
@@ -553,8 +571,8 @@ struct AIUsageModuleView: View {
                                 Text(summary.title).aiText(12, color: palette.text)
                                 Text(summary.provider.title).aiText(11, color: palette.muted)
                                 Spacer()
-                                Text(aiCount(summary.tokens.total) + " Token").aiText(12, weight: .medium, color: palette.text).monospacedDigit()
-                            }.padding(.vertical, 8)
+                                Text(aiCount(summary.tokens.total) + " Token").aiText(13, weight: .medium, color: palette.text).monospacedDigit()
+                            }.frame(height: 36)
                         }
                     }
                 }.frame(maxHeight: 240)
@@ -567,7 +585,7 @@ struct AIUsageModuleView: View {
     }
     private var prices: some View {
         VStack(alignment: .leading, spacing: 0) {
-            WBPageHeader(title: "模型单价", subtitle: "API 等价估算不代表订阅账单或实际付费") {
+            WBPageHeader(title: "模型单价", subtitle: "API 等价估算不代表订阅账单或实际付费", back: pageBack) {
                 Button("保存单价") { model.savePriceDraft() }.buttonStyle(WBButtonStyle(primary: true)).accessibilityIdentifier("fc.ai.price.save")
             }
             WBCard(title: model.priceDraft.model.isEmpty ? "API 等价估算单价" : model.priceDraft.model, symbol: "dollarsign.circle", spacing: 16) {
@@ -604,7 +622,7 @@ struct AIUsageModuleView: View {
                             Spacer()
                             Button("编辑") { model.requestPriceSelection(provider: price.provider, model: price.model) }.buttonStyle(WBButtonStyle(compact: true))
                             Button { model.present(.removePrice(price.id)) } label: { Image(systemName: "trash") }.buttonStyle(WBIconButtonStyle(size: 28)).help("删除此模型单价")
-                        }.padding(.vertical, 12).overlay(alignment: .bottom) { Rectangle().fill(palette.line).frame(height: 1) }
+                        }.frame(minHeight: 52).overlay(alignment: .bottom) { Rectangle().fill(palette.line).frame(height: 1) }
                     }
                 }.padding(.top, 12)
             }
@@ -682,17 +700,17 @@ struct AIDailyUsageBars: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(title).aiText(12, weight: .medium, color: palette.text)
+                Text(title).aiText(13, weight: .medium, color: palette.text)
                 Spacer()
                 Text(showsTokens ? (tokens.isEmpty ? "暂无 Token 记录" : "已记录 " + aiCount(tokens.values.reduce(Int64(0)) { $0 + $1.total }) + " Token / 31 天") : "0–100%")
-                    .aiText(10, color: palette.muted).monospacedDigit()
+                    .aiText(11, color: palette.muted).monospacedDigit()
             }
             HStack(alignment: .top, spacing: 8) {
                 VStack(alignment: .trailing) {
                     Text(showsTokens ? aiCount(Int64(maximum)) : "100%")
                     Spacer(minLength: 0)
                     Text("0")
-                }.font(.system(size: 10)).foregroundStyle(palette.muted).monospacedDigit().frame(width: 40, height: plotHeight)
+                }.font(.system(size: 11)).foregroundStyle(palette.muted).monospacedDigit().frame(width: 40, height: plotHeight)
                 GeometryReader { plot in
                     VStack(spacing: 6) {
                         HStack(alignment: .bottom, spacing: gap) {
@@ -706,7 +724,7 @@ struct AIDailyUsageBars: View {
                                                 .frame(height: max(2, plotHeight * amount / maximum))
                                                 .aiQuotaMeasuredRegion("fc.ai.history." + identifier + ".bar." + String(Int(day.date.timeIntervalSince1970)))
                                         } else {
-                                            Text("—").font(.system(size: 9)).foregroundStyle(palette.muted).frame(height: 14)
+                                            Text("—").font(.system(size: 11)).foregroundStyle(palette.muted).frame(height: 14)
                                         }
                                     }.frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(Rectangle())
                                 }.buttonStyle(ClickablePlainButtonStyle())
@@ -728,12 +746,12 @@ struct AIDailyUsageBars: View {
                         ZStack(alignment: .topLeading) {
                             ForEach(Array(visibleDays.enumerated()), id: \.element.id) { index, day in
                                 if index == 0 || index == 7 || index == 14 || index == 21 || index == visibleDays.count - 1 {
-                                    Text(formatted(day.date, template: "MMdd"))
+                                    Text(WorkbenchDateText.axis(day.date, calendar: calendar))
                                         .fixedSize()
                                         .position(x: min(max(22, (CGFloat(index) + 0.5) * (plot.size.width + gap) / CGFloat(visibleDays.count) - gap / 2), plot.size.width - 22), y: 6)
                                 }
                             }
-                        }.font(.system(size: 10)).foregroundStyle(palette.muted).frame(height: 14)
+                        }.font(.system(size: 11)).foregroundStyle(palette.muted).frame(height: 14)
                     }
                 }.frame(height: plotHeight + 20)
             }
@@ -782,14 +800,30 @@ private struct AIProviderQuotaCard: View {
     let expanded: Bool
     var automaticReadingEnabled = true
     var showsAction = true
+    var reading = false
+    var enable: (() -> Void)? = nil
+    /// The source's own connection settings, offered beside "开启读取" (9.3, U2).
+    var connect: (() -> Void)? = nil
     @Environment(\.timeZone) private var timeZone
     var action: () -> Void
     @Environment(\.workbenchPalette) private var palette
     private var windows: [AIQuotaWindow] { summary.snapshot?.availableWindows ?? [] }
     private var rowGap: CGFloat { expanded ? 18 : 14 }
-    private var sourceText: String {
-        if !automaticReadingEnabled { return summary.snapshot == nil ? "自动读取关闭" : summary.sourceDescription + " · 自动读取关闭" }
+    /// Nothing under the name while the empty state already gives the reason (9.3, U2).
+    private var sourceText: String? {
+        if !automaticReadingEnabled { return summary.snapshot == nil ? nil : summary.sourceDescription + " · 自动读取已关闭" }
         return summary.state == .disconnected ? "来源已断开" : summary.sourceDescription
+    }
+    fileprivate var isReading: Bool { automaticReadingEnabled && summary.snapshot == nil && (reading || summary.detail == AIUsageModel.readingDetail) }
+    /// One status, in words, at the top right (现行规范 9.3, U2).
+    private var status: String? {
+        if !automaticReadingEnabled { return "已关闭" }
+        if isReading { return "读取中" }
+        switch summary.state {
+        case .error: return "读取失败"
+        case .unavailable, .disconnected: return windows.isEmpty ? "不可用" : nil
+        case .ready, .stale: return nil
+        }
     }
     var body: some View {
         Group {
@@ -808,24 +842,27 @@ private struct AIProviderQuotaCard: View {
                 AIProviderLogo(provider: summary.provider)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
-                        Text(summary.title).aiText(14, weight: .medium, color: palette.text)
+                        Text(summary.title).aiText(13, weight: .medium, color: palette.text)
                         if let plan = summary.effectiveAccountPlan {
-                            Text(plan.title).aiText(10, weight: .medium, color: palette.secondary)
-                                .padding(.horizontal, 6).frame(height: 18)
-                                .background(palette.soft, in: RoundedRectangle(cornerRadius: 5))
+                            WBStatusPill(title: plan.title)
                                 .help(summary.accountPlanDescription)
                                 .accessibilityIdentifier("fc.ai.plan." + summary.provider.rawValue)
                         }
                     }.frame(height: 20, alignment: .leading)
-                    Text(sourceText).aiText(11, color: palette.muted).lineLimit(1).truncationMode(.middle).help(sourceText).frame(height: 16)
+                    if let sourceText {
+                        Text(sourceText).aiText(11, color: palette.muted).lineLimit(1).truncationMode(.middle).help(sourceText).frame(height: 16)
+                    }
                 }
                 Spacer()
+                if let status { WBStatusPill(title: status) }
             }.frame(height: 40)
                 .aiQuotaMeasuredRegion("fc.ai.quota.header." + summary.provider.rawValue)
                 .padding(.bottom, 14)
                 .accessibilityElement(children: .contain).accessibilityIdentifier("fc.ai.quota.header." + summary.provider.rawValue)
             quotaContent.frame(height: 128 + rowGap, alignment: .top)
             Spacer(minLength: 12)
+            // Without windows the empty state above is the only explanation.
+            if !windows.isEmpty {
             HStack(spacing: 5) {
                 Circle().fill(summary.state == .ready ? palette.accent : summary.state == .error ? palette.warning : palette.muted).frame(width: 5, height: 5)
                 Text(summary.state.title)
@@ -839,16 +876,26 @@ private struct AIProviderQuotaCard: View {
                 .aiText(11, color: summary.state == .error ? palette.warning : palette.muted)
                 .lineLimit(1).truncationMode(.tail).help(summary.state == .ready ? summary.accountPlanDescription : summary.detail)
                 .frame(height: 16).padding(.top, 6)
+            }
         }.frame(minHeight: minimumHeight, alignment: .top)
             .contentShape(RoundedRectangle(cornerRadius: 15))
     }
     @ViewBuilder private var quotaContent: some View {
         if windows.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                Image(systemName: "chart.bar.xaxis").font(.system(size: 20)).foregroundStyle(palette.muted)
-                Text("暂无可用额度窗口").aiText(12, weight: .medium, color: palette.secondary)
-                Text("连接来源后显示实际提供的周期；不会把缺失窗口记作 0%。")
-                    .aiText(11, color: palette.muted).fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 7) {
+                    Image(systemName: isReading ? "arrow.triangle.2.circlepath" : "info.circle").font(.system(size: 14)).foregroundStyle(palette.muted)
+                    Text(emptyTitle).aiText(13, weight: .medium, color: palette.text)
+                }
+                Text(emptyDetail).aiText(11, color: palette.secondary).fixedSize(horizontal: false, vertical: true)
+                if !automaticReadingEnabled, let enable, !showsAction {
+                    HStack(spacing: 12) {
+                        Button("开启读取", action: enable).buttonStyle(WBButtonStyle(compact: true))
+                            .accessibilityIdentifier("fc.ai.quota.enable." + summary.provider.rawValue)
+                        if let connect { Button("连接设置", action: connect).buttonStyle(WBQuietButtonStyle()) }
+                        else { Button("管理来源", action: action).buttonStyle(WBQuietButtonStyle()) }
+                    }.padding(.top, 2)
+                }
             }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                 .accessibilityIdentifier("fc.ai.quota.empty." + summary.provider.rawValue)
         } else {
@@ -869,6 +916,18 @@ private struct AIProviderQuotaCard: View {
         }
     }
 }
+extension AIProviderQuotaCard {
+    fileprivate var emptyTitle: String {
+        if !automaticReadingEnabled { return "自动读取已关闭" }
+        if isReading { return "读取中" }
+        return summary.state == .error ? "读取失败" : "暂无可用额度窗口"
+    }
+    fileprivate var emptyDetail: String {
+        if !automaticReadingEnabled { return "开启后显示\(summary.provider == .codex ? "本机会话" : "官方客户端")提供的额度窗口；缺失的窗口不会记作 0%。" }
+        if isReading { return summary.detail }
+        return summary.state == .error ? summary.detail : "连接来源后显示实际提供的周期；不会把缺失窗口记作 0%。"
+    }
+}
 private struct AIQuotaRow: View {
     var window: AIQuotaWindow
     var identifier: String
@@ -880,10 +939,10 @@ private struct AIQuotaRow: View {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(window.title).aiText(12, color: palette.secondary).lineLimit(1)
                 Spacer()
-                Text(UsagePercentage.text(window.usedPercent)).font(.system(size: 21)).monospacedDigit()
+                Text(UsagePercentage.text(window.usedPercent)).font(.system(size: 24)).monospacedDigit()
                 Text("已用").aiText(11, color: palette.muted)
             }.frame(height: 26)
-            WBProgress(value: window.usedPercent / 100, color: color, height: 6)
+            WBProgress(value: window.usedPercent / 100, color: color, height: 5)
                 .aiQuotaMeasuredRegion(identifier + ".progress")
                 .accessibilityElement(children: .ignore).accessibilityLabel(window.title + "已用 " + UsagePercentage.text(window.usedPercent))
                 .accessibilityIdentifier(identifier + ".progress")
@@ -902,6 +961,7 @@ private struct AIActionCard<Content: View>: View {
     let content: Content
     @Environment(\.workbenchPalette) private var palette
     @FocusState private var actionFocused: Bool
+    @State private var keyboardFocused = false
     init(actionTitle: String, action: @escaping () -> Void, @ViewBuilder content: () -> Content) {
         self.actionTitle = actionTitle
         self.action = action
@@ -922,9 +982,11 @@ private struct AIActionCard<Content: View>: View {
                 guard actionFocused else { return .ignored }
                 action(); return .handled
             }
+            // Only keyboard focus draws the 2-point accent ring; a click does not (现行规范 8).
+            .onChange(of: actionFocused) { _, focused in keyboardFocused = focused && NSApp.currentEvent?.type == .keyDown }
             .overlay {
                 RoundedRectangle(cornerRadius: 15)
-                    .stroke(actionFocused ? palette.accent : .clear, lineWidth: 1)
+                    .strokeBorder(keyboardFocused ? palette.accent : .clear, lineWidth: 2)
                     .allowsHitTesting(false)
             }
             .help(actionTitle)
@@ -942,7 +1004,7 @@ private struct AICardTitle: View {
     var body: some View {
         HStack(spacing: 7) {
             Image(systemName: symbol).font(.system(size: 16)).foregroundStyle(palette.accent)
-            Text(title).aiText(12, weight: .medium, color: palette.secondary)
+            Text(title).aiText(13, weight: .medium, color: palette.text)
             Spacer()
             if let trailing { Text(trailing).aiText(11, color: palette.muted) }
         }.frame(height: 22).padding(.bottom, 10)
@@ -954,6 +1016,7 @@ private struct AITokenTable: View {
     var compact: Bool
     var scrollHeight: CGFloat?
     @Environment(\.workbenchPalette) private var palette
+    @Environment(\.timeZone) private var timeZone
     var body: some View {
         VStack(spacing: 0) {
             rowHeader
@@ -968,7 +1031,7 @@ private struct AITokenTable: View {
             Text("来源 / 模型").frame(maxWidth: .infinity, alignment: .leading)
             Text("输入").frame(width: compact ? 52 : 74, alignment: .trailing)
             Text("输出").frame(width: compact ? 52 : 74, alignment: .trailing)
-        }.aiText(11, color: palette.muted).padding(.vertical, 10).overlay(alignment: .bottom) { Rectangle().fill(palette.line).frame(height: 1) }
+        }.aiText(11, color: palette.muted).frame(height: 32).overlay(alignment: .bottom) { Rectangle().fill(palette.line).frame(height: 1) }
     }
     @ViewBuilder private var rows: some View {
         if records.isEmpty {
@@ -976,25 +1039,16 @@ private struct AITokenTable: View {
         } else {
             ForEach(records, id: \.selfIdentity) { record in
                 HStack(spacing: compact ? 6 : 12) {
-                    Text(record.timestamp.formatted(.dateTime.month(.twoDigits).day(.twoDigits).hour().minute())).foregroundStyle(palette.muted).frame(width: compact ? 72 : 92, alignment: .leading)
+                    Text(aiShortDateTime(record.timestamp, timeZone: timeZone)).foregroundStyle(palette.muted).lineLimit(1).frame(width: compact ? 72 : 92, alignment: .leading)
                     Text(record.provider.title + " · " + record.model).foregroundStyle(palette.secondary).lineLimit(1).help(record.provider.title + " · " + record.model).frame(maxWidth: .infinity, alignment: .leading)
                     Text(aiCount(record.tokens.input)).monospacedDigit().frame(width: compact ? 52 : 74, alignment: .trailing)
                     Text(aiCount(record.tokens.output)).foregroundStyle(palette.muted).monospacedDigit().frame(width: compact ? 52 : 74, alignment: .trailing)
-                }.font(.system(size: 11)).frame(minHeight: 15.95).padding(.vertical, 11).overlay(alignment: .bottom) { Rectangle().fill(palette.line).frame(height: 1) }
+                }.font(.system(size: 11)).frame(height: 36).overlay(alignment: .bottom) { Rectangle().fill(palette.line).frame(height: 1) }
             }
         }
     }
 }
 private extension AITokenRecord { var selfIdentity: String { provider.rawValue + ":" + id } }
-private struct AIStateChip: View {
-    var title: String
-    var positive: Bool
-    @Environment(\.workbenchPalette) private var palette
-    var body: some View {
-        Text(title).font(.system(size: 11)).foregroundStyle(positive ? palette.success : palette.muted)
-            .padding(.horizontal, 7).padding(.vertical, 3).background((positive ? palette.success : palette.muted).opacity(0.08), in: RoundedRectangle(cornerRadius: 5))
-    }
-}
 private struct AIFactRow: View {
     var title: String
     var value: String
@@ -1029,6 +1083,8 @@ private struct AISourceRow<Action: View>: View {
 private struct AINotice: View {
     var text: String
     var warning = false
+    /// Outside a card the notice sits on the page note backing (现行规范 3.4).
+    var onBackdrop = false
     @Environment(\.workbenchPalette) private var palette
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -1039,8 +1095,11 @@ private struct AINotice: View {
         }.foregroundStyle(warning ? palette.warning : palette.secondary)
             .padding(.vertical, 10).padding(.horizontal, 12)
             .background {
-                RoundedRectangle(cornerRadius: 8).fill(warning ? palette.surface : palette.soft)
-                    .overlay { if warning { RoundedRectangle(cornerRadius: 8).fill(palette.warning.opacity(0.10)) } }
+                if onBackdrop { WorkbenchMaterialSurface(radius: 8) }
+                else {
+                    RoundedRectangle(cornerRadius: 8).fill(warning ? palette.surface : palette.soft)
+                        .overlay { if warning { RoundedRectangle(cornerRadius: 8).fill(palette.warning.opacity(0.10)) } }
+                }
             }
             .accessibilityElement(children: .contain)
     }
@@ -1057,12 +1116,27 @@ private struct AIFieldStyle: TextFieldStyle {
     func _body(configuration: TextField<Self._Label>) -> some View {
         configuration.textFieldStyle(.plain).font(.system(size: 12)).foregroundStyle(palette.text).padding(.horizontal, 10).frame(height: 32)
             .background(WorkbenchMaterialSurface(kind: .control, radius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(palette.controlBorder, lineWidth: 1).allowsHitTesting(false))
     }
 }
 private extension View {
     func aiText(_ size: CGFloat, weight: Font.Weight = .regular, color: Color) -> some View {
         font(.system(size: size, weight: weight)).foregroundStyle(color).lineSpacing(size * 0.25).fixedSize(horizontal: false, vertical: true).frame(minHeight: size * 1.45, alignment: .leading)
     }
+}
+/// 「11月7日 10:50」 for compact rows; lists with room use the full date (现行规范 5.3).
+private func aiShortDateTime(_ date: Date, timeZone: TimeZone) -> String {
+    var calendar = Calendar(identifier: .gregorian); calendar.timeZone = timeZone
+    return WorkbenchDateText.monthDay(date, calendar: calendar) + " " + aiClock(date, timeZone: timeZone)
+}
+private func aiFullDateTime(_ date: Date, timeZone: TimeZone) -> String {
+    var calendar = Calendar(identifier: .gregorian); calendar.timeZone = timeZone
+    return WorkbenchDateText.fullWithTime(date, calendar: calendar)
+}
+private func aiClock(_ date: Date, timeZone: TimeZone) -> String {
+    var calendar = Calendar(identifier: .gregorian); calendar.timeZone = timeZone
+    let parts = calendar.dateComponents([.hour, .minute], from: date)
+    return String(format: "%02d:%02d", parts.hour ?? 0, parts.minute ?? 0)
 }
 private func aiCount(_ value: Int64) -> String {
     let number = Double(value)
@@ -1110,7 +1184,7 @@ private struct AIUsageDialogContent: View {
                         Text("仅对新鲜、有效的来源读数触发").aiText(11, color: palette.muted)
                     }
                     Spacer()
-                    Toggle("额度接近上限时提醒", isOn: $model.alertEnabled).labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.small).accessibilityIdentifier("fc.ai.alert.enabled")
+                    Toggle("额度接近上限时提醒", isOn: $model.alertEnabled).labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.mini).accessibilityIdentifier("fc.ai.alert.enabled")
                 }
                 HStack(spacing: 14) {
                     AIFieldLabel("留意 · 已用达到（%）") { TextField("75", text: $model.alertWarningText).textFieldStyle(AIFieldStyle()).accessibilityIdentifier("fc.ai.alert.warning") }
@@ -1244,7 +1318,7 @@ private struct AIUsageDialogContent: View {
                     HStack(spacing: 10) { ProgressView().controlSize(.small); Text("正在检查可识别的计量字段…").aiText(12, color: palette.secondary) }.frame(maxWidth: .infinity, minHeight: 140)
                 } else if let preview = model.connectionPreview {
                     AISourceRow(title: URL(fileURLWithPath: preview.path).lastPathComponent, detail: preview.path, last: true, first: true) {
-                        AIStateChip(title: !preview.canConnect ? "不可读取" : previewIsStale(preview) ? "可读取 · 已过期" : "可读取", positive: preview.canConnect && !previewIsStale(preview))
+                        WBStatusPill(title: !preview.canConnect ? "不可读取" : previewIsStale(preview) ? "可读取 · 已过期" : "可读取", good: preview.canConnect && !previewIsStale(preview))
                     }
                     VStack(spacing: 0) {
                         if preview.quotaFile {
@@ -1302,7 +1376,7 @@ private struct AIUsageDialogContent: View {
         } footer: { Button("知道了") { model.requestDismissDialog() }.buttonStyle(WBButtonStyle(primary: true)) }
     }
     private func helpLine(_ title: String, _ text: String) -> some View {
-        VStack(alignment: .leading, spacing: 5) { Text(title).aiText(12, weight: .medium, color: palette.text); Text(text).aiText(11, color: palette.secondary) }
+        VStack(alignment: .leading, spacing: 5) { Text(title).aiText(13, weight: .medium, color: palette.text); Text(text).aiText(11, color: palette.secondary) }
     }
     @ViewBuilder private var errorText: some View {
         if let message = model.errorMessage { Text(message).aiText(11, color: palette.warning).accessibilityIdentifier("fc.ai.dialog.error") }

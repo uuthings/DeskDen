@@ -63,6 +63,12 @@ struct WorkbenchAuditEntry:Codable,Identifiable {var id:String;var title:String;
     @Published private(set) var loginNeedsApproval=false
     @Published var message:String?
     @Published var toast:String?
+    /// Belongs to the toast with the same message; a later plain toast drops it.
+    @Published var toastAction:WorkbenchToastAction?
+    func showToast(_ text:String,actionTitle:String? = nil,action:(()->Void)? = nil) {
+        toastAction=action.map {WorkbenchToastAction(message:text,title:actionTitle ?? "撤销",perform:$0)}
+        toast=text
+    }
     @Published var auditStorageResult="尚未检查"
     @Published var lastAudit:Date?
     weak var hostWindow:NSWindow?

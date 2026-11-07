@@ -541,9 +541,8 @@ struct DeviceHistoryChartData {
             maxValue = max(minValue + 20, 70, (((finite.max() ?? 60) + 5) / 10).rounded(.up) * 10)
         case .network:
             minValue = 0
-            let maximum = max(1024, (finite.max() ?? 0) * 1.15)
-            let divisor: Double = maximum >= 1_048_576 ? 1_048_576 : 1024
-            maxValue = networkScale ? ceil(maximum / divisor) * divisor : maximum
+            let maximum = max(1_000, (finite.max() ?? 0) * 1.15)
+            maxValue = networkScale ? Self.niceNetworkMaximum(maximum) : maximum
         }
         self.minValue = minValue; self.maxValue = maxValue
         let range = maxValue - minValue
@@ -557,6 +556,15 @@ struct DeviceHistoryChartData {
                 return Sample(segment: point.segment, location: location)
             }
         }
+    }
+
+    /// The network axis tops out at 1, 2 or 5 × 10ⁿ decimal bytes per second,
+    /// so the labelled middle gridline is a clean half (现行规范 9.3).
+    static func niceNetworkMaximum(_ value: Double) -> Double {
+        guard value.isFinite, value > 0 else { return 1_000 }
+        let magnitude = pow(10, floor(log10(value)))
+        for step in [1.0, 2, 5] where step * magnitude >= value * 0.999_999 { return step * magnitude }
+        return 10 * magnitude
     }
 
     static func values(_ point: DeviceHistoryPoint, kind: DeviceChartKind) -> [Double?] {
@@ -595,11 +603,10 @@ struct DeviceHistoryChart: View {
     var showsSeriesLegend = true
     @State private var hover: CGPoint?
     private func axisValue(_ value: Double, divisor: Double) -> String { let text = String(format: "%.1f", value / divisor); return text.hasSuffix(".0") ? String(text.dropLast(2)) : text }
-    private func clock(_ date: Date) -> String { let format = DateFormatter(); format.dateFormat = "HH:mm"; return format.string(from: date) }
     var body: some View {
         let data = DeviceHistoryChartData(points: points, kind: kind, minutes: minutes, networkScale: networkScale)
         let visible = data.visible, end = data.end, minValue = data.minValue, maxValue = data.maxValue
-        let networkDivisor: Double = maxValue >= 1_048_576 ? 1_048_576 : 1024
+        let networkDivisor: Double = maxValue >= 1_000_000 ? 1_000_000 : 1_000
         let maximumLabel = axisValue(maxValue, divisor: networkDivisor)
         let middleLabel = axisValue(maxValue / 2, divisor: networkDivisor)
         let networkAxisWidth = DeviceChartAxisMetrics.width(for: [maximumLabel, middleLabel, "0"], minimum: 21)
@@ -609,7 +616,7 @@ struct DeviceHistoryChart: View {
         let valueAxisWidth = valueLabels.isEmpty ? 0 : DeviceChartAxisMetrics.width(for: valueLabels, minimum: 28)
         VStack(spacing: 8) {
             if networkScale {
-                HStack { Text("近 \(minutes) 分钟"); Spacer(); Text(networkDivisor == 1_048_576 ? "MB/s" : "KB/s") }
+                HStack { Spacer(); Text(networkDivisor == 1_000_000 ? "MB/s" : "KB/s") }
                     .font(.system(size: 11)).foregroundStyle(palette.muted)
             }
             HStack(spacing: networkScale || !valueLabels.isEmpty ? 6 : 0) {
@@ -671,9 +678,7 @@ struct DeviceHistoryChart: View {
             }
             }
             HStack(spacing: 6) {
-                if networkScale {
-                    Text(clock(end.addingTimeInterval(-Double(minutes * 60)))); Spacer(); Text(clock(end))
-                } else if !valueLabels.isEmpty {
+                if networkScale || !valueLabels.isEmpty {
                     Text(minutes == 60 ? "1 小时前" : "\(minutes) 分钟前"); Spacer(minLength: 0); Text("现在")
                 } else if kind == .thermal {
                     legend("CPU", palette.accent); legend("GPU", palette.cool, dashed: true)
@@ -685,7 +690,7 @@ struct DeviceHistoryChart: View {
                     Spacer(minLength: 0); Text("现在")
                 }
             }.font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
-                .padding(.leading, networkScale ? 27 : valueLabels.isEmpty ? 0 : valueAxisWidth + 6)
+                .padding(.leading, networkScale ? networkAxisWidth + 6 : valueLabels.isEmpty ? 0 : valueAxisWidth + 6)
             if !valueLabels.isEmpty && kind == .thermal {
                 HStack(spacing: 14) { legend("CPU", palette.accent); legend("GPU", palette.cool, dashed: true); Spacer(minLength: 0) }
                     .font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
@@ -707,12 +712,10 @@ struct DeviceHistoryChart: View {
 
 // Traffic and storage use decimal bytes; memory retains its separate binary units.
 extension DeviceTrafficDisplay {
+    /// Traffic totals share the disk precision: GB and TB keep one decimal,
+    /// MB and smaller are whole numbers (现行规范 5.2, 9.3).
     static func adaptive(_ bytes: UInt64?) -> String {
-        guard let bytes else { return "—" }
-        var value = Double(bytes), index = 0
-        let units = ["B", "KB", "MB", "GB", "TB", "PB", "EB"]
-        while value >= 1000 && index < units.count - 1 { value /= 1000; index += 1 }
-        return decimal(value) + " " + units[index]
+        DeviceStorageCapacity.formatted(bytes)
     }
     static func budget(_ gigabytes: Double) -> String { decimal(gigabytes) + " GB" }
     private static func decimal(_ value: Double) -> String {

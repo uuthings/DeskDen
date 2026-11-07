@@ -327,10 +327,10 @@ struct DeviceModuleView: View {
         VStack(spacing: 12) {
             HStack { Text("当前网络接口").font(.system(size: 12)).foregroundStyle(palette.secondary); Spacer(); Button { sheet = .networkOptions } label: { HStack(spacing: 6) { Text(networkInterfaceSummary).lineLimit(1).truncationMode(.tail); Image(systemName: "chevron.down").font(.system(size: 10)).accessibilityHidden(true) }.frame(width: 152, alignment: .leading) }.buttonStyle(WBButtonStyle()).help("管理实时网卡；完整选择列表在接口设置中展示").accessibilityLabel("当前网络接口：" + networkInterfaceSummary).accessibilityIdentifier("device-network-interface-picker") }
             DeviceDetailColumns {
-                DeviceDetailCard(title: "下载速度", symbol: "arrow.down") { DeviceReading(value: DeviceFormat.rate(s.network.downloadBytesPerSecond), size: 36) }
-                DeviceDetailCard(title: "上传速度", symbol: "arrow.up") { DeviceReading(value: DeviceFormat.rate(s.network.uploadBytesPerSecond), size: 36) }
+                DeviceDetailCard(title: "下载速度", symbol: "arrow.down") { DeviceReading(value: DeviceFormat.rate(s.network.downloadBytesPerSecond), size: 30) }
+                DeviceDetailCard(title: "上传速度", symbol: "arrow.up") { DeviceReading(value: DeviceFormat.rate(s.network.uploadBytesPerSecond), size: 30) }
             }
-            WBCard(title: "网络速度趋势", symbol: "waveform.path.ecg") { DeviceHistoryChart(points: model.history, kind: .network, minutes: minutes).frame(height: expanded ? 260 : 190) }
+            WBCard(title: "网络速度趋势", symbol: "waveform.path.ecg") { DeviceHistoryChart(points: model.history, kind: .network, minutes: minutes, networkScale: true).frame(height: expanded ? 260 : 190) }
             DeviceDetailColumns {
                 DeviceDetailCard(title: "接口信息", symbol: "wifi") {
                     DeviceFact(label: "接口", value: s.network.interfaceNames.isEmpty ? "没有活跃接口" : s.network.interfaceNames.joined(separator: "、"))
@@ -694,11 +694,17 @@ enum DeviceFormat {
         guard sysctlbyname("kern.osversion", &buffer, &size, nil, 0) == 0 else { return version }
         return version + "（" + String(cString: buffer) + "）"
     }
+    /// Rates use decimal units like the traffic ledger; below 10 keeps one
+    /// decimal, 10 and above are whole numbers (现行规范 9.3).
     static func rate(_ value: Double?) -> String {
         guard let value, value.isFinite, value >= 0 else { return "—" }
-        if value >= 1_048_576 { return String(format: "%.2f MB/s", value / 1_048_576) }
-        if value >= 1024 { return String(format: "%.1f KB/s", value / 1024) }
-        return String(format: "%.0f B/s", value)
+        let units = ["B/s", "KB/s", "MB/s", "GB/s"]
+        var number = value, index = 0
+        while number >= 1_000 && index < units.count - 1 { number /= 1_000; index += 1 }
+        func text(_ number: Double) -> String { index > 0 && number < 9.95 ? String(format: "%.1f", number) : String(format: "%.0f", number) }
+        // Rounding may reach 1000 of the current unit; show the next unit instead.
+        if index < units.count - 1, (Double(text(number)) ?? 0) >= 1_000 { number /= 1_000; index += 1 }
+        return text(number) + " " + units[index]
     }
     static func percent(_ value: Double?) -> String { UsagePercentage.text(value) }
     static func duration(_ seconds: TimeInterval) -> String {

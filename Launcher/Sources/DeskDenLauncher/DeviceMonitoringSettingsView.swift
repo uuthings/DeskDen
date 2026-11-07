@@ -441,10 +441,10 @@ struct DeviceTrafficHistoryView: View {
 
 /// Decimal formatting matches the budget unit and retains small nonzero observations.
 enum DeviceTrafficDisplay {
+    /// 「11月1日–11月30日」 in the ledger's time zone (现行规范 5.3, G2).
     static func period(_ summary: DeviceTrafficSummary, includeYear: Bool = false) -> String {
-        let formatter = DateFormatter(); formatter.timeZone = TimeZone(identifier: summary.timeZoneIdentifier)
-        formatter.dateFormat = includeYear ? "yyyy/M/d" : "M/d"
-        return "\(formatter.string(from: summary.periodStart)) – \(formatter.string(from: summary.periodEnd.addingTimeInterval(-1)))"
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(identifier: summary.timeZoneIdentifier) ?? .current
+        return WorkbenchDateText.range(summary.periodStart, summary.periodEnd.addingTimeInterval(-1), calendar: calendar, withYear: includeYear)
     }
     static func gigabytes(_ bytes: UInt64) -> String {
         let value = Double(bytes) / 1_000_000_000

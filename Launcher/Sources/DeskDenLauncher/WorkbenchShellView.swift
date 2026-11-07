@@ -34,6 +34,26 @@ private struct WorkbenchPageMaximumWidthKey: EnvironmentKey {
     static let defaultValue: CGFloat = .infinity
 }
 enum WorkbenchPageScrollSpace { static let name = "workbench-page-scroll" }
+/// One-off results (deleted, exported, restored) appear as the window's toast
+/// (现行规范 4.8, G3); an undoable result carries its action.
+struct WorkbenchToastAction {
+    let message: String
+    let title: String
+    let perform: () -> Void
+}
+struct WorkbenchToastPoster {
+    var post: (String, String?, (() -> Void)?) -> Void = { _, _, _ in }
+    func callAsFunction(_ message: String, actionTitle: String? = nil, action: (() -> Void)? = nil) { post(message, actionTitle, action) }
+}
+private struct WorkbenchToastKey: EnvironmentKey {
+    static var defaultValue: WorkbenchToastPoster { WorkbenchToastPoster() }
+}
+extension EnvironmentValues {
+    var workbenchToast: WorkbenchToastPoster {
+        get {self[WorkbenchToastKey.self]}
+        set {self[WorkbenchToastKey.self] = newValue}
+    }
+}
 extension EnvironmentValues {
     var workbenchPageInsets: EdgeInsets {
         get {self[WorkbenchPageInsetsKey.self]}
@@ -139,6 +159,7 @@ struct WorkbenchSceneView: View {
         .overlay(RoundedRectangle(cornerRadius: windowRadius).strokeBorder(Color.white.opacity(model.isFullScreen ? 0 : 0.57), lineWidth: 1).allowsHitTesting(false))
         .workbenchThemeEnvironment(theme: model.theme, opacity: model.opacity, backgroundMotion: false, appearance: model.appearance)
         .environment(\.workbenchModals,model.modals)
+        .environment(\.workbenchToast, WorkbenchToastPoster { [weak model] text, title, action in model?.showToast(text, actionTitle: title, action: action) })
         .ignoresSafeArea(.container, edges: .top)
         .tint(palette.accent).controlSize(.regular)
         .font(.system(size: 12)).foregroundStyle(palette.text)
@@ -209,15 +230,24 @@ private struct WorkbenchStatusMessages:View {
                     WorkbenchStatusMessageDialog(model:model)
                 }
             if let toast=model.toast {
-                Text(toast).font(.system(size:12)).foregroundStyle(palette.text).padding(.horizontal,16).padding(.vertical,10)
+                let action=model.toastAction?.message == toast ? model.toastAction : nil
+                HStack(spacing:12) {
+                    Text(toast).font(.system(size:12)).foregroundStyle(palette.text).lineLimit(1)
+                    if let action {
+                        Button(action.title) {model.toast=nil;model.toastAction=nil;action.perform()}
+                            .buttonStyle(WBButtonStyle(compact:true)).accessibilityIdentifier("workbench-toast-action")
+                    }
+                }.padding(.horizontal,16).padding(.vertical,action == nil ? 10 : 6)
                     .background(WorkbenchMaterialSurface(kind:.panel,radius:10)).padding(.bottom,18)
-                    .allowsHitTesting(false).accessibilityIdentifier("workbench-toast")
+                    .allowsHitTesting(action != nil).accessibilityElement(children:.contain).accessibilityIdentifier("workbench-toast")
             }
-        }.frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.bottom).allowsHitTesting(false)
+        }.frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.bottom)
             .task(id:model.toast) {
                 let shown=model.toast;guard shown != nil else {return}
-                do {try await Task.sleep(for:.seconds(3))}catch{return}
-                if model.toast == shown {model.toast=nil}
+                // An undoable result stays longer, matching the launcher toast.
+                let seconds=model.toastAction?.message == shown ? 8.0 : 3.0
+                do {try await Task.sleep(for:.seconds(seconds))}catch{return}
+                if model.toast == shown {model.toast=nil;model.toastAction=nil}
             }
     }
 }

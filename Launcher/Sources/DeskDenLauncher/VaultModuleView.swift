@@ -2,6 +2,12 @@ import AppKit
 import SwiftUI
 import LauncherCore
 
+/// Places the lock card 42% down the free height, slightly above center.
+private enum VaultLockCardAlignment: AlignmentID {
+    static func defaultValue(in context: ViewDimensions) -> CGFloat { context.height * 0.42 }
+}
+private extension VerticalAlignment { static let vaultLockCard = VerticalAlignment(VaultLockCardAlignment.self) }
+
 struct VaultModuleView:View {
     @ObservedObject var model:VaultModel
     var returnToSettingsPrivacy:(()->Void)?=nil
@@ -11,8 +17,10 @@ struct VaultModuleView:View {
     var body:some View {
         VStack(alignment:.leading,spacing:0) {
             if model.showingProtection {
-                Button{model.showingProtection=false;if model.protectionFromSettings {returnToSettingsPrivacy?()}}label:{Label(model.protectionFromSettings ? "返回隐私与锁定":"返回私密空间",systemImage:"arrow.left")}.buttonStyle(WBQuietButtonStyle()).environment(\.workbenchOnBackdrop,true).padding(.bottom,12)
-                VaultProtectionPage(model:model)
+                // The way back sits before the title (现行规范 4.1, D7).
+                VaultProtectionPage(model:model,back:WBPageBack(title:model.protectionFromSettings ? "隐私与锁定":"私密空间",identifier:"vault-protection-back",escapes:true) {
+                    model.showingProtection=false;if model.protectionFromSettings {returnToSettingsPrivacy?()}
+                })
             } else {
                 WBPageHeader(title:"私密空间",subtitle:model.isUnlocked ? "\(model.documents.count) 条文本 · 仅保存在此设备":"独立密码保护，仅在需要时解锁") {
                     Button{model.showProtection()}label:{Label("保护与备份",systemImage:"checkmark.shield")}.buttonStyle(WBButtonStyle())
@@ -25,7 +33,10 @@ struct VaultModuleView:View {
                     HStack(alignment:.top,spacing:10){Image(systemName:"exclamationmark.triangle").foregroundStyle(palette.warning);Text(model.hasPendingPasswordChange ? "密码更改尚未完成，加密资料已保留。请重试完成，之后使用新密码解锁。":"最新更改已加密保留，尚未写入磁盘。请重试保存后再退出。");Spacer();Button(model.hasPendingPasswordChange ? "重试完成":"重试保存"){model.flush()}.buttonStyle(WBButtonStyle(primary:true))}.font(.system(size:12)).padding(14).background(WorkbenchMaterialSurface(radius:10)).padding(.bottom,12)
                 }
                 if model.isUnlocked {VaultUnlockedView(model:model,panelHeight:max(480,min(720,windowHeight-183))).id(model.sessionID)}
-                else {VaultLockedView(model:model).id(model.sessionID).frame(maxWidth:.infinity).frame(minHeight:max(420,min(640,windowHeight-214))).background(WorkbenchMaterialSurface(radius:15))}
+                // A compact card in the unlocked panel's area, 42% down its free
+                // height, wallpaper around it (现行规范 9.3, V1).
+                else {VaultLockedView(model:model).id(model.sessionID).frame(width:400).background(WorkbenchMaterialSurface(radius:15))
+                    .frame(maxWidth:.infinity,minHeight:max(320,windowHeight-183),alignment:Alignment(horizontal:.center,vertical:.vaultLockCard))}
             }
         }.foregroundStyle(palette.text)
         .background(VaultWindowReader(found:{model.hostWindow=$0},resized:{windowHeight=$0}).frame(width:0,height:0))
@@ -44,39 +55,48 @@ struct VaultModuleView:View {
 
 private struct VaultProtectionPage:View {
     @ObservedObject var model:VaultModel
+    let back:WBPageBack
     @Environment(\.workbenchPalette) private var palette
+    @Environment(\.workbenchToast) private var toast
     var body:some View {
         VStack(alignment:.leading,spacing:0) {
-            WBPageHeader(title:"保护与备份",subtitle:"设置锁定规则，保留可恢复的加密备份")
+            WBPageHeader(title:"保护与备份",subtitle:"设置锁定规则，保留可恢复的加密备份",back:back)
             VStack(alignment:.leading,spacing:12) {
-                WBCard(title:"访问保护",symbol:"checkmark.shield") {
-                    VStack(spacing:0) {
-                        row("独立密码",model.isUnlocked ? "至少 8 个字符；不会保存明文密码":"先验证解锁，再继续修改密码",first:true){Button("修改密码",action:model.requestPasswordChange).buttonStyle(WBButtonStyle(compact:true)).disabled(!model.isConfigured || model.busy)}
-                        row("Touch ID",model.biometricUnavailableReason ?? (model.biometricEnabled ? "仅此设备；变更指纹或密码后需重新开启":"先用独立密码解锁，再为此资料库开启")){
-                            if model.biometricEnabled && model.biometricCanRemove {Button("停用"){Task{_ = await model.disableBiometrics()}}.buttonStyle(WBButtonStyle(compact:true)).disabled(model.busy)}
-                            else if !model.biometricAvailable {VStack(alignment:.trailing,spacing:7){Text("暂不可用").foregroundStyle(palette.muted);Button("重新检测"){Task{await model.refreshBiometrics()}}.buttonStyle(WBButtonStyle(compact:true)).disabled(model.busy)}}
-                            else {Button("开启 Touch ID"){Task{_ = await model.enableBiometrics()}}.buttonStyle(WBButtonStyle(compact:true)).disabled(!model.isUnlocked || model.busy || !model.canChangeProtectionPreferences)}
-                        }
-                        row("离开私密页时锁定","切换模块、收起工作台后生效"){Text("始终开启").foregroundStyle(palette.secondary)}
-                        row("剪贴板保护","复制后 3 分钟或锁定时清理"){Text("始终开启").foregroundStyle(palette.secondary)}
-                        row("闲置自动锁定","没有操作时自动收起内容"){WBSelect("闲置自动锁定",selection:Binding(get:{model.idleMinutes},set:model.changeIdleMinutes),options:[1,5,10].map{($0,"\($0) 分钟")}).frame(width:174).disabled(!model.canChangeProtectionPreferences)}
-                        row("睡眠或会话切换","需要重新验证身份",last:true){Text("始终开启").foregroundStyle(palette.secondary)}
+                // Setting rows (现行规范 4.5, G1); the three fixed rules share one row (V4).
+                WBCard(title:"访问保护",symbol:"checkmark.shield",spacing:0) {
+                    WBSettingRow(title:"独立密码",subtitle:model.isUnlocked ? "至少 8 个字符；不会保存明文密码":"先验证解锁，再继续修改密码",showsDivider:false) {
+                        Button("修改密码",action:model.requestPasswordChange).buttonStyle(WBButtonStyle(compact:true)).disabled(!model.isConfigured || model.busy)
+                    }
+                    WBSettingRow(title:"Touch ID",subtitle:model.biometricUnavailableReason ?? (model.biometricEnabled ? "仅此设备；变更指纹或密码后需重新开启":"先用独立密码解锁，再为此资料库开启")) {
+                        if model.biometricEnabled && model.biometricCanRemove {Button("停用"){Task{_ = await model.disableBiometrics()}}.buttonStyle(WBButtonStyle(compact:true)).disabled(model.busy)}
+                        else if !model.biometricAvailable {Button("重新检测"){Task{await model.refreshBiometrics()}}.buttonStyle(WBButtonStyle(compact:true)).disabled(model.busy)}
+                        else {Button("开启 Touch ID"){Task{_ = await model.enableBiometrics()}}.buttonStyle(WBButtonStyle(compact:true)).disabled(!model.isUnlocked || model.busy || !model.canChangeProtectionPreferences)}
+                    }
+                    WBSettingRow(title:"闲置自动锁定",subtitle:"没有操作时自动收起内容") {
+                        WBSelect("闲置自动锁定",selection:Binding(get:{model.idleMinutes},set:model.changeIdleMinutes),options:[1,5,10].map{($0,"\($0) 分钟")}).frame(width:120).disabled(!model.canChangeProtectionPreferences)
+                    }
+                    WBSettingRow(title:"始终生效的保护",subtitle:"离开私密页或收起工作台时锁定；睡眠或切换用户后需重新验证；复制的内容 3 分钟后或锁定时清除") {
+                        WBStatusPill(title:"始终开启")
                     }
                 }
-                WBCard(title:"本机备份",symbol:"archivebox") {
-                    VStack(spacing:0) {
-                        row("导出加密备份","包含资料与必要的恢复信息",first:true){Button("导出"){model.errorMessage=nil;model.sheet = .backup}.buttonStyle(WBButtonStyle(compact:true)).disabled(!model.isConfigured || model.busy)}
-                        row("恢复备份","先验证密码与格式，再确认替换",last:true){Button("选择备份"){model.errorMessage=nil;model.sheet = .restore}.buttonStyle(WBButtonStyle(compact:true)).disabled(model.busy)}
+                WBCard(title:"本机备份",symbol:"archivebox",spacing:0) {
+                    WBSettingRow(title:"导出加密备份",subtitle:"包含资料与必要的恢复信息",showsDivider:false) {
+                        Button("导出"){model.errorMessage=nil;model.sheet = .backup}.buttonStyle(WBButtonStyle(compact:true)).disabled(!model.isConfigured || model.busy)
+                    }
+                    WBSettingRow(title:"恢复备份",subtitle:"先验证密码与格式，再确认替换") {
+                        Button("选择备份"){model.errorMessage=nil;model.sheet = .restore}.buttonStyle(WBButtonStyle(compact:true)).disabled(model.busy)
+                    }
+                    // A problem that needs action stays in its card (G3).
+                    if let error=model.errorMessage {
+                        Label(error,systemImage:"exclamationmark.triangle").font(.system(size:11)).foregroundStyle(palette.critical)
+                            .fixedSize(horizontal:false,vertical:true).padding(.top,8)
                     }
                 }
-                Label("没有密码找回功能。恢复会替换当前资料，确认前会保留原有加密副本。",systemImage:"info.circle").font(.system(size:11)).foregroundStyle(.white.opacity(0.92)).shadow(color:.black.opacity(0.45),radius:2,y:1).padding(.vertical,4)
-                if let message=model.completionMessage {Label(message,systemImage:"checkmark.circle").font(.system(size:11)).foregroundStyle(palette.success)}
-                if let error=model.errorMessage {Text(error).font(.system(size:11)).foregroundStyle(palette.critical)}
+                WBPageNote {Text("没有密码找回功能。恢复会替换当前资料，确认前会保留原有加密副本。").fixedSize(horizontal:false,vertical:true)}
             }
         }.task {await model.refreshBiometrics()}
-    }
-    private func row<Control:View>(_ title:String,_ subtitle:String,first:Bool=false,last:Bool=false,@ViewBuilder control:()->Control)->some View {
-        HStack(spacing:16){VStack(alignment:.leading,spacing:4){Text(title).font(.system(size:12));Text(subtitle).font(.system(size:11)).foregroundStyle(palette.muted)};Spacer();control()}.padding(.top,13).padding(.bottom,last ? 0:13).overlay(alignment:.top){if !first {Rectangle().fill(palette.line).frame(height:1)}}
+            // A finished restore or password change is a one-off result (现行规范 4.8, G3).
+            .onChange(of:model.completionMessage) {_,message in if let message {toast(message)}}
     }
 }
 
@@ -112,23 +132,26 @@ private struct VaultLockedView:View {
     @Environment(\.workbenchPalette) private var palette
     var body:some View {
         VStack(spacing:0) {
-            Image(systemName:"lock").font(.system(size:23,weight:.light)).foregroundStyle(palette.secondary).frame(width:52,height:52).background(palette.soft,in:RoundedRectangle(cornerRadius:15)).overlay(RoundedRectangle(cornerRadius:15).strokeBorder(palette.line,lineWidth:1)).padding(.bottom,18)
-            Text(model.isConfigured ? "资料已锁定":"建立你的私密空间").font(.system(size:16,weight:.medium)).padding(.bottom,9)
+            Image(systemName:"lock").font(.system(size:30,weight:.light)).foregroundStyle(palette.secondary).frame(height:36).padding(.bottom,12)
+            Text(model.isConfigured ? "资料已锁定":"建立你的私密空间").font(.system(size:15,weight:.medium)).padding(.bottom,8)
             Text(model.isConfigured ? "你的内容留在这台 Mac 上。\n离开此页面后会自动锁定。":"用一个独立密码，保护只属于你的文字。").font(.system(size:12)).foregroundStyle(palette.secondary).multilineTextAlignment(.center).lineSpacing(5)
-            if model.isConfigured {
-                SecureField("输入私密空间密码",text:$password).modifier(VaultInputStyle()).focused($focused).onSubmit(unlock).disabled(model.busy).padding(.top,21).padding(.bottom,10)
-                Button(action:unlock){HStack{Spacer();if model.busy {ProgressView().controlSize(.small)}else{Label("解锁",systemImage:"lock.open")};Spacer()}}.buttonStyle(WBButtonStyle(primary:true)).disabled(model.busy || password.isEmpty)
-                if model.biometricEnabled {
-                    if model.biometricAvailable {Button{password="";Task{_ = await model.unlockWithBiometrics()}}label:{Label("使用 Touch ID 解锁",systemImage:"touchid").frame(maxWidth:.infinity)}.buttonStyle(WBButtonStyle()).disabled(model.busy).padding(.top,8)}
-                    else if let reason=model.biometricUnavailableReason {Text(reason).font(.system(size:11)).foregroundStyle(palette.muted).multilineTextAlignment(.center).lineLimit(nil).fixedSize(horizontal:false,vertical:true).padding(.top,8).accessibilityIdentifier("fc.vault.lock.biometric-reason")}
+            // The form is 280 wide inside the 400-point card (V1).
+            VStack(spacing:0) {
+                if model.isConfigured {
+                    SecureField("输入私密空间密码",text:$password).modifier(VaultInputStyle()).focused($focused).onSubmit(unlock).disabled(model.busy).padding(.top,20).padding(.bottom,10)
+                    Button(action:unlock){HStack{Spacer();if model.busy {ProgressView().controlSize(.small)}else{Label("解锁",systemImage:"lock.open")};Spacer()}}.buttonStyle(WBButtonStyle(primary:true)).disabled(model.busy || password.isEmpty)
+                    if model.biometricEnabled {
+                        if model.biometricAvailable {Button{password="";Task{_ = await model.unlockWithBiometrics()}}label:{Label("使用 Touch ID 解锁",systemImage:"touchid").frame(maxWidth:.infinity)}.buttonStyle(WBButtonStyle()).disabled(model.busy).padding(.top,8)}
+                        else if let reason=model.biometricUnavailableReason {Text(reason).font(.system(size:11)).foregroundStyle(palette.muted).multilineTextAlignment(.center).lineLimit(nil).fixedSize(horizontal:false,vertical:true).padding(.top,8).accessibilityIdentifier("fc.vault.lock.biometric-reason")}
+                    }
+                } else {
+                    Button{model.errorMessage=nil;model.sheet = .setup}label:{Label("设置独立密码",systemImage:"key").frame(maxWidth:.infinity)}.buttonStyle(WBButtonStyle(primary:true)).padding(.top,20)
                 }
-            } else {
-                Button{model.errorMessage=nil;model.sheet = .setup}label:{Label("设置独立密码",systemImage:"key").frame(maxWidth:.infinity)}.buttonStyle(WBButtonStyle(primary:true)).padding(.top,21)
-            }
+            }.frame(width:280)
             if let error=model.errorMessage {Text(error).font(.system(size:11)).foregroundStyle(palette.critical).multilineTextAlignment(.center).fixedSize(horizontal:false,vertical:true).padding(.top,10)}
             if let message=model.completionMessage {Text(message).font(.system(size:11)).foregroundStyle(palette.success).multilineTextAlignment(.center).lineLimit(nil).fixedSize(horizontal:false,vertical:true).padding(.top,10)}
-            HStack(spacing:16){Button("从备份恢复"){model.errorMessage=nil;model.sheet = .restore}.buttonStyle(WBQuietButtonStyle());if model.isConfigured {Button("忘记密码"){showForgot=true}.buttonStyle(WBQuietButtonStyle())}}.padding(.top,18)
-        }.frame(maxWidth:360).fixedSize(horizontal:false,vertical:true).padding(.vertical,24)
+            HStack(spacing:16){Button("从备份恢复"){model.errorMessage=nil;model.sheet = .restore}.buttonStyle(WBQuietButtonStyle());if model.isConfigured {Button("忘记密码"){showForgot=true}.buttonStyle(WBQuietButtonStyle())}}.padding(.top,16)
+        }.frame(maxWidth:.infinity).fixedSize(horizontal:false,vertical:true).padding(.horizontal,24).padding(.top,28).padding(.bottom,24)
         .onAppear{focused=model.isConfigured}.task{await model.refreshBiometrics()}
         .modifier(VaultSensitiveState(model:model,clear:{password="";showForgot=false}))
         .workbenchModal(isPresented:$showForgot){WorkbenchDialogFrame(title:"忘记密码",dismiss:{showForgot=false}){Text("方寸不会保存或找回私密空间密码。若此前已开启 Touch ID，可在本机验证解锁；Touch ID 不能用于找回或修改遗忘的密码。你可以使用备份及其密码恢复；确认替换前会保留当前加密副本。").font(.system(size:12)).foregroundStyle(palette.secondary).lineSpacing(5)}actions:{Spacer();Button("知道了"){showForgot=false}.buttonStyle(WBButtonStyle(primary:true))}}
@@ -154,10 +177,9 @@ private struct VaultUnlockedView:View {
     var body:some View {
         VStack(spacing:12) {
             HStack(alignment:.top,spacing:12) {
-                sidebar.frame(maxHeight:.infinity).padding(10).frame(width:244).background(WorkbenchMaterialSurface(radius:15))
+                sidebar.frame(maxHeight:.infinity).padding(14).frame(width:244).background(WorkbenchMaterialSurface(radius:15))
                 editor.frame(maxWidth:.infinity,maxHeight:.infinity).padding(14).background(WorkbenchMaterialSurface(radius:15))
             }.frame(height:panelHeight)
-            if let error=model.errorMessage {HStack{Text(error).font(.system(size:11)).foregroundStyle(palette.critical);Spacer();if model.hasPendingSave {Button("重试保存"){model.flush()}.buttonStyle(WBButtonStyle())}}}
         }
         .workbenchModal(item:$deletion){document in WorkbenchDialogFrame(title:"删除这条私密文本？",dismiss:{deletion=nil}){
             Text("「\(document.title.isEmpty ? "未命名文本":document.title)」删除后无法撤销，可从此前的加密备份恢复。").font(.system(size:12)).foregroundStyle(palette.secondary)
@@ -178,7 +200,7 @@ private struct VaultUnlockedView:View {
     }
     private var sidebar:some View {
         VStack(spacing:12) {
-            HStack(spacing:7){Image(systemName:"magnifyingglass").foregroundStyle(palette.muted);TextField("搜索标题",text:$query).textFieldStyle(.plain)}.padding(.horizontal,10).frame(height:32).background(palette.soft,in:RoundedRectangle(cornerRadius:8)).overlay(RoundedRectangle(cornerRadius:8).strokeBorder(palette.line,lineWidth:1))
+            HStack(spacing:7){Image(systemName:"magnifyingglass").foregroundStyle(palette.muted);TextField("搜索标题",text:$query).textFieldStyle(.plain)}.modifier(WBFieldSurface())
             HStack(spacing:6){
                 WBSelect("筛选分类",selection:Binding(get:{model.categoryFilter},set:{_ = model.selectCategory($0,matching:query)}),options:[("all","全部分类")]+model.categoryOptions)
                 Button{categoryName="";editingCategoryID=nil;showCategories=true;model.recordActivity()}label:{Label("管理分类",systemImage:"folder.badge.gearshape")}
@@ -187,14 +209,11 @@ private struct VaultUnlockedView:View {
             WorkbenchScrollView {
                 LazyVStack(spacing:2) {
                     ForEach(filtered){document in
-                        Button{model.selectDocument(document.id)}label:{VStack(alignment:.leading,spacing:5){
-                            Text(document.title.isEmpty ? "未命名文本":document.title).font(.system(size:12,weight:.medium)).lineLimit(1)
-                            HStack(spacing:6){
-                                Text(model.categoryTitle(document)).font(.system(size:10)).foregroundStyle(palette.secondary).lineLimit(1)
-                                    .padding(.horizontal,6).padding(.vertical,3).background(palette.soft,in:RoundedRectangle(cornerRadius:5))
-                                Text(document.updatedAt.formatted(date:.abbreviated,time:.omitted)).font(.system(size:11)).foregroundStyle(palette.muted).lineLimit(1)
-                            }
-                        }.padding(.vertical,12).padding(.horizontal,9).frame(maxWidth:.infinity,alignment:.leading).foregroundStyle(model.selectedID == document.id ? palette.text:palette.secondary).background(model.selectedID == document.id ? palette.navSelected:.clear,in:RoundedRectangle(cornerRadius:8))}.buttonStyle(WBSelectableButtonStyle(selected: model.selectedID == document.id, cornerRadius: 8, drawsSelection: false, showsBorder: false))
+                        // A 52-point row: title, then category and date-time on one line (现行规范 4.5, 5.3).
+                        Button{model.selectDocument(document.id)}label:{VStack(alignment:.leading,spacing:3){
+                            Text(document.title.isEmpty ? "未命名文本":document.title).font(.system(size:13,weight:.medium)).foregroundStyle(palette.text).lineLimit(1)
+                            Text(model.categoryTitle(document)+" · "+WorkbenchDateText.fullWithTime(document.updatedAt,calendar:.current)).font(.system(size:11)).foregroundStyle(palette.muted).lineLimit(1)
+                        }.padding(.horizontal,10).frame(maxWidth:.infinity,minHeight:52,maxHeight:52,alignment:.leading).background(model.selectedID == document.id ? palette.navSelected:.clear,in:RoundedRectangle(cornerRadius:8))}.buttonStyle(WBSelectableButtonStyle(selected: model.selectedID == document.id, cornerRadius: 8, drawsSelection: false, showsBorder: false))
                     }
                     if filtered.isEmpty {Text(query.isEmpty ? "此分类暂无文本":"没有匹配的标题").font(.system(size:11)).foregroundStyle(palette.muted).padding(.vertical,20)}
                 }
@@ -206,7 +225,7 @@ private struct VaultUnlockedView:View {
             VStack(alignment:.leading,spacing:14){
                 Text("分类与文本一起加密保存。「未分类」始终保留；删除其他分类时可先选择文本去向。").font(.system(size:12)).foregroundStyle(palette.secondary)
                 WorkbenchScrollView {VStack(spacing:4){ForEach(model.categories){category in
-                    HStack(spacing:10){VStack(alignment:.leading,spacing:4){Text(category.name).font(.system(size:12));Text("\(model.documents.filter{$0.effectiveCategoryID == category.id}.count) 条文本").font(.system(size:11)).foregroundStyle(palette.muted)};Spacer();Button{editingCategoryID=category.id;categoryName=category.name}label:{Image(systemName:"pencil")}.buttonStyle(WBIconButtonStyle(size:28)).accessibilityLabel("重命名 \(category.name)");Button{moveDestination="unclassified";categoryDeletion=category}label:{Image(systemName:"trash")}.buttonStyle(WBIconButtonStyle(size:28)).foregroundStyle(palette.critical).accessibilityLabel("删除分类 \(category.name)")}.padding(.vertical,8)
+                    HStack(spacing:10){VStack(alignment:.leading,spacing:3){Text(category.name).font(.system(size:13,weight:.medium));Text("\(model.documents.filter{$0.effectiveCategoryID == category.id}.count) 条文本").font(.system(size:11)).foregroundStyle(palette.muted)};Spacer();Button{editingCategoryID=category.id;categoryName=category.name}label:{Image(systemName:"pencil")}.buttonStyle(WBIconButtonStyle(size:28)).accessibilityLabel("重命名 \(category.name)");Button{moveDestination="unclassified";categoryDeletion=category}label:{Image(systemName:"trash")}.buttonStyle(WBIconButtonStyle(size:28)).foregroundStyle(palette.critical).accessibilityLabel("删除分类 \(category.name)")}.frame(height:52)
                 }}}.frame(maxHeight:240)
                 VStack(alignment:.leading,spacing:6){Text(editingCategoryID == nil ? "新增分类":"重命名分类").font(.system(size:12));HStack(spacing:10){TextField("1–30 个字",text:$categoryName).modifier(VaultInputStyle());Button(editingCategoryID == nil ? "新增":"保存"){let saved=editingCategoryID.map{model.renameCategory($0,to:categoryName)} ?? model.addCategory(categoryName);if saved {categoryName="";editingCategoryID=nil}}.buttonStyle(WBButtonStyle(primary:true)).disabled(categoryName.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty);if editingCategoryID != nil {Button("取消"){categoryName="";editingCategoryID=nil}.buttonStyle(WBButtonStyle())}}}
                 VaultSheetError(model:model)
@@ -216,11 +235,18 @@ private struct VaultUnlockedView:View {
     @ViewBuilder private var editor:some View {
         if let document=model.selectedDocument {
             VStack(alignment:.leading,spacing:0) {
-                HStack(spacing:8){TextField("未命名文本",text:Binding(get:{model.selectedDocument?.title ?? ""},set:model.updateTitle)).textFieldStyle(.plain).font(.system(size:18)).frame(height:32);Button{deletion=VaultDeletionTarget(id:document.id,title:document.title);model.recordActivity()}label:{Image(systemName:"trash")}.buttonStyle(WBIconButtonStyle(size:28)).foregroundStyle(palette.critical).accessibilityLabel("删除文本")}
+                HStack(spacing:8){TextField("未命名文本",text:Binding(get:{model.selectedDocument?.title ?? ""},set:model.updateTitle)).textFieldStyle(.plain).font(.system(size:17,weight:.medium)).frame(height:32);Button{deletion=VaultDeletionTarget(id:document.id,title:document.title);model.recordActivity()}label:{Image(systemName:"trash")}.buttonStyle(WBIconButtonStyle(size:28)).foregroundStyle(palette.critical).accessibilityLabel("删除文本")}
                 HStack(spacing:10){Text("分类").font(.system(size:11)).foregroundStyle(palette.muted);WBSelect("文本分类",selection:Binding(get:{model.selectedDocument?.effectiveCategoryID ?? "unclassified"},set:model.moveSelected),options:model.categoryOptions).frame(width:164);Spacer()}.padding(.top,10).padding(.bottom,10)
-                VaultFormattingToolbar(controller:formatting).disabled(model.busy).padding(.bottom,8)
+                VaultFormattingToolbar(controller:formatting).disabled(model.busy).padding(.bottom,10)
                 VaultPrivateTextEditor(model:model,document:document,formatting:formatting).disabled(model.busy).id(document.id)
-                HStack{Text(model.saveStatus).foregroundStyle(model.hasPendingSave ? palette.warning:palette.muted);Spacer();Text("\(document.body.count) 字")}.font(.system(size:11)).foregroundStyle(palette.muted).padding(.top,8)
+                // Only a failed save is a warning; saving in progress is quiet (V2, G3).
+                HStack(spacing:8){
+                    if let error=model.errorMessage {
+                        Label(error,systemImage:"exclamationmark.triangle").foregroundStyle(palette.critical).lineLimit(1).help(error)
+                        if model.hasPendingSave {Button("重试保存"){model.flush()}.buttonStyle(WBButtonStyle(compact:true))}
+                    } else {Text(model.saveStatus)}
+                    Spacer();Text("\(document.body.count) 字")
+                }.font(.system(size:11)).foregroundStyle(palette.muted).padding(.top,8)
             }
         } else {
             VStack(spacing:14){
@@ -228,29 +254,30 @@ private struct VaultUnlockedView:View {
                     .font(.system(size:12)).foregroundStyle(palette.muted)
                 Button{model.newDocument()}label:{Label("新建文本",systemImage:"plus")}.buttonStyle(WBButtonStyle(primary:true))
                 Button("管理分类"){categoryName="";editingCategoryID=nil;showCategories=true;model.recordActivity()}.buttonStyle(WBQuietButtonStyle())
+                if let error=model.errorMessage {Text(error).font(.system(size:11)).foregroundStyle(palette.critical).multilineTextAlignment(.center)}
             }.frame(maxWidth:.infinity,maxHeight:.infinity).accessibilityIdentifier("fc.vault.category.empty")
         }
     }
 }
 
+/// One row without a boxed backing, a hairline below (现行规范 9.3, V3):
+/// font and size | bold, italic, underline, strikethrough | text color and
+/// highlight | clear formatting. A narrow editor folds the last two groups
+/// into "更多".
 private struct VaultFormattingToolbar:View {
     @ObservedObject var controller:VaultEditorFormatting
     @Environment(\.workbenchPalette) private var palette
+    @State private var textColorOpen=false
+    @State private var highlightOpen=false
+    @State private var moreOpen=false
     var body:some View {
-        VStack(alignment:.leading,spacing:8) {
-            ViewThatFits(in:.horizontal) {
-                HStack(spacing:6){fontControls;formatControls;Spacer(minLength:0)}
-                VStack(alignment:.leading,spacing:8){HStack(spacing:6){fontControls;Spacer(minLength:0)};HStack(spacing:6){formatControls;Spacer(minLength:0)}}
-            }
-            HStack(spacing:8) {
-                Text("文字").font(.system(size:11)).foregroundStyle(palette.muted)
-                WBSelect("文字颜色",selection:Binding(get:{controller.textColor},set:controller.setTextColor),options:VaultTextColor.allCases.map{($0,VaultEditorFormatting.textColorTitle($0))}).frame(width:98)
-                Text("高亮").font(.system(size:11)).foregroundStyle(palette.muted).padding(.leading,4)
-                WBSelect("背景高亮",selection:Binding(get:{controller.highlightColor},set:controller.setHighlightColor),options:VaultHighlightColor.allCases.map{($0,VaultEditorFormatting.highlightTitle($0))}).frame(width:98)
-                Spacer(minLength:0)
-            }
-        }.padding(8).background(palette.soft,in:RoundedRectangle(cornerRadius:8)).overlay(RoundedRectangle(cornerRadius:8).strokeBorder(palette.line,lineWidth:1)).accessibilityIdentifier("fc.vault.editor.toolbar")
+        ViewThatFits(in:.horizontal) {
+            HStack(spacing:6){fontControls;divider;formatControls;divider;colorControls;divider;clearButton;Spacer(minLength:0)}
+            HStack(spacing:6){fontControls;divider;formatControls;divider;moreButton;Spacer(minLength:0)}
+        }.frame(height:32).padding(.bottom,8).overlay(alignment:.bottom){palette.line.frame(height:1)}
+            .accessibilityElement(children:.contain).accessibilityIdentifier("fc.vault.editor.toolbar")
     }
+    private var divider:some View {Rectangle().fill(palette.line).frame(width:1,height:18).padding(.horizontal,2)}
     private var fontControls:some View {
         Group {
             WBSelect("字体",selection:Binding(get:{controller.family},set:controller.setFamily),options:VaultEditorFormatting.availableFamilies.map{($0,VaultEditorFormatting.familyTitle($0))}).frame(width:132)
@@ -263,10 +290,70 @@ private struct VaultFormattingToolbar:View {
             formatButton("斜体",symbol:"italic",selected:controller.italic){controller.toggle(.italicFontMask)}
             formatButton("下划线",symbol:"underline",selected:controller.underline){controller.toggleUnderline()}
             formatButton("删除线",symbol:"strikethrough",selected:controller.strikethrough){controller.toggleStrikethrough()}
-            Rectangle().fill(palette.line).frame(width:1,height:17).padding(.horizontal,3)
-            formatButton("清除格式",symbol:"textformat",selected:false){controller.clearFormatting()}
         }
     }
+    private var colorControls:some View {
+        Group {
+            colorButton("文字颜色",glyph:AnyView(Text("A").font(.system(size:14,weight:.medium))),swatch:VaultFormattingToolbar.swatch(controller.textColor,automatic:palette.text),isOpen:$textColorOpen) {textColorChoices{textColorOpen=false}}
+            colorButton("高亮",glyph:AnyView(Image(systemName:"highlighter").font(.system(size:14))),swatch:VaultEditorFormatting.highlight(controller.highlightColor).map{Color(nsColor:$0)},isOpen:$highlightOpen) {highlightChoices{highlightOpen=false}}
+        }
+    }
+    private var clearButton:some View {
+        Button(action:controller.clearFormatting){Image(systemName:"eraser").frame(width:16,height:16)}.buttonStyle(WBIconButtonStyle(size:28)).help("清除格式").accessibilityLabel("清除格式")
+    }
+    private var moreButton:some View {
+        Button{moreOpen.toggle()}label:{Image(systemName:"ellipsis").frame(width:16,height:16)}.buttonStyle(WBIconButtonStyle(size:28)).help("更多格式").accessibilityLabel("更多格式")
+            .workbenchPopover(isPresented:$moreOpen,width:180) {
+                VStack(alignment:.leading,spacing:6) {
+                    Text("文字颜色").font(.system(size:11)).foregroundStyle(palette.muted).padding(.horizontal,10)
+                    textColorChoices{moreOpen=false}
+                    Text("高亮").font(.system(size:11)).foregroundStyle(palette.muted).padding(.horizontal,10)
+                    highlightChoices{moreOpen=false}
+                    palette.line.frame(height:1)
+                    choice("清除格式",swatch:nil,selected:false){controller.clearFormatting();moreOpen=false}
+                }.padding(6)
+            }
+    }
+    private func textColorChoices(close:@escaping ()->Void)->some View {
+        VStack(alignment:.leading,spacing:2) {
+            ForEach(VaultTextColor.allCases,id:\.self) {value in
+                choice(VaultEditorFormatting.textColorTitle(value),swatch:VaultFormattingToolbar.swatch(value,automatic:palette.text),selected:controller.textColor == value) {controller.setTextColor(value);close()}
+            }
+        }
+    }
+    private func highlightChoices(close:@escaping ()->Void)->some View {
+        VStack(alignment:.leading,spacing:2) {
+            ForEach(VaultHighlightColor.allCases,id:\.self) {value in
+                choice(VaultEditorFormatting.highlightTitle(value),swatch:VaultEditorFormatting.highlight(value).map{Color(nsColor:$0)},selected:controller.highlightColor == value) {controller.setHighlightColor(value);close()}
+            }
+        }
+    }
+    private func choice(_ title:String,swatch:Color?,selected:Bool,action:@escaping ()->Void)->some View {
+        Button(action:action){
+            HStack(spacing:8) {
+                if let swatch {Circle().fill(swatch).frame(width:10,height:10)} else {Circle().strokeBorder(palette.controlBorder,lineWidth:1).frame(width:10,height:10)}
+                Text(title).font(.system(size:12)).foregroundStyle(palette.text)
+                Spacer(minLength:0)
+                if selected {Image(systemName:"checkmark").font(.system(size:11,weight:.medium)).foregroundStyle(palette.accent)}
+            }.padding(.horizontal,10).frame(height:28).contentShape(Rectangle())
+        }.buttonStyle(WBSelectableButtonStyle(cornerRadius:7,drawsSelection:false,showsBorder:false))
+    }
+    /// A color dropdown shows its current color as a bar under the glyph.
+    private func colorButton<Content:View>(_ title:String,glyph:AnyView,swatch:Color?,isOpen:Binding<Bool>,@ViewBuilder content:@escaping ()->Content)->some View {
+        Button{isOpen.wrappedValue.toggle()}label:{
+            HStack(spacing:3) {
+                VStack(spacing:1) {
+                    glyph.frame(width:18,height:16)
+                    RoundedRectangle(cornerRadius:1.5).fill(swatch ?? .clear)
+                        .overlay(RoundedRectangle(cornerRadius:1.5).strokeBorder(palette.controlBorder,lineWidth:swatch == nil ? 1:0))
+                        .frame(width:16,height:3)
+                }
+                Image(systemName:"chevron.down").font(.system(size:9,weight:.medium))
+            }.foregroundStyle(palette.secondary).padding(.horizontal,6).frame(height:28).contentShape(Rectangle())
+        }.buttonStyle(WBSelectableButtonStyle(cornerRadius:7,drawsSelection:false,showsBorder:false)).help(title).accessibilityLabel(title)
+            .workbenchPopover(isPresented:isOpen,width:150) {content().padding(6)}
+    }
+    static func swatch(_ value:VaultTextColor,automatic:Color)->Color {value == .automatic ? automatic:Color(nsColor:VaultEditorFormatting.color(value,automatic:.textColor))}
     private func formatButton(_ title:String,symbol:String,selected:Bool,action:@escaping ()->Void)->some View {Button(action:action){Image(systemName:symbol).frame(width:16,height:16)}.buttonStyle(WBIconButtonStyle(size:28)).background(selected ? palette.navSelected:.clear,in:RoundedRectangle(cornerRadius:7)).help(title).accessibilityLabel(title).accessibilityValue(selected ? "已开启":"未开启")}
 }
 
@@ -609,8 +696,7 @@ private struct VaultPasswordField:View {
 }
 private struct VaultInputStyle:ViewModifier {
     func body(content:Content) -> some View {
-        content.textFieldStyle(.plain).font(.system(size:12)).padding(.horizontal,10).frame(height:32)
-            .background(WorkbenchMaterialSurface(kind:.control,radius:8))
+        content.textFieldStyle(.plain).modifier(WBFieldSurface())
     }
 }
 private struct VaultSheetError:View {

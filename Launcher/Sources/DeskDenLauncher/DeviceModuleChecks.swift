@@ -10,7 +10,7 @@ import LauncherCore
         count += sensorRecovery.count; failures += sensorRecovery.failures
         func check(_ condition: Bool, _ message: String) { count += 1; if !condition { failures += 1 }; print("\(condition ? "PASS" : "FAIL") \(message)") }
         check(DeviceTrafficDisplay.budget(100) == "100 GB" && DeviceTrafficDisplay.budget(0.01) == "0.01 GB", "traffic budget card keeps the exact decimal GB allowance")
-        check(DeviceTrafficDisplay.adaptive(100_000_000_000) == "100 GB" && DeviceTrafficDisplay.adaptive(1_048_576) == "1.05 MB", "traffic card adaptive units use decimal bytes consistently with budget thresholds")
+        check(DeviceTrafficDisplay.adaptive(100_000_000_000) == "100.0 GB" && DeviceTrafficDisplay.adaptive(1_048_576) == "1 MB" && DeviceFormat.rate(3_300) == "3.3 KB/s" && DeviceFormat.rate(126_000) == "126 KB/s", "traffic and rates use decimal units with the disk precision (现行规范 9.3)")
         check(DeviceTrafficDisplay.adaptive(999) == "999 B" && DeviceTrafficDisplay.adaptive(1000) == "1 KB" && DeviceTrafficDisplay.adaptive(nil) == "—", "traffic display preserves byte boundaries and missing data")
         check(DeviceFormat.capacity(1_048_576) == "1 MB", "storage unit fix does not change memory formatting")
         check(DeviceFormat.storage(1_000_000_000_000) == "1.0 TB" && DeviceFormat.storage(nil) == "—", "storage formatting uses decimal units and preserves missing readings")

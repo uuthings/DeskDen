@@ -220,7 +220,8 @@ enum WorkbenchResponsiveLayoutChecks {
             let month = frame("fc.calendar.monthCard", in: host), side = frame("fc.calendar.sideColumn", in: host)
             let monthDay = frame("fc.calendar.day." + dayKey, in: host)
             check(homeRows.count == 6 && homeRowPitch.allSatisfy { abs($0 - 36) < 1 } && monthDay.map { month in
-                month.height >= 54 && month.height <= 72 && (0.85...1.4).contains(month.width / month.height)
+                // 现行规范 9.3 (K2): tiles take 40–64 from the page's remaining height.
+                month.height >= 39.5 && month.height <= 64.5 && (0.85...1.4).contains(month.width / month.height)
             } == true, "home uses 36 pt date rows while the full calendar retains readable proportions in \(label)")
             let selected=frame("fc.calendar.selectedAgenda",in:host)
             let upcoming=frame("fc.calendar.upcomingAgenda",in:host)
@@ -230,7 +231,8 @@ enum WorkbenchResponsiveLayoutChecks {
                 check(abs(month.width + side.width + 12 - sample.page) < 3 &&
                       abs(month.width/(sample.page-12)-0.45)<0.01 && month.height <= 600,
                       "calendar and agenda retain the accepted 45/55 split and bounded month height in \(label)")
-                check(selected.map{abs($0.width-month.width)<2 && abs($0.maxY-month.minY+12)<2 && $0.height>=160} == true,
+                // The selected day keeps at least two 36-point rows (现行规范 9.3, K2).
+                check(selected.map{abs($0.width-month.width)<2 && abs($0.maxY-month.minY+12)<2 && $0.height>=131.5} == true,
                       "the selected day's complete agenda stays below its calendar in \(label)")
                 check(upcoming.flatMap { recent in pending.map { longTerm in
                     abs(recent.maxY-month.maxY)<2 && abs(recent.width-side.width)<2

@@ -54,9 +54,6 @@ struct NetworkMonitorView: View {
                         }
                     }
                 }
-                if let error = model.lastError ?? model.monitoringError {
-                    Text(error).font(.system(size: 11)).foregroundStyle(palette.warning).padding(.top, 12)
-                }
             }.frame(maxWidth: .infinity, alignment: .leading)
                 .background(GeometryReader { proxy in Color.clear.preference(key: NetworkContentWidth.self, value: proxy.size.width) })
                 .workbenchPageCanvas()
@@ -78,10 +75,17 @@ struct NetworkMonitorView: View {
         drafts.load(model);budgetOpen=true
     }
 
+    /// Card titles follow the shared card: a 16-point accent icon and 13 medium.
+    private func cardTitle(_ title: String, symbol: String) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: symbol).font(.system(size: 16)).foregroundStyle(palette.accent)
+            Text(title).font(.system(size: 13, weight: .medium))
+        }.frame(height: 22)
+    }
     private var liveCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Label("实时网速", systemImage: "waveform.path.ecg").font(.system(size: 12, weight: .medium))
+                cardTitle("实时网速", symbol: "waveform.path.ecg")
                 HStack(spacing: 5) {
                     Circle().fill(model.snapshot.network.downloadBytesPerSecond == nil ? palette.muted : palette.success).frame(width: 5, height: 5)
                     Text(model.snapshot.network.interfaceNames.isEmpty ? "未连接" : model.snapshot.network.downloadBytesPerSecond == nil ? "暂无读数" : "正在采集")
@@ -91,17 +95,24 @@ struct NetworkMonitorView: View {
                     .accessibilityIdentifier("fc.field.networkInterface")
                 Button { interfaceSheet = .networkOptions } label: { Image(systemName: "ellipsis") }.buttonStyle(WBIconButtonStyle(size: WBControlMetrics.regularHeight)).help("管理实时网卡与本次记录")
             }.frame(height: 32)
+            // One height in every window size (现行规范 9.3): the ordinary
+            // window shows both cards and the note without scrolling.
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: expanded ? 30 : compact ? 16 : 22) {
-                    speedReadings.frame(width: expanded ? 180 : compact ? 112 : 138)
-                    DeviceHistoryChart(points: model.history, kind: .network, minutes: 5, networkScale: true).frame(minWidth: 220, minHeight: expanded ? 180 : 144)
-                    todayReadings.frame(width: expanded ? 224 : compact ? 162 : 182).padding(.leading, expanded ? 28 : compact ? 14 : 20)
+                HStack(spacing: compact ? 16 : 22) {
+                    speedReadings.frame(width: compact ? 112 : 138)
+                    DeviceHistoryChart(points: model.history, kind: .network, minutes: 5, networkScale: true).frame(minWidth: 220).frame(height: 124)
+                    todayReadings.frame(width: compact ? 162 : 182).padding(.leading, compact ? 14 : 20)
                         .overlay(alignment: .leading) { palette.line.frame(width: 1) }
-                }
+                }.frame(height: 124)
                 VStack(spacing: 14) {
-                    HStack(spacing: 18) { speedReadings.frame(width: 112); DeviceHistoryChart(points: model.history, kind: .network, minutes: 5, networkScale: true).frame(height: 144) }
+                    HStack(spacing: 18) { speedReadings.frame(width: 112); DeviceHistoryChart(points: model.history, kind: .network, minutes: 5, networkScale: true).frame(height: 124) }
                     todayReadings.padding(.top, 12).overlay(alignment: .top) { palette.line.frame(height: 1) }
                 }
+            }
+            // A collection problem belongs to this card, not to the wallpaper (G3).
+            if let error = model.lastError ?? model.monitoringError {
+                Label(error, systemImage: "exclamationmark.triangle").font(.system(size: 11)).foregroundStyle(palette.warning)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 12) { Text("每 \(Int(model.samplingInterval)) 秒采样"); Spacer(); Text("切换实时接口不改变流量统计范围") }
                 .font(.system(size: 11)).foregroundStyle(palette.muted)
@@ -116,16 +127,17 @@ struct NetworkMonitorView: View {
     private func liveSpeed(_ title: String, symbol: String, value: Double?, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Label(title, systemImage: symbol).font(.system(size: 11)).foregroundStyle(color)
-            DeviceReading(value: DeviceFormat.rate(value), size: expanded ? 32 : compact ? 24 : 26)
+            DeviceReading(value: DeviceFormat.rate(value), size: 24)
         }
     }
     private var todayReadings: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 5) {
             Text("今日已记录").font(.system(size: 11)).foregroundStyle(palette.secondary)
-            DeviceReading(value: today.coveredSeconds > 0 ? DeviceTrafficDisplay.adaptive(today.totalBytes) : "—", size: expanded ? 36 : compact ? 28 : 30)
+            DeviceReading(value: today.coveredSeconds > 0 ? DeviceTrafficDisplay.adaptive(today.totalBytes) : "—", size: 24)
             transfer("下载", value: today.coveredSeconds > 0 ? today.received : nil)
             transfer("上传", value: today.coveredSeconds > 0 ? today.sent : nil)
-            Text("全部物理网络 · 已采集时段").font(.system(size: 11)).foregroundStyle(palette.muted).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            Text("全部网络 · 已采集时段").font(.system(size: 11)).foregroundStyle(palette.muted).fixedSize(horizontal: false, vertical: true)
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
     private func transfer(_ title: String, value: UInt64?) -> some View {
@@ -133,26 +145,30 @@ struct NetworkMonitorView: View {
             .font(.system(size: 11)).monospacedDigit()
     }
     private var periodCard: some View {
-        VStack(alignment: .leading, spacing: expanded ? 14 : 10) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Label("周期流量", systemImage: "calendar").font(.system(size: 12, weight: .medium))
+                cardTitle("周期流量", symbol: "calendar")
                 Text("\(model.budget.period.title) · \(DeviceTrafficDisplay.period(summary))").font(.system(size: 11)).foregroundStyle(palette.muted)
                 Spacer(minLength: 8)
                 Button { recordsOpen = true } label: { Label("流量历史", systemImage: "arrow.up.right") }.buttonStyle(WBButtonStyle(compact: true))
                     .accessibilityIdentifier("fc.action.network.records")
             }.frame(minHeight: 32)
             ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: expanded ? 30 : compact ? 18 : 24) {
-                    periodSummary.frame(width: expanded ? 274 : compact ? 200 : 222).padding(.trailing, expanded ? 30 : compact ? 18 : 24)
+                HStack(alignment: .top, spacing: compact ? 18 : 24) {
+                    periodSummary.frame(width: compact ? 200 : 222).padding(.trailing, compact ? 18 : 24)
                         .overlay(alignment: .trailing) { palette.line.frame(width: 1) }
                     history.frame(minWidth: 280)
-                }
+                }.fixedSize(horizontal: false, vertical: true)
                 VStack(spacing: 16) { periodSummary; history }
             }
             HStack(alignment: .top, spacing: 14) {
                 Label(coverageText, systemImage: "clock").fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
-                if !model.budget.enabled { Text("预算未开启") }
+                // The budget state is written once, in the summary heading (N1).
+                if !model.budget.enabled {
+                    Button("设置预算") { drafts.load(model); budgetOpen = true }.buttonStyle(WBQuietButtonStyle())
+                        .accessibilityIdentifier("fc.action.network.budget-inline")
+                }
                 else if model.budget.period == .custom { Text("单次周期 · 不重复") }
                 else {
                     UsageResetLabel(reset: .init(resetsAt: summary.periodEnd, sourceTimeZoneIdentifier: summary.timeZoneIdentifier),
@@ -163,26 +179,28 @@ struct NetworkMonitorView: View {
         }.padding(14).background(DeviceCardSurface()).foregroundStyle(palette.text)
     }
     private var periodSummary: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack { Text("本周期已记录").font(.system(size: 11)).foregroundStyle(palette.secondary); Spacer(minLength: 5); Text(budgetStatus).font(.system(size: 11)).foregroundStyle(known ? tone : palette.muted) }
             HStack(alignment: .firstTextBaseline) {
-                DeviceReading(value: known ? DeviceTrafficDisplay.adaptive(summary.totalBytes) : "—", size: expanded ? 40 : compact ? 32 : 34)
+                DeviceReading(value: known ? DeviceTrafficDisplay.adaptive(summary.totalBytes) : "—", size: 30)
                 Spacer(minLength: 4)
                 if let percentage { Text(UsagePercentage.text(percentage) + " 已用").font(.system(size: 11)).foregroundStyle(tone) }
-            }.padding(.vertical, expanded ? 12 : 2)
-            if model.budget.enabled && known { DeviceUsageBar(value: percentage, tone: tone).frame(height: 6) }
-            else { Text(summary.hasStarted ? "未采集的时段不会填为 0" : "新账期开始后记录").font(.system(size: 11)).foregroundStyle(palette.muted) }
-            HStack(alignment: .top, spacing: 8) {
-                Text(model.budget.enabled ? "预算 \(DeviceTrafficDisplay.budget(model.budget.limitGB))" : "预算未启用")
-                Spacer(minLength: 0)
-                if model.budget.enabled && known {
-                    Text(model.budgetExceededBytes > 0 ? "超出 \(DeviceTrafficDisplay.adaptive(model.budgetExceededBytes))" : "剩余 \(DeviceTrafficDisplay.adaptive(model.budgetRemainingBytes ?? 0))").multilineTextAlignment(.trailing)
-                }
-            }.font(.system(size: 11)).foregroundStyle(palette.muted)
-            VStack(spacing: 9) {
+            }
+            if model.budget.enabled {
+                if known { DeviceUsageBar(value: percentage, tone: tone).frame(height: 5) }
+                HStack(alignment: .top, spacing: 8) {
+                    Text("预算 \(DeviceTrafficDisplay.budget(model.budget.limitGB))")
+                    Spacer(minLength: 0)
+                    if known {
+                        Text(model.budgetExceededBytes > 0 ? "超出 \(DeviceTrafficDisplay.adaptive(model.budgetExceededBytes))" : "剩余 \(DeviceTrafficDisplay.adaptive(model.budgetRemainingBytes ?? 0))").multilineTextAlignment(.trailing)
+                    }
+                }.font(.system(size: 11)).foregroundStyle(palette.muted)
+            }
+            VStack(spacing: 6) {
                 transfer("下载", value: known ? summary.received : nil)
                 transfer("上传", value: known ? summary.sent : nil)
-            }.padding(.vertical, 4)
+            }.padding(.top, 2)
+            Spacer(minLength: 0)
             Label(model.budget.scope.title, systemImage: "network").font(.system(size: 11)).foregroundStyle(palette.muted)
         }
     }
@@ -193,7 +211,7 @@ struct NetworkMonitorView: View {
                 Spacer()
                 legend("下载", color: palette.accent); legend("上传", color: palette.cool)
             }.font(.system(size: 11)).foregroundStyle(palette.secondary)
-            NetworkDailyBars(summary: summary).frame(height: expanded ? 226 : 154)
+            NetworkDailyBars(summary: summary).frame(height: 124)
             Text("\(DeviceTrafficDisplay.period(summary))\(summary.isActivePeriod ? " · 今日未结束" : " · 所选周期内记录") · — 未采集")
                 .font(.system(size: 11)).foregroundStyle(palette.muted)
         }
@@ -246,7 +264,7 @@ struct NetworkRecordsDialog: View {
                                 .accessibilityIdentifier("network-records-received-" + String(Int(day.date.timeIntervalSince1970)))
                             Text(DeviceTrafficDisplay.adaptive(day.sent)).frame(width: 86, alignment: .trailing)
                             Text(DeviceTrafficDisplay.adaptive(day.totalBytes)).frame(width: 86, alignment: .trailing)
-                        }.font(.system(size: 12)).monospacedDigit().frame(minHeight: 38).overlay(alignment: .bottom) { palette.line.frame(height: 1) }
+                        }.font(.system(size: 12)).monospacedDigit().frame(minHeight: 36).overlay(alignment: .bottom) { palette.line.frame(height: 1) }
                             .accessibilityElement(children: .contain)
                     }
                     if !summary.dailyUsage.contains(where: { $0.coveredSeconds > 0 }) { Text(summary.hasStarted ? "此周期暂无采集记录" : "账期尚未开始").font(.system(size: 12)).foregroundStyle(palette.muted).padding(.vertical, 24) }
@@ -256,12 +274,12 @@ struct NetworkRecordsDialog: View {
                             HStack {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(row.id)
-                                    Text(row.isPartial ? "部分时段已记录" : "已采集时段").font(.system(size: 10)).foregroundStyle(palette.muted)
+                                    Text(row.isPartial ? "部分时段已记录" : "已采集时段").font(.system(size: 11)).foregroundStyle(palette.muted)
                                 }.frame(maxWidth: .infinity, alignment: .leading)
                                 Text(row.coveredSeconds > 0 ? DeviceTrafficDisplay.adaptive(row.received) : "—").frame(width: 86, alignment: .trailing)
                                 Text(row.coveredSeconds > 0 ? DeviceTrafficDisplay.adaptive(row.sent) : "—").frame(width: 86, alignment: .trailing)
                                 Text(row.coveredSeconds > 0 ? DeviceTrafficDisplay.adaptive(row.totalBytes) : "—").frame(width: 86, alignment: .trailing)
-                            }.font(.system(size: 12)).monospacedDigit().frame(minHeight: 44)
+                            }.font(.system(size: 12)).monospacedDigit().frame(minHeight: 52)
                                 .overlay(alignment: .bottom) { palette.line.frame(height: 1) }
                         }
                         if rows.isEmpty { Text("尚无汇总记录").font(.system(size: 12)).foregroundStyle(palette.muted).padding(.vertical, 24) }
@@ -326,7 +344,7 @@ private struct NetworkDailyBars: View {
                                             }.frame(maxWidth: 36).clipShape(UnevenRoundedRectangle(topLeadingRadius: 4, topTrailingRadius: 4))
                                                 .anchorPreference(key: NetworkBarBoundsKey.self, value: .bounds) { [date: $0] }
                                         } else {
-                                            Text("—").font(.system(size: 13)).foregroundStyle(palette.muted).frame(height: 14)
+                                            Text("—").font(.system(size: 11)).foregroundStyle(palette.muted).frame(height: 14)
                                                 .anchorPreference(key: NetworkBarBoundsKey.self, value: .bounds) { [date: $0] }
                                         }
                                     }.frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(Rectangle())
@@ -337,7 +355,7 @@ private struct NetworkDailyBars: View {
                             HStack(spacing: 3) {
                                 Text("\(calendar.component(.day, from: date))").lineLimit(1).fixedSize(horizontal: true, vertical: false)
                                 if calendar.isDate(date, inSameDayAs: summary.measuredAt) { Circle().fill(palette.accent).frame(width: 4, height: 4) }
-                            }.font(.system(size: 11, weight: activeDate == date ? .semibold : .regular)).foregroundStyle(activeDate == date ? palette.text : palette.muted)
+                            }.font(.system(size: 11)).foregroundStyle(activeDate == date ? palette.text : palette.muted)
                                 .fixedSize(horizontal: true, vertical: false)
                                 .accessibilityElement(children: .combine)
                                 .accessibilityIdentifier("fc.network.day-label." + NetworkLedgerDate.label(date, timeZone: summary.timeZoneIdentifier))
@@ -371,7 +389,7 @@ private struct NetworkDailyBars: View {
     }
     private func tip(_ date: Date, day: DeviceTrafficDay?) -> some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text(NetworkLedgerDate.label(date, timeZone: summary.timeZoneIdentifier)).font(.system(size: 12, weight: .medium))
+            Text(NetworkLedgerDate.label(date, timeZone: summary.timeZoneIdentifier)).font(.system(size: 13, weight: .medium))
             if let day {
                 DeviceFact(label: "下载", value: DeviceTrafficDisplay.adaptive(day.received))
                 DeviceFact(label: "上传", value: DeviceTrafficDisplay.adaptive(day.sent))
@@ -380,16 +398,8 @@ private struct NetworkDailyBars: View {
         }.padding(12).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .foregroundStyle(palette.text)
     }
-    /// Axis ticks need less precision than the actual totals and hover details.
-    /// Decimal units stay consistent with the traffic ledger and budget.
-    private func axisLabel(_ bytes: UInt64) -> String {
-        var value = Double(bytes), unit = 0
-        let units = ["B", "KB", "MB", "GB", "TB", "PB", "EB"]
-        while value >= 1000 && unit < units.count - 1 { value /= 1000; unit += 1 }
-        var text = String(format: value >= 100 ? "%.0f" : "%.1f", value)
-        if text.hasSuffix(".0") { text.removeLast(2) }
-        return text + " " + units[unit]
-    }
+    /// The top label is the period's real maximum, in the traffic precision (现行规范 9.3).
+    private func axisLabel(_ bytes: UInt64) -> String { DeviceTrafficDisplay.adaptive(bytes) }
     private func detail(_ date: Date, day: DeviceTrafficDay?) -> String {
         let label = NetworkLedgerDate.label(date, timeZone: summary.timeZoneIdentifier)
         return day.map { "\(label) · 下载 \(DeviceTrafficDisplay.adaptive($0.received)) · 上传 \(DeviceTrafficDisplay.adaptive($0.sent)) · 合计 \(DeviceTrafficDisplay.adaptive($0.totalBytes))" } ?? "\(label) · 未采集，不代表零流量"
@@ -403,12 +413,11 @@ enum NetworkTrafficTooltipPlacement {
     }
 }
 
+/// Lists use the padded full date; labels and tooltips use the short date (现行规范 5.3).
 private enum NetworkLedgerDate {
     static func label(_ date: Date, timeZone: String, includeYear: Bool = false) -> String {
-        let formatter = DateFormatter(); formatter.locale = Locale(identifier: "zh_CN"); formatter.timeZone = TimeZone(identifier: timeZone) ?? .current; formatter.dateFormat = includeYear ? "yyyy/M/d" : "M 月 d 日"; return formatter.string(from: date)
-    }
-    static func resetLabel(_ date: Date, timeZone: String) -> String {
-        let formatter = DateFormatter(); formatter.locale = Locale(identifier: "zh_CN"); formatter.timeZone = TimeZone(identifier: timeZone) ?? .current; formatter.dateFormat = "M 月 d 日 HH:mm"; return formatter.string(from: date)
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(identifier: timeZone) ?? .current
+        return includeYear ? WorkbenchDateText.full(date, calendar: calendar) : WorkbenchDateText.monthDay(date, calendar: calendar)
     }
 }
 
@@ -446,7 +455,7 @@ struct DeviceBudgetDialog: View {
             VStack(alignment: .leading, spacing: 18) {
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 5) {
-                        Text("启用流量预算").font(.system(size: 12, weight: .medium)).foregroundStyle(palette.text)
+                        Text("启用流量预算").font(.system(size: 13, weight: .medium)).foregroundStyle(palette.text)
                         Text("按选定周期记录，接近额度时提醒").font(.system(size: 11)).foregroundStyle(palette.muted)
                     }
                     Spacer(minLength: 12)
@@ -484,12 +493,12 @@ struct DeviceBudgetDialog: View {
                     let preview = model.trafficPreview(drafts.budget.rule(from: model.budget))
                     VStack(alignment: .leading, spacing: 7) {
                         Text("当前账期").font(.system(size: 11)).foregroundStyle(palette.muted)
-                        Text(DeviceTrafficDisplay.period(preview, includeYear: true)).font(.system(size: 12, weight: .medium))
+                        Text(DeviceTrafficDisplay.period(preview, includeYear: true)).font(.system(size: 13, weight: .medium))
                         Text("记录时区 · \(preview.timeZoneIdentifier)").font(.system(size: 11)).foregroundStyle(palette.muted)
                     }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                         .background(palette.soft, in: RoundedRectangle(cornerRadius: 8))
                 }.disabled(!drafts.budget.enabled || drafts.savingBudget)
-                Text("用量颜色统一在 70% 转黄、90% 转红；通知按上方设置的比例触发。预算仅提醒，不会限速或断网；未采集的时段不补记流量。")
+                Text("统计范围只含 Wi-Fi、有线等物理网卡，不含 VPN 等虚拟接口。用量颜色统一在 70% 转黄、90% 转红；通知按上方设置的比例触发。预算仅提醒，不会限速或断网；未采集的时段不补记流量。")
                     .font(.system(size: 11)).foregroundStyle(palette.muted).fixedSize(horizontal: false, vertical: true)
                 if drafts.budgetStatus != "已保存" { Text(drafts.budgetStatus).font(.system(size: 11)).foregroundStyle(palette.warning) }
             }
@@ -509,7 +518,7 @@ struct DeviceBudgetDialog: View {
     }
     private func close() { guard !drafts.savingBudget else { return }; if drafts.budgetDirty { discard = true } else { dismiss() } }
     private func sectionTitle(_ title: String) -> some View {
-        Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(palette.secondary)
+        Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(palette.text)
     }
     private func dateField(_ title: String, value: Binding<Date>) -> some View {
         let calendar = drafts.budget.calendar

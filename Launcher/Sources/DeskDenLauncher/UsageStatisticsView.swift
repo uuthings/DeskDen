@@ -291,11 +291,11 @@ struct UsageStatisticsView: View {
                 Button("管理分类") { presentation.categoryEditor = .init(appearance.preferences.categories) }
                     .buttonStyle(WBButtonStyle()).accessibilityIdentifier("fc.usage.categories")
                 Spacer(minLength: 8)
-                Text("排序").font(.system(size: 11)).foregroundStyle(.white.opacity(0.92)).shadow(color:.black.opacity(0.45),radius:2,y:1)
-                WBSelect("卡片排序", selection: Binding(get: { appearance.preferences.sort }, set: { _ = appearance.setOrdering($0, ascending: appearance.preferences.ascending) }), options: UsageCardSort.allCases.map { ($0, $0.title) }).frame(width: 126)
+                // Nothing is written on the wallpaper (现行规范 3.5): the select names its own order.
+                WBSelect("卡片排序", selection: Binding(get: { appearance.preferences.sort }, set: { _ = appearance.setOrdering($0, ascending: appearance.preferences.ascending) }), options: UsageCardSort.allCases.map { ($0, "按" + $0.title) }).frame(width: 126)
                     .accessibilityIdentifier("fc.usage.sort")
-                Button { _ = appearance.setOrdering(appearance.preferences.sort, ascending: !appearance.preferences.ascending) } label: { Image(systemName: appearance.preferences.ascending ? "arrow.up" : "arrow.down") }
-                    .buttonStyle(WBIconButtonStyle(size: WBControlMetrics.regularHeight)).accessibilityLabel(appearance.preferences.ascending ? "当前升序，切换降序" : "当前降序，切换升序")
+                Button { _ = appearance.setOrdering(appearance.preferences.sort, ascending: !appearance.preferences.ascending) } label: { Image(systemName: appearance.preferences.ascending ? "arrow.up" : "arrow.down").frame(width: 10) }
+                    .buttonStyle(WBButtonStyle()).accessibilityLabel(appearance.preferences.ascending ? "当前升序，切换降序" : "当前降序，切换升序")
                     .accessibilityIdentifier("fc.usage.sort-direction")
             }.environment(\.workbenchOnBackdrop, true).padding(.bottom, 14)
             UsageCardGrid {
@@ -322,9 +322,23 @@ struct UsageStatisticsView: View {
     @ViewBuilder private func sourceCell(_ key: String) -> some View {
         if let provider = AIProvider.allCases.first(where: { UsagePresentationSourceID.ai($0) == key }) {
             let display = appearance.appearance(for: key)
+            let enabled = ai.configuration(for: provider).enabled
+            let offerEnable = !enabled && summary(provider).snapshot == nil
             Button { presentation.selectedSourceID = nil; presentation.selectedAPIID = nil; ai.show(.provider(provider)) } label: {
-                UsageAIQuotaCard(summary: summary(provider), display: display, appearance: appearance, enabled: ai.configuration(for: provider).enabled, timeZone: context.dateContext.timeZone, categoryTitle: appearance.categoryTitle(for: key, defaultID: "ai-subscription"))
+                UsageAIQuotaCard(summary: summary(provider), display: display, appearance: appearance, enabled: enabled, timeZone: context.dateContext.timeZone, categoryTitle: appearance.categoryTitle(for: key, defaultID: "ai-subscription"), reading: ai.isRefreshing, reservesAction: offerEnable)
             }.buttonStyle(ClickablePlainButtonStyle()).accessibilityHint("查看" + provider.title + "额度详情").accessibilityIdentifier("fc.ai.provider." + provider.rawValue)
+                // "开启读取" sits right below the card's detail (9.3, U2), laid
+                // over the slot the card reserves because the card is a button.
+                .overlayPreferenceValue(UsageCardActionAnchor.self) { anchor in
+                    GeometryReader { proxy in
+                        if offerEnable, let anchor {
+                            let slot = proxy[anchor]
+                            Button("开启读取") { ai.setEnabled(true, provider: provider) }.buttonStyle(WBButtonStyle(compact: true))
+                                .fixedSize().offset(x: slot.minX, y: slot.minY)
+                                .accessibilityIdentifier("fc.ai.provider.enable." + provider.rawValue)
+                        }
+                    }
+                }
         } else if let source = model.sources.first(where: { UsagePresentationSourceID.service($0.id) == key }) {
             Button { presentation.selectedAPIID = nil; presentation.selectedSourceID = source.id } label: {
                 ProviderQuotaCard(source: source, state: model.state(for: source.id), refreshing: model.refreshing.contains(source.id), display: appearance.appearance(for: key), appearance: appearance, timeZone: context.dateContext.timeZone, categoryTitle: appearance.categoryTitle(for: key, defaultID: source.kind == .iproyal ? "static-isp" : "vps-traffic"))
@@ -340,27 +354,32 @@ struct UsageStatisticsView: View {
     }
     private func apiDetail(_ source: APIBalanceConfiguration) -> some View {
         let state = api.state(for: source.id)
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack { Button { presentation.selectedAPIID = nil } label: { Label("返回用量与额度", systemImage: "chevron.left") }.buttonStyle(WBButtonStyle(compact: true)); Spacer() }
-            WBPageHeader(title: source.name, subtitle: "DeepSeek API · 官方余额") {
+        return VStack(alignment: .leading, spacing: 0) {
+            WBPageHeader(title: source.name, subtitle: "DeepSeek API · 官方余额",
+                         back: WBPageBack(title: "用量与额度", identifier: "fc.usage.api.back", escapes: true) { presentation.selectedAPIID = nil }) {
                 HStack(spacing: 8) {
                     Button("刷新") { Task { await api.refresh(id: source.id) } }.buttonStyle(WBButtonStyle()).disabled(api.refreshing.contains(source.id))
                     Button("编辑连接") { presentation.configure(sourceID: UsagePresentationSourceID.api(source.id)) }.buttonStyle(WBButtonStyle())
                     Button("移除") { presentation.removingAPI = source }.buttonStyle(WBButtonStyle(destructive: true))
                 }
             }
+            // The header keeps its own 12 to the content (现行规范 4.1).
+            VStack(alignment: .leading, spacing: 12) {
             if let snapshot = state.snapshot {
                 ForEach(snapshot.balances) { balance in
                     WBCard(title: balance.currency + " 余额", symbol: "creditcard") {
-                        Text(balance.totalBalance).font(.system(size: 30, weight: .medium)).monospacedDigit()
+                        Text(balance.totalBalance).font(.system(size: 30)).monospacedDigit()
                         apiValue("赠送余额", value: balance.grantedBalance + " " + balance.currency)
                         apiValue("充值余额", value: balance.toppedUpBalance + " " + balance.currency)
                         apiValue("查询时间", value: UsageDatePresentation.absolute(snapshot.observedAt, timeZone: context.dateContext.timeZone, location: context.locationTitle))
                     }
                 }
             }
-            if let message = state.message { Text(message).font(.system(size: 12)).foregroundStyle(palette.warning) }
-            Text("不同币种独立展示。余额接口不提供本机 Token 活动，也不据此推算消费明细。").font(.system(size: 11)).foregroundStyle(.white.opacity(0.92)).shadow(color:.black.opacity(0.45),radius:2,y:1)
+            if let message = state.message {
+                WBCard(title: "余额读取", symbol: "exclamationmark.triangle") { Text(message).font(.system(size: 12)).foregroundStyle(palette.warning) }
+            }
+            WBPageNote { Text("不同币种独立展示。余额接口不提供本机 Token 活动，也不据此推算消费明细。") }
+            }
         }.accessibilityIdentifier("fc.usage.api.detail")
     }
     @ViewBuilder private var storageProtection: some View {
@@ -383,14 +402,16 @@ struct UsageStatisticsView: View {
     private func detail(_ source: ProviderUsageConfiguration) -> some View {
         let state = model.state(for: source.id)
         let display = appearance.appearance(for: UsagePresentationSourceID.service(source.id))
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack { Button { presentation.selectedSourceID = nil } label: { Label("返回用量与额度", systemImage: "chevron.left") }.buttonStyle(WBButtonStyle(compact: true)); Spacer() }.padding(.bottom, 2)
-            WBPageHeader(title: display.displayName ?? source.name, subtitle: source.kind.title + " · " + (source.kind == .iproyal ? "订单 " : "实例 ") + source.resourceID) {
+        return VStack(alignment: .leading, spacing: 0) {
+            WBPageHeader(title: display.displayName ?? source.name, subtitle: source.kind.title + " · " + (source.kind == .iproyal ? "订单 " : "实例 ") + source.resourceID,
+                         back: WBPageBack(title: "用量与额度", identifier: "fc.usage.detail.back", escapes: true) { presentation.selectedSourceID = nil }) {
                 HStack(spacing: 8) {
                     Button("刷新") { model.refresh(id: source.id, manual: true) }.buttonStyle(WBButtonStyle()).disabled(model.refreshing.contains(source.id))
                     Button("配置用量") { presentation.configure(.service) }.buttonStyle(WBButtonStyle())
                 }
             }
+            // The header keeps its own 12 to the content (现行规范 4.1).
+            VStack(alignment: .leading, spacing: 12) {
             serviceDetailSummary(state)
             if let snapshot = state.snapshot {
                 WBCard(title: "重置时间", spacing: 14) {
@@ -442,6 +463,7 @@ struct UsageStatisticsView: View {
                 Button("编辑来源") { presentation.edit(source, appearance: display) }.buttonStyle(WBButtonStyle(compact: true))
                 Button("移除来源") { model.errorMessage = nil; presentation.removing = source }.buttonStyle(WBButtonStyle(destructive: true))
             }
+            }
         }.accessibilityElement(children: .contain).accessibilityIdentifier("fc.usage.detail")
     }
     private func serviceDetailSummary(_ state: ProviderUsageSourceState) -> some View {
@@ -451,7 +473,7 @@ struct UsageStatisticsView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("本周期剩余").font(.system(size: 11)).foregroundStyle(palette.muted)
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text(ProviderUsageFormatting.amount(snapshot.remaining, unit: snapshot.displayUnit)).font(.system(size: 32)).monospacedDigit()
+                            Text(ProviderUsageFormatting.amount(snapshot.remaining, unit: snapshot.displayUnit)).font(.system(size: 30)).monospacedDigit()
                             Text("GB").font(.system(size: 12)).foregroundStyle(palette.secondary)
                         }
                     }.frame(minWidth: 190, alignment: .leading)
@@ -467,7 +489,7 @@ struct UsageStatisticsView: View {
                     }
                 }
             } else {
-                Text("尚无有效读数").font(.system(size: 14, weight: .medium))
+                Text("尚无有效读数").font(.system(size: 13, weight: .medium))
                 Text("完成连接后显示此来源的实际读数。").font(.system(size: 12)).foregroundStyle(palette.secondary)
             }
             if let message = state.message { Text(message).font(.system(size: 11)).foregroundStyle(palette.warning) }
@@ -475,7 +497,7 @@ struct UsageStatisticsView: View {
     }
     @ViewBuilder private func resetObservation(_ state: ProviderUsageSourceState) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("周期变化记录").font(.system(size: 12, weight: .medium))
+            Text("周期变化记录").font(.system(size: 13, weight: .medium))
             if let observation = state.pendingResetObservation ?? state.resetObservations.last {
                 detailRow("上次旧周期读数", ProviderUsageFormatting.timestamp(observation.lastOldObservedAt, timeZone: context.dateContext.timeZone))
                 detailRow("首次看到新周期", ProviderUsageFormatting.timestamp(observation.firstNewObservedAt, timeZone: context.dateContext.timeZone))
@@ -527,8 +549,8 @@ private struct ProviderUsageEditorView: View {
                     field("最长间隔 · 小时") { TextField("6", text: $editor.maximumHours).textFieldStyle(ProviderUsageFieldStyle()) }
                 }
                 Text("1 GB = 1000 MB。累计流量与时间共同触发；不同来源独立计算。").font(.system(size: 11)).foregroundStyle(palette.muted)
-                Toggle("自动更新此来源", isOn: $editor.enabled).toggleStyle(.switch).controlSize(.small)
-                Toggle("在概览中显示", isOn: $editor.cardAppearance.visible).toggleStyle(.switch).controlSize(.small)
+                Toggle("自动更新此来源", isOn: $editor.enabled).toggleStyle(.switch).controlSize(.mini)
+                Toggle("在概览中显示", isOn: $editor.cardAppearance.visible).toggleStyle(.switch).controlSize(.mini)
                 if let error = editor.error { Text(error).font(.system(size: 11)).foregroundStyle(palette.warning).accessibilityIdentifier("fc.usage.editor.error") }
                 if let error = appearance.errorMessage { Text(error).font(.system(size: 11)).foregroundStyle(palette.warning) }
             }.padding(.vertical, 2).disabled(editor.saving)
@@ -549,7 +571,7 @@ private struct ProviderUsageEditorView: View {
     private var bandwagonConnectionHelp: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Text("获取连接信息").font(.system(size: 12, weight: .medium))
+                Text("获取连接信息").font(.system(size: 13, weight: .medium))
                 Spacer(minLength: 4)
                 Button {
                     NSWorkspace.shared.open(URL(string: "https://bandwagonhost.com/services")!)
@@ -592,8 +614,7 @@ private struct ProviderUsageEditorView: View {
 
 private struct ProviderUsageFieldStyle: TextFieldStyle {
     func _body(configuration: TextField<Self._Label>) -> some View {
-        configuration.textFieldStyle(.plain).font(.system(size: 12)).padding(.horizontal, 10).frame(height: 32)
-            .background(WorkbenchMaterialSurface(kind: .control, radius: 8))
+        configuration.textFieldStyle(.plain).modifier(WBFieldSurface())
     }
 }
 

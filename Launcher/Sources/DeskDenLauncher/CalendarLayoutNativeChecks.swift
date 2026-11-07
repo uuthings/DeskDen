@@ -80,13 +80,14 @@ import LauncherCore
                 print("DETAIL calendar layout \(sample.2) month=\(String(describing: frame("fc.calendar.monthCard", in: host))) side=\(String(describing: frame("fc.calendar.sideColumn", in: host))) upcoming=\(String(describing: frame("fc.calendar.upcomingAgenda", in: host)))")
             }
             check(calendar.monthDays.count == 35, "calendar fixture covers an actual five-week month")
-            let fiveHeight = frame("fc.calendar.monthCard", in: host)?.height
+            let fiveTile = objects(in: host).filter { identifier($0).hasPrefix("fc.calendar.day.") }.compactMap(rect).first?.height
             calendar.displayedMonth = sixWeekDay; calendar.selectedDay = sixWeekDay
             await calendar.refresh()
             check(await settle(window, until: { calendar.monthDays.count == 42 && geometryFits(host) }),
                   "six-week calendar preserves bounded geometry without compressing its last row")
-            check(fiveHeight.flatMap { five in frame("fc.calendar.monthCard", in: host).map { $0.height > five && $0.height <= 600 } } == true,
-                  "month height follows five or six real weeks within its maximum")
+            let sixTile = objects(in: host).filter { identifier($0).hasPrefix("fc.calendar.day.") }.compactMap(rect).first?.height
+            check(fiveTile.flatMap { five in sixTile.map { five >= $0 - 0.5 } } == true && frame("fc.calendar.monthCard", in: host).map { $0.height <= 600.5 } == true,
+                  "five weeks give the same remaining height to taller tiles; six weeks stay within the maximum")
             try NativeUIFixtureAccessibility.saveView(host, name: "calendar-layout-six-weeks.png")
 
             let interval = calendar.overviewInterval
@@ -241,7 +242,8 @@ import LauncherCore
               let workspace = frame("fc.calendar.workspace", in: host),
               month.width > 0, month.height <= 600.5 else { return false }
         let tiles = objects(in: host).filter { identifier($0).hasPrefix("fc.calendar.day.") }.compactMap(rect)
-        guard !tiles.isEmpty, tiles.allSatisfy({ $0.height >= 53.5 && $0.width > 0 }) else { return false }
+        // 现行规范 9.3 (K2): date tiles take 40–64 from the remaining height.
+        guard !tiles.isEmpty, tiles.allSatisfy({ $0.height >= 39.5 && $0.height <= 64.5 && $0.width > 0 }) else { return false }
         if page < 760 {
             return abs(month.width-page) < 2 && abs(selected.width-page) < 2 && abs(recent.width-page) < 2
                 && selected.maxY <= month.minY-10 && recent.maxY <= selected.minY-10 && longTerm.maxY <= recent.minY-10

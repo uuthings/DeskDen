@@ -247,7 +247,7 @@ struct UsageAIEditorView: View {
                     Text("优先使用来源提供的信息；手动选择只用于展示，不改变额度读数。").font(.system(size: 11)).foregroundStyle(palette.muted)
                 }
                 UsageIconPicker(selection: $editor.display.icon, appearance: appearance, aiProvider: editor.provider)
-                Toggle("在概览中显示", isOn: $editor.display.visible).toggleStyle(.switch).controlSize(.small)
+                Toggle("在概览中显示", isOn: $editor.display.visible).toggleStyle(.switch).controlSize(.mini)
                 HStack(spacing: 10) {
                     UsageSourceIcon(appearance: appearance, icon: editor.display.icon, aiProvider: editor.provider)
                     VStack(alignment: .leading, spacing: 3) {
@@ -401,8 +401,7 @@ struct UsageIconPicker: View {
 
 struct UsageFieldStyle: TextFieldStyle {
     func _body(configuration: TextField<Self._Label>) -> some View {
-        configuration.textFieldStyle(.plain).font(.system(size: 12)).padding(.horizontal, 10).frame(height: 32)
-            .background(WorkbenchMaterialSurface(kind: .control, radius: 8))
+        configuration.textFieldStyle(.plain).modifier(WBFieldSurface())
     }
 }
 
@@ -492,7 +491,7 @@ struct UsageAPIBalanceEditorView: View {
                 }
                 UsageCategoryPicker(selection: $editor.display.categoryID, defaultID: "api-balance", appearance: appearance)
                 UsageIconPicker(selection: $editor.display.icon, appearance: appearance)
-                Toggle("在概览中显示", isOn: $editor.display.visible).toggleStyle(.switch).controlSize(.small)
+                Toggle("在概览中显示", isOn: $editor.display.visible).toggleStyle(.switch).controlSize(.mini)
                 if let error = editor.error ?? model.storageError ?? appearance.storageError { Text(error).font(.system(size: 11)).foregroundStyle(palette.warning) }
             }
         } actions: {
@@ -538,13 +537,14 @@ struct UsageAPIBalanceCard: View {
                     Text("DeepSeek API").font(.system(size: 11)).foregroundStyle(palette.muted)
                 }
                 Spacer(minLength: 3)
-                Circle().fill(state.message != nil ? palette.warning : state.snapshot != nil && !state.isStale() ? palette.accent : palette.muted).frame(width: 5, height: 5)
+                // A capsule only when the state needs words (现行规范 9.3, U2).
+                if let status { WBStatusPill(title: status) }
             }.frame(height: 36)
             if let snapshot = state.snapshot {
                 ForEach(snapshot.balances) { balance in
                     VStack(alignment: .leading, spacing: 3) {
                         Text("可用余额 · " + balance.currency).font(.system(size: 11)).foregroundStyle(palette.secondary)
-                        Text(balance.totalBalance).font(.system(size: snapshot.balances.count > 1 ? 21 : 29, weight: .medium)).monospacedDigit().lineLimit(1)
+                        Text(balance.totalBalance).font(.system(size: 24)).monospacedDigit().lineLimit(1)
                     }
                 }
                 if !snapshot.isAvailable { Text("当前余额不足或不可用").font(.system(size: 11)).foregroundStyle(palette.warning) }
@@ -562,5 +562,10 @@ struct UsageAPIBalanceCard: View {
             }.font(.system(size: 11)).foregroundStyle(palette.muted).padding(.top, 8)
         }.foregroundStyle(palette.text).padding(14).frame(maxWidth: .infinity).frame(height: UsageCardGrid.cardSize.height, alignment: .topLeading)
             .background(WorkbenchMaterialSurface(radius: 15)).contentShape(RoundedRectangle(cornerRadius: 15))
+    }
+    private var status: String? {
+        if refreshing { return "读取中" }
+        if !source.enabled { return "已暂停" }
+        return state.message != nil ? "读取失败" : nil
     }
 }

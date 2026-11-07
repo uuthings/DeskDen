@@ -28,9 +28,10 @@ enum WorkbenchChartPerformanceChecks {
         check(download.map(\.count) == [2, 1, 1, 1], "missing values, sample discontinuities and nonfinite reads each break download lines")
         check(upload.map(\.count) == [4, 1, 1], "upload retains its independent valid samples across a missing download")
         check(download.flatMap { $0 }.allSatisfy { $0.x.isFinite && $0.y.isFinite }, "nonfinite readings never become chart coordinates")
-        check(data.maxValue == 1024 && data.minValue == 0, "small network samples retain the original bounded axis")
+        check(data.maxValue == 1_000 && data.minValue == 0, "small network samples keep the minimum decimal axis of 1 KB/s")
         let both = DeviceHistoryChartData(points: [point(0, 1_000, 3_000_000)], kind: .network, minutes: 5, networkScale: true)
-        check(both.maxValue == 4_194_304, "network axis includes upload peaks and rounds to the established unit")
+        // 现行规范 9.3: the axis tops out at 1, 2 or 5 × 10ⁿ decimal bytes per second.
+        check(both.maxValue == 5_000_000, "network axis includes upload peaks and rounds up to a 1-2-5 decimal step")
         let thermal = DeviceHistoryChartData(points: [point(0, 46, 79)], kind: .thermal, minutes: 5, networkScale: false)
         // 现行规范 9.2: ten-degree bounds keep the labelled middle gridline on a whole degree.
         check(thermal.minValue == 40 && thermal.maxValue == 90, "thermal axis uses padded ten-degree bounds")
@@ -41,7 +42,7 @@ enum WorkbenchChartPerformanceChecks {
         check(recent.visible.count == 151 && recent.visible.first?.date == start.addingTimeInterval(3300), "one hour of retained samples yields exactly the last five minutes including the boundary")
         check(recent.segments(series: 0, size: CGSize(width: 300, height: 100)).first?.count == 151, "long-history projection keeps every measured visible sample")
         let oldPeak = DeviceHistoryChartData(points: [point(0, 1e12), point(302, 500)], kind: .network, minutes: 5, networkScale: true)
-        check(oldPeak.maxValue == 1024 && oldPeak.visible.count == 1, "out-of-window peaks cannot inflate the current axis")
+        check(oldPeak.maxValue == 1_000 && oldPeak.visible.count == 1, "out-of-window peaks cannot inflate the current axis")
         let clock = ContinuousClock(), began = clock.now
         var plotted = 0
         for _ in 0..<200 {
