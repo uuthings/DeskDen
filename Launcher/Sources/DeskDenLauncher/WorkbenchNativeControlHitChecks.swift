@@ -395,6 +395,18 @@ import LauncherCore
         await pause()
         checks.append((state.selection == 1 && popup.choiceListFrame == nil,
                        "clicking outside the dropdown dismisses its list without committing a different row"))
+        // 4.6: a second click on the trigger closes the list. The outside-click monitor used
+        // to close it first and pass the same click on, so the trigger opened it again.
+        clickPadding(); await pause()
+        let openBeforeSecondClick = popup.choiceListFrame != nil
+        let triggerFrame = popup.convert(popup.bounds, to: nil)
+        let triggerPoint = NSPoint(x: triggerFrame.maxX - 3, y: triggerFrame.midY)
+        if let down = pointerEvent(.leftMouseDown, point: triggerPoint, window: window), let up = pointerEvent(.leftMouseUp, point: triggerPoint, window: window) {
+            NSApp.postEvent(down, atStart: false); NSApp.postEvent(up, atStart: false)
+        }
+        await pause(); await pause()
+        checks.append((openBeforeSecondClick && state.selection == 1 && popup.choiceListFrame == nil,
+                       "clicking the open dropdown's trigger again closes its list instead of reopening it"))
         // A short host near the visible screen bottom leaves no room below.
         window.setFrameOrigin(NSPoint(x: visible.minX + 160, y: visible.minY + 8)); window.makeKeyAndOrderFront(nil)
         await pause(); clickPadding(); await pause()

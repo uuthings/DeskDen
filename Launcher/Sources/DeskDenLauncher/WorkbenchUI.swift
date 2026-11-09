@@ -1090,6 +1090,10 @@ private final class WBPopoverAnchorView: NSView {
     }
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+    private func isTriggerClick(_ event: NSEvent) -> Bool {
+        guard event.type == .leftMouseDown, let anchor, event.window === anchor.window else { return false }
+        return anchor.bounds.contains(anchor.convert(event.locationInWindow, from: nil))
+    }
     func present() {
         guard let anchor, let parent = anchor.window else { return }
         let trigger = parent.convertToScreen(anchor.convert(anchor.bounds, to: nil))
@@ -1099,10 +1103,15 @@ private final class WBPopoverAnchorView: NSView {
         setCurrent(current)
         if rows.indices.contains(current) { list.scrollToVisible(rows[current].frame) }
         outsideMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel]) { [weak self] event in
-            MainActor.assumeIsolated {
-                if let self, event.window !== self { self.dismiss() }
+            let consumed = MainActor.assumeIsolated { () -> Bool in
+                guard let self, event.window !== self else { return false }
+                // 4.6: a second click on the trigger only closes the list. Passing that
+                // click on would let the trigger open the list again straight away.
+                let fromTrigger = self.isTriggerClick(event)
+                self.dismiss()
+                return fromTrigger
             }
-            return event
+            return consumed ? nil : event
         }
         resignObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: self, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.dismiss() }
