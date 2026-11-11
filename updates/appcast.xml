@@ -9,6 +9,33 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
         <description>Official signed software updates for DeskDen.</description>
         <language>zh-CN</language>
         <item>
+            <title>0.6.0</title>
+            <pubDate>Wed, 11 Nov 2026 02:48:51 GMT</pubDate>
+            <sparkle:version>7</sparkle:version>
+            <sparkle:shortVersionString>0.6.0</sparkle:shortVersionString>
+            <sparkle:fullReleaseNotesLink>https://github.com/uuthings/DeskDen/releases/tag/v0.6.0</sparkle:fullReleaseNotesLink>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="plain-text"><![CDATA[统一排版
+首页、设备、空间清理、网络、用量、日历、私密空间、设置与 Mini 采用一致的卡片、设置行、按钮和日期格式。
+
+设置
+设置行与开关统一，外观改用三张卡片；启动器选项并入「设置 → 启动器」，桌面组件在设置中逐卡调整。
+
+空间清理
+识别 Xcode 模拟器、项目构建产物和开发工具缓存；清理一批后其余结果保持可选，临时读取失败不会丢失恢复入口，处理记录保存更快。
+
+用量与额度
+AI 每日记录改为额度与 Token 合并图表；Claude 会员额度按本机登录方式给出指引。
+
+其他改进
+工作台默认以标准大小打开，需要沿用上次大小可在「设置 → 通用」开启「记住窗口大小」；下拉框再次点击即可收起；锁屏期间的后台记录可以正常保存。
+
+旧版升级提示
+从 0.3.0 或更早版本升级前，请在旧版导出并另存私密空间加密备份。迁移后继续使用新版，按安装指南重新开启 Touch ID、系统权限和 IPRoyal 本机连接。
+]]></description>
+            <enclosure url="https://updates.uuthings.com/deskden/macos/releases/0.6.0-7/DeskDen-0.6.0-macos-universal.zip" length="30165087" type="application/octet-stream" sparkle:edSignature="5L4v9DU215HrgNWXQnLPR/ysnsATWka1ROoWZTXSUIoGX2s/0/lepgQrI/RKBV20Z7Iiri+f6w0gyF/ycRRvDA=="/>
+        </item>
+        <item>
             <title>0.5.0</title>
             <pubDate>Wed, 04 Nov 2026 05:29:29 GMT</pubDate>
             <sparkle:version>6</sparkle:version>
@@ -105,6 +132,6 @@ IPRoyal 连接器需另行安装并保持官方控制台登录。服务额度存
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: ONhzCcAyQjV/biyRck0RHJYS+n4rvFvkkh5XSpG9J+tz0TneQBbIbu0LUR7m/mBoN+uAlp4nhPF9kItJZCvTCg==
-length: 7703
+edSignature: LZo94wAoexDfGImdJPU9C23whQKwK714sagctncdLxo7nf5HUJJ9ANmryzIBF5/MIbTVfumYDzHc/EG8FCTzCQ==
+length: 9606
 -->
