@@ -31,7 +31,7 @@ struct WorkbenchUpdateSettings: View {
                 }.buttonStyle(WBButtonStyle(compact: true))
                     .disabled(!updates.canCheck && updates.release == nil).accessibilityIdentifier("updates-check")
             }
-            WBSettingRow(title: "自动检查更新", subtitle: "每天在后台检查，有新版本时顶栏显示「新版本」入口；关闭后只在你主动检查时连接更新服务") {
+            WBSettingRow(title: "自动检查更新", subtitle: "启动时检查，打开工作台时按需复查。发现新版本会在顶栏提示。关闭后仅手动检查。") {
                 Toggle("自动检查更新", isOn: Binding(get: { updates.automaticallyChecks }, set: updates.setAutomaticallyChecks))
                     .labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.mini).tint(palette.accent)
                     .disabled(!AppUpdateController.configurationIsValid(Bundle.main.infoDictionary ?? [:]))

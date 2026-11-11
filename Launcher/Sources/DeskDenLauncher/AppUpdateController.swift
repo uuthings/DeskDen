@@ -11,6 +11,7 @@ import Sparkle
     func start() throws
     func checkForUpdates()
     func checkForUpdatesInBackground()
+    func checkForUpdateInformation()
     func observeChanges(_ changed: @escaping @MainActor () -> Void) -> Set<AnyCancellable>
 }
 
@@ -37,6 +38,7 @@ import Sparkle
     }
     func checkForUpdates() { updater.checkForUpdates() }
     func checkForUpdatesInBackground() { updater.checkForUpdatesInBackground() }
+    func checkForUpdateInformation() { updater.checkForUpdateInformation() }
     func observeChanges(_ changed: @escaping @MainActor () -> Void) -> Set<AnyCancellable> {
         var result = Set<AnyCancellable>()
         updater.publisher(for: \.canCheckForUpdates).receive(on: RunLoop.main).sink { _ in changed() }.store(in: &result)
@@ -67,6 +69,7 @@ struct AppUpdateRelease: Equatable {
 /// and installation. This object owns only presentation and user choices.
 @MainActor final class AppUpdateController: NSObject, ObservableObject, SPUUpdaterDelegate {
     static let checkInterval: TimeInterval = 86_400
+    private static let workbenchCheckInterval: TimeInterval = 3_600
     @Published private(set) var automaticallyChecks = true
     @Published private(set) var canCheck = true
     @Published private(set) var lastChecked: Date?
@@ -93,6 +96,8 @@ struct AppUpdateRelease: Equatable {
     private var timer: Timer?
     private var lastAutomaticAttempt: Date?
     private var retryWhenConnected = false
+    private enum InformationCheck { case checking, found(AppUpdateRelease) }
+    private var informationCheck: InformationCheck?
     private var cancellation: (() -> Void)?
     private var offerReply: ((SPUUserUpdateChoice) -> Void)?
     private var installReply: ((SPUUserUpdateChoice) -> Void)?
@@ -138,9 +143,13 @@ struct AppUpdateRelease: Equatable {
             && information["SURequireSignedFeed"] as? Bool == true
     }
     func startAutomaticCheckingIfEnabled() {
+        let isStarting = engine == nil
         guard automaticallyChecks, startIfNeeded() else { return }
         observeAutomaticTriggersIfNeeded()
-        checkAutomaticallyIfDue()
+        // Sparkle supports a background check immediately after starting, even
+        // if the previous process checked recently and no offer was retained.
+        if isStarting { checkAutomatically(at: now()) }
+        else { checkAutomaticallyIfDue() }
     }
     func setAutomaticallyChecks(_ enabled: Bool) {
         guard Self.configurationIsValid(information) else { return }
@@ -227,15 +236,28 @@ struct AppUpdateRelease: Equatable {
         // immediately cancels instead; it never grants permission to install.
     }
     func checkAutomaticallyIfDue(reconnected: Bool = false) {
-        guard automaticallyChecks, let engine, engine.canCheckForUpdates, !engine.sessionInProgress, terminationCompletions.isEmpty else { return }
         let date = now()
-        let due = lastChecked.map { date.timeIntervalSince($0) >= Self.checkInterval || $0 > date } ?? true
-        let retry = retryWhenConnected && reconnected
-        guard due || retry else { return }
+        guard checkIsDue(after: Self.checkInterval, at: date) || (retryWhenConnected && reconnected) else { return }
+        checkAutomatically(at: date)
+    }
+    func checkWhenWorkbenchOpens() {
+        guard release == nil, !isDialogPresented else { return }
+        let date = now()
+        guard checkIsDue(after: Self.workbenchCheckInterval, at: date) else { return }
+        checkAutomatically(at: date, informationOnly: true)
+    }
+    private func checkIsDue(after interval: TimeInterval, at date: Date) -> Bool {
+        lastChecked.map { date.timeIntervalSince($0) >= interval || $0 > date } ?? true
+    }
+    private func checkAutomatically(at date: Date, informationOnly: Bool = false) {
+        guard automaticallyChecks, let engine, engine.canCheckForUpdates, !engine.sessionInProgress, terminationCompletions.isEmpty else { return }
         guard lastAutomaticAttempt.map({ date.timeIntervalSince($0) >= 60 }) ?? true else { return }
         lastAutomaticAttempt = date; retryWhenConnected = false
         if release == nil { phase = .checking; status = "正在后台检查更新" }
-        engine.checkForUpdatesInBackground()
+        if informationOnly {
+            informationCheck = .checking
+            engine.checkForUpdateInformation()
+        } else { engine.checkForUpdatesInBackground() }
         syncEngine()
     }
     private func observeAutomaticTriggersIfNeeded() {
@@ -293,8 +315,17 @@ struct AppUpdateRelease: Equatable {
     }
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
         guard item.signingValidationStatus == .succeeded else { return }
-        release = Self.release(from: item)
-        hasError = false; status = "发现新版本 v" + item.displayVersionString
+        recordVerifiedRelease(Self.release(from: item))
+    }
+    func recordVerifiedRelease(_ item: AppUpdateRelease) {
+        if informationCheck != nil {
+            // Sparkle reports the result before it finishes cleaning up the
+            // probe. Publish it once a requested download can start a new check.
+            informationCheck = .found(item)
+            return
+        }
+        release = item
+        hasError = false; status = "发现新版本 v" + item.version
         retryWhenConnected = false
     }
     func updaterDidNotFindUpdate(_ updater: SPUUpdater) { foundNoUpdate() }
@@ -358,6 +389,12 @@ struct AppUpdateRelease: Equatable {
             completions.forEach { $0() }
         }
         syncEngine()
+        let finishedInformationCheck = informationCheck
+        informationCheck = nil
+        if case let .found(item) = finishedInformationCheck, phase == .checking {
+            recordVerifiedRelease(item)
+            phase = .available
+        }
     }
     func showUpdateCheck(cancellation: @escaping () -> Void) {
         self.cancellation = cancellation; canCancelUpdate = true

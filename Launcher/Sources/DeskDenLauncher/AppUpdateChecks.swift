@@ -46,7 +46,7 @@ import SwiftUI
         updates.setAutomaticallyChecks(false)
         let manualFactory = UpdateCheckEngineFactory(defaults: defaults)
         let manual = AppUpdateController(defaults: defaults, information: information, engineFactory: manualFactory.make)
-        manual.startAutomaticCheckingIfEnabled()
+        manual.startAutomaticCheckingIfEnabled(); manual.checkWhenWorkbenchOpens()
         check(!manual.automaticallyChecks && manualFactory.engines.isEmpty && defaults.object(forKey: "SUEnableAutomaticChecks") as? Bool == false,
               "an explicit saved opt-out survives recreation and prevents launch-time checks")
         manual.checkForUpdates()
@@ -61,6 +61,9 @@ import SwiftUI
         manualEngine.complete(at: date); manual.foundNoUpdate()
         check(manual.canCheck && manual.lastChecked == date && manual.phase == .upToDate && !manual.automaticallyChecks,
               "manual completion publishes the actual result and date without enabling automatic checks")
+        manual.dismissDialog(); manual.checkWhenWorkbenchOpens()
+        check(manualEngine.informationChecks == 0, "reopening a workbench with an explicitly disabled automatic preference never probes")
+        manual.isDialogPresented = true
         manual.recordAbort(NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut))
         check(manual.hasError && manual.isDialogPresented && manual.phase == .failed, "manual check failures remain visibly actionable")
 
@@ -102,6 +105,50 @@ import SwiftUI
         let synthetic = AppUpdateRelease(version: "2.0.0", publishedAt: nil,
             notes: [.init(title: "Synthetic change", detail: "Synthetic explanation")], downloadSize: 100,
             informationURL: nil, informationOnly: false)
+        let reopenSuite = suite + ".reopen"
+        guard let reopenDefaults = UserDefaults(suiteName: reopenSuite) else { check(false, "reopen checks create isolated preferences"); return (count, failures) }
+        defer { reopenDefaults.removePersistentDomain(forName: reopenSuite) }
+        var reopenDate = date
+        reopenDefaults.set(reopenDate.addingTimeInterval(-120), forKey: "SULastCheckTime")
+        let reopenFactory = UpdateCheckEngineFactory(defaults: reopenDefaults)
+        let reopened = AppUpdateController(defaults: reopenDefaults, information: information, now: { reopenDate }, engineFactory: reopenFactory.make)
+        reopened.checkWhenWorkbenchOpens()
+        check(reopenFactory.engines.isEmpty, "presenting a workbench before automatic startup does not construct an update engine")
+        reopened.startAutomaticCheckingIfEnabled()
+        guard let reopenedEngine = reopenFactory.engines.first else { check(false, "reopening tests start the injected engine"); return (count, failures) }
+        check(reopenedEngine.backgroundChecks == 1 && !reopened.isDialogPresented,
+              "a fresh process checks silently even when the previous process checked two minutes ago")
+        reopenedEngine.complete(at: reopenDate); reopened.foundNoUpdate(); reopened.finishUpdateCycle()
+        reopened.startAutomaticCheckingIfEnabled()
+        reopenDate = reopenDate.addingTimeInterval(3_599)
+        reopened.checkWhenWorkbenchOpens()
+        check(reopenedEngine.starts == 1 && reopenedEngine.backgroundChecks == 1 && reopenedEngine.informationChecks == 0,
+              "another startup call and a workbench reopen just before one hour do not repeat a recent check")
+        reopenDate = reopenDate.addingTimeInterval(1)
+        reopened.isDialogPresented = true; reopened.checkWhenWorkbenchOpens()
+        check(reopenedEngine.informationChecks == 0, "opening the workbench for a manual dialog cannot start a quiet probe")
+        reopened.dismissDialog()
+        reopened.checkWhenWorkbenchOpens(); reopened.checkWhenWorkbenchOpens()
+        check(reopenedEngine.informationChecks == 1 && reopenedEngine.backgroundChecks == 1 && reopenedEngine.checks == 0
+              && reopened.phase == .checking && !reopened.isDialogPresented,
+              "reopening after one hour starts one quiet information check without opening a dialog")
+        reopened.recordVerifiedRelease(synthetic)
+        check(reopened.release == nil && reopened.phase == .checking && !reopened.canCheck,
+              "the probe's verified result waits for its session to finish before offering an actionable update")
+        reopenedEngine.complete(at: reopenDate); reopened.finishUpdateCycle()
+        check(reopened.release == synthetic && reopened.phase == .available && !reopened.isDialogPresented && reopenedEngine.checks == 0,
+              "a verified information result remains available after the probe finishes without opening a dialog or initiating download")
+        reopenDate = reopenDate.addingTimeInterval(3_600)
+        reopened.checkWhenWorkbenchOpens()
+        check(reopenedEngine.informationChecks == 1, "reopening with a known release keeps the existing sidebar offer")
+        reopened.downloadUpdate()
+        var revalidatedChoices: [SPUUserUpdateChoice] = []
+        check(reopenedEngine.checks == 1 && reopened.isDialogPresented && reopened.phase == .checking,
+              "explicit download after a probe starts a user session to revalidate the offered version")
+        reopened.offerUpdate(synthetic, userInitiated: true) { revalidatedChoices.append($0) }
+        check(revalidatedChoices == [.install] && reopened.phase == .downloading,
+              "the explicit download accepts the version only after Sparkle offers it again")
+
         let flow = AppUpdateController(defaults: defaults, information: information, allowsStarting: false)
         var choices: [SPUUserUpdateChoice] = [], cancellations = 0, completions = 0
         flow.offerUpdate(synthetic, userInitiated: false) { choices.append($0) }
@@ -371,7 +418,7 @@ import SwiftUI
 }
 @MainActor private final class UpdateCheckEngine: AppUpdateEngine {
     let defaults: UserDefaults; let failsStart: Bool
-    var starts = 0, checks = 0, backgroundChecks = 0, automaticWrites = 0
+    var starts = 0, checks = 0, backgroundChecks = 0, informationChecks = 0, automaticWrites = 0
     var canCheckForUpdates = true
     var sessionInProgress = false
     var lastUpdateCheckDate: Date?
@@ -379,6 +426,7 @@ import SwiftUI
     private var changed: (@MainActor () -> Void)?
     init(defaults: UserDefaults, failsStart: Bool) {
         self.defaults = defaults; self.failsStart = failsStart; automatic = defaults.object(forKey: "SUEnableAutomaticChecks") as? Bool ?? true
+        lastUpdateCheckDate = defaults.object(forKey: "SULastCheckTime") as? Date
     }
     var automaticallyChecksForUpdates: Bool {
         get { automatic }
@@ -387,6 +435,7 @@ import SwiftUI
     func start() throws { starts += 1; if failsStart { throw UpdateCheckError.engineStart } }
     func checkForUpdates() { checks += 1; canCheckForUpdates = false; sessionInProgress = true; changed?() }
     func checkForUpdatesInBackground() { backgroundChecks += 1; canCheckForUpdates = false; sessionInProgress = true; changed?() }
+    func checkForUpdateInformation() { informationChecks += 1; canCheckForUpdates = false; sessionInProgress = true; changed?() }
     func observeChanges(_ changed: @escaping @MainActor () -> Void) -> Set<AnyCancellable> { self.changed = changed; return [] }
     func complete(at date: Date) { canCheckForUpdates = true; sessionInProgress = false; lastUpdateCheckDate = date; changed?() }
 }

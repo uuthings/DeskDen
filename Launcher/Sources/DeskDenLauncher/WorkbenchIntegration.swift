@@ -10,6 +10,7 @@ extension LauncherController {
         topEntryController?.dismissSummary(animated: false)
         if workbenchController == nil {workbenchController=WorkbenchWindowController(owner:self)}
         workbenchController?.present(route:route,settingsTab:settingsTab)
+        updates.checkWhenWorkbenchOpens()
     }
     func showWorkbenchFromTopEntry(originFrame: NSRect? = nil) {
         guard !isPreparingToQuit else { return }

@@ -6,7 +6,7 @@ Xcode's final build phase signs the embedded framework's four helpers inside-out
 
 ## User behavior
 
-Settings → General contains **Check for Updates** and **Automatically check for updates**. The application and menu-bar menus also offer a manual check. Automatic checking is enabled by default; an explicitly saved opt-out is preserved. Checks run daily, with a due check after launch or wake and a retry after connectivity returns. Manual checks run immediately when no update session is active. Automatic downloading/installing and system-profile reporting remain disabled.
+Settings → General contains **Check for Updates** and **Automatically check for updates**. The application and menu-bar menus also offer a manual check. With automatic checking enabled, DeskDen checks silently at launch and checks again when opening the workbench if the last check was at least an hour ago. It also checks daily in the background, on wake when due, and retries after connectivity returns. An explicitly saved opt-out is preserved. Manual checks run immediately when no update session is active. Downloading and installing updates require confirmation. System-profile reporting is disabled.
 
 A background result appears as a single download icon and new-version button beside the brand in the workbench header. It does not open a window or interrupt another app. Clicking the button opens the shared themed update dialog with the release version, known publication date and change notes. Short notes stay compact; long notes scroll while actions remain visible. Failed checks are reported when the user opens the update interface, never as “up to date.”
 

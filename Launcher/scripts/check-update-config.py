@@ -112,7 +112,7 @@ def configuration_errors(info):
             errors.append(key + " must be explicitly " + str(expected).lower())
     interval = info.get("SUScheduledCheckInterval")
     if type(interval) not in (int, float) or not math.isfinite(interval) or interval < 86_400:
-        errors.append("automatic checks must be at least 24 hours apart")
+        errors.append("the scheduled automatic check interval must be at least 24 hours")
     if numeric_version(info.get("LSMinimumSystemVersion")) is None:
         errors.append("the app must expose its actual numeric minimum macOS baseline")
     return errors
