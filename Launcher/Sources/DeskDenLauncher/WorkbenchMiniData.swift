@@ -181,6 +181,7 @@ struct WorkbenchMiniNetworkPoint: Identifiable {
 }
 
 struct WorkbenchMiniDeviceData {
+    static let networkWindowDuration: TimeInterval = 60
     var cpu = "—"
     var memory = "—"
     var temperature = "—"
@@ -206,6 +207,7 @@ struct WorkbenchMiniDeviceData {
     var periodTraffic = "—"
     var trafficFraction: Double?
     var trafficNote = "尚未采集流量"
+    var networkWindowEnd: Date = .now
     var networkPoints: [WorkbenchMiniNetworkPoint] = []
 }
 
@@ -227,7 +229,7 @@ extension WorkbenchMiniDeviceData {
                 if !current.isEmpty { result.append(current) }; current = []; continue
             }
             if let previous = current.last,
-               previous.segment != point.segment || point.date <= previous.date || point.date.timeIntervalSince(previous.date) > 8 {
+               previous.segment != point.segment || point.date <= previous.date {
                 result.append(current); current = []
             }
             current.append(point)
@@ -239,7 +241,9 @@ extension WorkbenchMiniDeviceData {
     init(snapshot: DeviceSnapshot, openedAt: Date, history: [DeviceHistoryPoint] = [],
          summary: DeviceTrafficSummary? = nil, budget: DeviceTrafficBudget? = nil,
          unit: WeatherTemperatureUnit = .celsius, now: Date = Date()) {
-        let performanceFresh = Self.sampleIsCurrent(snapshot.performanceSampledAt, now: now, maximumAge: 90)
+        let memorySampledAt = snapshot.memorySampledAt ?? snapshot.performanceSampledAt
+        let memoryFresh = Self.sampleIsCurrent(memorySampledAt, now: now, maximumAge: 90)
+        let cpuFresh = Self.sampleIsCurrent(snapshot.sampledAt ?? snapshot.performanceSampledAt, now: now, maximumAge: 90)
         let diskFresh = Self.sampleIsCurrent(snapshot.performanceSampledAt, now: now, maximumAge: 300)
         let thermalFresh = Self.sampleIsCurrent(snapshot.thermalSampledAt, now: now, maximumAge: 90)
         let networkFresh = Self.sampleIsCurrent(snapshot.sampledAt, now: now, maximumAge: 10)
@@ -247,13 +251,13 @@ extension WorkbenchMiniDeviceData {
             guard let date else { return "读取中" }
             return !fresh || date < openedAt ? "更新中" : ""
         }
-        memoryStatus = status(performanceFresh, snapshot.performanceSampledAt)
+        memoryStatus = status(memoryFresh, memorySampledAt)
         diskStatus = status(diskFresh, snapshot.performanceSampledAt)
-        if performanceFresh && snapshot.memory == nil { memoryStatus = "读数不可用" }
+        if memoryFresh && snapshot.memory == nil { memoryStatus = "读数不可用" }
         if diskFresh && snapshot.disk == nil { diskStatus = "读数不可用" }
         thermalUpdating = thermalFresh && snapshot.thermalSampledAt.map { $0 < openedAt } == true
-        cpu = DeviceFormat.percent(performanceFresh ? snapshot.cpuPercent : nil)
-        if performanceFresh, let memory = snapshot.memory {
+        cpu = DeviceFormat.percent(cpuFresh ? snapshot.cpuPercent : nil)
+        if memoryFresh, let memory = snapshot.memory {
             self.memory = DeviceFormat.capacity(memory.used) + " / " + DeviceFormat.capacity(memory.total)
             memoryFraction = memory.total > 0 ? Double(memory.used) / Double(memory.total) : nil
             memoryPressure = DeviceFormat.pressure(memory.pressure)
@@ -277,9 +281,9 @@ extension WorkbenchMiniDeviceData {
         download = DeviceFormat.rate(networkFresh ? snapshot.allNetwork.downloadBytesPerSecond : nil)
         upload = DeviceFormat.rate(networkFresh ? snapshot.allNetwork.uploadBytesPerSecond : nil)
         if networkFresh, snapshot.allNetwork.downloadBytesPerSecond == nil, snapshot.allNetwork.uploadBytesPerSecond == nil {
-            networkStatus = snapshot.allNetwork.interfaceNames.isEmpty ? "无活动接口" : "建立采样"
+            networkStatus = snapshot.allNetwork.liveReadingStatus ?? (snapshot.allNetwork.interfaceNames.isEmpty ? "无活动接口" : "建立采样")
         } else { networkStatus = status(networkFresh, snapshot.sampledAt) }
-        note = performanceFresh ? (memoryStatus.isEmpty ? nil : "正在更新，暂显示最近有效的本机读数。") : "正在读取最新本机数据。"
+        note = memoryFresh ? (memoryStatus.isEmpty ? nil : "正在更新，暂显示最近有效的本机读数。") : "正在读取最新本机数据。"
         if snapshot.allNetwork.todayCoverageSeconds > 0 {
             let total = snapshot.allNetwork.todayDownload.addingReportingOverflow(snapshot.allNetwork.todayUpload)
             todayTraffic = DeviceFormat.storage(total.overflow ? UInt64.max : total.partialValue)
@@ -297,7 +301,8 @@ extension WorkbenchMiniDeviceData {
             trafficNote = "\(start)–\(end) · \(summary.scope.title)\n本机已采集流量；\(summary.isPartialPeriod ? "仅覆盖部分时间" : "覆盖当前周期")。"
             trafficNote += budget?.enabled == true ? "预算为本机自设额度。" : "尚未启用流量预算。"
         }
-        let cutoff = now.addingTimeInterval(-60)
+        networkWindowEnd = now
+        let cutoff = now.addingTimeInterval(-Self.networkWindowDuration)
         networkPoints = history.suffix(64).filter { $0.date >= cutoff && $0.date <= now }.map {
             .init(date: $0.date, segment: $0.allNetworkSegment ?? $0.segment,
                   download: $0.allDownloadBytesPerSecond, upload: $0.allUploadBytesPerSecond)

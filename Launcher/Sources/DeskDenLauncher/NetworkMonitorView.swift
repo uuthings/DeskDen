@@ -88,7 +88,7 @@ struct NetworkMonitorView: View {
                 cardTitle("实时网速", symbol: "waveform.path.ecg")
                 HStack(spacing: 5) {
                     Circle().fill(model.snapshot.network.downloadBytesPerSecond == nil ? palette.muted : palette.success).frame(width: 5, height: 5)
-                    Text(model.snapshot.network.interfaceNames.isEmpty ? "未连接" : model.snapshot.network.downloadBytesPerSecond == nil ? "暂无读数" : "正在采集")
+                    Text(model.snapshot.network.liveReadingStatus ?? (model.snapshot.sampledAt == nil ? "读取中" : model.snapshot.network.downloadBytesPerSecond == nil ? "暂无读数" : "正在采集"))
                 }.font(.system(size: 11)).foregroundStyle(palette.muted)
                 Spacer(minLength: 8)
                 WBSelect("实时接口", selection: interfaceBinding, options: interfaceOptions).frame(width: expanded ? 180 : 155)

@@ -503,13 +503,19 @@ struct WorkbenchMiniPanelView: View {
         let downloads = device.networkSegments(upload: false), uploads = device.networkSegments(upload: true)
         return Group {
             if downloads.isEmpty && uploads.isEmpty {
-                Text(device.networkStatus == "无活动接口" ? "当前无活动网络接口" : device.download == "—" && device.upload == "—" ? "正在建立网络采样" : "正在采集趋势")
+                let status = switch device.networkStatus {
+                case "无活动接口": "当前无活动网络接口"
+                case "网卡读数不可用", "采样已暂停": device.networkStatus
+                default: device.download == "—" && device.upload == "—" ? "正在建立网络采样" : "正在采集趋势"
+                }
+                Text(status)
                     .font(.system(size: 11)).foregroundStyle(palette.muted).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Canvas { drawing, size in
                     let points = device.networkPoints
                     let maximum = max(1, points.flatMap { [$0.download, $0.upload].compactMap { $0 }.filter { $0.isFinite && $0 >= 0 } }.max() ?? 1)
-                    let first = points.first!.date, duration = max(1, points.last!.date.timeIntervalSince(first))
+                    let duration = WorkbenchMiniDeviceData.networkWindowDuration
+                    let first = device.networkWindowEnd.addingTimeInterval(-duration)
                     for upload in [false, true] {
                         let color = upload ? palette.secondary : palette.accent
                         for segment in upload ? uploads : downloads {

@@ -39,6 +39,41 @@ final class DeviceMetricsTests: XCTestCase {
         ["en0": .init(received: received, sent: sent)]
     }
 
+    func testLiveRateRecoversAcrossReadFailureButDoesNotBridgeDisconnectionOrSleep() {
+        var live = DeviceLiveNetworkRate()
+        XCTAssertEqual(live.ingest(counter(100, 20), uptime: 1, maximumGap: 6), .establishingBaseline)
+        let firstSegment = live.segment
+        XCTAssertEqual(live.ingest(nil, uptime: 3, maximumGap: 6), .readFailed)
+        XCTAssertEqual(live.ingest(counter(500, 20), uptime: 5, maximumGap: 6),
+                       .measured(.init(received: 400, sent: 0, seconds: 4)))
+        XCTAssertEqual(live.segment, firstSegment)
+        XCTAssertEqual(live.ingest([:], uptime: 7, maximumGap: 6), .noActiveInterface)
+        XCTAssertNotEqual(live.segment, firstSegment)
+        XCTAssertEqual(live.ingest(counter(800), uptime: 9, maximumGap: 6), .establishingBaseline)
+        live.breakContinuity()
+        XCTAssertEqual(live.ingest(counter(1_000_000), uptime: 10, maximumGap: 6), .establishingBaseline)
+    }
+
+    func testLiveRateKeepsContinuityAcrossCadenceChangeAndMidnightWithoutChangingDailyLedger() {
+        let midnight = utc.startOfDay(for: start).addingTimeInterval(86_400)
+        var live = DeviceLiveNetworkRate()
+        var accounting = DeviceNetworkAccumulator(ledger: .init(now: start))
+        let first = counter(100, 50), next = counter(190, 50)
+        _ = live.ingest(first, uptime: 10, maximumGap: 25)
+        let segment = live.segment
+        _ = accounting.ingest(first, at: midnight.addingTimeInterval(-4), maximumGap: 25, calendar: utc)
+        XCTAssertEqual(live.ingest(next, uptime: 19, maximumGap: 6).delta?.downloadBytesPerSecond, 10)
+        XCTAssertEqual(live.segment, segment)
+        XCTAssertNil(accounting.ingest(next, at: midnight.addingTimeInterval(5), maximumGap: 25, calendar: utc))
+        XCTAssertEqual(accounting.ledger.recordingReceived, 0)
+        XCTAssertEqual(live.ingest(next, uptime: 20, maximumGap: 6).delta?.downloadBytesPerSecond, 0)
+        XCTAssertEqual(live.ingest(counter(1), uptime: 21, maximumGap: 6), .establishingBaseline)
+        XCTAssertNotEqual(live.segment, segment)
+        let reset = live.segment
+        XCTAssertEqual(live.ingest(counter(500), uptime: 31, maximumGap: 6), .establishingBaseline)
+        XCTAssertNotEqual(live.segment, reset)
+    }
+
     func testNetworkStartsWithBaselineAndRecordsOnlyDifferences() {
         var subject = DeviceNetworkAccumulator(ledger: .init(now: start))
         XCTAssertNil(subject.ingest(counter(1_000, 500), at: start, maximumGap: 6, calendar: utc))

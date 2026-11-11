@@ -12,6 +12,7 @@ struct VaultModuleView:View {
     @ObservedObject var model:VaultModel
     var returnToSettingsPrivacy:(()->Void)?=nil
     @State private var windowHeight:CGFloat=758
+    @StateObject private var hintClose = WorkbenchDraftCloseCoordinator()
     @Environment(\.workbenchPalette) private var palette
     @Environment(\.workbenchModals) private var modals
     var body:some View {
@@ -41,11 +42,19 @@ struct VaultModuleView:View {
         }.foregroundStyle(palette.text)
         .background(VaultWindowReader(found:{model.hostWindow=$0},resized:{windowHeight=$0}).frame(width:0,height:0))
         .onChange(of:model.sessionID){_,_ in modals?.prune()}
-        .workbenchModal(item:$model.sheet,onDismiss:{if model.restorePreview != nil || model.restoreSourceName != nil {model.cancelRestore()}},onRequestDismiss:model.closeSheet){sheet in
+        .workbenchModal(item: $model.sheet, onDismiss: {
+            hintClose.continueEditing()
+            if model.restorePreview != nil || model.restoreSourceName != nil { model.cancelRestore() }
+        }, onRequestDismiss: {
+            if model.sheet == .passwordHint { hintClose.requestClose() }
+            else { model.closeSheet() }
+        }) { sheet in
             switch sheet {
             case .setup:VaultSetupSheet(model:model)
             case .unlockForPassword:VaultPasswordUnlockSheet(model:model)
             case .password:VaultPasswordSheet(model:model)
+            case .passwordHint: VaultPasswordHintSheet(model: model, close: hintClose)
+            case .touchIDDefault: VaultTouchIDDefaultSheet(model: model)
             case .backup:VaultBackupSheet(model:model)
             case .restore:VaultRestoreSheet(model:model)
             }
@@ -64,13 +73,40 @@ private struct VaultProtectionPage:View {
             VStack(alignment:.leading,spacing:12) {
                 // Setting rows (现行规范 4.5, G1); the three fixed rules share one row (V4).
                 WBCard(title:"访问保护",symbol:"checkmark.shield",spacing:0) {
-                    WBSettingRow(title:"独立密码",subtitle:model.isUnlocked ? "至少 8 个字符；不会保存明文密码":"先验证解锁，再继续修改密码",showsDivider:false) {
+                    WBSettingRow(title:"独立密码",subtitle:model.isUnlocked ? "新密码至少需要 \(VaultCryptography.minimumPasswordLength) 个字符":"先验证解锁，再继续修改密码",showsDivider:false) {
                         Button("修改密码",action:model.requestPasswordChange).buttonStyle(WBButtonStyle(compact:true)).disabled(!model.isConfigured || model.busy)
                     }
                     WBSettingRow(title:"Touch ID",subtitle:model.biometricUnavailableReason ?? (model.biometricEnabled ? "仅此设备；变更指纹或密码后需重新开启":"先用独立密码解锁，再为此资料库开启")) {
-                        if model.biometricEnabled && model.biometricCanRemove {Button("停用"){Task{_ = await model.disableBiometrics()}}.buttonStyle(WBButtonStyle(compact:true)).disabled(model.busy)}
-                        else if !model.biometricAvailable {Button("重新检测"){Task{await model.refreshBiometrics()}}.buttonStyle(WBButtonStyle(compact:true)).disabled(model.busy)}
-                        else {Button("开启 Touch ID"){Task{_ = await model.enableBiometrics()}}.buttonStyle(WBButtonStyle(compact:true)).disabled(!model.isUnlocked || model.busy || !model.canChangeProtectionPreferences)}
+                        if !model.biometricAvailable {
+                            Button("重新检测") { Task { await model.refreshBiometrics() } }
+                                .buttonStyle(WBButtonStyle(compact:true)).disabled(model.busy)
+                        } else if model.biometricEnabled && model.biometricCanRemove {
+                            Button("停用") { Task { _ = await model.disableBiometrics() } }
+                                .buttonStyle(WBButtonStyle(compact:true)).disabled(model.busy)
+                        } else {
+                            Button("开启 Touch ID", action: enableTouchID)
+                                .buttonStyle(WBButtonStyle(compact:true))
+                                .disabled(!model.isUnlocked || model.busy || !model.canChangeProtectionPreferences)
+                        }
+                    }
+                    WBSettingRow(title: "默认解锁方式", subtitle: unlockMethodNote) {
+                        WBSelect("默认解锁方式", selection: Binding(
+                            get: { model.preferredUnlockMethod },
+                            set: { method in
+                                guard method != model.preferredUnlockMethod, model.setPreferredUnlockMethod(method) else { return }
+                                toast("已更新默认解锁方式")
+                            }
+                        ), options: unlockMethods)
+                        .frame(width: 120)
+                        .disabled(!model.isUnlocked || model.busy || !model.canChangeProtectionPreferences || unlockMethods.count < 2)
+                    }
+                    WBSettingRow(title: "密码提示", subtitle: hintNote) {
+                        Button(model.passwordHint == nil ? "设置提示" : "编辑提示") {
+                            model.errorMessage = nil
+                            model.sheet = .passwordHint
+                        }
+                        .buttonStyle(WBButtonStyle(compact: true))
+                        .disabled(!model.isUnlocked || model.busy)
                     }
                     WBSettingRow(title:"闲置自动锁定",subtitle:"没有操作时自动收起内容") {
                         WBSelect("闲置自动锁定",selection:Binding(get:{model.idleMinutes},set:model.changeIdleMinutes),options:[1,5,10].map{($0,"\($0) 分钟")}).frame(width:120).disabled(!model.canChangeProtectionPreferences)
@@ -78,25 +114,52 @@ private struct VaultProtectionPage:View {
                     WBSettingRow(title:"始终生效的保护",subtitle:"离开私密页或收起工作台时锁定；睡眠或切换用户后需重新验证；复制的内容 3 分钟后或锁定时清除") {
                         WBStatusPill(title:"始终开启")
                     }
+                    if model.sheet == nil, let error = model.errorMessage {
+                        Label(error, systemImage: "exclamationmark.triangle").font(.system(size: 11))
+                            .foregroundStyle(palette.critical)
+                            .fixedSize(horizontal: false, vertical: true).padding(.top, 8)
+                    }
                 }
                 WBCard(title:"本机备份",symbol:"archivebox",spacing:0) {
                     WBSettingRow(title:"导出加密备份",subtitle:"包含资料与必要的恢复信息",showsDivider:false) {
                         Button("导出"){model.errorMessage=nil;model.sheet = .backup}.buttonStyle(WBButtonStyle(compact:true)).disabled(!model.isConfigured || model.busy)
                     }
-                    WBSettingRow(title:"恢复备份",subtitle:"先验证密码与格式，再确认替换") {
+                    WBSettingRow(title:"恢复备份",subtitle:"使用备份文件和导出时的密码") {
                         Button("选择备份"){model.errorMessage=nil;model.sheet = .restore}.buttonStyle(WBButtonStyle(compact:true)).disabled(model.busy)
                     }
-                    // A problem that needs action stays in its card (G3).
-                    if let error=model.errorMessage {
-                        Label(error,systemImage:"exclamationmark.triangle").font(.system(size:11)).foregroundStyle(palette.critical)
-                            .fixedSize(horizontal:false,vertical:true).padding(.top,8)
-                    }
                 }
-                WBPageNote {Text("没有密码找回功能。恢复会替换当前资料，确认前会保留原有加密副本。").fixedSize(horizontal:false,vertical:true)}
+                WBPageNote {Text("确认恢复后，方寸会先保留当前资料的加密副本，再替换为这份备份。").fixedSize(horizontal:false,vertical:true)}
             }
         }.task {await model.refreshBiometrics()}
             // A finished restore or password change is a one-off result (现行规范 4.8, G3).
             .onChange(of:model.completionMessage) {_,message in if let message {toast(message)}}
+    }
+
+    private var unlockMethods: [(value: VaultUnlockMethod, title: String)] {
+        var methods: [(VaultUnlockMethod, String)] = [(.password, "密码")]
+        if (model.biometricEnabled && model.biometricAvailable) || model.preferredUnlockMethod == .touchID {
+            methods.append((.touchID, "Touch ID"))
+        }
+        return methods
+    }
+
+    private var unlockMethodNote: String {
+        if !model.isUnlocked { return "解锁后可更改默认方式" }
+        if !model.biometricEnabled { return "开启 Touch ID 后可选择" }
+        return "进入私密空间时优先显示所选方式"
+    }
+
+    private var hintNote: String {
+        guard model.isUnlocked else { return "解锁后可设置密码提示" }
+        return model.passwordHint == nil ? "未设置 · 选填" : "已设置 · 锁定时可查看"
+    }
+
+    private func enableTouchID() {
+        Task {
+            guard await model.enableBiometrics(), model.isUnlocked, model.showingProtection,
+                  model.sheet == nil else { return }
+            model.sheet = .touchIDDefault
+        }
     }
 }
 
@@ -127,9 +190,15 @@ private struct VaultWindowReader:NSViewRepresentable {
 private struct VaultLockedView:View {
     @ObservedObject var model:VaultModel
     @State private var password=""
-    @State private var showForgot=false
+    @State private var showPasswordHint = false
+    @State private var usingPasswordInstead = false
     @FocusState private var focused:Bool
     @Environment(\.workbenchPalette) private var palette
+
+    private var showsPassword: Bool {
+        model.isConfigured && (usingPasswordInstead || model.effectiveUnlockMethod == .password)
+    }
+
     var body:some View {
         VStack(spacing:0) {
             Image(systemName:"lock").font(.system(size:30,weight:.light)).foregroundStyle(palette.secondary).frame(height:36).padding(.bottom,12)
@@ -137,26 +206,99 @@ private struct VaultLockedView:View {
             Text(model.isConfigured ? "你的内容留在这台 Mac 上。\n离开此页面后会自动锁定。":"用一个独立密码，保护只属于你的文字。").font(.system(size:12)).foregroundStyle(palette.secondary).multilineTextAlignment(.center).lineSpacing(5)
             // The form is 280 wide inside the 400-point card (V1).
             VStack(spacing:0) {
-                if model.isConfigured {
-                    SecureField("输入私密空间密码",text:$password).modifier(VaultInputStyle()).focused($focused).onSubmit(unlock).disabled(model.busy).padding(.top,20).padding(.bottom,10)
-                    Button(action:unlock){HStack{Spacer();if model.busy {ProgressView().controlSize(.small)}else{Label("解锁",systemImage:"lock.open")};Spacer()}}.buttonStyle(WBButtonStyle(primary:true)).disabled(model.busy || password.isEmpty)
-                    if model.biometricEnabled {
-                        if model.biometricAvailable {Button{password="";Task{_ = await model.unlockWithBiometrics()}}label:{Label("使用 Touch ID 解锁",systemImage:"touchid").frame(maxWidth:.infinity)}.buttonStyle(WBButtonStyle()).disabled(model.busy).padding(.top,8)}
-                        else if let reason=model.biometricUnavailableReason {Text(reason).font(.system(size:11)).foregroundStyle(palette.muted).multilineTextAlignment(.center).lineLimit(nil).fixedSize(horizontal:false,vertical:true).padding(.top,8).accessibilityIdentifier("fc.vault.lock.biometric-reason")}
-                    }
+                if showsPassword {
+                    passwordForm
+                } else if model.isConfigured {
+                    unlockButton("使用 Touch ID 解锁", symbol: "touchid", action: unlockWithTouchID)
+                        .disabled(model.busy).keyboardShortcut(.defaultAction)
+                        .accessibilityIdentifier("fc.vault.lock.touchID")
+                    Button("改用密码") { usingPasswordInstead = true }
+                        .buttonStyle(WBQuietButtonStyle()).disabled(model.busy).padding(.top, 8)
+                        .accessibilityIdentifier("fc.vault.lock.usePassword")
                 } else {
-                    Button{model.errorMessage=nil;model.sheet = .setup}label:{Label("设置独立密码",systemImage:"key").frame(maxWidth:.infinity)}.buttonStyle(WBButtonStyle(primary:true)).padding(.top,20)
+                    Button{model.errorMessage=nil;model.sheet = .setup}label:{Label("设置独立密码",systemImage:"key").frame(maxWidth:.infinity)}.buttonStyle(WBButtonStyle(primary:true))
                 }
-            }.frame(width:280)
+            }.frame(width:280).padding(.top, 20)
             if let error=model.errorMessage {Text(error).font(.system(size:11)).foregroundStyle(palette.critical).multilineTextAlignment(.center).fixedSize(horizontal:false,vertical:true).padding(.top,10)}
             if let message=model.completionMessage {Text(message).font(.system(size:11)).foregroundStyle(palette.success).multilineTextAlignment(.center).lineLimit(nil).fixedSize(horizontal:false,vertical:true).padding(.top,10)}
-            HStack(spacing:16){Button("从备份恢复"){model.errorMessage=nil;model.sheet = .restore}.buttonStyle(WBQuietButtonStyle());if model.isConfigured {Button("忘记密码"){showForgot=true}.buttonStyle(WBQuietButtonStyle())}}.padding(.top,16)
         }.frame(maxWidth:.infinity).fixedSize(horizontal:false,vertical:true).padding(.horizontal,24).padding(.top,28).padding(.bottom,24)
-        .onAppear{focused=model.isConfigured}.task{await model.refreshBiometrics()}
-        .modifier(VaultSensitiveState(model:model,clear:{password="";showForgot=false}))
-        .workbenchModal(isPresented:$showForgot){WorkbenchDialogFrame(title:"忘记密码",dismiss:{showForgot=false}){Text("方寸不会保存或找回私密空间密码。若此前已开启 Touch ID，可在本机验证解锁；Touch ID 不能用于找回或修改遗忘的密码。你可以使用备份及其密码恢复；确认替换前会保留当前加密副本。").font(.system(size:12)).foregroundStyle(palette.secondary).lineSpacing(5)}actions:{Spacer();Button("知道了"){showForgot=false}.buttonStyle(WBButtonStyle(primary:true))}}
+        .onChange(of: showsPassword, initial: true) { _, visible in focused = visible }
+        .onChange(of: model.shouldRevealPasswordHint, initial: true) { _, reveal in
+            if reveal { showPasswordHint = true }
+        }
+        .task { await model.refreshBiometrics() }
+        .modifier(VaultSensitiveState(model:model,clear:{
+            password = ""
+            showPasswordHint = false
+            usingPasswordInstead = false
+        }))
     }
-    private func unlock(){guard !password.isEmpty,!model.busy else{return};let value=password;password="";Task{_ = await model.unlock(password:value)}}
+
+    private var passwordForm: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 4) {
+                SecureField("输入私密空间密码", text: $password)
+                    .focused($focused).onSubmit(unlock).accessibilityIdentifier("fc.vault.lock.password")
+                    .onChange(of: password) { _, value in
+                        if !value.isEmpty { usingPasswordInstead = true }
+                    }
+                if model.passwordHint != nil {
+                    Button {
+                        showPasswordHint.toggle()
+                        focused = true
+                    } label: { Image(systemName: "questionmark.circle") }
+                        .buttonStyle(WBIconButtonStyle())
+                        .help("密码提示")
+                        .accessibilityLabel("密码提示")
+                        .accessibilityValue(showPasswordHint ? "已显示" : "已隐藏")
+                        .accessibilityIdentifier("fc.vault.lock.hintButton")
+                }
+            }
+            .modifier(VaultInputStyle()).disabled(model.busy)
+            if showPasswordHint, let hint = model.passwordHint {
+                Text("提示：\(hint)")
+                    .font(.system(size: 11)).foregroundStyle(palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("fc.vault.lock.hint")
+            }
+            if model.biometricEnabled, !model.biometricAvailable, let reason = model.biometricUnavailableReason {
+                Text(reason).font(.system(size:11)).foregroundStyle(palette.muted)
+                    .fixedSize(horizontal:false,vertical:true).accessibilityIdentifier("fc.vault.lock.biometric-reason")
+            }
+            unlockButton("解锁", symbol: "lock.open", action: unlock)
+                .disabled(model.busy || password.isEmpty)
+            if model.biometricEnabled && model.biometricAvailable {
+                Button("使用 Touch ID", action: unlockWithTouchID)
+                    .buttonStyle(WBQuietButtonStyle()).disabled(model.busy)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityIdentifier("fc.vault.lock.touchID")
+            }
+        }
+    }
+
+    private func unlockButton(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Group {
+                if model.busy { ProgressView().controlSize(.small) }
+                else { Label(title, systemImage: symbol) }
+            }.frame(maxWidth: .infinity)
+        }.buttonStyle(WBButtonStyle(primary: true))
+    }
+
+    private func unlock() {
+        guard !password.isEmpty, !model.busy else { return }
+        let value = password
+        password = ""
+        Task {
+            if !(await model.unlock(password: value)), showsPassword { focused = true }
+        }
+    }
+
+    private func unlockWithTouchID() {
+        guard !model.busy else { return }
+        password = ""
+        Task { _ = await model.unlockWithBiometrics() }
+    }
 }
 
 private struct VaultDeletionTarget:Identifiable {let id:UUID;let title:String}
@@ -540,23 +682,28 @@ private struct VaultSetupSheet:View {
     @ObservedObject var model:VaultModel
     @State private var password=""
     @State private var confirmation=""
-    @Environment(\.workbenchPalette) private var palette
+    @State private var hint = ""
     var body:some View {
         WorkbenchDialogFrame(title:"建立独立密码",dismiss:model.closeSheet) {
             VStack(alignment:.leading,spacing:16) {
-                VaultPasswordField(title:"新密码",placeholder:"至少 8 个字符",text:$password)
-                VaultPasswordField(title:"确认新密码",placeholder:"再次输入新密码",text:$confirmation)
-                VaultPrivacyNotice("请牢记这个独立密码。方寸不会保存明文密码，也没有密码找回功能。",warning:true)
+                VaultNewPasswordFields(password: $password, confirmation: $confirmation)
+                VaultPasswordHintField(text: $hint)
+                VaultPrivacyNotice("请牢记独立密码。密码提示可以帮助你回想密码。", warning: true)
                 VaultSheetError(model:model)
             }.disabled(model.busy)
         } actions: {
             Spacer()
             Button("取消",action:model.closeSheet).buttonStyle(WBButtonStyle()).disabled(model.busy).keyboardShortcut(.cancelAction)
-            Button("设置密码") { let p=password,c=confirmation; clear(); Task { _=await model.create(password:p,confirmation:c) } }
-                .buttonStyle(WBButtonStyle(primary:true)).disabled(model.busy || password.count<8 || confirmation.isEmpty).keyboardShortcut(.defaultAction)
+            Button("设置密码") {
+                let new = password, confirmed = confirmation, question = hint
+                password = ""; confirmation = ""
+                Task { _ = await model.create(password: new, confirmation: confirmed, hint: question) }
+            }.buttonStyle(WBButtonStyle(primary:true))
+                .disabled(model.busy || !VaultNewPasswordFields.canSubmit(password, confirmation) || !VaultPasswordHintField.fits(hint))
+                .keyboardShortcut(.defaultAction)
         }.modifier(VaultSensitiveState(model:model,clear:clear)).accessibilityIdentifier("fc.modal.vault.setup")
     }
-    private func clear() { password=""; confirmation="" }
+    private func clear() { password=""; confirmation=""; hint="" }
 }
 
 private struct VaultPasswordUnlockSheet:View {
@@ -585,23 +732,111 @@ private struct VaultPasswordSheet:View {
     @State private var current=""
     @State private var next=""
     @State private var confirmation=""
+    @State private var hint = ""
     var body:some View {
         WorkbenchDialogFrame(title:"修改独立密码",dismiss:model.closeSheet) {
             VStack(alignment:.leading,spacing:16) {
                 VaultPasswordField(title:"当前密码",placeholder:"输入当前密码",text:$current)
-                VaultPasswordField(title:"新密码",placeholder:"至少 8 个字符",text:$next)
-                VaultPasswordField(title:"确认新密码",placeholder:"再次输入新密码",text:$confirmation)
+                VaultNewPasswordFields(password: $next, confirmation: $confirmation)
+                VaultPasswordHintField(text: $hint)
                 VaultPrivacyNotice("更改后会立即锁定。使用当前密码的本机历史副本随新密码更新；已导出备份仍需使用创建时的密码。",warning:true)
                 VaultSheetError(model:model)
             }.disabled(model.busy || !model.isUnlocked)
         } actions: {
             Spacer()
             Button("取消",action:model.closeSheet).buttonStyle(WBButtonStyle()).disabled(model.busy).keyboardShortcut(.cancelAction)
-            Button("更改并锁定") { let c=current,n=next,r=confirmation; clear(); Task { _=await model.changePassword(current:c,new:n,confirmation:r) } }
-                .buttonStyle(WBButtonStyle(primary:true)).disabled(model.busy || !model.isUnlocked || current.isEmpty || next.count<8 || confirmation.isEmpty).keyboardShortcut(.defaultAction)
-        }.modifier(VaultSensitiveState(model:model,clear:clear)).accessibilityIdentifier("fc.modal.vault.password")
+            Button("更改并锁定") {
+                let old = current, new = next, confirmed = confirmation, question = hint
+                current = ""; next = ""; confirmation = ""
+                Task { _ = await model.changePassword(current: old, new: new, confirmation: confirmed, hint: question) }
+            }.buttonStyle(WBButtonStyle(primary:true))
+                .disabled(model.busy || !model.isUnlocked || current.isEmpty || !VaultNewPasswordFields.canSubmit(next, confirmation) || !VaultPasswordHintField.fits(hint))
+                .keyboardShortcut(.defaultAction)
+        }.onAppear { hint = model.passwordHint ?? "" }
+            .modifier(VaultSensitiveState(model:model,clear:clear)).accessibilityIdentifier("fc.modal.vault.password")
     }
-    private func clear() { current=""; next=""; confirmation="" }
+    private func clear() { current=""; next=""; confirmation=""; hint="" }
+}
+
+private struct VaultTouchIDDefaultSheet: View {
+    @ObservedObject var model: VaultModel
+    @Environment(\.workbenchPalette) private var palette
+    @Environment(\.workbenchToast) private var toast
+
+    var body: some View {
+        WorkbenchDialogFrame(title: "将 Touch ID 设为默认解锁方式？", dismiss: model.closeSheet) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Touch ID 已开启。设为默认后，打开私密空间时会优先显示 Touch ID。你仍可随时改用独立密码。")
+                    .font(.system(size: 12)).foregroundStyle(palette.secondary).lineSpacing(4)
+                VaultSheetError(model: model)
+            }
+        } actions: {
+            Spacer()
+            Button("保留密码为默认", action: model.closeSheet)
+                .buttonStyle(WBButtonStyle()).keyboardShortcut(.cancelAction)
+                .accessibilityIdentifier("fc.vault.touchIDDefault.keepPassword")
+            Button("设为默认") {
+                if model.setPreferredUnlockMethod(.touchID) {
+                    model.closeSheet()
+                    toast("已将 Touch ID 设为默认解锁方式")
+                }
+            }
+            .buttonStyle(WBButtonStyle(primary: true)).keyboardShortcut(.defaultAction)
+            .disabled(!model.isUnlocked || !model.biometricEnabled || !model.biometricAvailable || model.busy)
+            .accessibilityIdentifier("fc.vault.touchIDDefault.confirm")
+        }
+        .accessibilityIdentifier("fc.modal.vault.touchIDDefault")
+    }
+}
+
+private struct VaultPasswordHintSheet: View {
+    @ObservedObject var model: VaultModel
+    @ObservedObject var close: WorkbenchDraftCloseCoordinator
+    @State private var hint = ""
+    @Environment(\.workbenchToast) private var toast
+
+    var body: some View {
+        WorkbenchDialogFrame(title: "密码提示", dismiss: requestDismiss) {
+            VStack(alignment: .leading, spacing: 16) {
+                VaultPasswordHintField(text: $hint)
+                VaultSheetError(model: model)
+            }
+        } actions: {
+            if model.passwordHint != nil {
+                Button("移除提示") { save(nil) }.buttonStyle(WBQuietButtonStyle())
+            }
+            Spacer()
+            Button("取消", action: requestDismiss)
+                .buttonStyle(WBButtonStyle()).keyboardShortcut(.cancelAction)
+            Button("保存提示") { save(hint) }
+                .buttonStyle(WBButtonStyle(primary: true)).keyboardShortcut(.defaultAction)
+                .disabled(hint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !VaultPasswordHintField.fits(hint))
+        }
+        .onAppear { hint = model.passwordHint ?? "" }
+        .onChange(of: close.closeRequests) { _, _ in requestDismiss() }
+        .workbenchModal(isPresented: $close.confirmingDiscard, onRequestDismiss: close.continueEditing) {
+            WorkbenchDiscardConfirmation(
+                continueEditing: close.continueEditing,
+                discard: { close.discardChanges(dismiss: model.closeSheet) }
+            )
+        }
+        .modifier(VaultSensitiveState(model: model, clear: { hint = "" }))
+        .accessibilityIdentifier("fc.modal.vault.passwordHint")
+    }
+
+    private func save(_ value: String?) {
+        if model.setPasswordHint(value) {
+            model.closeSheet()
+            toast(value == nil ? "已移除密码提示" : "已保存密码提示")
+        }
+    }
+
+    private func requestDismiss() {
+        close.resolveClose(
+            hasChanges: hint.trimmingCharacters(in: .whitespacesAndNewlines) != (model.passwordHint ?? ""),
+            dismiss: model.closeSheet
+        )
+    }
 }
 
 private struct VaultBackupSheet:View {
@@ -641,7 +876,7 @@ private struct VaultRestoreSheet:View {
                     Label("验证通过 · \(preview.count) 条文本",systemImage:"checkmark.shield")
                         .font(.system(size:12)).foregroundStyle(palette.success).padding(10).frame(maxWidth:.infinity,alignment:.leading).background(palette.soft,in:RoundedRectangle(cornerRadius:8))
                     Text(preview.sourceName).font(.system(size:11)).foregroundStyle(palette.muted).lineLimit(2)
-                    VaultPrivacyNotice("恢复将替换当前资料，并使用这份备份的密码。确认前会另存保留原有加密文件，恢复后需要重新解锁。",warning:true)
+                    VaultPrivacyNotice("方寸会先保留当前资料的加密副本，再替换为这份备份。恢复后请用备份密码解锁。",warning:true)
                 } else {
                     HStack(spacing:12) {
                         VStack(alignment:.leading,spacing:4) {
@@ -694,6 +929,57 @@ private struct VaultPasswordField:View {
         }
     }
 }
+
+private struct VaultNewPasswordFields: View {
+    @Binding var password: String
+    @Binding var confirmation: String
+    @Environment(\.workbenchPalette) private var palette
+
+    static func canSubmit(_ password: String, _ confirmation: String) -> Bool {
+        password.count >= VaultCryptography.minimumPasswordLength && password == confirmation
+    }
+
+    var body: some View {
+        let minimum = VaultCryptography.minimumPasswordLength
+        VaultPasswordField(title: "新密码", placeholder: "至少 \(minimum) 个字符", text: $password)
+        VaultPasswordField(title: "确认新密码", placeholder: "再次输入新密码", text: $confirmation)
+        if !password.isEmpty && password.count < minimum {
+            validation("新密码至少需要 \(minimum) 个字符。")
+        } else if !confirmation.isEmpty && password != confirmation {
+            validation("两次输入的密码不一致。")
+        }
+    }
+
+    private func validation(_ message: String) -> some View {
+        Text(message).font(.system(size: 11)).foregroundStyle(palette.critical)
+    }
+}
+
+private struct VaultPasswordHintField: View {
+    @Binding var text: String
+    @Environment(\.workbenchPalette) private var palette
+
+    static func fits(_ text: String) -> Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).count <= VaultModel.maximumPasswordHintLength
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("密码提示（选填）").font(.system(size: 12)).foregroundStyle(palette.secondary)
+            TextField("写一句能帮你想起密码的话", text: $text)
+                .textFieldStyle(WBTextFieldStyle())
+                .accessibilityLabel("密码提示")
+            Text("锁定时可查看。请勿填写密码、答案或个人信息。")
+                .font(.system(size: 11)).foregroundStyle(palette.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if !Self.fits(text) {
+                Text("密码提示最多 \(VaultModel.maximumPasswordHintLength) 个字符。")
+                    .font(.system(size: 11)).foregroundStyle(palette.critical)
+            }
+        }
+    }
+}
+
 private struct VaultInputStyle:ViewModifier {
     func body(content:Content) -> some View {
         content.textFieldStyle(.plain).modifier(WBFieldSurface())

@@ -247,6 +247,66 @@ import LauncherCore
             check(await refined.enableBiometrics(),"biometrics can be explicitly re-enrolled after password change")
             check(await refined.disableBiometrics() && syntheticBiometrics.secret == nil && !refined.biometricEnabled,"opt-out deletes protected key and saved opt-in flag")
             refined.lock(reason:"finished isolated refinement")
+
+            let unlockDirectory=directory.appendingPathComponent("unlock-preferences")
+            let unlockBiometrics=VaultSyntheticBiometrics()
+            let unlock=VaultModel(dataDirectory:unlockDirectory,protectedDataAvailable:{true},biometrics:unlockBiometrics)
+            let sixCharacters="甲乙丙丁戊己",hint="Synthetic clue about a fictional object"
+            check(await unlock.create(password:sixCharacters,confirmation:sixCharacters,hint:hint),"six-character setup can save a local hint")
+            let hintURL=unlockDirectory.appendingPathComponent("password-hints.json")
+            check((try FileManager.default.attributesOfItem(atPath:hintURL.path)[.posixPermissions] as? NSNumber)?.intValue == 0o600,
+                  "hint storage is readable only by the local account")
+            let hintBackup=directory.appendingPathComponent("hint-test-export.deskdenvault")
+            check(unlock.exportBackup(to:hintBackup),"backup exports the vault with an independent hint configured")
+            check(!String(decoding:try Data(contentsOf:hintBackup),as:UTF8.self).contains(hint),"vault export excludes the local hint")
+            check(!unlock.setPreferredUnlockMethod(.touchID),"default cannot be set to Touch ID before opt-in")
+            await unlock.refreshBiometrics()
+            check(await unlock.enableBiometrics() && unlock.preferredUnlockMethod == .password,"Touch ID opt-in leaves password as the default until confirmed")
+            check(unlock.setPreferredUnlockMethod(.touchID),"user can select the enabled Touch ID method")
+            unlock.changeIdleMinutes(10)
+            let unlockedPreferences=VaultModel(dataDirectory:unlockDirectory,protectedDataAvailable:{true},biometrics:unlockBiometrics)
+            check(unlockedPreferences.preferredUnlockMethod == .touchID && unlockedPreferences.idleMinutes == 10 && unlockedPreferences.passwordHint == hint,
+                  "default and hint persist across model recreation and other protection changes")
+            unlockBiometrics.available=false
+            await unlockedPreferences.refreshBiometrics()
+            check(unlockedPreferences.effectiveUnlockMethod == .password && unlockedPreferences.preferredUnlockMethod == .touchID,
+                  "temporary Touch ID unavailability preserves the saved default")
+            unlockBiometrics.available=true
+            await unlockedPreferences.refreshBiometrics()
+            check(unlockedPreferences.effectiveUnlockMethod == .touchID,"saved default resumes when Touch ID becomes available")
+            check(!(await unlockedPreferences.unlock(password:"wrong-pass")) && !unlockedPreferences.shouldRevealPasswordHint,"first password authentication failure does not reveal the hint")
+            unlockBiometrics.failure = .cancelled
+            check(!(await unlockedPreferences.unlockWithBiometrics()) && unlockedPreferences.errorMessage == nil,"biometric cancellation is silent")
+            let emptyAccepted=await unlockedPreferences.unlock(password:"")
+            let secondWrongAccepted=await unlockedPreferences.unlock(password:"wrong-pass")
+            check(!emptyAccepted && !secondWrongAccepted && !unlockedPreferences.shouldRevealPasswordHint,
+                  "empty submission and cancelled Touch ID do not count as password failures")
+            check(!(await unlockedPreferences.unlock(password:"wrong-pass")) && unlockedPreferences.shouldRevealPasswordHint,"the third password authentication failure reveals the saved hint")
+            check(await unlockedPreferences.unlock(password:sixCharacters) && !unlockedPreferences.shouldRevealPasswordHint,"successful password authentication resets the hint threshold")
+            check(unlockedPreferences.setPasswordHint("Synthetic updated clue"),"unlocked users can replace a hint")
+            let selectedHintBackup=unlockedPreferences.loadRestoreSource(hintBackup)
+            let verifiedHintBackup=await unlockedPreferences.verifyRestore(password:sixCharacters)
+            check(selectedHintBackup && verifiedHintBackup,
+                  "the existing backup remains usable with its original password")
+            check(unlockedPreferences.confirmRestore() && unlockedPreferences.passwordHint == nil && unlockedPreferences.preferredUnlockMethod == .password,
+                  "same-salt backup restoration clears local hint and default Touch ID")
+            check(await unlockedPreferences.unlock(password:sixCharacters),"restored vault accepts its original six-character password")
+            unlockBiometrics.failure=nil
+            check(await unlockedPreferences.enableBiometrics() && unlockedPreferences.setPreferredUnlockMethod(.touchID),"restored vault can opt into Touch ID again")
+            unlockedPreferences.lock(reason:"synthetic key invalidation")
+            unlockBiometrics.failure = .invalidated
+            check(!(await unlockedPreferences.unlockWithBiometrics()) && !unlockedPreferences.biometricEnabled && unlockedPreferences.preferredUnlockMethod == .password,
+                  "permanent invalidation revokes opt-in and the saved Touch ID default")
+            check(await unlockedPreferences.unlock(password:sixCharacters),"independent password remains available after invalidation")
+            let newPassword="新密保留六位"
+            check(await unlockedPreferences.changePassword(current:sixCharacters,new:newPassword,confirmation:newPassword,hint:"Synthetic new hint"),
+                  "password change accepts a six-character password and commits its new hint")
+            let changedUnlock=VaultModel(dataDirectory:unlockDirectory,protectedDataAvailable:{true},biometrics:unlockBiometrics)
+            let hintBeforeUnlock=changedUnlock.passwordHint
+            let newPasswordAccepted=await changedUnlock.unlock(password:newPassword)
+            check(hintBeforeUnlock == "Synthetic new hint" && newPasswordAccepted,
+                  "the new hint is bound to the committed password and survives restart")
+            changedUnlock.lock(reason:"finished unlock preference checks")
             var invalid=PrivateDocument(body:"emoji 🔐")
             invalid.formatting=[VaultTextStyleRun(location:0,length:100)]
             check((try? VaultContents(documents:[invalid]).validate()) == nil,"out-of-range rich formatting is rejected")
@@ -288,12 +348,18 @@ import LauncherCore
     var salt:Data?
     var enrollments=0
     var failAuthentication=false
+    var failure:VaultBiometricFailure?
     var silentProbeResult:Bool?
     var refreshes=0,containsCalls=0,reads=0,removals=0,cancels=0
     func refreshAvailability() async -> String? {refreshes += 1;return unavailableReason}
     func containsKey() async -> Bool {containsCalls += 1;return silentProbeResult ?? (secret != nil)}
     func enroll(key:Data,salt:Data) async throws {secret=key;self.salt=salt;enrollments += 1}
-    func readKey(salt:Data) async throws -> Data {reads += 1;guard !failAuthentication,self.salt == salt,let secret else {throw VaultFailure.incorrectPassword};return secret}
+    func readKey(salt:Data) async throws -> Data {
+        reads += 1
+        if let failure {throw failure}
+        guard !failAuthentication,self.salt == salt,let secret else {throw VaultFailure.incorrectPassword}
+        return secret
+    }
     func remove() async throws {removals += 1;secret=nil;salt=nil}
     func removeSynchronously() throws {removals += 1;secret=nil;salt=nil}
     func cancel() {cancels += 1}

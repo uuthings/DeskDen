@@ -292,7 +292,7 @@ struct DeviceModuleView: View {
             }
             WBCard {
                 chartTitle("温度趋势")
-                DeviceHistoryChart(points: model.history, kind: .thermal, minutes: minutes).frame(height: expanded ? 260 : 190)
+                DeviceHistoryChart(points: model.thermalHistory, kind: .thermal, minutes: minutes).frame(height: expanded ? 260 : 190)
             }
             DeviceDetailColumns {
                 DeviceDetailCard(title: "风扇", symbol: "fan") {
@@ -313,8 +313,9 @@ struct DeviceModuleView: View {
         }
     }
     private func peak(_ path: KeyPath<DeviceHistoryPoint, Double?>) -> Double? {
-        let end = model.history.last?.date ?? Date()
-        return model.history.filter { end.timeIntervalSince($0.date) <= Double(minutes * 60) }.compactMap { $0[keyPath: path] }.max()
+        let now = Date()
+        return model.thermalHistory.filter { (0...Double(minutes * 60)).contains(now.timeIntervalSince($0.date)) }
+            .compactMap { $0[keyPath: path] }.max()
     }
     private var networkInterfaceSummary: String {
         guard let selected = model.selectedInterfaceIDs else { return "自动 · 物理网络" }
@@ -333,8 +334,8 @@ struct DeviceModuleView: View {
             WBCard(title: "网络速度趋势", symbol: "waveform.path.ecg") { DeviceHistoryChart(points: model.history, kind: .network, minutes: minutes, networkScale: true).frame(height: expanded ? 260 : 190) }
             DeviceDetailColumns {
                 DeviceDetailCard(title: "接口信息", symbol: "wifi") {
-                    DeviceFact(label: "接口", value: s.network.interfaceNames.isEmpty ? "没有活跃接口" : s.network.interfaceNames.joined(separator: "、"))
-                    DeviceFact(label: "状态", value: s.network.downloadBytesPerSecond == nil ? "等待有效采样" : "正在采集")
+                    DeviceFact(label: "接口", value: s.network.interfaceNames.isEmpty ? "—" : s.network.interfaceNames.joined(separator: "、"))
+                    DeviceFact(label: "状态", value: s.network.liveReadingStatus ?? (s.network.downloadBytesPerSecond == nil ? "等待有效采样" : "正在采集"))
                     DeviceFact(label: "采样间隔", value: "\(Int(model.samplingInterval)) 秒")
                     Button("采集详情") { sheet = .coverage }.buttonStyle(WBQuietButtonStyle())
                 }

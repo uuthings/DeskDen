@@ -128,7 +128,7 @@ import LauncherCore
         model.setQuickSummaryVisible(true)
         model.start(interval: 1)
         let firstSamplesDeadline = ContinuousClock.now.advanced(by: .seconds(8))
-        while model.history.count < 2 && ContinuousClock.now < firstSamplesDeadline {
+        while (model.history.count < 2 || model.snapshot.performanceSampledAt == nil) && ContinuousClock.now < firstSamplesDeadline {
             try? await Task.sleep(for: .milliseconds(100))
         }
         check(!model.isWindowVisible && model.history.count >= 2, "Mini alone records real trend samples before any workbench page is opened")
@@ -140,17 +140,19 @@ import LauncherCore
         }
         check(initialSegment != nil && model.history.last?.allNetworkSegment == initialSegment && model.history.last?.date != initialDate,
               "closing the workbench preserves the independent Mini sampling segment")
-        let filteredSegment = model.history.last?.segment, beforeSelection = model.history.last?.date
+        let filteredSegment = model.history.last?.selectedNetworkSegment, beforeSelection = model.history.last?.date
+        let cpuSegment = model.history.last?.segment
         model.setSelectedInterfaces([])
         let selectedDeadline = ContinuousClock.now.advanced(by: .seconds(3))
-        while (model.history.last?.date == beforeSelection || model.history.last?.segment == filteredSegment
+        while (model.history.last?.date == beforeSelection || model.history.last?.selectedNetworkSegment == filteredSegment
                || model.selectedInterfaceIDs != [] || model.snapshot.network.downloadBytesPerSecond != nil) && ContinuousClock.now < selectedDeadline {
             try? await Task.sleep(for: .milliseconds(100))
         }
         check(initialSegment != nil && model.history.last?.allNetworkSegment == initialSegment
-              && model.history.last?.segment != filteredSegment && model.history.last?.date != beforeSelection
+              && model.history.last?.selectedNetworkSegment != filteredSegment && model.history.last?.date != beforeSelection
+              && model.history.last?.segment == cpuSegment
               && model.selectedInterfaceIDs == [] && model.snapshot.network.downloadBytesPerSecond == nil,
-              "changing the real workbench interface filter starts only its own segment and preserves Mini's all-network segment")
+              "changing the interface filter starts only its own segment and preserves CPU and all-network history")
         let beforeAutomatic = model.history.last?.date
         model.setSelectedInterfaces(nil)
         let automaticDeadline = ContinuousClock.now.advanced(by: .seconds(3))
@@ -159,14 +161,24 @@ import LauncherCore
         }
         check(model.selectedInterfaceIDs == nil && model.history.last?.allNetworkSegment == initialSegment && model.history.last?.date != beforeAutomatic,
               "restoring automatic interface selection also leaves the Mini network segment continuous")
+        let hiddenAfter = model.history.last?.date
+        model.setQuickSummaryVisible(false)
+        let backgroundDeadline = ContinuousClock.now.advanced(by: .seconds(14))
+        while model.history.last?.date == hiddenAfter && ContinuousClock.now < backgroundDeadline {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        check(model.history.last?.date != hiddenAfter && model.history.last?.segment == cpuSegment
+              && model.history.last?.allNetworkSegment == initialSegment,
+              "CPU and network history continue at background cadence without a visible consumer")
         let resumedAfter = model.history.last?.date
-        model.setQuickSummaryVisible(false); model.setQuickSummaryVisible(true)
+        model.setQuickSummaryVisible(true)
         let resumedDeadline = ContinuousClock.now.advanced(by: .seconds(3))
         while model.history.last?.date == resumedAfter && ContinuousClock.now < resumedDeadline {
             try? await Task.sleep(for: .milliseconds(100))
         }
-        check(initialSegment != nil && model.history.last?.allNetworkSegment != initialSegment && model.history.last?.date != resumedAfter,
-              "resuming after all chart consumers leave starts a new segment without filling the gap")
+        check(initialSegment != nil && model.history.last?.allNetworkSegment == initialSegment && model.history.last?.date != resumedAfter
+              && model.history.last?.segment == cpuSegment,
+              "restoring an active consumer changes cadence without splitting the live series")
         let mini = WorkbenchMiniDeviceData(snapshot: model.snapshot, openedAt: miniOpenedAt, history: model.history)
         check(mini.networkPoints.count >= 2 && mini.networkPoints.allSatisfy { $0.date >= Date().addingTimeInterval(-61) },
               "Mini's sixty-second projection receives independently collected real history")

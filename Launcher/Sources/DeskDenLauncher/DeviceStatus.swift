@@ -6,6 +6,7 @@ import IOKit
 import IOKit.ps
 import IOKit.pwr_mgt
 import LauncherCore
+import OSLog
 import SystemConfiguration
 
 struct DeviceMemorySnapshot: Sendable {
@@ -34,7 +35,7 @@ struct DeviceBatterySnapshot: Sendable {
     var cycleCount: Int? = nil
 }
 
-struct DeviceNetworkInterface: Identifiable, Sendable {
+struct DeviceNetworkInterface: Identifiable, Equatable, Sendable {
     var id: String
     var name: String
     var isVirtual: Bool
@@ -52,11 +53,27 @@ struct DeviceNetworkSnapshot: Sendable {
     var todayFirstSample: Date?, todayLastSample: Date?
     var excludedIntervals: Int = 0
     var interfaceNames: [String] = []
+    var liveReadingStatus: String? = nil
+
+    mutating func updateAccounting(_ ledger: DeviceNetworkLedger, at date: Date, calendar: Calendar = .current) {
+        let today = ledger.today(at: date, calendar: calendar)
+        sessionDownload = ledger.recordingReceived
+        sessionUpload = ledger.recordingSent
+        todayDownload = today.received
+        todayUpload = today.sent
+        todayCoverageSeconds = today.coveredSeconds
+        sessionCoverageSeconds = ledger.recordingCoveredSeconds
+        recordedSince = ledger.recordingStartedAt
+        todayFirstSample = today.firstSample
+        todayLastSample = today.lastSample
+        excludedIntervals = today.excludedIntervals
+    }
 }
 
 struct DeviceSnapshot: Sendable {
     var sampledAt: Date?
     var performanceSampledAt: Date?
+    var memorySampledAt: Date? = nil
     var thermalSampledAt: Date?
     var deviceName = "Mac"
     var modelIdentifier = "—"
@@ -111,14 +128,19 @@ struct DeviceHistoryPoint: Identifiable, Sendable {
     var allUploadBytesPerSecond: Double? = nil
     /// Independent of the main window's selectable interface scope.
     var allNetworkSegment: UUID? = nil
+    var selectedNetworkSegment: UUID? = nil
+    var memorySegment: UUID? = nil
+    var cpuStatus: String? = nil
+    var networkStatus: String? = nil
 }
 
 /// One shared model serves the overview, device page and desktop widgets.
-/// With no visible consumer, retain low-frequency network accounting without process scans or charts.
+/// Keep CPU and network history at a lower cadence when no consumer is visible.
 @MainActor
 final class DeviceStatusModel: ObservableObject {
     @Published private(set) var snapshot = DeviceSnapshot()
     @Published private(set) var history: [DeviceHistoryPoint] = []
+    @Published private(set) var thermalHistory: [DeviceHistoryPoint] = []
     @Published private(set) var interfaces: [DeviceNetworkInterface] = []
     @Published private(set) var selectedInterfaceIDs: [String]?
     @Published private(set) var isSampling = false
@@ -144,24 +166,33 @@ final class DeviceStatusModel: ObservableObject {
     @Published private(set) var undoLayout: DeviceDashboardLayout?
     var dashboardScrollOffset: CGFloat = 0
     let layoutStore: DeviceLayoutStore
-    private let sampler: DeviceSampler
+    private let sampler = DevicePerformanceSampler()
+    private let liveSampler = DeviceLiveSampler()
+    private let recorder: DeviceTrafficRecorder
     private var loop: Task<Void, Never>?
     private var samplingTask: Task<Void, Never>?
+    private var liveLoop: Task<Void, Never>?
+    private var liveRefresh: Task<Void, Never>?
+    private var lastLiveStart: ContinuousClock.Instant?
+    private var trafficTask: Task<Void, Never>?
+    private var pendingTraffic: [DeviceTrafficInput] = []
+    private var pendingTrafficSamples = 0
+    private var hasLoadedSelection = false
+    private var selectionRevision = UUID()
     private var generation = UUID()
     private var visibleWidgetConsumers = false
     private var visibleQuickSummary = false
     private var workspaceEvents = Set<AnyCancellable>()
     private var systemSleeping = false
-    private var historySegment = UUID()
-    private var allNetworkHistorySegment = UUID()
-    private var lastHistoryDate: Date?
+    private var thermalSegment = UUID()
+    private var lastThermalGap: TimeInterval = 0
     private var resumeSamplingAfterCancelledQuit = false
     private var preparingForQuit = false
 
     init(dataDirectory: URL, notifications: (any DeviceNotificationProviding)? = nil) {
         self.notifications = notifications ?? DeviceAlertService()
         monitoringURL = dataDirectory.appendingPathComponent("monitoring-rules.json")
-        sampler = DeviceSampler(dataDirectory: dataDirectory)
+        recorder = DeviceTrafficRecorder(dataDirectory: dataDirectory)
         layoutStore = DeviceLayoutStore(url: dataDirectory.appendingPathComponent("dashboard-layout.json"))
         do { dashboardLayout = try layoutStore.load() } catch { layoutError = error.localizedDescription }
         if FileManager.default.fileExists(atPath: monitoringURL.path) {
@@ -184,19 +215,18 @@ final class DeviceStatusModel: ObservableObject {
         }.store(in: &workspaceEvents)
     }
     private func systemWillSleep() {
-        let pendingLoop = loop, pendingSample = samplingTask
         systemSleeping = true; generation = UUID(); evaluator.breakContinuity()
-        historySegment = UUID(); allNetworkHistorySegment = UUID(); lastHistoryDate = nil
-        loop?.cancel(); loop = nil; samplingTask?.cancel(); samplingTask = nil
+        let pendingTraffic = trafficTask
+        pauseSampling()
         Task { [weak self] in
             guard let self else { return }
-            await pendingLoop?.value; await pendingSample?.value
-            do { try await sampler.flush() } catch { lastError = "休眠前流量记录保存失败：\(error.localizedDescription)" }
+            await pendingTraffic?.value
+            do { try await recorder.flush() } catch { lastError = "休眠前流量记录保存失败：\(error.localizedDescription)" }
         }
     }
     private func systemDidWake() {
         systemSleeping = false; generation = UUID(); evaluator.breakContinuity()
-        if isSampling { scheduleLoop() }
+        if isSampling { scheduleLoop(); scheduleLiveLoop() }
     }
     func saveLayout(_ next: DeviceDashboardLayout) {
         guard next != dashboardLayout else { return }
@@ -211,15 +241,24 @@ final class DeviceStatusModel: ObservableObject {
     func changeCard(_ id: DeviceCardID, _ change: (inout DeviceCardPreference) -> Void) {
         var next = dashboardLayout; next.update(id, change); saveLayout(next)
     }
-    deinit { loop?.cancel(); samplingTask?.cancel() }
+    deinit {
+        loop?.cancel(); samplingTask?.cancel()
+        liveLoop?.cancel(); liveRefresh?.cancel(); trafficTask?.cancel()
+    }
 
     func start(interval: TimeInterval = 2) {
         guard !preparingForQuit else { return }
-        samplingInterval = min(60, max(1, interval.isFinite ? interval : 2))
-        guard !isSampling else { return }
+        let nextInterval = min(60, max(1, interval.isFinite ? interval : 2))
+        if isSampling {
+            guard nextInterval != samplingInterval else { return }
+            samplingInterval = nextInterval
+            scheduleLoop(); scheduleLiveLoop()
+            return
+        }
+        samplingInterval = nextInterval
         isSampling = true
         generation = UUID()
-        scheduleLoop()
+        scheduleLoop(); scheduleLiveLoop()
     }
 
     private func scheduleLoop() {
@@ -238,20 +277,55 @@ final class DeviceStatusModel: ObservableObject {
         return effectiveInterval
     }
 
+    private func scheduleLiveLoop() {
+        liveLoop?.cancel()
+        guard !systemSleeping, !preparingForQuit else { return }
+        let clock = ContinuousClock()
+        let interval = Duration.seconds(liveInterval)
+        let firstDeadline = max(clock.now, lastLiveStart?.advanced(by: interval) ?? clock.now)
+        liveLoop = Task { [weak self] in
+            var deadline = firstDeadline
+            while !Task.isCancelled {
+                do { try await clock.sleep(until: deadline) } catch { return }
+                guard !Task.isCancelled, let self else { return }
+                await self.takeLiveSample(scheduledAt: deadline)
+                let next = deadline.advanced(by: interval)
+                // Do not synthesize samples for deadlines we actually missed.
+                deadline = next > clock.now ? next : clock.now.advanced(by: interval)
+            }
+        }
+    }
+
+    private func pauseSampling() {
+        loop?.cancel(); loop = nil; samplingTask?.cancel(); samplingTask = nil
+        liveLoop?.cancel(); liveLoop = nil; liveRefresh?.cancel(); liveRefresh = nil
+        lastLiveStart = nil
+        thermalSegment = UUID()
+        var next = snapshot
+        next.cpuPercent = nil; next.cpuUserPercent = nil; next.cpuSystemPercent = nil
+        next.network.downloadBytesPerSecond = nil; next.network.uploadBytesPerSecond = nil
+        next.allNetwork.downloadBytesPerSecond = nil; next.allNetwork.uploadBytesPerSecond = nil
+        next.network.liveReadingStatus = "采样已暂停"; next.allNetwork.liveReadingStatus = "采样已暂停"
+        snapshot = next
+    }
+
     func stop() {
         isSampling = false; generation = UUID()
-        loop?.cancel(); loop = nil; samplingTask?.cancel(); samplingTask = nil
-        historySegment = UUID(); allNetworkHistorySegment = UUID(); lastHistoryDate = nil; evaluator.breakContinuity()
-        Task { [sampler] in try? await sampler.flush() }
+        pauseSampling()
+        evaluator.breakContinuity()
+        let pending = trafficTask
+        Task { [recorder] in await pending?.value; try? await recorder.flush() }
     }
 
     /// Awaited by the common native/menu/update termination barrier, before OS termination.
     func prepareForQuit() async throws {
         resumeSamplingAfterCancelledQuit = isSampling; preparingForQuit = true
-        let pendingLoop = loop, pendingSample = samplingTask
+        let pendingLoop = loop, pendingSample = samplingTask, pendingLive = liveLoop, pendingRefresh = liveRefresh
+        let pendingTraffic = trafficTask
         stop()
-        await pendingLoop?.value; await pendingSample?.value
-        try await sampler.flush()
+        await pendingLoop?.value; await pendingSample?.value; await pendingLive?.value; await pendingRefresh?.value
+        await pendingTraffic?.value
+        try await recorder.flush()
     }
     func resumeAfterCancelledQuit() {
         preparingForQuit = false
@@ -284,34 +358,42 @@ final class DeviceStatusModel: ObservableObject {
 
     private func updateSamplingDemand(previouslyActive: Bool) {
         guard previouslyActive != wantsPerformance else { return }
-        // A main-window route change must not interrupt a still-visible Mini.
-        // Once all consumers leave, resumed charts begin a separate segment.
-        historySegment = UUID(); allNetworkHistorySegment = UUID(); lastHistoryDate = nil
-        if isSampling { scheduleLoop() } else if wantsPerformance { refresh() }
+        if isSampling { scheduleLoop(); scheduleLiveLoop() } else if wantsPerformance { refresh() }
     }
 
     func refresh() {
-        guard samplingTask == nil, !preparingForQuit else { return }
-        samplingTask = Task { [weak self] in
-            guard let self else { return }
-            await self.takeSample(); self.samplingTask = nil
+        guard !preparingForQuit, !systemSleeping else { return }
+        if samplingTask == nil {
+            samplingTask = Task { [weak self] in
+                guard let self else { return }
+                await self.takeSample()
+                if !Task.isCancelled { self.samplingTask = nil }
+            }
+        }
+        if !isSampling, liveRefresh == nil {
+            liveRefresh = Task { [weak self] in
+                guard let self else { return }
+                await self.takeLiveSample(scheduledAt: ContinuousClock.now)
+                if !Task.isCancelled { self.liveRefresh = nil }
+            }
         }
     }
 
     func setSelectedInterfaces(_ identifiers: [String]?) {
-        selectedInterfaceIDs = identifiers.map { Array(Set($0)).sorted() }
-        Task { [weak self] in
-            guard let self else { return }
-            await self.sampler.selectInterfaces(self.selectedInterfaceIDs)
-            self.historySegment = UUID(); self.refresh()
-        }
+        let next = identifiers.map { Array(Set($0)).sorted() }
+        guard !hasLoadedSelection || next != selectedInterfaceIDs else { return }
+        hasLoadedSelection = true; selectionRevision = UUID()
+        selectedInterfaceIDs = next
+        snapshot.network.downloadBytesPerSecond = nil
+        snapshot.network.uploadBytesPerSecond = nil
+        snapshot.network.interfaceNames = []
+        snapshot.network.liveReadingStatus = "正在建立采样基线"
+        enqueueTraffic(.select(next))
+        if !isSampling { refresh() }
     }
 
     func beginNewNetworkRecording() {
-        Task { [weak self] in
-            guard let self else { return }
-            await self.sampler.beginRecording(); self.refresh()
-        }
+        enqueueTraffic(.begin(Date()))
     }
 
     func filteredProcesses(query: String, sort: DeviceProcessSort) -> [DeviceProcess] {
@@ -319,6 +401,7 @@ final class DeviceStatusModel: ObservableObject {
     }
 
     private var wantsPerformance: Bool { isWindowVisible || visibleWidgetConsumers || visibleQuickSummary }
+    private var liveInterval: TimeInterval { wantsPerformance ? samplingInterval : max(10, samplingInterval) }
     private var effectiveInterval: TimeInterval { wantsPerformance ? min(samplingInterval, temperatureRule.enabled ? 5 : 60) : temperatureRule.enabled ? min(5, samplingInterval) : max(10, samplingInterval) }
     var budgetProgressPercent: Double? { budget.enabled && budget.limitBytes > 0 ? Double(trafficSummary.totalBytes) / Double(budget.limitBytes) * 100 : nil }
     var budgetRemainingBytes: UInt64? { budget.enabled ? (budget.limitBytes > trafficSummary.totalBytes ? budget.limitBytes - trafficSummary.totalBytes : 0) : nil }
@@ -375,15 +458,17 @@ final class DeviceStatusModel: ObservableObject {
         try JSONEncoder().encode(content).write(to: monitoringURL, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: monitoringURL.path)
     }
-    private func evaluateMonitoring(at date: Date, maximumGap: TimeInterval) async {
+    private func evaluateMonitoring(at date: Date, maximumGap: TimeInterval, hasNewTemperature: Bool = true) async {
         let revision = monitoringRevision, sampleGeneration = generation
         let evaluatedBudget = budget, evaluatedRule = temperatureRule
-        if date.timeIntervalSince(lastPermissionCheck) >= 60 { await refreshNotificationPermission() }
+        if Date().timeIntervalSince(lastPermissionCheck) >= 60 { await refreshNotificationPermission() }
         guard revision == monitoringRevision, sampleGeneration == generation else { return }
         guard notificationPermission == .authorized else { evaluator.breakContinuity(); return }
         var next = evaluator
-        let events = next.evaluateBudget(evaluatedBudget, summary: trafficSummary)
-            + next.evaluateTemperature(evaluatedRule, cpu: snapshot.cpuTemperature, gpu: snapshot.gpuTemperature, at: date, maximumGap: min(maximumGap, effectiveInterval * 1.75))
+        var events = next.evaluateBudget(evaluatedBudget, summary: trafficSummary)
+        if hasNewTemperature {
+            events += next.evaluateTemperature(evaluatedRule, cpu: snapshot.cpuTemperature, gpu: snapshot.gpuTemperature, at: date, maximumGap: min(maximumGap, effectiveInterval * 1.75))
+        }
         for event in events {
             guard revision == monitoringRevision, sampleGeneration == generation else { return }
             do {
@@ -431,14 +516,110 @@ final class DeviceStatusModel: ObservableObject {
         catch { monitoringError = "提醒状态未能保存：\(error.localizedDescription)" }
     }
     #if DEBUG
-    /// Deterministic fixtures are compiled only into debug checks; production always uses DeviceSampler.
-    func inspectTrafficStorageForChecks() async -> String? { await sampler.inspectTrafficStorageForChecks() }
+    /// Deterministic fixtures are compiled only into debug checks.
+    func inspectTrafficStorageForChecks() async -> String? { await recorder.inspectTrafficStorageForChecks() }
     func evaluateMonitoringForChecks(snapshot: DeviceSnapshot, ledger: DeviceTrafficLedger, at date: Date, maximumGap: TimeInterval = 3) async {
         self.snapshot = snapshot; trafficLedger = ledger
         trafficSummary = ledger.summary(budget: budget, at: date)
         await evaluateMonitoring(at: date, maximumGap: maximumGap)
     }
     #endif
+
+    private var takingLiveSample = false
+    private func takeLiveSample(scheduledAt deadline: ContinuousClock.Instant) async {
+        guard !takingLiveSample, !systemSleeping, !preparingForQuit else { return }
+        takingLiveSample = true
+        defer { takingLiveSample = false }
+        lastLiveStart = ContinuousClock.now
+        let token = generation, selection = selectionRevision
+        let result = await liveSampler.sample(token: token, selection: selectedInterfaceIDs,
+                                              interval: liveInterval, scheduledAt: deadline)
+        // Cadence changes cancel the old schedule, but an in-flight observation
+        // is still valid unless sleep, stop or quit invalidated its generation.
+        guard generation == token else { return }
+        let selectedIsCurrent = selectionRevision == selection && hasLoadedSelection
+        var next = snapshot
+        next.sampledAt = result.date
+        next.uptime = result.uptime
+        next.cpuPercent = result.cpu?.total
+        next.cpuUserPercent = result.cpu?.user
+        next.cpuSystemPercent = result.cpu?.system
+        next.memory = result.memory
+        next.memorySampledAt = result.date
+        if selectedIsCurrent {
+            next.network.downloadBytesPerSecond = result.selected.delta?.downloadBytesPerSecond
+            next.network.uploadBytesPerSecond = result.selected.delta?.uploadBytesPerSecond
+            next.network.interfaceNames = result.network?.names(for: selectedInterfaceIDs) ?? []
+            next.network.liveReadingStatus = result.selected.statusText
+        } else {
+            next.network.liveReadingStatus = "正在建立采样基线"
+        }
+        next.allNetwork.downloadBytesPerSecond = result.all.delta?.downloadBytesPerSecond
+        next.allNetwork.uploadBytesPerSecond = result.all.delta?.uploadBytesPerSecond
+        next.allNetwork.interfaceNames = result.network?.physicalNames ?? []
+        next.allNetwork.liveReadingStatus = result.all.statusText
+        snapshot = next
+        if let network = result.network, interfaces != network.interfaces { interfaces = network.interfaces }
+        if let last = history.last?.date, last >= result.date { history.removeAll() }
+        history.append(.init(date: result.date, segment: result.cpuSegment, cpuPercent: result.cpu?.total,
+                             downloadBytesPerSecond: selectedIsCurrent ? result.selected.delta?.downloadBytesPerSecond : nil,
+                             uploadBytesPerSecond: selectedIsCurrent ? result.selected.delta?.uploadBytesPerSecond : nil,
+                             memoryPercent: result.memory?.percent,
+                             allDownloadBytesPerSecond: result.all.delta?.downloadBytesPerSecond,
+                             allUploadBytesPerSecond: result.all.delta?.uploadBytesPerSecond,
+                             allNetworkSegment: result.allSegment, selectedNetworkSegment: result.selectedSegment,
+                             memorySegment: result.memorySegment,
+                             cpuStatus: result.cpuStatus, networkStatus: selectedIsCurrent ? result.selected.statusText : "正在建立采样基线"))
+        history.removeAll { result.date.timeIntervalSince($0.date) > 3600 }
+        enqueueTraffic(.sample(result.network, date: result.date, token: token, maximumGap: result.maximumGap,
+                               selectionIsCurrent: selectionRevision == selection))
+    }
+
+    private func enqueueTraffic(_ input: DeviceTrafficInput) {
+        pendingTraffic.append(input)
+        if case .sample = input {
+            pendingTrafficSamples += 1
+            if pendingTrafficSamples > 120,
+               let index = pendingTraffic.firstIndex(where: { if case .sample = $0 { true } else { false } }) {
+                // A stalled disk must not grow the queue unbounded. The ledger
+                // will mark the longer uncovered interval on the next sample.
+                pendingTraffic.remove(at: index)
+                pendingTrafficSamples -= 1
+            }
+        }
+        guard trafficTask == nil else { return }
+        trafficTask = Task { [weak self] in await self?.recordTraffic() }
+    }
+
+    private func recordTraffic() async {
+        defer { trafficTask = nil }
+        while !pendingTraffic.isEmpty, !Task.isCancelled {
+            let batch = pendingTraffic
+            pendingTraffic.removeAll(keepingCapacity: true)
+            pendingTrafficSamples = 0
+            let result = await recorder.record(batch)
+            if !hasLoadedSelection {
+                hasLoadedSelection = true
+                if selectedInterfaceIDs != result.selected.selectedInterfaceIDs {
+                    selectionRevision = UUID()
+                    selectedInterfaceIDs = result.selected.selectedInterfaceIDs
+                }
+            }
+            let date = snapshot.sampledAt ?? Date()
+            var next = snapshot
+            next.network.updateAccounting(result.selected, at: date)
+            if let physical = result.ledger.scopes[.all] {
+                next.allNetwork.updateAccounting(physical, at: date, calendar: result.ledger.calendar)
+                let counter = ProviderPhysicalTrafficCounter(epoch: result.ledger.startedAt, received: physical.recordingReceived, sent: physical.recordingSent)
+                if physicalTrafficCounter != counter { physicalTrafficCounter = counter }
+            }
+            snapshot = next
+            lastError = result.error
+            trafficLedger = result.ledger
+            trafficSummary = trafficPreview(budget)
+        }
+    }
+
     private var takingSample = false
     private func takeSample() async {
         guard !takingSample, !systemSleeping, !preparingForQuit else { return }
@@ -448,28 +629,26 @@ final class DeviceStatusModel: ObservableObject {
         let maximumGap = max(6, expectedInterval * 2.5)
         let result = await sampler.sample(full: full, thermal: temperatureRule.enabled, token: token, maximumGap: maximumGap)
         guard generation == token, !Task.isCancelled else { return }
-        snapshot = result.snapshot; interfaces = result.interfaces
-        selectedInterfaceIDs = result.selection; lastError = result.error
-        trafficLedger = result.trafficLedger; trafficSummary = trafficPreview(budget)
-        if let physical = trafficLedger.scopes[.all] {
-            physicalTrafficCounter = .init(epoch: trafficLedger.startedAt, received: physical.recordingReceived, sent: physical.recordingSent)
+        var next = result
+        next.sampledAt = snapshot.sampledAt; next.uptime = snapshot.uptime
+        next.cpuPercent = snapshot.cpuPercent; next.cpuUserPercent = snapshot.cpuUserPercent; next.cpuSystemPercent = snapshot.cpuSystemPercent
+        next.memory = snapshot.memory; next.memorySampledAt = snapshot.memorySampledAt
+        next.network = snapshot.network; next.allNetwork = snapshot.allNetwork
+        let hasNewTemperature = next.thermalSampledAt != snapshot.thermalSampledAt
+        if let now = next.thermalSampledAt, hasNewTemperature {
+            if let last = thermalHistory.last?.date {
+                let gap = now.timeIntervalSince(last)
+                if gap <= 0 { thermalHistory.removeAll(); thermalSegment = UUID() }
+                else if gap > max(maximumGap, lastThermalGap) { thermalSegment = UUID() }
+            }
+            thermalHistory.append(.init(date: now, segment: thermalSegment, cpuPercent: nil,
+                                        downloadBytesPerSecond: nil, uploadBytesPerSecond: nil,
+                                        cpuTemperature: next.cpuTemperature, gpuTemperature: next.gpuTemperature))
+            thermalHistory.removeAll { now.timeIntervalSince($0.date) > 3600 }
+            lastThermalGap = maximumGap
         }
-        await evaluateMonitoring(at: snapshot.sampledAt ?? Date(), maximumGap: maximumGap)
-        guard generation == token, !Task.isCancelled else { return }
-        guard wantsPerformance, full, let now = snapshot.sampledAt else { return }
-        if let lastHistoryDate {
-            let gap = now.timeIntervalSince(lastHistoryDate)
-            if gap < 0 { history.removeAll(); historySegment = UUID(); allNetworkHistorySegment = UUID() }
-            else if gap > max(6, samplingInterval * 2.5) { historySegment = UUID(); allNetworkHistorySegment = UUID() }
-        }
-        history.append(.init(date: now, segment: historySegment, cpuPercent: snapshot.cpuPercent,
-                             downloadBytesPerSecond: snapshot.network.downloadBytesPerSecond,
-                             uploadBytesPerSecond: snapshot.network.uploadBytesPerSecond, cpuTemperature: snapshot.cpuTemperature, gpuTemperature: snapshot.gpuTemperature, memoryPercent: snapshot.memory?.percent,
-                             allDownloadBytesPerSecond: snapshot.allNetwork.downloadBytesPerSecond,
-                             allUploadBytesPerSecond: snapshot.allNetwork.uploadBytesPerSecond,
-                             allNetworkSegment: allNetworkHistorySegment))
-        history.removeAll { now.timeIntervalSince($0.date) > 3600 }
-        lastHistoryDate = now
+        snapshot = next
+        await evaluateMonitoring(at: next.thermalSampledAt ?? Date(), maximumGap: maximumGap, hasNewTemperature: hasNewTemperature)
     }
 }
 
@@ -479,16 +658,20 @@ private struct DeviceMonitoringConfiguration: Codable {
     var state: DeviceMonitoringState
 }
 
-private struct DeviceSampleResult: Sendable {
-    var snapshot: DeviceSnapshot
-    var interfaces: [DeviceNetworkInterface]
-    var selection: [String]?
+private struct DeviceTrafficResult: Sendable {
+    var selected: DeviceNetworkLedger
+    var ledger: DeviceTrafficLedger
     var error: String?
-    var trafficLedger: DeviceTrafficLedger
 }
 
-/// Actor-isolated synchronous system calls run on Swift's background executor, never MainActor.
-private actor DeviceSampler {
+private enum DeviceTrafficInput: Sendable {
+    case sample(DeviceInterfaceReading?, date: Date, token: UUID, maximumGap: TimeInterval, selectionIsCurrent: Bool)
+    case select([String]?)
+    case begin(Date)
+}
+
+/// Disk writes cannot block live sampling or process and sensor reads.
+private actor DeviceTrafficRecorder {
     private let ledgerURL: URL
     private let trafficURL: URL
     private var trafficAccumulator = DeviceTrafficAccumulator()
@@ -501,25 +684,7 @@ private actor DeviceSampler {
     private var trafficWrites = DevicePersistenceSchedule()
     private var networkWrites = DevicePersistenceSchedule()
     private var scheduledFlush: Task<Void, Never>?
-    private var snapshot = DeviceSnapshot()
-    private var previousCPU: DeviceCPUTicks?
-    private var previousProcesses: [Int32: (started: UInt64, ticks: UInt64)] = [:]
-    private var previousPerformanceDate: Date?
-    private var previousDisk: (date: Date, counters: [UInt64: DeviceNetworkCounter])?
-    private var diskRead: UInt64 = 0, diskWrite: UInt64 = 0
-    private var cachedDiskCapacity: DeviceStorageCapacity?
-    private var diskCapacityReadUptime: TimeInterval?
     private var token: UUID?
-    private var pressure: DevicePressure = .unknown
-    private let timebase: Double = {
-        var info = mach_timebase_info_data_t(); mach_timebase_info(&info)
-        return info.denom > 0 ? Double(info.numer) / Double(info.denom) : 1
-    }()
-    private var pressureSource: DispatchSourceMemoryPressure?
-    private var interfaceMetadata: [String: (name: String, physical: Bool, scope: DeviceTrafficScope?)] = [:]
-    private var lastMetadataDate = Date.distantPast
-    private lazy var sensors = DeviceSensorReader()
-    private var hardwareLoaded = false
 
     init(dataDirectory: URL) {
         ledgerURL = dataDirectory.appendingPathComponent("device-network.json")
@@ -529,8 +694,6 @@ private actor DeviceSampler {
     #if DEBUG
     func inspectTrafficStorageForChecks() -> String? { load(); trafficWrites.markChanged(); networkWrites.markChanged(); persist(force: true); return [trafficError, persistenceError].compactMap { $0 }.joined(separator: "；").nilIfEmpty }
     #endif
-    func selectInterfaces(_ ids: [String]?) { load(); accumulator.selectInterfaces(ids); networkWrites.markChanged(); persist(force: true) }
-    func beginRecording() { load(); accumulator.beginRecording(at: Date()); networkWrites.markChanged(); persist(force: true) }
     func flush() throws {
         guard loaded else { return }
         scheduledFlush?.cancel(); scheduledFlush = nil
@@ -541,62 +704,40 @@ private actor DeviceSampler {
         }
     }
 
-    func sample(full: Bool, thermal: Bool, token: UUID, maximumGap: TimeInterval) -> DeviceSampleResult {
+    func record(_ inputs: [DeviceTrafficInput]) -> DeviceTrafficResult {
         load()
-        let now = Date()
-        if self.token != token {
-            self.token = token; accumulator.breakContinuity(); trafficAccumulator.breakContinuity(); previousCPU = nil
-            previousPerformanceDate = nil; previousProcesses.removeAll(); previousDisk = nil
+        var force = false
+        for input in inputs {
+            switch input {
+            case .sample(let network, let date, let generation, let maximumGap, let selectionIsCurrent):
+                if token != generation {
+                    token = generation
+                    accumulator.breakContinuity()
+                    trafficAccumulator.breakContinuity()
+                }
+                trafficAccumulator.ingest(wifi: network?.wifi ?? [:], ethernet: network?.ethernet ?? [:],
+                                          at: date, maximumGap: maximumGap)
+                trafficWrites.markChanged()
+                if selectionIsCurrent {
+                    // Preserve the accounting policy: neither failed reads nor
+                    // empty interfaces credit bytes across a missing interval.
+                    _ = accumulator.ingest(network?.counters(for: accumulator.ledger.selectedInterfaceIDs) ?? [:],
+                                           at: date, maximumGap: maximumGap)
+                    networkWrites.markChanged()
+                }
+            case .select(let identifiers):
+                accumulator.selectInterfaces(identifiers)
+                networkWrites.markChanged()
+                force = true
+            case .begin(let date):
+                accumulator.beginRecording(at: date)
+                networkWrites.markChanged()
+                force = true
+            }
         }
-        if now.timeIntervalSince(lastMetadataDate) > 30 { refreshInterfaceMetadata(); lastMetadataDate = now }
-        let read = networkCounters()
-        let interfaces = read.map { id, entry in
-            let meta = interfaceMetadata[id]
-            return DeviceNetworkInterface(id: id, name: meta?.name ?? id,
-                                          isVirtual: !(meta?.physical ?? id.hasPrefix("en")),
-                                          isActive: entry.active,
-                                          isDefault: meta?.physical ?? id.hasPrefix("en"))
-        }.sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
-        let selected = accumulator.ledger.selectedInterfaceIDs.map(Set.init)
-        let chosen = interfaces.filter { $0.isActive && (selected?.contains($0.id) ?? $0.isDefault) }
-        let counters = Dictionary(uniqueKeysWithValues: chosen.compactMap { interface in
-            read[interface.id].map { (interface.id, $0.counter) }
-        })
-        let physical = read.filter { $0.value.active && interfaceMetadata[$0.key]?.physical == true }
-        let wifi = physical.filter { interfaceMetadata[$0.key]?.scope == .wifi }.mapValues(\.counter)
-        let ethernet = physical.filter { interfaceMetadata[$0.key]?.scope == .ethernet }.mapValues(\.counter)
-        let allDelta = trafficAccumulator.ingest(wifi: wifi, ethernet: ethernet, at: now, maximumGap: maximumGap)
-        let delta = accumulator.ingest(counters, at: now, maximumGap: maximumGap)
-        trafficWrites.markChanged(); networkWrites.markChanged()
-        let ledger = accumulator.ledger, today = ledger.today(at: now)
-        snapshot.network = .init(downloadBytesPerSecond: delta?.downloadBytesPerSecond,
-                                 uploadBytesPerSecond: delta?.uploadBytesPerSecond,
-                                 sessionDownload: ledger.recordingReceived, sessionUpload: ledger.recordingSent,
-                                 todayDownload: today.received, todayUpload: today.sent,
-                                 todayCoverageSeconds: today.coveredSeconds, sessionCoverageSeconds: ledger.recordingCoveredSeconds,
-                                 recordedSince: ledger.recordingStartedAt, todayFirstSample: today.firstSample,
-                                 todayLastSample: today.lastSample, excludedIntervals: today.excludedIntervals,
-                                 interfaceNames: chosen.map { "\($0.name) · \($0.id)" })
-        if let allLedger = trafficAccumulator.ledger.scopes[.all] {
-            let allToday = allLedger.today(at: now, calendar: trafficAccumulator.ledger.calendar)
-            snapshot.allNetwork = .init(downloadBytesPerSecond: allDelta?.downloadBytesPerSecond,
-                                       uploadBytesPerSecond: allDelta?.uploadBytesPerSecond,
-                                       sessionDownload: allLedger.recordingReceived, sessionUpload: allLedger.recordingSent,
-                                       todayDownload: allToday.received, todayUpload: allToday.sent,
-                                       todayCoverageSeconds: allToday.coveredSeconds, sessionCoverageSeconds: allLedger.recordingCoveredSeconds,
-                                       recordedSince: allLedger.recordingStartedAt, todayFirstSample: allToday.firstSample,
-                                       todayLastSample: allToday.lastSample, excludedIntervals: allToday.excludedIntervals,
-                                       interfaceNames: interfaces.filter { physical[$0.id] != nil }.map { "\($0.name) · \($0.id)" })
-        } else { snapshot.allNetwork = .init() }
-        snapshot.uptime = ProcessInfo.processInfo.systemUptime
-        snapshot.sampledAt = now
-        if full { samplePerformance(now: now, maximumGap: maximumGap) }
-        else {
-            previousCPU = nil; previousPerformanceDate = nil; previousProcesses.removeAll(); previousDisk = nil
-            if thermal { sampleThermal(now: now) }
-        }
-        persist()
-        return .init(snapshot: snapshot, interfaces: interfaces, selection: ledger.selectedInterfaceIDs, error: [persistenceError, trafficError].compactMap { $0 }.joined(separator: "；").nilIfEmpty, trafficLedger: trafficAccumulator.ledger)
+        persist(force: force)
+        let errors = [persistenceError, trafficError].compactMap { $0 }.joined(separator: "；").nilIfEmpty
+        return .init(selected: accumulator.ledger, ledger: trafficAccumulator.ledger, error: errors)
     }
 
     private func load() {
@@ -612,16 +753,7 @@ private actor DeviceSampler {
                 persistenceError = "网络记录无法读取，已保留原文件；当前仅显示本次运行记录。"
             }
         }
-        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.normal, .warning, .critical], queue: .global(qos: .utility))
-        source.setEventHandler { [weak self, weak source] in
-            guard let event = source?.data else { return }
-            let value: DevicePressure = event.contains(.critical) ? .critical : event.contains(.warning) ? .warning : .normal
-            Task { await self?.setPressure(value) }
-        }
-        pressureSource = source; source.resume()
     }
-
-    private func setPressure(_ value: DevicePressure) { pressure = value }
 
     private func boundedHistoryData(_ url: URL) throws -> Data {
         let handle = try FileHandle(forReadingFrom: url); defer { try? handle.close() }
@@ -663,6 +795,38 @@ private actor DeviceSampler {
     }
     private func performScheduledFlush() { scheduledFlush = nil; persist(force: true) }
 
+}
+
+private actor DevicePerformanceSampler {
+    private var snapshot = DeviceSnapshot()
+    private var token: UUID?
+    private var previousProcesses: [Int32: (started: UInt64, ticks: UInt64)] = [:]
+    private var previousPerformanceDate: Date?
+    private var previousDisk: (date: Date, counters: [UInt64: DeviceNetworkCounter])?
+    private var diskRead: UInt64 = 0, diskWrite: UInt64 = 0
+    private var cachedDiskCapacity: DeviceStorageCapacity?
+    private var diskCapacityReadUptime: TimeInterval?
+    private let timebase: Double = {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        return info.denom > 0 ? Double(info.numer) / Double(info.denom) : 1
+    }()
+    private lazy var sensors = DeviceSensorReader()
+    private var hardwareLoaded = false
+
+    func sample(full: Bool, thermal: Bool, token: UUID, maximumGap: TimeInterval) -> DeviceSnapshot {
+        let now = Date()
+        if self.token != token || !full {
+            self.token = token
+            previousPerformanceDate = nil
+            previousProcesses.removeAll()
+            previousDisk = nil
+        }
+        if full { samplePerformance(now: now, maximumGap: maximumGap) }
+        else if thermal { sampleThermal(now: now) }
+        return snapshot
+    }
+
     private func samplePerformance(now: Date, maximumGap: TimeInterval) {
         let elapsed = previousPerformanceDate.map { now.timeIntervalSince($0) }
         let continuous = elapsed.map { $0 > 0 && $0 <= maximumGap } ?? false
@@ -670,25 +834,16 @@ private actor DeviceSampler {
             hardwareLoaded = true
             snapshot.modelIdentifier = sysctlString("hw.model") ?? "Mac"
             snapshot.deviceName = hardwareName() ?? snapshot.modelIdentifier
-            snapshot.performanceCores = sysctlUInt64("hw.perflevel0.physicalcpu").map(Int.init)
-            snapshot.efficiencyCores = sysctlUInt64("hw.perflevel1.physicalcpu").map(Int.init)
+            snapshot.performanceCores = deviceUInt64("hw.perflevel0.physicalcpu").map(Int.init)
+            snapshot.efficiencyCores = deviceUInt64("hw.perflevel1.physicalcpu").map(Int.init)
         }
         snapshot.chipName = sysctlString("machdep.cpu.brand_string") ?? "Mac 处理器"
         snapshot.logicalCPUCount = ProcessInfo.processInfo.activeProcessorCount
-        snapshot.physicalCPUCount = Int(sysctlUInt64("hw.physicalcpu") ?? UInt64(snapshot.logicalCPUCount))
+        snapshot.physicalCPUCount = Int(deviceUInt64("hw.physicalcpu") ?? UInt64(snapshot.logicalCPUCount))
         snapshot.uptime = ProcessInfo.processInfo.systemUptime
-        if let current = cpuTicks() {
-            let values = continuous ? previousCPU.flatMap { current.percentages(since: $0) } : nil
-            snapshot.cpuPercent = values?.total; snapshot.cpuUserPercent = values?.user; snapshot.cpuSystemPercent = values?.system
-            previousCPU = current
-        } else { snapshot.cpuPercent = nil; snapshot.cpuUserPercent = nil; snapshot.cpuSystemPercent = nil }
-        if let level = sysctlUInt64("kern.memorystatus_vm_pressure_level") {
-            switch level { case 1: pressure = .normal; case 2: pressure = .warning; case 4: pressure = .critical; default: break }
-        }
-        snapshot.memory = memory()
         snapshot.disk = disk(now: now, maximumGap: maximumGap)
         snapshot.battery = battery()
-        sampleThermal(now: now)
+        sampleThermal(now: Date())
         snapshot.processes = processes(now: now, elapsed: continuous ? elapsed : nil)
         snapshot.performanceSampledAt = now; previousPerformanceDate = now
     }
@@ -724,33 +879,6 @@ private actor DeviceSampler {
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let items = root["SPHardwareDataType"] as? [[String: Any]] else { return nil }
         return items.first?["machine_name"] as? String
-    }
-
-    private func cpuTicks() -> DeviceCPUTicks? {
-        var info = host_cpu_load_info(), count = mach_msg_type_number_t(MemoryLayout<host_cpu_load_info>.size / MemoryLayout<integer_t>.size)
-        let result = withUnsafeMutablePointer(to: &info) {
-            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, $0, &count) }
-        }
-        guard result == KERN_SUCCESS else { return nil }
-        return .init(user: info.cpu_ticks.0, system: info.cpu_ticks.1, idle: info.cpu_ticks.2, nice: info.cpu_ticks.3)
-    }
-
-    private func memory() -> DeviceMemorySnapshot? {
-        var vm = vm_statistics64(), count = mach_msg_type_number_t(MemoryLayout<vm_statistics64>.size / MemoryLayout<integer_t>.size)
-        let result = withUnsafeMutablePointer(to: &vm) {
-            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count) }
-        }
-        guard result == KERN_SUCCESS else { return nil }
-        var pageSize: vm_size_t = 0; guard host_page_size(mach_host_self(), &pageSize) == KERN_SUCCESS else { return nil }
-        let page = UInt64(pageSize), total = ProcessInfo.processInfo.physicalMemory
-        let wired = UInt64(vm.wire_count) * page, compressed = UInt64(vm.compressor_page_count) * page
-        let application = UInt64(vm.internal_page_count > vm.purgeable_count ? vm.internal_page_count - vm.purgeable_count : 0) * page
-        let used = min(total, application + wired + compressed)
-        var swap = xsw_usage(), size = MemoryLayout<xsw_usage>.size
-        let swapOK = sysctlbyname("vm.swapusage", &swap, &size, nil, 0) == 0
-        return .init(total: total, used: used, available: total - used, application: application, wired: wired,
-                     compressed: compressed, cached: UInt64(vm.external_page_count) * page,
-                     swapUsed: swapOK ? swap.xsu_used : nil, pageIns: vm.pageins * page, pageOuts: vm.pageouts * page, pressure: pressure)
     }
 
     private func disk(now: Date, maximumGap: TimeInterval) -> DeviceDiskSnapshot? {
@@ -882,6 +1010,207 @@ private actor DeviceSampler {
         return DeviceProcess.filtered(DeviceProcessExplorer.inheritApplications(results), query: "", sort: .cpu)
     }
 
+    private func sysctlString(_ key: String) -> String? {
+        var length = 0
+        guard sysctlbyname(key, nil, &length, nil, 0) == 0, length > 0, length < 4096 else { return nil }
+        var buffer = [CChar](repeating: 0, count: length)
+        guard sysctlbyname(key, &buffer, &length, nil, 0) == 0 else { return nil }
+        return String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    }
+
+}
+
+private extension String { var nilIfEmpty: String? { isEmpty ? nil : self } }
+
+
+nonisolated private struct DeviceInterfaceReading: Sendable {
+    var interfaces: [DeviceNetworkInterface]
+    var activeCounters: [String: DeviceNetworkCounter]
+    var wifi: [String: DeviceNetworkCounter]
+    var ethernet: [String: DeviceNetworkCounter]
+
+    var physical: [String: DeviceNetworkCounter] { wifi.merging(ethernet) { first, _ in first } }
+    var physicalNames: [String] { interfaces.filter { wifi[$0.id] != nil || ethernet[$0.id] != nil }.map(Self.displayName) }
+
+    func counters(for selection: [String]?) -> [String: DeviceNetworkCounter] {
+        Dictionary(uniqueKeysWithValues: selectedInterfaces(selection).compactMap { interface in
+            activeCounters[interface.id].map { (interface.id, $0) }
+        })
+    }
+
+    func names(for selection: [String]?) -> [String] { selectedInterfaces(selection).map(Self.displayName) }
+
+    private func selectedInterfaces(_ selection: [String]?) -> [DeviceNetworkInterface] {
+        let selected = selection.map(Set.init)
+        return interfaces.filter { $0.isActive && (selected?.contains($0.id) ?? $0.isDefault) }
+    }
+
+    private static func displayName(_ interface: DeviceNetworkInterface) -> String { "\(interface.name) · \(interface.id)" }
+}
+
+private extension DeviceLiveNetworkRate.Reading {
+    var statusText: String? {
+        switch self {
+        case .measured: nil
+        case .establishingBaseline: "正在建立采样基线"
+        case .noActiveInterface: "无活动接口"
+        case .readFailed: "网卡读数不可用"
+        }
+    }
+}
+
+private struct DeviceLiveSample: Sendable {
+    var date: Date
+    var uptime: TimeInterval
+    var maximumGap: TimeInterval
+    var cpu: (user: Double, system: Double, total: Double)?
+    var cpuSegment: UUID
+    var cpuStatus: String?
+    var memory: DeviceMemorySnapshot?
+    var memorySegment: UUID
+    var network: DeviceInterfaceReading?
+    var selected: DeviceLiveNetworkRate.Reading
+    var all: DeviceLiveNetworkRate.Reading
+    var selectedSegment: UUID
+    var allSegment: UUID
+}
+
+/// Only cumulative counters and lightweight memory reads belong on this executor.
+private actor DeviceLiveSampler {
+    private let clock = ContinuousClock()
+    private let logger = Logger(subsystem: "local.deskden.launcher", category: "DeviceSampling")
+    private var lastDiagnostic: ContinuousClock.Instant?
+    private var token: UUID?
+    private var previousMaximumGap: TimeInterval?
+    private var selection: [String]?
+    private var previousCPU: (uptime: TimeInterval, maximumGap: TimeInterval, ticks: DeviceCPUTicks)?
+    private var cpuSegment = UUID()
+    private var memorySegment = UUID()
+    private var previousMemory: (uptime: TimeInterval, maximumGap: TimeInterval)?
+    private var selectedNetwork = DeviceLiveNetworkRate()
+    private var allNetwork = DeviceLiveNetworkRate()
+    private var lastMetadataUptime: TimeInterval?
+    private var interfaceMetadata: [String: (name: String, physical: Bool, scope: DeviceTrafficScope?)] = [:]
+    private var pressure: DevicePressure = .unknown
+    private var pressureSource: DispatchSourceMemoryPressure?
+
+    func sample(token: UUID, selection: [String]?, interval: TimeInterval, scheduledAt: ContinuousClock.Instant) -> DeviceLiveSample {
+        let started = clock.now
+        let date = Date(), uptime = ProcessInfo.processInfo.systemUptime
+        let maximumGap = max(6, interval * 2.5)
+        if self.token != token {
+            self.token = token
+            previousMaximumGap = nil
+            previousCPU = nil
+            cpuSegment = UUID()
+            previousMemory = nil
+            memorySegment = UUID()
+            selectedNetwork.breakContinuity()
+            allNetwork.breakContinuity()
+        } else if self.selection != selection {
+            selectedNetwork.breakContinuity()
+        }
+        self.selection = selection
+        if pressureSource == nil { startPressureMonitoring() }
+        if let level = deviceUInt64("kern.memorystatus_vm_pressure_level") {
+            switch level { case 1: pressure = .normal; case 2: pressure = .warning; case 4: pressure = .critical; default: break }
+        }
+        if lastMetadataUptime.map({ uptime - $0 >= 30 || uptime < $0 }) ?? true {
+            refreshInterfaceMetadata()
+            lastMetadataUptime = uptime
+        }
+        let cpu = readCPU(uptime: uptime, maximumGap: maximumGap)
+        let network = (networkCounters() ?? networkCounters()).map(interfaceReading)
+        let selected = selectedNetwork.ingest(network?.counters(for: selection), uptime: uptime, maximumGap: maximumGap)
+        let all = allNetwork.ingest(network?.physical, uptime: uptime, maximumGap: maximumGap)
+        let memory = memory()
+        if let previousMemory {
+            let elapsed = uptime - previousMemory.uptime
+            if elapsed <= 0 || elapsed > max(maximumGap, previousMemory.maximumGap) { memorySegment = UUID() }
+        }
+        previousMemory = (uptime, maximumGap)
+        let recordingGap = max(maximumGap, previousMaximumGap ?? 0)
+        previousMaximumGap = maximumGap
+        let elapsed = started.duration(to: clock.now)
+        let delay = scheduledAt.duration(to: started)
+        if cpu.status == "CPU 读数不可用" || network == nil || delay > .seconds(1) || elapsed > .milliseconds(500),
+           lastDiagnostic.map({ $0.duration(to: started) >= .seconds(30) }) ?? true {
+            lastDiagnostic = started
+            logger.debug("Device sample delay=\(String(describing: delay), privacy: .public), duration=\(String(describing: elapsed), privacy: .public), CPU=\(cpu.status ?? "measured", privacy: .public), network=\(selected.statusText ?? "measured", privacy: .public)")
+        }
+        return .init(date: date, uptime: uptime, maximumGap: recordingGap, cpu: cpu.values, cpuSegment: cpuSegment,
+                     cpuStatus: cpu.status, memory: memory, memorySegment: memorySegment, network: network, selected: selected, all: all,
+                     selectedSegment: selectedNetwork.segment, allSegment: allNetwork.segment)
+    }
+
+    private func readCPU(uptime: TimeInterval, maximumGap: TimeInterval)
+        -> (values: (user: Double, system: Double, total: Double)?, status: String?) {
+        guard let ticks = cpuTicks() else { return (nil, "CPU 读数不可用") }
+        let old = previousCPU
+        previousCPU = (uptime, maximumGap, ticks)
+        guard let old else { return (nil, "正在建立采样基线") }
+        let elapsed = uptime - old.uptime
+        guard elapsed > 0, elapsed <= max(maximumGap, old.maximumGap) else {
+            cpuSegment = UUID()
+            return (nil, "正在建立采样基线")
+        }
+        guard let values = ticks.percentages(since: old.ticks) else { return (nil, "CPU 读数不可用") }
+        return (values, nil)
+    }
+
+    private func interfaceReading(_ read: [String: (counter: DeviceNetworkCounter, active: Bool)]) -> DeviceInterfaceReading {
+        let interfaces = read.map { id, entry in
+            let meta = interfaceMetadata[id]
+            return DeviceNetworkInterface(id: id, name: meta?.name ?? id,
+                                          isVirtual: !(meta?.physical ?? id.hasPrefix("en")),
+                                          isActive: entry.active,
+                                          isDefault: meta?.physical ?? id.hasPrefix("en"))
+        }.sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
+        let active = read.filter { $0.value.active }.mapValues(\.counter)
+        let wifi = active.filter { interfaceMetadata[$0.key]?.scope == .wifi }
+        let ethernet = active.filter { interfaceMetadata[$0.key]?.scope == .ethernet }
+        return .init(interfaces: interfaces, activeCounters: active, wifi: wifi, ethernet: ethernet)
+    }
+
+    private func startPressureMonitoring() {
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.normal, .warning, .critical], queue: .global(qos: .utility))
+        source.setEventHandler { [weak self, weak source] in
+            guard let event = source?.data else { return }
+            let value: DevicePressure = event.contains(.critical) ? .critical : event.contains(.warning) ? .warning : .normal
+            Task { await self?.setPressure(value) }
+        }
+        pressureSource = source; source.resume()
+    }
+
+    private func setPressure(_ value: DevicePressure) { pressure = value }
+
+    private func cpuTicks() -> DeviceCPUTicks? {
+        var info = host_cpu_load_info(), count = mach_msg_type_number_t(MemoryLayout<host_cpu_load_info>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, $0, &count) }
+        }
+        guard result == KERN_SUCCESS else { return nil }
+        return .init(user: info.cpu_ticks.0, system: info.cpu_ticks.1, idle: info.cpu_ticks.2, nice: info.cpu_ticks.3)
+    }
+
+    private func memory() -> DeviceMemorySnapshot? {
+        var vm = vm_statistics64(), count = mach_msg_type_number_t(MemoryLayout<vm_statistics64>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &vm) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count) }
+        }
+        guard result == KERN_SUCCESS else { return nil }
+        var pageSize: vm_size_t = 0; guard host_page_size(mach_host_self(), &pageSize) == KERN_SUCCESS else { return nil }
+        let page = UInt64(pageSize), total = ProcessInfo.processInfo.physicalMemory
+        let wired = UInt64(vm.wire_count) * page, compressed = UInt64(vm.compressor_page_count) * page
+        let application = UInt64(vm.internal_page_count > vm.purgeable_count ? vm.internal_page_count - vm.purgeable_count : 0) * page
+        let used = min(total, application + wired + compressed)
+        var swap = xsw_usage(), size = MemoryLayout<xsw_usage>.size
+        let swapOK = sysctlbyname("vm.swapusage", &swap, &size, nil, 0) == 0
+        return .init(total: total, used: used, available: total - used, application: application, wired: wired,
+                     compressed: compressed, cached: UInt64(vm.external_page_count) * page,
+                     swapUsed: swapOK ? swap.xsu_used : nil, pageIns: vm.pageins * page, pageOuts: vm.pageouts * page, pressure: pressure)
+    }
+
     private func refreshInterfaceMetadata() {
         guard let all = SCNetworkInterfaceCopyAll() as? [SCNetworkInterface] else { return }
         interfaceMetadata = [:]
@@ -894,18 +1223,18 @@ private actor DeviceSampler {
         }
     }
 
-    private func networkCounters() -> [String: (counter: DeviceNetworkCounter, active: Bool)] {
+    private func networkCounters() -> [String: (counter: DeviceNetworkCounter, active: Bool)]? {
         // NET_RT_IFLIST2 supplies true 64-bit counters; getifaddrs' if_data counters can wrap at 4 GiB.
         var mib: [Int32] = [CTL_NET, PF_ROUTE, 0, AF_LINK, NET_RT_IFLIST2, 0], size = 0
-        guard sysctl(&mib, u_int(mib.count), nil, &size, nil, 0) == 0, size > 0, size < 16_777_216 else { return [:] }
+        guard sysctl(&mib, u_int(mib.count), nil, &size, nil, 0) == 0, size > 0, size < 16_777_216 else { return nil }
         var buffer = [UInt8](repeating: 0, count: size)
         let ok = buffer.withUnsafeMutableBytes { sysctl(&mib, u_int(mib.count), $0.baseAddress, &size, nil, 0) }
-        guard ok == 0 else { return [:] }
+        guard ok == 0, size <= buffer.count else { return nil }
         return buffer.withUnsafeBytes { bytes in
             var result: [String: (counter: DeviceNetworkCounter, active: Bool)] = [:], offset = 0
             while offset + 4 <= size {
                 let length = Int(bytes.loadUnaligned(fromByteOffset: offset, as: UInt16.self))
-                guard length >= 4, offset + length <= size else { break }
+                guard length >= 4, offset + length <= size else { return nil }
                 if bytes[offset + 3] == RTM_IFINFO2, length >= MemoryLayout<if_msghdr2>.size {
                     let message = bytes.loadUnaligned(fromByteOffset: offset, as: if_msghdr2.self)
                     if message.ifm_flags & IFF_LOOPBACK == 0 {
@@ -919,25 +1248,16 @@ private actor DeviceSampler {
                 }
                 offset += length
             }
-            return result
+            return offset == size ? result : nil
         }
     }
 
-    private func sysctlString(_ key: String) -> String? {
-        var length = 0
-        guard sysctlbyname(key, nil, &length, nil, 0) == 0, length > 0, length < 4096 else { return nil }
-        var buffer = [CChar](repeating: 0, count: length)
-        guard sysctlbyname(key, &buffer, &length, nil, 0) == 0 else { return nil }
-        return String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
-    }
-    private func sysctlUInt64(_ key: String) -> UInt64? {
-        var value: UInt64 = 0, size = MemoryLayout<UInt64>.size
-        guard sysctlbyname(key, &value, &size, nil, 0) == 0 else { return nil }; return value
-    }
 }
 
-private extension String { var nilIfEmpty: String? { isEmpty ? nil : self } }
-
+private func deviceUInt64(_ key: String) -> UInt64? {
+    var value: UInt64 = 0, size = MemoryLayout<UInt64>.size
+    guard sysctlbyname(key, &value, &size, nil, 0) == 0 else { return nil }; return value
+}
 
 /// System metadata and actions are isolated from view state. No shell commands or name-based kills.
 @MainActor

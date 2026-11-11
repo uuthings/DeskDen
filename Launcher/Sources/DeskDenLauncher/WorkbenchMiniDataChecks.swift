@@ -120,7 +120,9 @@ import LauncherCore
             let graph = WorkbenchMiniDeviceData(snapshot: snapshot, openedAt: now, history: history, now: now)
             check(graph.networkPoints.count == 61 && graph.networkPoints.first?.date == now.addingTimeInterval(-60) && graph.networkPoints.last?.download == nil, "Mini graph reads a bounded sixty-second tail and retains unavailable samples as gaps")
             let historical=WorkbenchMiniDeviceData(snapshot:snapshot,openedAt:now.addingTimeInterval(11),history:history,now:now.addingTimeInterval(11))
-            check(historical.download == "—" && !historical.networkPoints.isEmpty, "recent historical network samples remain a trend without being substituted for a missing current speed")
+            check(historical.download == "—" && historical.networkPoints.last?.date == now
+                  && historical.networkWindowEnd == now.addingTimeInterval(11),
+                  "Mini retains the recent trend and its unsampled tail without substituting a historical speed")
             let allSegment = UUID()
             let filteredChange = [0, 1].map { index in
                 DeviceHistoryPoint(date: now.addingTimeInterval(Double(index - 1)), segment: UUID(), cpuPercent: nil,
@@ -131,16 +133,24 @@ import LauncherCore
             check(independentGraph.networkSegments(upload: false).map(\.count) == [2]
                   && independentGraph.networkSegments(upload: true).map(\.count) == [2],
                   "changing selected-interface segments does not split Mini's continuous all-network curves")
+            var background = WorkbenchMiniDeviceData()
+            background.networkPoints = [
+                .init(date: now.addingTimeInterval(-10), segment: segment, download: 0, upload: 1),
+                .init(date: now, segment: segment, download: 2, upload: 0)
+            ]
+            check(background.networkSegments(upload: false).map(\.count) == [2]
+                  && background.networkSegments(upload: true).map(\.count) == [2],
+                  "Mini preserves a continuous ten-second network interval collected in the background")
             var interrupted = WorkbenchMiniDeviceData()
-            let restarted = UUID()
+            let restarted = UUID(), afterGap = UUID()
             interrupted.networkPoints = [
                 .init(date: now.addingTimeInterval(-5), segment: segment, download: 0, upload: 1),
                 .init(date: now.addingTimeInterval(-4), segment: segment, download: 4, upload: 2),
                 .init(date: now.addingTimeInterval(-3), segment: segment, download: nil, upload: 3),
                 .init(date: now.addingTimeInterval(-2), segment: segment, download: 2, upload: 4),
                 .init(date: now.addingTimeInterval(-1), segment: restarted, download: 1, upload: 5),
-                .init(date: now.addingTimeInterval(10), segment: restarted, download: 3, upload: 6),
-                .init(date: now.addingTimeInterval(9), segment: restarted, download: 2, upload: 7)
+                .init(date: now.addingTimeInterval(10), segment: afterGap, download: 3, upload: 6),
+                .init(date: now.addingTimeInterval(9), segment: afterGap, download: 2, upload: 7)
             ]
             check(interrupted.networkSegments(upload: false).map(\.count) == [2,1,1,1,1], "Mini curves split at missing rates, source changes, long gaps and clock reversal")
             check(interrupted.networkSegments(upload: true).map(\.count) == [4,1,1,1], "each network series retains its own available samples and genuine zero rates")

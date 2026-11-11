@@ -7,7 +7,10 @@ import UniformTypeIdentifiers
 import LocalAuthentication
 import Security
 
-enum VaultSheet:String,Identifiable { case setup,unlockForPassword,password,backup,restore; var id:String { rawValue } }
+enum VaultSheet:String,Identifiable {
+    case setup,unlockForPassword,password,passwordHint,touchIDDefault,backup,restore
+    var id:String { rawValue }
+}
 struct VaultRestorePreview:Identifiable {
     let id=UUID()
     let envelope:VaultEnvelope
@@ -15,7 +18,40 @@ struct VaultRestorePreview:Identifiable {
     let sourceName:String
 }
 
+/// A hint is explicitly visible at the lock screen. Keep it local and bind it
+/// to the vault's salt so a replacement vault cannot inherit the old hint.
+private struct VaultPasswordHints:Codable {
+    struct Record:Codable,Equatable {
+        let salt:Data
+        let text:String
+    }
+
+    var schema=1
+    var records:[Record]
+
+    func validated() throws -> Self {
+        guard schema == 1,records.count<=2,Set(records.map(\.salt)).count == records.count,
+              records.allSatisfy({$0.salt.count == 16 && !$0.text.isEmpty && $0.text.count<=VaultModel.maximumPasswordHintLength && $0.text.utf8.count<=4096}) else {
+            throw VaultFailure.invalidData
+        }
+        return self
+    }
+}
+
+private enum VaultHintFailure:LocalizedError {
+    case invalid,protected
+    var errorDescription:String? {
+        switch self {
+        case .invalid:"密码提示最多 \(VaultModel.maximumPasswordHintLength) 个字符。"
+        case .protected:"密码提示无法读取，原文件已保留。"
+        }
+    }
+}
+
 @MainActor final class VaultModel:ObservableObject {
+    nonisolated static let maximumPasswordHintLength=60
+    private static let passwordHintFailureThreshold=3
+
     @Published private(set) var isUnlocked=false
     @Published private(set) var isConfigured=false
     @Published private(set) var busy=false
@@ -27,6 +63,9 @@ struct VaultRestorePreview:Identifiable {
     @Published private(set) var biometricAvailable=false
     @Published private(set) var biometricCanRemove=false
     @Published private(set) var biometricUnavailableReason:String?="正在检查 Touch ID 是否可用"
+    @Published private(set) var preferredUnlockMethod:VaultUnlockMethod = .password
+    @Published private(set) var passwordHint:String?
+    @Published private(set) var shouldRevealPasswordHint=false
     @Published private(set) var selectedID:UUID?
     @Published private(set) var saveStatus="所有更改已保存"
     @Published private(set) var lockReason=""
@@ -44,10 +83,14 @@ struct VaultRestorePreview:Identifiable {
     let vaultDataURL:URL
     private let store:VaultFileStore
     private let protectionURL:URL
+    private let passwordHintsURL:URL
     private let biometrics:any VaultBiometricStore
     private let clipboard:VaultClipboard
     private var biometricOperationInFlight=false
     private var protectionProtected=false
+    private var passwordHintsProtected=false
+    private var passwordHints:[VaultPasswordHints.Record]=[]
+    private var failedPasswordAttempts=0
     private var key:SymmetricKey?
     private var salt:Data?
     private var openedPayloadVersion=3
@@ -68,6 +111,7 @@ struct VaultRestorePreview:Identifiable {
         vaultDataURL=dataDirectory.appendingPathComponent("private.deskdenvault")
         store=VaultFileStore(url:vaultDataURL)
         protectionURL=dataDirectory.appendingPathComponent("protection.json")
+        passwordHintsURL=dataDirectory.appendingPathComponent("password-hints.json")
         self.protectedDataAvailable=protectedDataAvailable
         self.biometrics=biometrics ?? VaultKeychainBiometrics(vaultURL:vaultDataURL)
         self.clipboard=clipboard ?? .shared
@@ -83,9 +127,12 @@ struct VaultRestorePreview:Identifiable {
                 let handle=try FileHandle(forReadingFrom:protectionURL);defer{try? handle.close()}
                 let data=try handle.read(upToCount:16_385) ?? Data()
                 guard data.count <= 16_384 else {throw VaultFailure.invalidData}
-                let preferences=try JSONDecoder().decode(VaultProtectionPreferences.self,from:data).validated();idleMinutes=preferences.idleMinutes;biometricEnabled=preferences.biometricEnabled
+                let preferences=try JSONDecoder().decode(VaultProtectionPreferences.self,from:data).validated()
+                idleMinutes=preferences.idleMinutes;biometricEnabled=preferences.biometricEnabled
+                preferredUnlockMethod=preferences.preferredUnlockMethod
             } catch {protectionProtected=true;errorMessage="锁定偏好无法读取，原文件已保留；当前按 5 分钟自动锁定。"}
         }
+        loadPasswordHints()
         identityBiometricSetupRequired = !biometricEnabled && FileManager.default.fileExists(atPath:dataDirectory.appendingPathComponent(LegacyIdentityMigration.vaultNoticeName).path)
         activityMonitor=NSEvent.addLocalMonitorForEvents(matching:[.keyDown,.leftMouseDown,.rightMouseDown,.scrollWheel]) { [weak self] event in
             MainActor.assumeIsolated {
@@ -109,6 +156,9 @@ struct VaultRestorePreview:Identifiable {
         return identityBiometricSetupRequired ? "资料已迁移。请先用密码解锁，再重新开启 Touch ID。":nil
     }
     var canChangeProtectionPreferences:Bool { !protectionProtected }
+    var effectiveUnlockMethod:VaultUnlockMethod {
+        biometricEnabled && biometricAvailable ? preferredUnlockMethod:.password
+    }
     var hasPendingPasswordChange:Bool {store.isPendingPasswordChange}
     func recordActivity() { lastActivityUptime=ProcessInfo.processInfo.systemUptime }
     func registerPlaintextClearer(id:UUID,_ clear:@escaping ()->Void) { plaintextClearers[id]=clear }
@@ -129,10 +179,74 @@ struct VaultRestorePreview:Identifiable {
     func changeIdleMinutes(_ value:Int) {
         guard !protectionProtected else {errorMessage="锁定偏好无法读取，当前未覆盖原文件。";return}
         do {
-            let next=try VaultProtectionPreferences(idleMinutes:value,biometricEnabled:biometricEnabled).validated()
-            try ProtectedAtomicFile.write(JSONEncoder().encode(next),to:protectionURL)
-            idleMinutes=value;errorMessage=nil;checkIdle()
+            try persistProtectionPreferences(idleMinutes:value,biometricEnabled:biometricEnabled,preferredUnlockMethod:preferredUnlockMethod)
+            errorMessage=nil;checkIdle()
         } catch {errorMessage="锁定偏好未能保存：\(error.localizedDescription)"}
+    }
+    @discardableResult func setPreferredUnlockMethod(_ method:VaultUnlockMethod) -> Bool {
+        guard isUnlocked,!busy,requireProtectedData() else {return false}
+        guard method == .password || (biometricEnabled && biometricAvailable && biometrics.available) else {
+            errorMessage=biometricUnavailableReason ?? "请先开启 Touch ID。"
+            return false
+        }
+        do {
+            try persistProtectionPreferences(idleMinutes:idleMinutes,biometricEnabled:biometricEnabled,preferredUnlockMethod:method)
+            errorMessage=nil;recordActivity();return true
+        } catch {errorMessage="默认解锁方式未能保存：\(error.localizedDescription)";return false}
+    }
+    @discardableResult func setPasswordHint(_ value:String?) -> Bool {
+        guard isUnlocked,!busy,let salt,requireProtectedData() else {return false}
+        do {
+            guard !passwordHintsProtected else {throw VaultHintFailure.protected}
+            try stagePasswordHint(try normalizedPasswordHint(value),for:salt)
+            selectPasswordHint(for:salt);errorMessage=nil;recordActivity();return true
+        } catch {errorMessage="密码提示未能保存：\(error.localizedDescription)";return false}
+    }
+    private func normalizedPasswordHint(_ value:String?) throws -> String? {
+        guard let text=value?.trimmingCharacters(in:.whitespacesAndNewlines),!text.isEmpty else {return nil}
+        guard text.count<=Self.maximumPasswordHintLength,text.utf8.count<=4096 else {throw VaultHintFailure.invalid}
+        return text
+    }
+    private func loadPasswordHints() {
+        guard FileManager.default.fileExists(atPath:passwordHintsURL.path) else {return}
+        do {
+            let handle=try FileHandle(forReadingFrom:passwordHintsURL)
+            defer {try? handle.close()}
+            let data=try handle.read(upToCount:32_769) ?? Data()
+            guard data.count<=32_768 else {throw VaultFailure.invalidData}
+            passwordHints=try JSONDecoder().decode(VaultPasswordHints.self,from:data).validated().records
+        } catch {passwordHintsProtected=true;return}
+        if let activeSalt=storedVaultSalt() {finishPasswordHintChange(for:activeSalt)}
+    }
+    private func storedVaultSalt() -> Data? {
+        guard !passwordHints.isEmpty,let data=try? store.read() else {return nil}
+        return (try? VaultCryptography.decodeEnvelope(data))?.salt
+    }
+    private func selectPasswordHint(for salt:Data?) {
+        passwordHint=passwordHints.first{$0.salt == salt}?.text
+    }
+    private func writePasswordHints(_ records:[VaultPasswordHints.Record]) throws {
+        guard records != passwordHints else {return}
+        guard !passwordHintsProtected else {throw VaultHintFailure.protected}
+        let settings=try VaultPasswordHints(records:records).validated()
+        let data=try JSONEncoder().encode(settings)
+        guard data.count<=32_768 else {throw VaultHintFailure.invalid}
+        try ProtectedAtomicFile.write(data,to:passwordHintsURL)
+        passwordHints=records
+    }
+    private func stagePasswordHint(_ hint:String?,for salt:Data,retaining previousSalt:Data?=nil) throws {
+        if passwordHintsProtected && hint != nil {throw VaultHintFailure.protected}
+        var records=passwordHints.filter{$0.salt == previousSalt && $0.salt != salt}
+        if let hint {records.append(.init(salt:salt,text:hint))}
+        try writePasswordHints(records)
+    }
+    private func finishPasswordHintChange(for salt:Data?) {
+        selectPasswordHint(for:salt)
+        // Only the active hint remains after a committed password change.
+        try? writePasswordHints(passwordHints.filter{$0.salt == salt})
+    }
+    private func resetPasswordFailures() {
+        failedPasswordAttempts=0;shouldRevealPasswordHint=false
     }
     private func requireProtectedData() -> Bool {
         guard protectedDataAvailable() else {
@@ -143,24 +257,26 @@ struct VaultRestorePreview:Identifiable {
         return true
     }
 
-    func create(password:String,confirmation:String) async -> Bool {
+    func create(password:String,confirmation:String,hint:String?=nil) async -> Bool {
         guard !busy,!isUnlocked,!isConfigured else { return false }
         guard requireProtectedData() else { return false }
         guard password == confirmation else { errorMessage="两次输入的密码不一致。"; return false }
         busy=true; errorMessage=nil; generation += 1; let token=generation
         do {
+            let hint=try normalizedPasswordHint(hint)
             let unlocked=try await Task.detached(priority:.userInitiated) { try VaultCryptography.create(contents:VaultContents(),password:password) }.value
             guard token == generation else { return false }
             guard requireProtectedData() else { return false }
             // Re-check immediately before creation so an externally created file is not replaced.
             guard !FileManager.default.fileExists(atPath:vaultDataURL.path) else { isConfigured=true; busy=false; errorMessage="资料库已经存在，请使用密码解锁。"; return false }
+            try stagePasswordHint(hint,for:unlocked.envelope.salt)
             pendingEnvelope=unlocked.envelope; hasPendingSave=true
             guard flush() else { busy=false; isConfigured=true; return false }
             adopt(unlocked); sheet=nil; busy=false; return true
         } catch { if token == generation { busy=false; errorMessage=error.localizedDescription }; return false }
     }
     func unlock(password:String) async -> Bool {
-        guard !busy,!isUnlocked else { return false }
+        guard !busy,!isUnlocked,!password.isEmpty else { return false }
         guard requireProtectedData() else { return false }
         guard flush() else { return false }
         busy=true; errorMessage=nil; generation += 1; let token=generation
@@ -170,10 +286,20 @@ struct VaultRestorePreview:Identifiable {
             guard token == generation else { return false }
             guard requireProtectedData() else { return false }
             adopt(unlocked); busy=false; return true
-        } catch { if token == generation { busy=false; errorMessage=error.localizedDescription }; return false }
+        } catch {
+            if token == generation {
+                if error as? VaultFailure == .incorrectPassword {
+                    failedPasswordAttempts=min(failedPasswordAttempts+1,Self.passwordHintFailureThreshold)
+                    shouldRevealPasswordHint=failedPasswordAttempts == Self.passwordHintFailureThreshold && passwordHint != nil
+                }
+                busy=false;errorMessage=error.localizedDescription
+            }
+            return false
+        }
     }
     private func adopt(_ unlocked:UnlockedVault) {
         key=unlocked.key; salt=unlocked.envelope.salt;openedPayloadVersion=unlocked.contents.version; documents=unlocked.contents.documents;categories=unlocked.contents.categories
+        selectPasswordHint(for:unlocked.envelope.salt);resetPasswordFailures()
         categoryFilter="all";selectedID=documents.first?.id; isConfigured=true; isUnlocked=true; saveStatus="所有更改已保存"; lockReason=""
         errorMessage=nil; sessionID=UUID(); recordActivity()
     }
@@ -270,6 +396,7 @@ struct VaultRestorePreview:Identifiable {
             }
             do {
                 _=try store.recoverPasswordChange()
+                finishPasswordHintChange(for:storedVaultSalt())
                 hasPendingSave=false;isConfigured=true;saveStatus="所有更改已保存";errorMessage=nil
                 lockReason="密码已更改，请使用新密码重新解锁"
                 if isUnlocked {lock(reason:lockReason)}
@@ -282,6 +409,7 @@ struct VaultRestorePreview:Identifiable {
         guard let pendingEnvelope else { return true }
         do {
             try store.write(pendingEnvelope); self.pendingEnvelope=nil; hasPendingSave=false;openedPayloadVersion=3
+            selectPasswordHint(for:pendingEnvelope.salt)
             isConfigured=true; saveStatus="所有更改已保存"; errorMessage=nil; return true
         } catch {
             hasPendingSave=true; saveStatus="尚未写入磁盘"
@@ -296,6 +424,7 @@ struct VaultRestorePreview:Identifiable {
         clipboard.clearPrivateSession()
         _=flush()
         isUnlocked=false; busy=false; key=nil; salt=nil; documents=[];categories=[];categoryFilter="all"; selectedID=nil
+        resetPasswordFailures()
         restoreData=nil; restorePreview=nil; restoreSourceName=nil; sheet=nil
         (panel as? NSSavePanel)?.cancel(nil); panel=nil
         let clearers=Array(plaintextClearers.values); plaintextClearers.removeAll()
@@ -306,21 +435,27 @@ struct VaultRestorePreview:Identifiable {
         }
         sessionID=UUID(); lockReason=reason
     }
-    func changePassword(current:String,new:String,confirmation:String) async -> Bool {
+    func changePassword(current:String,new:String,confirmation:String,hint:String?=nil) async -> Bool {
         guard isUnlocked,!busy,!biometricOperationInFlight else { return false }
         guard requireProtectedData() else { return false }
         guard new == confirmation else { errorMessage="两次输入的新密码不一致。"; return false }
         guard flush() else { return false }
         busy=true; errorMessage=nil; generation += 1; let token=generation
         do {
+            let hint=try normalizedPasswordHint(hint)
             let store=store
             let change=try await Task.detached(priority:.userInitiated) {
                 try store.preparePasswordChange(currentPassword:current,newPassword:new)
             }.value
             guard token == generation,isUnlocked else { return false }
             guard requireProtectedData() else { return false }
+            let newSalt=try change.replacementSalt()
+            // The current hint remains available until the new envelope is
+            // committed, including when the password journal needs recovery.
+            try stagePasswordHint(hint,for:newSalt,retaining:salt)
             if biometricEnabled {try await biometrics.remove();guard token == generation,isUnlocked,requireProtectedData() else{return false};try persistBiometricPreference(false)}
             _=try store.commitPasswordChange(change)
+            finishPasswordHintChange(for:newSalt)
             lock(reason:"密码已更改，本机对应历史副本已更新，请重新解锁")
             return true
         } catch {
@@ -349,7 +484,7 @@ struct VaultRestorePreview:Identifiable {
     }
     func enableBiometrics() async -> Bool {
         guard isUnlocked,!busy,!biometricOperationInFlight,let key,let salt,requireProtectedData(),flush() else {return false}
-        guard biometrics.available else {biometricUnavailableReason=biometrics.unavailableReason;errorMessage=biometricUnavailableReason;return false}
+        guard biometrics.available else {setBiometricsUnavailable();return false}
         guard !protectionProtected else {errorMessage="锁定偏好无法读取，Touch ID 未启用。";return false}
         // Opt-in is an explicit protected-data write. Fence the released writer
         // before storing a biometric key, even if the user has not edited text.
@@ -366,11 +501,25 @@ struct VaultRestorePreview:Identifiable {
             try? FileManager.default.removeItem(at:vaultDataURL.deletingLastPathComponent().appendingPathComponent(LegacyIdentityMigration.vaultNoticeName))
             identityBiometricSetupRequired=false
             biometricAvailable=biometrics.available;biometricCanRemove=biometrics.canRemove;busy=false;recordActivity();return true
-        } catch {if enrolled {try? await biometrics.remove()};if token == generation {busy=false;errorMessage=error.localizedDescription};return false}
+        } catch {
+            if enrolled {try? await biometrics.remove()}
+            if token == generation {
+                busy=false
+                handleBiometricFailure(error)
+            }
+            return false
+        }
+    }
+    private func persistProtectionPreferences(idleMinutes:Int,biometricEnabled:Bool,preferredUnlockMethod:VaultUnlockMethod) throws {
+        guard !protectionProtected else {throw VaultFailure.invalidData}
+        let next=try VaultProtectionPreferences(idleMinutes:idleMinutes,biometricEnabled:biometricEnabled,preferredUnlockMethod:preferredUnlockMethod).validated()
+        try ProtectedAtomicFile.write(JSONEncoder().encode(next),to:protectionURL)
+        self.idleMinutes=next.idleMinutes
+        self.biometricEnabled=next.biometricEnabled
+        self.preferredUnlockMethod=next.preferredUnlockMethod
     }
     private func persistBiometricPreference(_ enabled:Bool) throws {
-        guard !protectionProtected else {throw VaultFailure.invalidData}
-        try ProtectedAtomicFile.write(JSONEncoder().encode(VaultProtectionPreferences(idleMinutes:idleMinutes,biometricEnabled:enabled)),to:protectionURL);biometricEnabled=enabled
+        try persistProtectionPreferences(idleMinutes:idleMinutes,biometricEnabled:enabled,preferredUnlockMethod:.password)
     }
     func disableBiometrics() async -> Bool {
         guard !busy,!biometricOperationInFlight else {return false};biometricOperationInFlight=true;defer{biometricOperationInFlight=false};busy=true;errorMessage=nil
@@ -379,7 +528,7 @@ struct VaultRestorePreview:Identifiable {
     }
     func unlockWithBiometrics() async -> Bool {
         guard !busy,!isUnlocked,!biometricOperationInFlight,biometricEnabled,isConfigured,requireProtectedData(),flush() else {return false}
-        guard biometrics.available else {biometricUnavailableReason=biometrics.unavailableReason;errorMessage=biometricUnavailableReason;return false}
+        guard biometrics.available else {setBiometricsUnavailable();return false}
         biometricOperationInFlight=true;defer{biometricOperationInFlight=false}
         busy=true;errorMessage=nil;generation += 1;let token=generation
         do {
@@ -390,7 +539,40 @@ struct VaultRestorePreview:Identifiable {
             let unlocked=try await Task.detached(priority:.userInitiated){try VaultCryptography.unlock(data:data,key:key)}.value
             guard token == generation,requireProtectedData() else {return false}
             adopt(unlocked);busy=false;return true
-        } catch {if token == generation {busy=false;errorMessage=error.localizedDescription};return false}
+        } catch {
+            if token == generation {
+                busy=false
+                handleBiometricFailure(error)
+            }
+            return false
+        }
+    }
+    private func setBiometricsUnavailable(fallback:String?=nil) {
+        biometricAvailable=false
+        biometricUnavailableReason=biometrics.unavailableReason ?? fallback ?? VaultBiometricFailure.unavailable.localizedDescription
+        errorMessage=nil
+    }
+    private func handleBiometricFailure(_ error:Error) {
+        guard let failure=error as? VaultBiometricFailure else {errorMessage=error.localizedDescription;return}
+        switch failure {
+        case .cancelled:
+            errorMessage=nil
+        case .invalidated:
+            try? biometrics.removeSynchronously()
+            do {
+                try persistBiometricPreference(false)
+                errorMessage=failure.localizedDescription
+            } catch {
+                // The key is no longer usable even if saving its opt-out failed.
+                biometricEnabled=false;preferredUnlockMethod = .password
+                errorMessage="\(failure.localizedDescription)\n锁定偏好未能保存：\(error.localizedDescription)"
+            }
+        case .unavailable,.status:
+            setBiometricsUnavailable(fallback:failure.localizedDescription)
+        case .authenticationFailed:
+            if biometrics.available {errorMessage=failure.localizedDescription}
+            else {setBiometricsUnavailable(fallback:failure.localizedDescription)}
+        }
     }
     func chooseBackupDestination() {
         guard isConfigured,!busy,flush() else { return }
@@ -448,12 +630,25 @@ struct VaultRestorePreview:Identifiable {
     @discardableResult func confirmRestore() -> Bool {
         guard !busy,!biometricOperationInFlight,let restorePreview,flush() else { return false }
         guard requireProtectedData() else { return false }
+        let previousHints=passwordHints
+        let previousData=previousHints.isEmpty ? nil:try? store.read()
         do {
             if biometricEnabled {try biometrics.removeSynchronously();try persistBiometricPreference(false)}
+            // Restoring a backup of this same vault may retain its salt, so
+            // clear the local hint even when the cryptographic identity matches.
+            try writePasswordHints([])
+            selectPasswordHint(for:nil)
             let previous=try store.restore(restorePreview.envelope)
             lastPreservedPath=previous?.path; isConfigured=true; errorMessage=nil
             lock(reason:"备份已恢复，请使用这份备份的密码解锁"); return true
-        } catch { errorMessage="恢复未完成，原资料已保留：\(error.localizedDescription)"; return false }
+        } catch {
+            if let previousData,(try? store.read()) == previousData {
+                try? writePasswordHints(previousHints)
+                selectPasswordHint(for:storedVaultSalt())
+            }
+            errorMessage="恢复未完成，原资料已保留：\(error.localizedDescription)"
+            return false
+        }
     }
     func cancelRestore() { generation += 1; busy=false; restoreData=nil; restoreSourceName=nil; restorePreview=nil; sheet=nil; errorMessage=nil }
 }
@@ -531,12 +726,13 @@ struct VaultBiometricSigningCapability:Equatable,Sendable {
     }
 }
 
-private enum VaultBiometricFailure:LocalizedError {
-    case unavailable,cancelled,invalidated,status(OSStatus)
+enum VaultBiometricFailure:LocalizedError {
+    case unavailable,cancelled,authenticationFailed,invalidated,status(OSStatus)
     var errorDescription:String? {
         switch self {
         case .unavailable:"这台 Mac 当前无法使用 Touch ID。请使用私密空间密码解锁。"
         case .cancelled:"Touch ID 已取消。你仍可使用私密空间密码。"
+        case .authenticationFailed:"Touch ID 验证未通过，请重试或使用私密空间密码。"
         case .invalidated:"Touch ID 授权已失效或资料库已变更。请用密码解锁后重新开启。"
         case .status(let status):status == errSecMissingEntitlement ? "当前构建缺少受保护钥匙串权限，Touch ID 未启用。请继续使用私密空间密码。":"Touch ID 暂不可用（\(status)）。请使用私密空间密码。"
         }
@@ -603,8 +799,15 @@ private enum VaultBiometricFailure:LocalizedError {
         guard available,let group=signing.accessGroup,key.count == 32,salt.count == 16 else {throw VaultBiometricFailure.unavailable}
         let context=LAContext();context.localizedFallbackTitle="";context.touchIDAuthenticationAllowableReuseDuration=0;self.context=context
         defer{context.invalidate();if self.context === context {self.context=nil}}
-        do {guard try await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics,localizedReason:"为私密空间开启 Touch ID 解锁") else {throw VaultBiometricFailure.cancelled}}
-        catch {throw VaultBiometricFailure.cancelled}
+        do {
+            guard try await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics,localizedReason:"为私密空间开启 Touch ID 解锁") else {throw VaultBiometricFailure.authenticationFailed}
+        } catch let error as LAError {
+            switch error.code {
+            case .userCancel,.systemCancel,.appCancel,.userFallback:throw VaultBiometricFailure.cancelled
+            case .biometryLockout,.biometryNotAvailable,.biometryNotEnrolled,.passcodeNotSet:throw VaultBiometricFailure.unavailable
+            default:throw VaultBiometricFailure.authenticationFailed
+            }
+        }
         guard self.context === context else {throw VaultBiometricFailure.cancelled}
         let account=account
         try await Task.detached(priority:.userInitiated) {
@@ -624,14 +827,16 @@ private enum VaultBiometricFailure:LocalizedError {
             var query=Self.query(account,group:group);query[kSecUseAuthenticationContext as String]=handle.value;query[kSecReturnData as String]=true;query[kSecMatchLimit as String]=kSecMatchLimitOne
             var result:CFTypeRef?;let status=SecItemCopyMatching(query as CFDictionary,&result)
             guard status == errSecSuccess,let data=result as? Data else {
-                if status == errSecUserCanceled || status == errSecAuthFailed {throw VaultBiometricFailure.cancelled}
+                if status == errSecUserCanceled {throw VaultBiometricFailure.cancelled}
+                if status == errSecAuthFailed {throw VaultBiometricFailure.authenticationFailed}
                 if status == errSecItemNotFound {throw VaultBiometricFailure.invalidated}
                 throw VaultBiometricFailure.status(status)
             }
             return data
         }.value
         var secret=payload;defer{secret.resetBytes(in:0..<secret.count)}
-        guard self.context === context,secret.count == 48,secret.prefix(16) == salt else {throw VaultBiometricFailure.invalidated}
+        guard self.context === context else {throw VaultBiometricFailure.cancelled}
+        guard secret.count == 48,secret.prefix(16) == salt else {throw VaultBiometricFailure.invalidated}
         return Data(secret.suffix(32))
     }
     nonisolated private static func delete(_ account:String,group:String)->OSStatus {

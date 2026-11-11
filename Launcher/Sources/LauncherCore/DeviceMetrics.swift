@@ -128,6 +128,67 @@ public struct DeviceNetworkDelta: Equatable, Sendable {
     public var received: UInt64, sent: UInt64, seconds: TimeInterval
     public var downloadBytesPerSecond: Double { Double(received) / seconds }
     public var uploadBytesPerSecond: Double { Double(sent) / seconds }
+
+    fileprivate static func between(_ previous: [String: DeviceNetworkCounter],
+                                    and current: [String: DeviceNetworkCounter], seconds: TimeInterval) -> Self? {
+        guard !current.isEmpty, previous.count == current.count else { return nil }
+        var received: UInt64 = 0, sent: UInt64 = 0
+        for (name, value) in current {
+            guard let before = previous[name], value.received >= before.received, value.sent >= before.sent else { return nil }
+            received = add(received, value.received - before.received)
+            sent = add(sent, value.sent - before.sent)
+        }
+        return .init(received: received, sent: sent, seconds: seconds)
+    }
+
+    fileprivate static func add(_ a: UInt64, _ b: UInt64) -> UInt64 {
+        let result = a.addingReportingOverflow(b)
+        return result.overflow ? .max : result.partialValue
+    }
+}
+
+/// A live rate has no calendar boundary or persisted counter baseline.
+public struct DeviceLiveNetworkRate: Sendable {
+    public enum Reading: Equatable, Sendable {
+        case measured(DeviceNetworkDelta)
+        case establishingBaseline, noActiveInterface, readFailed
+
+        public var delta: DeviceNetworkDelta? {
+            guard case .measured(let delta) = self else { return nil }
+            return delta
+        }
+    }
+
+    public private(set) var segment = UUID()
+    private var previous: (uptime: TimeInterval, maximumGap: TimeInterval, counters: [String: DeviceNetworkCounter])?
+
+    public init() {}
+
+    public mutating func breakContinuity() {
+        segment = UUID()
+        previous = nil
+    }
+
+    public mutating func ingest(_ counters: [String: DeviceNetworkCounter]?, uptime: TimeInterval,
+                                maximumGap: TimeInterval) -> Reading {
+        // A failed read is not an empty interface list. A later valid endpoint
+        // can still give the interval average if the counters remain comparable.
+        guard let counters else { return .readFailed }
+        guard !counters.isEmpty else {
+            if previous != nil { breakContinuity() }
+            return .noActiveInterface
+        }
+        let old = previous
+        previous = (uptime, maximumGap, counters)
+        guard let old else { return .establishingBaseline }
+        let seconds = uptime - old.uptime
+        guard seconds.isFinite, seconds > 0, seconds <= max(maximumGap, old.maximumGap),
+              let delta = DeviceNetworkDelta.between(old.counters, and: counters, seconds: seconds) else {
+            segment = UUID()
+            return .establishingBaseline
+        }
+        return .measured(delta)
+    }
 }
 
 /// Credits only two consecutive valid observations of the same interface scope.
@@ -163,33 +224,22 @@ public struct DeviceNetworkAccumulator: Sendable {
         }
         let dt = date.timeIntervalSince(old.date), key = DeviceNetworkLedger.dayKey(date, calendar: calendar)
         let sameDay = key == DeviceNetworkLedger.dayKey(old.date, calendar: calendar)
-        let valid = dt > 0 && dt <= maximumGap && sameDay && !counters.isEmpty && counters.keys.sorted() == old.counters.keys.sorted()
-        guard valid else {
+        guard dt > 0, dt <= maximumGap, sameDay,
+              let delta = DeviceNetworkDelta.between(old.counters, and: counters, seconds: dt) else {
             if dt > 0 { var day = ledger.days[key] ?? .init(); day.excludedIntervals = Self.increment(day.excludedIntervals); ledger.days[key] = day }
             return nil
         }
-        var received: UInt64 = 0, sent: UInt64 = 0
-        for (name, value) in counters {
-            guard let before = old.counters[name], value.received >= before.received, value.sent >= before.sent else {
-                var day = ledger.days[key] ?? .init(); day.excludedIntervals = Self.increment(day.excludedIntervals); ledger.days[key] = day
-                return nil
-            }
-            received = Self.add(received, value.received - before.received)
-            sent = Self.add(sent, value.sent - before.sent)
-        }
+        let received = delta.received, sent = delta.sent
         var day = ledger.days[key] ?? .init()
-        day.received = Self.add(day.received, received); day.sent = Self.add(day.sent, sent)
+        day.received = DeviceNetworkDelta.add(day.received, received); day.sent = DeviceNetworkDelta.add(day.sent, sent)
         day.coveredSeconds = Self.addSeconds(day.coveredSeconds, dt); day.firstSample = day.firstSample ?? old.date; day.lastSample = date
         ledger.days[key] = day
-        ledger.recordingReceived = Self.add(ledger.recordingReceived, received)
-        ledger.recordingSent = Self.add(ledger.recordingSent, sent); ledger.recordingCoveredSeconds = Self.addSeconds(ledger.recordingCoveredSeconds, dt)
-        return .init(received: received, sent: sent, seconds: dt)
+        ledger.recordingReceived = DeviceNetworkDelta.add(ledger.recordingReceived, received)
+        ledger.recordingSent = DeviceNetworkDelta.add(ledger.recordingSent, sent); ledger.recordingCoveredSeconds = Self.addSeconds(ledger.recordingCoveredSeconds, dt)
+        return delta
     }
     private static func increment(_ value: Int) -> Int { value < Int.max ? max(0, value) + 1 : .max }
     private static func addSeconds(_ a: Double, _ b: Double) -> Double { min(1_000_000_000_000, (a.isFinite ? max(0, a) : 0) + b) }
-    private static func add(_ a: UInt64, _ b: UInt64) -> UInt64 {
-        let result = a.addingReportingOverflow(b); return result.overflow ? .max : result.partialValue
-    }
 }
 
 public enum DeviceProcessSort: String, CaseIterable, Sendable { case cpu, memory, name, pid }

@@ -522,10 +522,9 @@ struct DeviceHistoryChartData {
     let hasReadings: Bool
 
     init(points: [DeviceHistoryPoint], kind: DeviceChartKind, minutes: Int, networkScale: Bool, now: Date = Date()) {
-        let end = points.last?.date ?? now
-        self.end = end
+        self.end = now
         let duration = Double(max(1, minutes) * 60)
-        let visible = points.filter { end.timeIntervalSince($0.date) <= duration }
+        let visible = points.filter { (0...duration).contains(now.timeIntervalSince($0.date)) }
         self.visible = visible
         let values = visible.map { Self.values($0, kind: kind) }
         let finite = values.flatMap { $0.compactMap { $0 }.filter(\.isFinite) }
@@ -550,10 +549,10 @@ struct DeviceHistoryChartData {
             zip(visible, values).map { point, readings in
                 let location = readings[index].flatMap { value -> CGPoint? in
                     guard value.isFinite else { return nil }
-                    return CGPoint(x: 1 - end.timeIntervalSince(point.date) / duration,
+                    return CGPoint(x: 1 - now.timeIntervalSince(point.date) / duration,
                                    y: 1 - (min(maxValue, max(minValue, value)) - minValue) / range)
                 }
-                return Sample(segment: point.segment, location: location)
+                return Sample(segment: Self.segment(point, kind: kind), location: location)
             }
         }
     }
@@ -574,6 +573,38 @@ struct DeviceHistoryChartData {
         case .thermal: [point.cpuTemperature, point.gpuTemperature]
         case .memory: [point.memoryPercent]
         }
+    }
+
+    static func segment(_ point: DeviceHistoryPoint, kind: DeviceChartKind) -> UUID {
+        switch kind {
+        case .network: point.selectedNetworkSegment ?? point.segment
+        case .memory: point.memorySegment ?? point.segment
+        case .cpu, .thermal: point.segment
+        }
+    }
+
+    static func status(_ point: DeviceHistoryPoint, kind: DeviceChartKind) -> String? {
+        switch kind {
+        case .cpu: point.cpuStatus
+        case .network: point.networkStatus
+        case .thermal, .memory: nil
+        }
+    }
+
+    func sample(near target: Date, kind: DeviceChartKind, tolerance: TimeInterval) -> DeviceHistoryPoint? {
+        let index = visible.firstIndex { $0.date >= target } ?? visible.count
+        let before = index > 0 ? visible[index - 1] : nil
+        let after = index < visible.count ? visible[index] : nil
+        let nearest = [before, after].compactMap { $0 }.min {
+            abs(target.timeIntervalSince($0.date)) < abs(target.timeIntervalSince($1.date))
+        }
+        if let nearest, abs(target.timeIntervalSince(nearest.date)) <= tolerance { return nearest }
+        guard let before, let after, Self.segment(before, kind: kind) == Self.segment(after, kind: kind),
+              zip(Self.values(before, kind: kind), Self.values(after, kind: kind))
+                .contains(where: { $0.0?.isFinite == true && $0.1?.isFinite == true }) else { return nil }
+        // A connected trace can snap to a real endpoint; a gap cannot snap to
+        // an old sample and imply that it was current at the pointer.
+        return nearest
     }
 
     func segments(series index: Int, size: CGSize) -> [[CGPoint]] {
@@ -604,7 +635,11 @@ struct DeviceHistoryChart: View {
     @State private var hover: CGPoint?
     private func axisValue(_ value: Double, divisor: Double) -> String { let text = String(format: "%.1f", value / divisor); return text.hasSuffix(".0") ? String(text.dropLast(2)) : text }
     var body: some View {
-        let data = DeviceHistoryChartData(points: points, kind: kind, minutes: minutes, networkScale: networkScale)
+        TimelineView(.periodic(from: .now, by: 2)) { _ in chart(now: Date()) }
+    }
+
+    private func chart(now: Date) -> some View {
+        let data = DeviceHistoryChartData(points: points, kind: kind, minutes: minutes, networkScale: networkScale, now: now)
         let visible = data.visible, end = data.end, minValue = data.minValue, maxValue = data.maxValue
         let networkDivisor: Double = maxValue >= 1_000_000 ? 1_000_000 : 1_000
         let maximumLabel = axisValue(maxValue, divisor: networkDivisor)
@@ -614,7 +649,7 @@ struct DeviceHistoryChart: View {
         let valueLabels: [String] = compact || networkScale || kind == .network ? [] : kind == .thermal
             ? [maxValue, (maxValue + minValue) / 2, minValue].map { String(format: "%.0f°C", $0) } : ["100%", "50%", "0%"]
         let valueAxisWidth = valueLabels.isEmpty ? 0 : DeviceChartAxisMetrics.width(for: valueLabels, minimum: 28)
-        VStack(spacing: 8) {
+        return VStack(spacing: 8) {
             if networkScale {
                 HStack { Spacer(); Text(networkDivisor == 1_000_000 ? "MB/s" : "KB/s") }
                     .font(.system(size: 11)).foregroundStyle(palette.muted)
@@ -667,12 +702,22 @@ struct DeviceHistoryChart: View {
                         context.stroke(path, with: .color(palette.secondary.opacity(0.55)), style: .init(lineWidth: 1, dash: [2,3]))
                     }
                 }.overlay {
-                    if !data.hasReadings { Text(kind == .thermal ? "暂无温度读数" : "等待连续有效样本").font(.system(size: 11)).foregroundStyle(palette.muted) }
+                    if !data.hasReadings {
+                        Text(visible.last.flatMap { DeviceHistoryChartData.status($0, kind: kind) }
+                             ?? (kind == .thermal ? "暂无温度读数" : "等待连续有效样本"))
+                            .font(.system(size: 11)).foregroundStyle(palette.muted)
+                    }
                 }.onContinuousHover { phase in
                     switch phase { case .active(let point): hover = point; case .ended: hover = nil }
                 }.overlay(alignment: .topLeading) {
-                    if let hover, let nearest = visible.min(by: { abs(end.timeIntervalSince($0.date) - (1 - hover.x / max(1,g.size.width)) * Double(minutes * 60)) < abs(end.timeIntervalSince($1.date) - (1 - hover.x / max(1,g.size.width)) * Double(minutes * 60)) }) {
-                        Text(tooltip(nearest)).font(.system(size: 11)).monospacedDigit().padding(.horizontal, 8).padding(.vertical, 5).background(WorkbenchMaterialSurface(kind: .panel, radius: 8)).padding(3).allowsHitTesting(false)
+                    if let hover {
+                        let duration = Double(max(1, minutes) * 60)
+                        let secondsPerPoint = duration / max(1, g.size.width)
+                        let at = end.addingTimeInterval(-(1 - hover.x / max(1, g.size.width)) * duration)
+                        let point = data.sample(near: at, kind: kind, tolerance: 2 * secondsPerPoint)
+                        Text(point.map(tooltip) ?? at.formatted(date: .omitted, time: .standard) + "　未采样")
+                            .font(.system(size: 11)).monospacedDigit().padding(.horizontal, 8).padding(.vertical, 5)
+                            .background(WorkbenchMaterialSurface(kind: .panel, radius: 8)).padding(3).allowsHitTesting(false)
                     }
                 }
             }
@@ -705,7 +750,9 @@ struct DeviceHistoryChart: View {
         }
     }
     private func tooltip(_ point: DeviceHistoryPoint) -> String {
-        let formatted = DeviceHistoryChartData.values(point, kind: kind).map { value in kind == .network ? DeviceFormat.rate(value) : kind == .thermal ? DeviceFormat.temperature(value) : DeviceFormat.percent(value) }.joined(separator: " / ")
+        let values = DeviceHistoryChartData.values(point, kind: kind)
+        let formatted = DeviceHistoryChartData.status(point, kind: kind) ??
+            values.map { value in kind == .network ? DeviceFormat.rate(value) : kind == .thermal ? DeviceFormat.temperature(value) : DeviceFormat.percent(value) }.joined(separator: " / ")
         return point.date.formatted(date: .omitted, time: .standard) + "　" + formatted
     }
 }

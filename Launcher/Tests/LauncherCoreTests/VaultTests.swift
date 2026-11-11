@@ -32,6 +32,15 @@ final class VaultTests:XCTestCase {
         var future=VaultProtectionPreferences();future.schema=3
         XCTAssertThrowsError(try future.validated())
     }
+    func testDefaultUnlockPreferencePreservesExistingTouchIDOptIn() throws {
+        let oldData=Data(#"{"schema":2,"idleMinutes":5,"biometricEnabled":true}"#.utf8)
+        let old=try JSONDecoder().decode(VaultProtectionPreferences.self,from:oldData).validated()
+        XCTAssertTrue(old.biometricEnabled)
+        XCTAssertEqual(old.preferredUnlockMethod,.password)
+        let selected=VaultProtectionPreferences(idleMinutes:1,biometricEnabled:true,preferredUnlockMethod:.touchID)
+        XCTAssertEqual(try JSONDecoder().decode(VaultProtectionPreferences.self,from:JSONEncoder().encode(selected)).validated(),selected)
+        XCTAssertEqual(VaultProtectionPreferences(biometricEnabled:false,preferredUnlockMethod:.touchID).preferredUnlockMethod,.password)
+    }
     func testCreateUnlockPreservesUnicodeAndDoesNotStorePlaintext() throws {
         let content=contents,created=try VaultCryptography.create(contents:content,password:password)
         let data=try VaultCryptography.encoded(created.envelope)
@@ -45,6 +54,26 @@ final class VaultTests:XCTestCase {
         XCTAssertThrowsError(try VaultCryptography.unlock(data:data,password:""))
         XCTAssertThrowsError(try VaultCryptography.create(contents:contents,password:"short"))
         XCTAssertThrowsError(try VaultCryptography.create(contents:contents,password:String(repeating:"a",count:4097)))
+    }
+    func testSixCharacterPasswordAndAuthenticationFailureAreDistinctFromInvalidContents() throws {
+        let sixCharacters="甲乙丙丁戊己"
+        let original=contents
+        let created=try VaultCryptography.create(contents:original,password:sixCharacters)
+        let data=try VaultCryptography.encoded(created.envelope)
+        XCTAssertEqual(try VaultCryptography.unlock(data:data,password:sixCharacters).contents,original)
+        XCTAssertThrowsError(try VaultCryptography.create(contents:contents,password:String(sixCharacters.dropLast()))) {
+            XCTAssertEqual($0 as? VaultFailure,.weakPassword)
+        }
+        XCTAssertThrowsError(try VaultCryptography.unlock(data:data,password:"incorrect")) {
+            XCTAssertEqual($0 as? VaultFailure,.incorrectPassword)
+        }
+        let invalidPayload=Data(#"{"version":999}"#.utf8)
+        let associatedData=Data("deskden-encrypted-vault:1:pbkdf2-sha256-310000".utf8)
+        let invalidBox=try AES.GCM.seal(invalidPayload,using:created.key,authenticating:associatedData)
+        let invalid=VaultEnvelope(rounds:VaultCryptography.rounds,salt:created.envelope.salt,sealed:try XCTUnwrap(invalidBox.combined))
+        XCTAssertThrowsError(try VaultCryptography.unlock(data:VaultCryptography.encoded(invalid),password:sixCharacters)) {
+            XCTAssertEqual($0 as? VaultFailure,.invalidData)
+        }
     }
     func testEachVaultGetsNewSaltAndEverySaveGetsNewNonce() throws {
         let content=contents,a=try VaultCryptography.create(contents:content,password:password),b=try VaultCryptography.create(contents:content,password:password)

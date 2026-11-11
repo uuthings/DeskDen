@@ -216,8 +216,98 @@ private struct ModalLifecycleEditor:View {
         }
         let scrolling = await WorkbenchDialogScrollChecks.run()
         count += scrolling.count; failures += scrolling.failures
+        let charts = WorkbenchChartPerformanceChecks.run()
+        count += charts.count; failures += charts.failures
+        let vault = await checkVaultUnlockAppearance(output: output)
+        count += vault.count; failures += vault.failures
         print("Background appearance checks: \(count) checks, \(failures) failures")
         return failures
+    }
+
+    private static func checkVaultUnlockAppearance(output: URL?) async -> (count: Int, failures: Int) {
+        var count = 0, failures = 0
+        func check(_ condition: Bool, _ message: String) {
+            count += 1
+            if !condition { failures += 1 }
+            print("\(condition ? "PASS" : "FAIL") vault appearance: \(message)")
+        }
+
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("deskden-vault-appearance-\(UUID().uuidString)")
+        let pasteboard = NSPasteboard.withUniqueName()
+        let biometrics = AppearanceVaultBiometrics()
+        let model = VaultModel(dataDirectory: directory, protectedDataAvailable: { true }, biometrics: biometrics,
+                               clipboard: VaultClipboard(pasteboard: pasteboard))
+        defer {
+            model.lock(reason: "appearance fixture complete")
+            pasteboard.releaseGlobally()
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let password = "synthetic-appearance-fixture"
+        guard await model.create(password: password, confirmation: password), await model.enableBiometrics() else {
+            check(false, "synthetic vault creates and enables fixture Touch ID")
+            return (count, failures)
+        }
+        model.showProtection()
+
+        let sizes = [CGSize(width: 960, height: 720), CGSize(width: 1120, height: 758), CGSize(width: 1728, height: 993)]
+        for light in [true, false] {
+            let modals = WorkbenchModalCoordinator()
+            let window = NSWindow(contentRect: CGRect(origin: .zero, size: sizes[0]), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.ignoresMouseEvents = true
+            let host = NSHostingView(rootView: AppearanceVaultFixture(model: model, modals: modals, light: light))
+            host.sizingOptions = []
+            window.contentView = host
+            modals.hostWindow = window
+            defer {
+                modals.clear()
+                window.contentView = nil
+                window.close()
+            }
+
+            let appearance = light ? "light" : "dark"
+            for size in sizes {
+                let label = "\(Int(size.width))x\(Int(size.height))-\(appearance)"
+                window.setContentSize(size)
+                host.setFrameSize(size)
+                let settings = await captureNative(host)
+                check(host.bounds.size == size, "\(label): the offscreen host uses the requested viewport")
+                let selector = descendants(host).compactMap { $0 as? WBPopUpButton }
+                    .first { $0.accessibilityLabel() == "默认解锁方式" }
+                check(settings != nil && selector.map {
+                    $0.isEnabled && $0.itemTitles.contains("Touch ID")
+                        && $0.titleOfSelectedItem == "密码" && abs($0.bounds.height - 32) < 1
+                        && $0.interfaceLight == light && host.bounds.contains($0.convert($0.bounds, to: host))
+                } == true, "\(label): unlocked protection settings display the shared default unlock selector")
+
+                model.sheet = .touchIDDefault
+                let confirmation = await captureNative(host)
+                let panels = descendants(host).compactMap { $0 as? NSVisualEffectView }.filter { abs($0.bounds.width - 470) < 1 }
+                let centeredPanel = panels.contains { panel in
+                    let frame = panel.convert(panel.bounds, to: host)
+                    return abs(frame.midX - host.bounds.midX) < 1 && abs(frame.midY - host.bounds.midY) < 1
+                        && (100...220).contains(frame.height) && host.bounds.insetBy(dx: 24, dy: 24).contains(frame)
+                }
+                let sharedBody = descendants(host).compactMap { $0 as? NSScrollView }.contains {
+                    abs($0.bounds.width - 470) < 1 && $0.scrollerStyle == .overlay && !$0.drawsBackground
+                }
+                check(modals.top?.width == 470 && centeredPanel && sharedBody && confirmation != nil,
+                      "\(label): the production confirmation mounts a compact, centered shared dialog")
+                if let output, let settings, let confirmation {
+                    do {
+                        try settings.write(to: output.appendingPathComponent("vault-protection-\(label).png"), options: .atomic)
+                        try confirmation.write(to: output.appendingPathComponent("vault-touch-id-default-\(label).png"), options: .atomic)
+                    } catch {
+                        check(false, "\(label): saves requested appearance evidence")
+                    }
+                }
+                modals.dismissTop()
+                await Task.yield()
+                check(model.sheet == nil && !modals.isPresented && model.biometricEnabled && !window.isVisible && !window.isKeyWindow,
+                      "\(label): shared dismissal keeps fixture Touch ID enabled and the window hidden")
+            }
+        }
+        return (count, failures)
     }
 
     private static func capture<V: View>(_ view: V, size: CGSize) async -> Data? {
@@ -236,6 +326,33 @@ private struct ModalLifecycleEditor:View {
         view.cacheDisplay(in: view.bounds, to: rep)
         return rep.representation(using: .png, properties: [:])
     }
+}
+
+private struct AppearanceVaultFixture: View {
+    @ObservedObject var model: VaultModel
+    @ObservedObject var modals: WorkbenchModalCoordinator
+    let light: Bool
+
+    var body: some View {
+        ZStack {
+            WorkbenchSceneBackground(motionEnabled: false, active: false)
+            VaultModuleView(model: model).frame(maxWidth: 1360, maxHeight: .infinity, alignment: .topLeading).padding(24)
+            WorkbenchModalHost(coordinator: modals)
+        }
+        .environment(\.workbenchModals, modals)
+        .workbenchThemeEnvironment(theme: .qingbiMist, opacity: 0.7, backgroundMotion: false, appearance: light ? .light : .dark)
+    }
+}
+
+@MainActor private final class AppearanceVaultBiometrics: VaultBiometricStore {
+    let available = true
+    private var enrolled = false
+    func containsKey() async -> Bool { enrolled }
+    func enroll(key: Data, salt: Data) async throws { enrolled = true }
+    func readKey(salt: Data) async throws -> Data { throw VaultFailure.invalidData }
+    func remove() async throws { enrolled = false }
+    func removeSynchronously() throws { enrolled = false }
+    func cancel() {}
 }
 
 private struct AppearanceWeatherProvider: WeatherProviding {
