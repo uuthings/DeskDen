@@ -161,6 +161,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {
             message="扫描范围尚未保存，请先应用更改或取消编辑。"
             revealWindow?();return false
         }
+        let enteringVault = next == .vault && route != .vault
         navigate(destination)
         guard route == next else {return false}
         switch next {
@@ -179,12 +180,24 @@ struct WorkbenchAuditEntry:Codable,Identifiable {
         case .ai:
             ai.showOverview();usagePresentation.selectedSourceID=nil;usagePresentation.selectedAPIID=nil
         case .vault:
-            vault.showingProtection=false;vault.protectionFromSettings=false
+            vault.closeProtection()
+            if enteringVault, isForegroundVaultPage {
+                let session = vault.sessionID
+                Task { [weak self] in
+                    guard let self else {return}
+                    await vault.unlockAutomaticallyOnEntry {
+                        self.isForegroundVaultPage && self.vault.sessionID == session
+                    }
+                }
+            }
         case .settings:
             settingsTab=destination == .cards ? .widgets:.general;launcherSection=0
         case .overview,.network,.cards:break
         }
         return true
+    }
+    private var isForegroundVaultPage:Bool {
+        route == .vault && windowVisible && NSApp.isActive && hostWindow?.isKeyWindow == true
     }
     func openContextSettings() {
         modals.prune()
@@ -383,12 +396,12 @@ struct WorkbenchAuditEntry:Codable,Identifiable {
         return [
             .init(id:"storage",title:"本机存储",state:auditStorageResult,detail:"配置、提醒、计量元数据与加密资料分别存储；损坏数据不被默认值覆盖。",summary:"配置、提醒与加密资料分开存放；数据损坏时不会被默认值覆盖。"),
             .init(id:"device",title:"设备状态",state:s.sampledAt == nil ? "等待采样":"真实采样",detail:"CPU、内存、磁盘、网卡与可读进程；温度及风扇使用硬件相关的 AppleSMC 只读接口，缺失时明确标记。GPU 使用率暂不可用。",summary:"读取 CPU、内存、磁盘、网络、温度与风扇；暂不提供 GPU 使用率。"),
-            .init(id:"device-traffic",title:"流量统计与预算",state:device.budget.enabled ? "预算已启用":"真实采集 · 预算关闭",detail:"网络速度与周期统计分离；按全部物理网络、Wi-Fi、有线分别记录。只计入方寸运行期间的连续采样，间断不补齐；预算不执行限速或断网。",summary:"只记录方寸运行期间的流量，间断不补；预算只提醒，不限速。"),
+            .init(id:"device-traffic",title:"流量统计与预算",state:device.budget.enabled ? "预算已启用":"真实采集 · 预算关闭",detail:"网络速度与周期统计分离；按全部物理网络、Wi-Fi、有线分别记录。只计入DeskDen 运行期间的连续采样，间断不补齐；预算不执行限速或断网。",summary:"只记录DeskDen 运行期间的流量，间断不补；预算只提醒，不限速。"),
             .init(id:"device-temperature",title:"温度提醒",state:device.temperatureRule.enabled ? "规则已启用":"规则关闭",detail:"CPU/GPU 独立阈值、持续时间和恢复后的冷却去重；传感器缺失与休眠中断计时。系统通知：" + device.notificationPermission.title + "。",summary:"CPU 与 GPU 分别设阈值，持续超温才提醒。系统通知：" + device.notificationPermission.title + "。"),
             .init(id:"workbench-top-entry",title:"顶部入口",state:owner?.topEntryController?.preferences.enabled == true ? "已开启":"已关闭",detail:"鼠标在顶部刘海或屏幕中央短暂停留，直接进入工作台或显示真实快速信息；无需辅助功能权限。入口设置独立保存在本机，展开/收起尊重系统减少动态效果。",summary:"鼠标停在屏幕顶部时，显示简要信息或直接进入工作台。"),
             .init(id:"calendar",title:"系统日历",state:accessTitle(calendar.calendarAccess),detail:"系统日程只读。当前加载 \(calendar.events.count) 条；不连接也可以使用本机提醒。",summary:"只读系统日程，当前 \(calendar.events.count) 条；不接入也能用本机提醒。"),
             .init(id:"reminders",title:"提醒事项",state:accessTitle(calendar.remindersAccess),detail:"本机 \(calendar.localReminders.count) 条，系统 \(calendar.systemReminders.count) 条；系统来源变更需要授权。",summary:"本机 \(calendar.localReminders.count) 条，系统 \(calendar.systemReminders.count) 条。"),
-            .init(id:"notifications",title:"系统通知",state:device.notificationPermission.title,detail:"方寸本机日历提醒、流量预算和温度提醒共用系统通知授权；不同模块保持独立通知标识，系统提醒事项由系统管理。",summary:"日历提醒、流量预算和温度提醒共用系统通知权限。"),
+            .init(id:"notifications",title:"系统通知",state:device.notificationPermission.title,detail:"DeskDen 本机日历提醒、流量预算和温度提醒共用系统通知授权；不同模块保持独立通知标识，系统提醒事项由系统管理。",summary:"日历提醒、流量预算和温度提醒共用系统通知权限。"),
             .init(id:"codex",title:"Codex 额度",state:ai.configurations.first(where:{$0.provider.rawValue == "codex"})?.enabled == false ? "已关闭":ai.providerSummaries.first(where:{$0.provider.rawValue == "codex"})?.state.title ?? "无读数",detail:ai.providerSummaries.first(where:{$0.provider.rawValue == "codex"})?.detail ?? "未读取到计量元数据。"),
             .init(id:"claude",title:"Claude 额度",state:ai.configurations.first(where:{$0.provider.rawValue == "claude"})?.enabled == false ? "已关闭":ai.providerSummaries.first(where:{$0.provider.rawValue == "claude"})?.state.title ?? "无读数",detail:"额度与 Token 独立统计；只接入官方状态数据或明确标记的导入数据，不读取认证密钥。",summary:"只读取官方客户端的额度与本机 Token 记录，不读取登录凭据。"),
             .init(id:"provider-usage",title:"服务流量额度",state:providerUsage.storageError == nil ? "\(providerUsage.sources.count) 个来源":"记录需要恢复",detail:"搬瓦工使用本机钥匙串保存的实例 API Key；IPRoyal 由限定站点的 Chrome 助手交付额度。各来源独立刷新与周期，不读取 Google 认证资料，不把本机网络量当服务商账单。",summary:"实例凭据存入钥匙串；浏览器连接只同步额度。"),
@@ -408,12 +421,12 @@ struct WorkbenchAuditEntry:Codable,Identifiable {
         } catch {auditStorageResult="检查失败：\(error.localizedDescription)";lastAudit=Date()}
     }
     func exportAudit() {
-        runStorageAudit();let panel=NSSavePanel();panel.title="导出功能审计";panel.nameFieldStringValue="方寸功能审计.json";panel.allowedContentTypes=[.json]
+        runStorageAudit();let panel=NSSavePanel();panel.title="导出功能审计";panel.nameFieldStringValue="DeskDen 功能审计.json";panel.allowedContentTypes=[.json]
         guard panel.runModal() == .OK,let url=panel.url else {return}
         struct Report:Codable {var format="deskden-function-audit";var date:Date;var entries:[WorkbenchAuditEntry]}
         do {let encoder=JSONEncoder();encoder.outputFormatting=[.prettyPrinted,.sortedKeys];encoder.dateEncodingStrategy = .iso8601;try encoder.encode(Report(date:Date(),entries:auditEntries)).write(to:url,options:.atomic);toast="功能审计已导出。"} catch {message="导出失败：\(error.localizedDescription)"}
     }
-    func shutdown() {apiBalance.shutdown();modals.clear();context.stop();cleaning.cancelAll();vault.lock(reason:"退出方寸");device.stop();widgets.hideAll()}
+    func shutdown() {apiBalance.shutdown();modals.clear();context.stop();cleaning.cancelAll();vault.lock(reason:"退出 DeskDen");device.stop();widgets.hideAll()}
 }
 
 @MainActor final class WorkbenchWindowController:NSWindowController,NSWindowDelegate {
@@ -470,7 +483,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {
         let window=WorkbenchCancelWindow(contentRect:NSRect(x:0,y:0,width:1120,height:758),styleMask:[.titled,.closable,.miniaturizable,.resizable,.fullSizeContentView],backing:.buffered,defer:false)
         super.init(window:window)
         window.cancelWorkbenchInteraction={ [weak self,weak window] in self?.cancelWorkbenchInteraction(in:window) ?? false }
-        window.title="方寸";window.titleVisibility = .hidden;window.titlebarAppearsTransparent=true;window.isOpaque=false;window.backgroundColor = .clear
+        window.title="DeskDen";window.titleVisibility = .hidden;window.titlebarAppearsTransparent=true;window.isOpaque=false;window.backgroundColor = .clear
         window.collectionBehavior.insert(.fullScreenPrimary)
         for kind in [NSWindow.ButtonType.closeButton,.miniaturizeButton,.zoomButton] {window.standardWindowButton(kind)?.isHidden=true}
         window.isReleasedWhenClosed=false;window.isMovableByWindowBackground=true;window.minSize=NSSize(width:900,height:620);window.delegate=self
@@ -740,7 +753,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {
         let panel = WorkbenchTopPanel(contentRect: NSRect(x: 0, y: 0, width: 1120, height: 758),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView, .nonactivatingPanel],
             backing: .buffered, defer: false)
-        panel.title = "方寸工作台"
+        panel.title = "DeskDen 工作台"
         panel.titleVisibility = .hidden; panel.titlebarAppearsTransparent = true
         panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = true
         panel.isReleasedWhenClosed = false; panel.isMovableByWindowBackground = true
@@ -971,7 +984,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {
     func requestMinimize() {
         guard !model.quitting else {return}
         cancelPendingPresentationActivation()
-        model.vault.lock(reason:"最小化方寸")
+        model.vault.lock(reason:"最小化 DeskDen")
         if isTopEntryPresented {promoteTopEntryToOrdinary(fullScreen:false,minimize:true);return}
         guard let window else {return}
         cancelOrdinaryDismissalForWindowControl(window)
@@ -1000,7 +1013,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {
         guard !model.quitting,let target = target ?? presentationWindow else { return }
         cancelPendingPresentationActivation()
         pendingMinimizeGeneration=nil
-        model.vault.lock(reason:close ? "关闭方寸窗口":"收起方寸窗口")
+        model.vault.lock(reason:close ? "关闭 DeskDen 窗口":"收起 DeskDen 窗口")
         model.confirmingQuit=false
         if target === topEntryPanel {
             if close {restoreTopEntryHostAfterClose = true}
@@ -1084,7 +1097,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {
         pendingMinimizeGeneration=nil
         if shouldMinimize {window?.performMiniaturize(nil)}
     }
-    func windowDidMiniaturize(_ notification:Notification) {if notification.object as? NSWindow === presentationWindow {cancelPendingPresentationActivation();model.vault.lock(reason:"最小化方寸");model.setWindowVisible(false);updateDockParticipation()}}
+    func windowDidMiniaturize(_ notification:Notification) {if notification.object as? NSWindow === presentationWindow {cancelPendingPresentationActivation();model.vault.lock(reason:"最小化 DeskDen");model.setWindowVisible(false);updateDockParticipation()}}
     func windowDidDeminiaturize(_ notification:Notification) {if notification.object as? NSWindow === presentationWindow {ordinaryWindowSessionActive=true;updateDockParticipation();model.setWindowVisible(true)}}
 }
 

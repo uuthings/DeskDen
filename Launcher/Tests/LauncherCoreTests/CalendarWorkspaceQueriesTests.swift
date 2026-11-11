@@ -123,6 +123,6 @@ final class CalendarWorkspaceQueriesTests: XCTestCase {
         XCTAssertEqual(CalendarWorkspaceQueries.sourceKey(reminderEntry), "reminder:工作")
         XCTAssertEqual(CalendarWorkspaceQueries.sourceTitle(eventEntry), "日程 · 工作")
         XCTAssertEqual(CalendarWorkspaceQueries.sourceTitle(reminderEntry), "待办 · 工作")
-        XCTAssertEqual(CalendarWorkspaceQueries.sourceTitle(.reminder(reminder("local"))), "方寸本机")
+        XCTAssertEqual(CalendarWorkspaceQueries.sourceTitle(.reminder(reminder("local"))), "DeskDen 本机")
     }
 }

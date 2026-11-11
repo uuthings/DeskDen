@@ -1,6 +1,6 @@
 # Product naming and release copy
 
-The English product name is **DeskDen**; the Chinese app name is **方寸**.
+The application name is **DeskDen** in every language. **方寸** is the previous name and remains a search alias.
 
 | Surface | Name |
 | --- | --- |
@@ -10,13 +10,16 @@ The English product name is **DeskDen**; the Chinese app name is **方寸**.
 | New optional update ZIP | `DeskDen-<version>-macos-universal.zip` |
 | Chrome extension, popup and native-host description | DeskDen IPRoyal Connector |
 | Newly exported connection folder | `DeskDen-IPRoyal-Connector` |
-| Chinese application UI and existing App bundle | 方寸 / 方寸.app |
+| Application UI and new App bundle | DeskDen / DeskDen.app |
+| Historical App bundles through 0.6.0 | 方寸.app |
 
 Use the approved Desk artwork from `Launcher/Artwork/AppIcons/Desk` for product branding. The extension has dedicated small-size derivatives. Do not replace the app icon with a letter, Chinese-character tile or a different background.
 
 ## Engineering names and distribution
 
 Current source uses `DeskDen.xcodeproj`, scheme `DeskDen`, module and executable `DeskDenLauncher`, Bundle ID `local.deskden.launcher`, and native messaging host `com.uuthings.deskden.iproyal`. Current settings and data use the DeskDen namespace. The extension public identity key and the existing update signing key are independent of these names and must not be regenerated during a rename.
+
+Sparkle updates replace the installed bundle in place, so a copy previously installed as `方寸.app` can keep that filename. After the first launch, DeskDen registers its former name with Spotlight. The DeskDen launcher also accepts that alias for apps with DeskDen's bundle identifier.
 
 Each Release has one canonical DMG, an optional same-brand update ZIP, and one `SHA256SUMS.txt` covering all binary downloads. Do not keep duplicate spelling aliases or split checksum lists by packaging step. A documented optional connector must have a generic downloadable package named `DeskDen-IPRoyal-Connector-<version>-chrome-macos.zip`; its independent version uses three components.
 

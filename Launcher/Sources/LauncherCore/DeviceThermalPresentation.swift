@@ -28,7 +28,7 @@ public struct DeviceThermalPresentation: Equatable, Sendable {
             basis = "macOS 报告\(state == .critical ? "临界" : "严重")热压力；请降低持续负载并保持散热通畅。"
         } else if cpuLevel == .warning || gpuLevel == .warning {
             level = .warning; title = "温度偏高"
-            basis = "有效温度读数已达到方寸的自定义提醒阈值；此阈值不是 Apple 安全上限。"
+            basis = "有效温度读数已达到 DeskDen 的自定义提醒阈值；此阈值不是 Apple 安全上限。"
         } else if state == .fair {
             level = .warning; title = "轻度升温"
             basis = "macOS 报告轻度热压力；系统正在自动调节散热。"

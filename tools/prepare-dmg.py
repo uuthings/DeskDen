@@ -111,20 +111,24 @@ def read_provenance(release):
     expected = {'CFBundleIdentifier': IDENTIFIER, 'CFBundleShortVersionString': version, 'CFBundleVersion': build, 'Team': TEAM}
     if any(str(properties.get(key, '')) != value for key, value in expected.items()):
         raise ValueError('Organizer archive identity does not match the release metadata')
+    archived_path = properties.get('ApplicationPath')
+    if archived_path not in ('Applications/DeskDen.app', 'Applications/方寸.app'):
+        raise ValueError('Organizer archive has an unexpected App path')
+    app_name = Path(archived_path).name
     submission_root = archive / 'Submissions' / submission
     apple_log = json.loads((submission_root / 'notarization-log.json').read_text())
     if not accepted_submission(apple_log, submission):
         raise ValueError('The original Organizer submission log does not match')
-    app = release / 'Export' / '方寸.app'
+    app = release / 'Export' / app_name
     if app.is_symlink() or not app.is_dir():
-        raise ValueError('A complete original Export/方寸.app is required')
+        raise ValueError(f'A complete original Export/{app_name} is required')
     info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
     if any(str(info.get(key, '')) != value for key, value in expected.items() if key != 'Team'):
         raise ValueError('Exported App identity does not match the archive')
     executable = info.get('CFBundleExecutable')
     if not isinstance(executable, str) or Path(executable).name != executable or executable in {'.', '..'}:
         raise ValueError('Invalid App executable')
-    submitted_app = submission_root / '方寸.app'
+    submitted_app = submission_root / app_name
     if not submitted_app.is_dir() or submitted_app.is_symlink():
         raise ValueError('Original Organizer submitted App is missing')
     return app, submitted_app, info, {
@@ -313,7 +317,7 @@ def prepare(release, output, identity):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--release-directory', required=True, type=Path, help='Original durable archive with RELEASE_METADATA.json and Export/方寸.app')
+    parser.add_argument('--release-directory', required=True, type=Path, help='Original durable archive with RELEASE_METADATA.json and the Organizer-exported App')
     parser.add_argument('--output', required=True, type=Path, help='New persistent directory outside Git and the original archive')
     parser.add_argument('--identity', required=True, help='Existing Developer ID Application certificate SHA-1')
     args = parser.parse_args()

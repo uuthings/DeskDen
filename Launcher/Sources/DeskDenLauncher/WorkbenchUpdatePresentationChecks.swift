@@ -221,7 +221,7 @@ private struct UpdatePresentationFixtureRoot: View {
             WorkbenchSceneBackground(theme: .qingbiMist, motionEnabled: false, active: false)
             HStack(spacing: 0) {
                 VStack {
-                    Text("方寸").font(.system(size: 12, weight: .medium)).padding(.top, 22)
+                    Text("DeskDen").font(.system(size: 12, weight: .medium)).padding(.top, 22)
                     Spacer()
                     UpdatePresentationFixtureEntry(updates: updates)
                 }.padding(.horizontal, 12).padding(.bottom, 15).frame(width: 184)

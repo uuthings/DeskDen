@@ -410,7 +410,7 @@ import LauncherCore
                     window.setContentSize(.init(width: width, height: width == 1728 ? 993 : 758))
                     app.settingsTab = .general; app.navigate(.settings); await settle(host)
                     let settingsObjects = objects(host)
-                    check(text("updates-current-version", objects: settingsObjects).contains("方寸 " + installedVersion)
+                    check(text("updates-current-version", objects: settingsObjects).contains("DeskDen " + installedVersion)
                           && text("window-brand", objects: settingsObjects).contains(installedVersion)
                           && !text("window-brand", objects: settingsObjects).contains("·"),
                           "version display \(width)/\(light): mounted brand and software update card share the lowercase v prefix")

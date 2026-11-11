@@ -206,7 +206,7 @@ struct UsageStatisticsView: View {
         }
         .workbenchModal(item: $presentation.removing, width: 440, onRequestDismiss: { if !presentation.isRemoving { presentation.removing = nil } }) { source in
             WorkbenchDialogFrame(title: "移除「\(source.name)」？", dismiss: { if !presentation.isRemoving { presentation.removing = nil } }) {
-                Text("停止此来源的查询，并移除方寸保存的额度记录及对应凭据。不会注销、退订或修改服务商账户。").font(.system(size: 12)).foregroundStyle(palette.secondary)
+                Text("停止此来源的查询，并移除 DeskDen 保存的额度记录及对应凭据。不会注销、退订或修改服务商账户。").font(.system(size: 12)).foregroundStyle(palette.secondary)
                 if let error = model.errorMessage { Text(error).font(.system(size: 11)).foregroundStyle(palette.warning) }
             } actions: {
                 if presentation.isRemoving { ProgressView().controlSize(.small) }
@@ -627,9 +627,9 @@ private struct ProviderBrowserSetupView: View {
         WorkbenchDialogFrame(title: "IPRoyal 浏览器连接", dismiss: close) {
             VStack(alignment: .leading, spacing: 13) {
                 Text("在 Chrome 中继续使用 Google 登录").font(.system(size: 13, weight: .medium))
-                Text("浏览器助手只在 IPRoyal 控制台读取订单额度，再交给本机方寸。不会读取 Google 页面、密码、Cookie 或 API Token。").font(.system(size: 12)).foregroundStyle(palette.secondary)
-                Text("1. 点击「安装本机连接」，由方寸为当前用户注册 Chrome 连接，无需打开安装脚本。\n2. 导出连接包，在 Chrome 扩展管理页启用开发者模式，并加载包内 Extension 文件夹。\n3. 在 Chrome 登录 IPRoyal、打开静态 ISP 订单，并在扩展弹窗启用连接。\n4. 在方寸添加订单编号，执行首次查询并核对额度。").font(.system(size: 12)).lineSpacing(5)
-                Text("安装本机连接只写入当前用户的连接配置，不需要管理员权限；移动方寸 App 后请再次安装。").font(.system(size: 11)).foregroundStyle(palette.muted)
+                Text("浏览器助手只在 IPRoyal 控制台读取订单额度，再交给本机 DeskDen。不会读取 Google 页面、密码、Cookie 或 API Token。").font(.system(size: 12)).foregroundStyle(palette.secondary)
+                Text("1. 点击「安装本机连接」，由 DeskDen 为当前用户注册 Chrome 连接，无需打开安装脚本。\n2. 导出连接包，在 Chrome 扩展管理页启用开发者模式，并加载包内 Extension 文件夹。\n3. 在 Chrome 登录 IPRoyal、打开静态 ISP 订单，并在扩展弹窗启用连接。\n4. 在 DeskDen 添加订单编号，执行首次查询并核对额度。").font(.system(size: 12)).lineSpacing(5)
+                Text("安装本机连接只写入当前用户的连接配置，不需要管理员权限；移动 DeskDen App 后请再次安装。").font(.system(size: 11)).foregroundStyle(palette.muted)
                 Text("登录状态由服务商决定。浏览器关闭或会话失效时，自动查询可能暂停；重新登录后可继续更新，最后有效读数和查询时间会保留。").font(.system(size: 11)).foregroundStyle(palette.muted)
                 if let message { Text(message).font(.system(size: 11)).foregroundStyle(palette.secondary) }
             }

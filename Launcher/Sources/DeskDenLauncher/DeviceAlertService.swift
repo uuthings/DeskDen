@@ -34,7 +34,7 @@ enum DeviceNotificationPermission: String, Sendable {
         case .budgetWarning(let percent):
             content.userInfo=["deskdenRoute":"network","detail":"budget"]
             content.title = "流量预算接近额度"
-            content.body = "\(budget.scope.title)的\(budget.period.title)已记录流量达到预算的 \(percent)%。仅统计方寸运行期间采集到的流量。"
+            content.body = "\(budget.scope.title)的\(budget.period.title)已记录流量达到预算的 \(percent)%。仅统计 DeskDen 运行期间采集到的流量。"
         case .budgetExceeded:
             content.userInfo=["deskdenRoute":"network","detail":"budget"]
             content.title = "流量预算已超出"

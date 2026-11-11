@@ -8,7 +8,7 @@ import LocalAuthentication
 import Security
 
 enum VaultSheet:String,Identifiable {
-    case setup,unlockForPassword,password,passwordHint,touchIDDefault,backup,restore
+    case setup,password,passwordHint,touchIDDefault,backup,restore
     var id:String { rawValue }
 }
 struct VaultRestorePreview:Identifiable {
@@ -73,8 +73,8 @@ private enum VaultHintFailure:LocalizedError {
     @Published private(set) var hasPendingSave=false
     @Published var errorMessage:String?
     @Published var sheet:VaultSheet?
-    @Published var showingProtection=false
-    @Published var protectionFromSettings=false
+    @Published private(set) var showingProtection=false
+    @Published private(set) var protectionFromSettings=false
     @Published private(set) var idleMinutes=5
     @Published var restorePreview:VaultRestorePreview?
     @Published private(set) var restoreSourceName:String?
@@ -166,10 +166,14 @@ private enum VaultHintFailure:LocalizedError {
     func checkIdle(uptime:TimeInterval = ProcessInfo.processInfo.systemUptime) {
         if isUnlocked && uptime-lastActivityUptime >= Double(idleMinutes)*60 { lock(reason:"已闲置 \(idleMinutes) 分钟，资料已锁定") }
     }
-    func showProtection(fromSettings:Bool=false) {protectionFromSettings=fromSettings;showingProtection=true;recordActivity()}
+    func showProtection(fromSettings:Bool=false) {
+        guard isUnlocked,!busy,requireProtectedData() else {return}
+        protectionFromSettings=fromSettings;showingProtection=true;recordActivity()
+    }
+    func closeProtection() {showingProtection=false;protectionFromSettings=false}
     func requestPasswordChange() {
-        guard isConfigured,!busy else { return }
-        errorMessage=nil; sheet=isUnlocked ? .password:.unlockForPassword
+        guard isUnlocked,!busy,requireProtectedData() else { return }
+        errorMessage=nil; sheet = .password
     }
     func closeSheet() {
         guard !busy else { return }
@@ -177,6 +181,7 @@ private enum VaultHintFailure:LocalizedError {
         else { sheet=nil; errorMessage=nil }
     }
     func changeIdleMinutes(_ value:Int) {
+        guard isUnlocked,!busy,requireProtectedData() else {return}
         guard !protectionProtected else {errorMessage="锁定偏好无法读取，当前未覆盖原文件。";return}
         do {
             try persistProtectionPreferences(idleMinutes:value,biometricEnabled:biometricEnabled,preferredUnlockMethod:preferredUnlockMethod)
@@ -426,6 +431,7 @@ private enum VaultHintFailure:LocalizedError {
         isUnlocked=false; busy=false; key=nil; salt=nil; documents=[];categories=[];categoryFilter="all"; selectedID=nil
         resetPasswordFailures()
         restoreData=nil; restorePreview=nil; restoreSourceName=nil; sheet=nil
+        closeProtection()
         (panel as? NSSavePanel)?.cancel(nil); panel=nil
         let clearers=Array(plaintextClearers.values); plaintextClearers.removeAll()
         for clear in clearers { clear() }
@@ -453,7 +459,7 @@ private enum VaultHintFailure:LocalizedError {
             // The current hint remains available until the new envelope is
             // committed, including when the password journal needs recovery.
             try stagePasswordHint(hint,for:newSalt,retaining:salt)
-            if biometricEnabled {try await biometrics.remove();guard token == generation,isUnlocked,requireProtectedData() else{return false};try persistBiometricPreference(false)}
+            if biometricEnabled {try biometrics.removeSynchronously();try persistBiometricPreference(false)}
             _=try store.commitPasswordChange(change)
             finishPasswordHintChange(for:newSalt)
             lock(reason:"密码已更改，本机对应历史副本已更新，请重新解锁")
@@ -521,10 +527,26 @@ private enum VaultHintFailure:LocalizedError {
     private func persistBiometricPreference(_ enabled:Bool) throws {
         try persistProtectionPreferences(idleMinutes:idleMinutes,biometricEnabled:enabled,preferredUnlockMethod:.password)
     }
-    func disableBiometrics() async -> Bool {
-        guard !busy,!biometricOperationInFlight else {return false};biometricOperationInFlight=true;defer{biometricOperationInFlight=false};busy=true;errorMessage=nil
-        do {try await biometrics.remove();try persistBiometricPreference(false);busy=false;return true}
-        catch {busy=false;errorMessage=error.localizedDescription;return false}
+    @discardableResult func disableBiometrics() -> Bool {
+        guard isUnlocked,!busy,!biometricOperationInFlight,biometricEnabled,requireProtectedData() else {return false}
+        guard !protectionProtected else {errorMessage="锁定偏好无法读取，Touch ID 未停用。";return false}
+        do {
+            try biometrics.removeSynchronously()
+            // Deleting the key is irreversible even if the preferences cannot be saved.
+            biometricEnabled=false;preferredUnlockMethod = .password
+            try persistBiometricPreference(false)
+            errorMessage=nil;recordActivity();return true
+        } catch {errorMessage=error.localizedDescription;return false}
+    }
+    /// Only explicit foreground navigation calls this. A capability check may
+    /// suspend, so recheck the page and session before asking macOS to prompt.
+    @discardableResult func unlockAutomaticallyOnEntry(isForeground: () -> Bool) async -> Bool {
+        guard isConfigured,!isUnlocked,!busy,sheet == nil,biometricEnabled,
+              preferredUnlockMethod == .touchID,isForeground() else {return false}
+        let token=generation
+        await refreshBiometrics()
+        guard token == generation,!Task.isCancelled,sheet == nil,isForeground(),effectiveUnlockMethod == .touchID else {return false}
+        return await unlockWithBiometrics()
     }
     func unlockWithBiometrics() async -> Bool {
         guard !busy,!isUnlocked,!biometricOperationInFlight,biometricEnabled,isConfigured,requireProtectedData(),flush() else {return false}
@@ -575,19 +597,19 @@ private enum VaultHintFailure:LocalizedError {
         }
     }
     func chooseBackupDestination() {
-        guard isConfigured,!busy,flush() else { return }
-        let save=NSSavePanel(); save.title="导出加密备份"; save.nameFieldStringValue="方寸私密备份-\(Date().formatted(.iso8601.year().month().day())).deskdenvault"
+        guard isUnlocked,!busy,panel == nil,requireProtectedData(),flush(),isUnlocked else { return }
+        let save=NSSavePanel(); save.title="导出加密备份"; save.nameFieldStringValue="DeskDen 私密备份-\(Date().formatted(.iso8601.year().month().day())).deskdenvault"
         save.allowedContentTypes=[UTType(filenameExtension:"deskdenvault") ?? .data]; save.canCreateDirectories=true; save.isExtensionHidden=false
         panel=save; recordActivity(); let token=generation
         let completion:@MainActor (NSApplication.ModalResponse)->Void = { [weak self,weak save] response in
-            guard let self else { return }; self.panel=nil
-            guard token == self.generation,self.isConfigured,response == .OK,let url=save?.url else { return }
+            guard let self,let save,self.panel === save else { return }; self.panel=nil
+            guard token == self.generation,response == .OK,let url=save.url else { return }
             self.exportBackup(to:url)
         }
         if let window=NSApp.keyWindow ?? hostWindow { save.beginSheetModal(for:window,completionHandler:completion) } else { save.begin(completionHandler:completion) }
     }
     @discardableResult func exportBackup(to url:URL) -> Bool {
-        guard isConfigured,!busy,flush() else { return false }
+        guard isUnlocked,!busy,requireProtectedData(),flush(),isUnlocked else { return false }
         do {
             guard url.standardizedFileURL != vaultDataURL.standardizedFileURL else { throw VaultFailure.invalidData }
             let data=try store.read(),scoped=url.startAccessingSecurityScopedResource(); defer { if scoped { url.stopAccessingSecurityScopedResource() } }
@@ -595,18 +617,26 @@ private enum VaultHintFailure:LocalizedError {
             lastBackupPath=url.path; errorMessage=nil; recordActivity(); return true
         } catch { errorMessage="备份未完成：\(error.localizedDescription)"; return false }
     }
+    private var canRestoreBackup:Bool {
+        isUnlocked || (!isConfigured && !store.isPendingPasswordChange && !FileManager.default.fileExists(atPath:vaultDataURL.path))
+    }
+    func requestRestore() {
+        guard canRestoreBackup,!busy,requireProtectedData() else {return}
+        errorMessage=nil;sheet = .restore
+    }
     func chooseRestoreSource() {
-        guard !busy else { return }
-        let open=NSOpenPanel(); open.title="选择方寸加密备份"; open.allowedContentTypes=[UTType(filenameExtension:"deskdenvault") ?? .data,UTType(filenameExtension:"fangcunvault") ?? .data]; open.allowsMultipleSelection=false; open.canChooseDirectories=false
+        guard canRestoreBackup,!busy,panel == nil,requireProtectedData() else { return }
+        let open=NSOpenPanel(); open.title="选择 DeskDen 加密备份"; open.allowedContentTypes=[UTType(filenameExtension:"deskdenvault") ?? .data,UTType(filenameExtension:"fangcunvault") ?? .data]; open.allowsMultipleSelection=false; open.canChooseDirectories=false
         panel=open; let token=generation
         let completion:@MainActor (NSApplication.ModalResponse)->Void = { [weak self,weak open] response in
-            guard let self else { return }; self.panel=nil
-            guard token == self.generation,response == .OK,let url=open?.url else { return }
+            guard let self,let open,self.panel === open else { return }; self.panel=nil
+            guard token == self.generation,response == .OK,let url=open.url else { return }
             self.loadRestoreSource(url)
         }
         if let window=NSApp.keyWindow ?? hostWindow { open.beginSheetModal(for:window,completionHandler:completion) } else { open.begin(completionHandler:completion) }
     }
     @discardableResult func loadRestoreSource(_ url:URL) -> Bool {
+        guard canRestoreBackup,!busy,requireProtectedData() else {return false}
         do {
             let scoped=url.startAccessingSecurityScopedResource(); defer { if scoped { url.stopAccessingSecurityScopedResource() } }
             let data=try VaultFileStore(url:url).read()
@@ -614,7 +644,8 @@ private enum VaultHintFailure:LocalizedError {
         } catch { errorMessage="无法读取备份：\(error.localizedDescription)"; return false }
     }
     func verifyRestore(password:String) async -> Bool {
-        guard !busy,let data=restoreData else { errorMessage="请先选择一份加密备份。"; return false }
+        guard canRestoreBackup,!busy else {return false}
+        guard let data=restoreData else { errorMessage="请先选择一份加密备份。"; return false }
         guard requireProtectedData() else { return false }
         busy=true; errorMessage=nil; generation += 1; let token=generation; let name=restoreSourceName ?? "加密备份"
         do {
@@ -624,12 +655,12 @@ private enum VaultHintFailure:LocalizedError {
             }.value
             guard token == generation else { return false }
             guard requireProtectedData() else { return false }
+            guard canRestoreBackup else {lock(reason:"已有私密空间，请先解锁");return false}
             restorePreview=VaultRestorePreview(envelope:preview.0,count:preview.1,sourceName:name); busy=false; recordActivity(); return true
         } catch { if token == generation { busy=false; errorMessage=error.localizedDescription }; return false }
     }
     @discardableResult func confirmRestore() -> Bool {
-        guard !busy,!biometricOperationInFlight,let restorePreview,flush() else { return false }
-        guard requireProtectedData() else { return false }
+        guard canRestoreBackup,!busy,!biometricOperationInFlight,let restorePreview,requireProtectedData(),flush(),canRestoreBackup else { return false }
         let previousHints=passwordHints
         let previousData=previousHints.isEmpty ? nil:try? store.read()
         do {
@@ -638,7 +669,7 @@ private enum VaultHintFailure:LocalizedError {
             // clear the local hint even when the cryptographic identity matches.
             try writePasswordHints([])
             selectPasswordHint(for:nil)
-            let previous=try store.restore(restorePreview.envelope)
+            let previous=try store.restore(restorePreview.envelope,replacingExisting:isUnlocked)
             lastPreservedPath=previous?.path; isConfigured=true; errorMessage=nil
             lock(reason:"备份已恢复，请使用这份备份的密码解锁"); return true
         } catch {
@@ -813,14 +844,14 @@ enum VaultBiometricFailure:LocalizedError {
         try await Task.detached(priority:.userInitiated) {
             guard let access=SecAccessControlCreateWithFlags(nil,kSecAttrAccessibleWhenUnlockedThisDeviceOnly,.biometryCurrentSet,nil) else {throw VaultBiometricFailure.unavailable}
             var payload=Data(salt);payload.append(key);defer{payload.resetBytes(in:0..<payload.count)}
-            var query=Self.query(account,group:group);query[kSecAttrAccessControl as String]=access;query[kSecValueData as String]=payload;query[kSecAttrLabel as String]="方寸私密空间 Touch ID"
+            var query=Self.query(account,group:group);query[kSecAttrAccessControl as String]=access;query[kSecValueData as String]=payload;query[kSecAttrLabel as String]="DeskDen 私密空间 Touch ID"
             let deletion=Self.delete(account,group:group);guard deletion == errSecSuccess || deletion == errSecItemNotFound else {throw VaultBiometricFailure.status(deletion)}
             let status=SecItemAdd(query as CFDictionary,nil);guard status == errSecSuccess else {throw VaultBiometricFailure.status(status)}
         }.value
     }
     func readKey(salt:Data) async throws -> Data {
         guard available,let group=signing.accessGroup else {throw VaultBiometricFailure.unavailable}
-        let context=LAContext();context.localizedFallbackTitle="";context.localizedReason="解锁方寸私密空间";context.touchIDAuthenticationAllowableReuseDuration=0;self.context=context
+        let context=LAContext();context.localizedFallbackTitle="";context.localizedReason="解锁 DeskDen 私密空间";context.touchIDAuthenticationAllowableReuseDuration=0;self.context=context
         defer{context.invalidate();if self.context === context {self.context=nil}}
         let account=account,handle=VaultAuthenticationContext(context)
         let payload=try await Task.detached(priority:.userInitiated) {

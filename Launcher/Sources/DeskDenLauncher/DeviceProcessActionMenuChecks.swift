@@ -27,7 +27,7 @@ import LauncherCore
         for (value, reason) in [(process(23, path: "/System/Library/Synthetic"), "系统服务"),
                                 (process(24, path: nil), "核验进程身份"),
                                 (process(25, uid: 502), "其他用户"),
-                                (process(99), "方寸"),
+                                (process(99), "DeskDen"),
                                 (process(26, started: 0), "核验进程身份")] {
             let state = availability([value], whole: false)
             check(!state.canQuit && !state.canForce && state.protection?.badge == "只读" && state.protection?.reason.contains(reason) == true,
@@ -40,7 +40,7 @@ import LauncherCore
         check(!missingMain.canQuit && missingMain.canForce && missingMain.protection?.reason.contains("应用主进程") == true,
               "a missing main process disables whole-application quit without silently turning it into child termination")
         let ownApp = availability([main, helper], currentApp: app.bundlePath)
-        check(!ownApp.canQuit && !ownApp.canForce && ownApp.protection?.reason.contains("方寸") == true,
+        check(!ownApp.canQuit && !ownApp.canForce && ownApp.protection?.reason.contains("DeskDen") == true,
               "the complete current application remains read-only, including its helpers")
         let empty = availability([])
         check(!empty.canQuit && !empty.canForce && empty.protection != nil, "an empty stale selection cannot acquire actions through allSatisfy")

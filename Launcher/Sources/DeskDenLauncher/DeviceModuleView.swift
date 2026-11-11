@@ -377,7 +377,7 @@ struct DeviceModuleView: View {
                     DeviceFact(label: "磁盘读写", value: "读取 \(DeviceFormat.rate(s.disk?.readBytesPerSecond)) · 写入 \(DeviceFormat.rate(s.disk?.writeBytesPerSecond))")
                 }
             }
-            DeviceRuleHelp(text: "存储按十进制显示（1 GB = 10 亿字节），约 30 秒刷新。可用空间 = 立即空闲 + 系统可回收（估算）；读不到估算时只计立即空闲。这里是启动卷的容量，APFS 卷共享容器空间，不等于硬盘标称容量；系统可回收不是方寸可以删除的文件。", notice: true).accessibilityIdentifier("device-detail-storage-notice")
+            DeviceRuleHelp(text: "存储按十进制显示（1 GB = 10 亿字节），约 30 秒刷新。可用空间 = 立即空闲 + 系统可回收（估算）；读不到估算时只计立即空闲。这里是启动卷的容量，APFS 卷共享容器空间，不等于硬盘标称容量；系统可回收不是 DeskDen 可以删除的文件。", notice: true).accessibilityIdentifier("device-detail-storage-notice")
         }
     }
     private var processesDetail: some View {

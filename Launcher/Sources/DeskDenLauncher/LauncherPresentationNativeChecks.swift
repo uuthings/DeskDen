@@ -30,6 +30,17 @@ import LauncherCore
             check(SearchEngine.search(owner.searchIndex,query:"mountain").contains {$0.target.id == target.id},"bound apps outside scanned directories retain their actual English bundle name")
             check(SearchEngine.search(owner.searchIndex,query:"me").contains {$0.target.id == target.id} && SearchEngine.search(owner.searchIndex,query:"mnted").contains {$0.target.id == target.id},"outside-catalog English initials and bounded fuzzy search work in parallel")
             check(owner.configuration == saved && SearchEngine.search(owner.searchIndex,query:"我的笔记").contains {$0.target.id == target.id},"search enrichment preserves the saved alias, keywords and configuration")
+            let deskDen=directory.appendingPathComponent("DeskDen.app")
+            let deskDenContents=deskDen.appendingPathComponent("Contents")
+            try FileManager.default.createDirectory(at:deskDenContents,withIntermediateDirectories:true)
+            let deskDenMetadata=["CFBundleIdentifier":ApplicationNames.deskDenIdentifier,"CFBundleName":"DeskDen","CFBundleDisplayName":"DeskDen","CFBundlePackageType":"APPL"]
+            try PropertyListSerialization.data(fromPropertyList:deskDenMetadata,format:.xml,options:0).write(to:deskDenContents.appendingPathComponent("Info.plist"))
+            let renamed=LaunchTarget(kind:.app,name:ApplicationNames.name(for:deskDen),location:deskDen.path)
+            owner.configuration.bindings["B"]=KeyBinding(target:renamed)
+            owner.rebuildIndex()
+            check(renamed.name == "DeskDen" && ["DeskDen","方寸"].allSatisfy {query in
+                SearchEngine.search(owner.searchIndex,query:query).contains {$0.target.id == renamed.id}
+            },"the launcher finds DeskDen by its current and former names")
             owner.configuration.bindings=[:];owner.rebuildIndex()
         } catch {check(false,"bound English metadata fixture is readable: \(error)")}
         owner.show()

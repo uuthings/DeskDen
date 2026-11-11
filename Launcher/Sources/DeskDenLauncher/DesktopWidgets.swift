@@ -44,7 +44,7 @@ final class DesktopWidgetsController: NSObject, NSWindowDelegate {
             if let existing = panels[kind] { panel = existing }
             else {
                 panel = DesktopWidgetPanel(contentRect: CGRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-                panel.kind = kind; panel.title = "方寸 · " + kind.title
+                panel.kind = kind; panel.title = "DeskDen · " + kind.title
                 panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = true
                 panel.hidesOnDeactivate = false; panel.isReleasedWhenClosed = false
                 panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
@@ -191,7 +191,7 @@ private struct DesktopWidgetView: View {
         .workbenchThemeEnvironment(theme: theme, opacity: opacity, backgroundMotion: false, appearance: light ? .light : .dark)
         .environment(\.colorScheme, light ? .light : .dark)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("方寸\(card.id.title)桌面组件")
+        .accessibilityLabel("DeskDen \(card.id.title)桌面组件")
     }
     private func menuAction(_ title: String, action: @escaping () -> Void) -> some View {
         Button { showingMenu = false; action() } label: {

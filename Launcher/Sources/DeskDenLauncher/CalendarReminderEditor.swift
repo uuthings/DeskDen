@@ -23,7 +23,7 @@ struct CalendarReminderEditor:View {
     }
     private var destinationOptions:[(value:String,title:String)] {
         (model.systemRemindersAvailable ? model.writableCalendars.map{(value:"system:"+$0.id,title:"提醒事项 · "+$0.title)}:[])
-            + [(value:"local",title:"仅保存在方寸本机")]
+            + [(value:"local",title:"仅保存在 DeskDen 本机")]
     }
     private var destination:Binding<String> {
         Binding(get:{draft.item.origin == .local ? "local":"system:"+(draft.item.calendarID ?? "")},set:{value in
@@ -189,7 +189,7 @@ struct CalendarReminderEditor:View {
                 Text("设置日期和时间后发送本机通知。"+(model.preferences.notificationsEnabled && model.notificationAccess == .granted ? "":"本机通知尚未开启，可在来源中管理。"))
                     .font(.system(size:11)).foregroundStyle(palette.muted).fixedSize(horizontal:false,vertical:true)
             } else {
-                Text("通知由系统提醒事项管理，方寸不重复发送。").font(.system(size:11)).foregroundStyle(palette.muted)
+                Text("通知由系统提醒事项管理，DeskDen 不重复发送。").font(.system(size:11)).foregroundStyle(palette.muted)
             }
             if draft.deadlineMode == .days {
                 Text("从 "+anchorLabel+" 起算，不计当天；保存后截止日期保持不变。").font(.system(size:11)).foregroundStyle(palette.muted)

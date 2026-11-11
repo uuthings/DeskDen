@@ -78,13 +78,41 @@ import LauncherCore
             state.light = light
             await settle(host)
             let palette = ThemePalette(light: light)
-            if let note = probes(host).first(where: { $0.name == "note" }), let image = capture(host) {
+            let mode = light ? "light" : "dark"
+            let surfaces = probes(host)
+            let rendered = capture(host)
+            if let note = surfaces.first(where: { $0.name == "note" }), let image = rendered {
                 let rect = note.convert(note.bounds, to: host)
                 let point = NSPoint(x: rect.minX + 24, y: rect.maxY - 5)
                 let background = color(image, point: point, size: host.bounds.size)
                 check(background.map { contrast(palette.nsSecondary, $0) >= 4.5 } == true,
-                      "\(light ? "light" : "dark") supporting text has readable contrast on the rendered note surface")
+                      "\(mode) supporting text has readable contrast on the rendered note surface")
             } else { check(false, "supporting note surface renders for contrast measurement") }
+            func sample(_ name: String, inset: CGFloat) -> NSColor? {
+                guard let rendered, let probe = surfaces.first(where: { $0.name == name }) else { return nil }
+                let rect = probe.convert(probe.bounds, to: host)
+                return color(rendered, point: NSPoint(x: rect.minX + inset, y: rect.midY), size: host.bounds.size)
+            }
+            // Window bitmaps use the display profile. Compare colors drawn into
+            // this same bitmap so the fixture is independent of that profile.
+            func matches(_ name: String, inset: CGFloat, reference: NSColor?) -> Bool {
+                guard let value = sample(name, inset: inset), let reference else { return false }
+                return distance(value, reference) < 0.04
+            }
+            let primary = NSColor(palette.primary)
+            check(matches("primary", inset: 5, reference: sample("primary-swatch", inset: 5))
+                  && distance(primary, palette.nsAccent) > 0.10
+                  && contrast(NSColor(palette.primaryText), primary) >= 4.5,
+                  "\(mode) shared primary renders its action color and readable text pairing")
+            let selection = sample("selection-swatch", inset: 5)
+            let selected = ["day-selected", "day-selected-today"].allSatisfy { name in
+                [0.5, 12].allSatisfy { inset in matches(name, inset: inset, reference: selection) }
+            }
+            check(selected && contrast(NSColor(palette.calendarSelectionText), NSColor(palette.calendarSelection)) >= 4.5,
+                  "\(mode) shared date selection renders a solid fill, including when selecting today")
+            check(matches("day-today", inset: 0.5, reference: sample("today-swatch", inset: 5))
+                  && matches("day-today", inset: 12, reference: sample("day-ordinary", inset: 12)),
+                  "\(mode) unselected today renders an outline with the ordinary date background")
             let initial = checkboxSamples(host)
             ButtonCursorPolicy.shared.apply(.arrow)
             state.revision += 1
@@ -98,7 +126,7 @@ import LauncherCore
             check(initial.count == 2 && refreshed.count == 2
                   && distance(initial[0], initial[1]) > 0.12
                   && zip(initial, refreshed).allSatisfy { distance($0.0, $0.1) < 0.02 },
-                  "\(light ? "light" : "dark") checked and unchecked surfaces stay distinct after cursor refresh")
+                  "\(mode) checked and unchecked surfaces stay distinct after cursor refresh")
         }
         check(!window.isVisible && !window.isKeyWindow,
               "all control rendering checks leave the fixture window hidden")
@@ -187,11 +215,22 @@ import LauncherCore
 private struct ControlSurfaceFixture: View {
     @ObservedObject var state: ControlSurfaceState
     var body: some View {
+        let palette = ThemePalette(light: state.light)
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Button("管理分类") {}.buttonStyle(WBButtonStyle()).background(ControlSurfaceProbe(name: "regular"))
                 WBSelect("全部分类", selection: $state.selection, options: [(0, "全部分类"), (1, "订阅")]).frame(width: 164)
                 Button("返回") {}.buttonStyle(WBButtonStyle(compact: true)).background(ControlSurfaceProbe(name: "compact"))
+            }
+            HStack {
+                Button("保存") {}.buttonStyle(WBButtonStyle(primary: true)).background(ControlSurfaceProbe(name: "primary"))
+                date("day-ordinary", selected: false, today: false)
+                date("day-today", selected: false, today: true)
+                date("day-selected", selected: true, today: false)
+                date("day-selected-today", selected: true, today: true)
+                swatch("primary-swatch", color: palette.primary)
+                swatch("selection-swatch", color: palette.calendarSelection)
+                swatch("today-swatch", color: palette.calendarToday)
             }
             WBPageNote { Text("存储按十进制显示（1 GB = 10 亿字节）。") }
                 .background(ControlSurfaceProbe(name: "note"))
@@ -205,6 +244,16 @@ private struct ControlSurfaceFixture: View {
             .frame(width: 440, height: 360, alignment: .topLeading)
             .background(state.light ? Color.cyan : Color.black)
             .workbenchThemeEnvironment(theme: .qingbiMist, opacity: 0.7, backgroundMotion: false, appearance: state.light ? .light : .dark)
+    }
+
+    private func date(_ name: String, selected: Bool, today: Bool) -> some View {
+        Button {} label: { Color.clear.frame(width: 36, height: 34) }
+            .buttonStyle(WorkbenchCalendarDayStyle(selected: selected, today: today))
+            .background(ControlSurfaceProbe(name: name))
+    }
+
+    private func swatch(_ name: String, color: Color) -> some View {
+        color.frame(width: 12, height: 12).background(ControlSurfaceProbe(name: name))
     }
 }
 private final class ControlSurfaceProbeView: NSView { var name = "" }

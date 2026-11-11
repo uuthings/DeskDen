@@ -80,7 +80,7 @@ public struct ReminderItem: Codable, Identifiable, Hashable, Sendable {
         notificationsEnabled=try values.decodeIfPresent(Bool.self,forKey:.notificationsEnabled) ?? true
     }
     public var stableID:String { "\(origin.rawValue):\(id)" }
-    public var sourceTitle:String { origin == .local ? "方寸本机" : "提醒事项 · \(calendarName ?? "系统")" }
+    public var sourceTitle:String { origin == .local ? "DeskDen 本机" : "提醒事项 · \(calendarName ?? "系统")" }
     public func validated() throws -> ReminderItem {
         var value = self; value.title = title.trimmingCharacters(in:.whitespacesAndNewlines); value.notes = notes.trimmingCharacters(in:.whitespacesAndNewlines)
         guard !value.id.isEmpty, !value.title.isEmpty else { throw ReminderError.invalid("请先写下提醒标题。") }

@@ -145,7 +145,7 @@ enum ClaudeQuotaSyncInstaller {
     static func install(settingsDirectory: URL, executableURL: URL, quotaURL: URL) throws -> Receipt {
         let fm = FileManager.default
         try validateDirectory(settingsDirectory); try validateOutput(quotaURL)
-        guard executableURL.isFileURL, fm.isExecutableFile(atPath: executableURL.path) else { throw AIUsageError.invalid("方寸程序暂不可用，请从应用程序文件夹重新打开。") }
+        guard executableURL.isFileURL, fm.isExecutableFile(atPath: executableURL.path) else { throw AIUsageError.invalid("DeskDen 程序暂不可用，请从应用程序文件夹重新打开。") }
         let url = settingsDirectory.appendingPathComponent("settings.json")
         var settings: [String: Any] = [:]
         let original = try settingsData(url)
@@ -158,7 +158,7 @@ enum ClaudeQuotaSyncInstaller {
         if let existing = settings["statusLine"], !(existing is NSNull) {
             guard var status = existing as? [String: Any], status["type"] as? String == "command", let previous = status["command"] as? String,
                   previous == command || ownedCommand(previous, matchingExecutable: executableURL) else {
-                throw AIUsageError.invalid("Claude 已有状态栏配置，方寸已保留它。可导出适配器手动合并，或选择已有额度 JSON。")
+                throw AIUsageError.invalid("Claude 已有状态栏配置，DeskDen 已保留它。可导出适配器手动合并，或选择已有额度 JSON。")
             }
             status["command"] = command; settings["statusLine"] = status
         } else { settings["statusLine"] = ["type": "command", "command": command] }
@@ -464,7 +464,7 @@ final class AIUsageModel: ObservableObject {
     private var preparingForQuit = false
     var todayTokens: Int64 { filteredRecords(period: .today).reduce(0) { $0 + $1.tokens.total } }
     var claudeSubscriptionNeedsLogin: Bool { claudeLoginRemedy != nil }
-    var storageRecoveryInstructions: String { "原文件已保留，对应文件的写入已暂停。请先退出方寸，备份下列原文件，再修复文件或将损坏文件移出此目录，重新打开方寸。移走文件会重新建立该项数据，不会恢复旧记录。" }
+    var storageRecoveryInstructions: String { "原文件已保留，对应文件的写入已暂停。请先退出 DeskDen，备份下列原文件，再修复文件或将损坏文件移出此目录，重新打开 DeskDen。移走文件会重新建立该项数据，不会恢复旧记录。" }
     func revealDataDirectory() { NSWorkspace.shared.open(directory) }
     init(dataDirectory: URL, startServices: Bool = true, notifications: (any AIQuotaNotificationProviding)? = nil,
          claudeSettingsDirectory: URL? = nil, statusLineExecutableURL: URL? = nil, subscriptionConnectionWait: TimeInterval = 4,
@@ -1152,7 +1152,7 @@ final class AIUsageModel: ObservableObject {
     @discardableResult func enableClaudeQuotaSync() -> Bool {
         errorMessage = nil; claudeQuotaSyncMessage = nil
         guard storageReadErrors["sources.json"] == nil, let executable = statusLineExecutableURL else {
-            errorMessage = storageReadErrors["sources.json"] ?? "无法找到方寸程序，请将方寸放入应用程序后再试。"
+            errorMessage = storageReadErrors["sources.json"] ?? "无法找到 DeskDen 程序，请将 DeskDen 放入应用程序后再试。"
             return false
         }
         do {
@@ -1217,7 +1217,7 @@ final class AIUsageModel: ObservableObject {
         } catch { errorMessage = storageReadErrors["sources.json"] ?? "来源设置保存失败，已保留原设置。"; return false }
     }
     private func protectStorageFile(_ name: String) {
-        storageReadErrors[name] = "\(name) 无法读取或内容无效，已暂停此文件写入。原文件未更改；请备份后修复或移走原文件，再重启方寸。"
+        storageReadErrors[name] = "\(name) 无法读取或内容无效，已暂停此文件写入。原文件未更改；请备份后修复或移走原文件，再重启 DeskDen。"
     }
     private func loadStorage<T: Decodable>(_ name: String, validate: (T) throws -> Void) -> T? {
         guard storageReadErrors[name] == nil else { return nil }

@@ -127,8 +127,8 @@ struct CalendarModuleView:View {
     private var newMenu:some View {
         VStack(alignment:.leading,spacing:2) {
             newMenuItem(symbol:"checkmark.circle",tint:palette.accent,title:model.systemRemindersAvailable ? "提醒事项":"新建提醒",
-                        detail:model.systemRemindersAvailable ? "保存到系统提醒事项，与提醒事项保持同步":"保存为方寸本机提醒；接入系统后保存到提醒事项",identifier:"fc.calendar.new.reminder") {model.openNewReminder()}
-            newMenuItem(symbol:"calendar",tint:palette.cool,title:"系统日程",detail:"在系统日历中新建，方寸只读显示",identifier:"fc.calendar.new.event") {model.openSystemCalendar()}
+                        detail:model.systemRemindersAvailable ? "保存到系统提醒事项，与提醒事项保持同步":"保存为 DeskDen 本机提醒；接入系统后保存到提醒事项",identifier:"fc.calendar.new.reminder") {model.openNewReminder()}
+            newMenuItem(symbol:"calendar",tint:palette.cool,title:"系统日程",detail:"在系统日历中新建，DeskDen 只读显示",identifier:"fc.calendar.new.event") {model.openSystemCalendar()}
         }.padding(6)
     }
     private func newMenuItem(symbol:String,tint:Color,title:String,detail:String,identifier:String,action:@escaping ()->Void)->some View {
@@ -456,11 +456,12 @@ private struct CalendarWeekGrid:View {
         let selected=calendar.isDate(date,inSameDayAs:model.selectedDay),today=calendar.isDateInToday(date)
         return Button {model.selectDay(date)} label:{
             HStack(spacing:4){Text(WorkbenchDateText.weekday(date,calendar:calendar)+" \(calendar.component(.day,from:date))").font(.system(size:11));CalendarHolidayBadge(day:info)}
-                .foregroundStyle(WorkbenchCalendarDayStyle.textColor(selected:selected,today:today,palette:palette))
+                .foregroundStyle(WorkbenchCalendarDayStyle.textColor(selected:selected,today:today,otherwise:palette.secondary,palette:palette))
                 .frame(maxWidth:.infinity).frame(height:30)
         }.buttonStyle(WorkbenchCalendarDayStyle(selected:selected,today:today))
             .accessibilityLabel(WorkbenchDateText.monthDay(date,calendar:calendar)+(info.namedLabel.map{"，"+$0} ?? ""))
-            .accessibilityValue(selected ? "已选择":"未选择")
+            .accessibilityValue(selected ? "已选择" : today ? "今天" : "未选择")
+            .accessibilityAddTraits(selected ? [.isSelected] : [])
             .accessibilityIdentifier("fc.calendar.weekday."+calendarFormat(date,"yyyy-MM-dd",calendar:calendar))
     }
     /// Blocks carry no border: a light schedule or accent tint (K5).
@@ -499,7 +500,7 @@ private struct CalendarAgendaRow:View {
                 Button {Task {await model.toggle(item)}} label:{
                     ZStack {
                         Circle().strokeBorder(tint,lineWidth:1.5)
-                        if item.isCompleted {Circle().fill(tint);Image(systemName:"checkmark").font(.system(size:9,weight:.bold)).foregroundStyle(palette.primaryText)}
+                        if item.isCompleted {Circle().fill(tint);Image(systemName:"checkmark").font(.system(size:9,weight:.bold)).foregroundStyle(palette.accentText)}
                     }.frame(width:16,height:16).padding(3).contentShape(Rectangle())
                 }.buttonStyle(ClickablePlainButtonStyle()).disabled(!item.isWritable || model.isWorking)
                     .accessibilityLabel("\(item.isCompleted ? "恢复待办":"完成提醒")：\(item.title)")
@@ -534,7 +535,7 @@ private struct CalendarAgendaRow:View {
         switch entry {
         case .reminder(let item):
             let deadline=item.due == nil ? "无期限":calendarEntryShortDate(entry,calendar:model.displayCalendar)+(item.due?.hasTime == true ? " "+calendarTime(entry,calendar:model.displayCalendar):"")+" 截止"
-            return deadline+" · "+(item.origin == .local ? "方寸本机":item.calendarName ?? "提醒事项")
+            return deadline+" · "+(item.origin == .local ? "DeskDen 本机":item.calendarName ?? "提醒事项")
         case .event(let event):
             let time=event.isAllDay ? "全天":calendarFormat(event.start,"HH:mm",calendar:model.displayCalendar)+"–"+calendarFormat(event.end,"HH:mm",calendar:model.displayCalendar)
             let minutes=max(0,Int(event.end.timeIntervalSince(event.start)/60))
@@ -817,8 +818,8 @@ private struct CalendarNotificationsDialog:View {
     var body:some View {
         CalendarDialog(title:"提醒通知",dismiss:close) {
             Text("到时间，轻轻提醒你").font(.system(size:13,weight:.medium))
-            Text("本机提醒需开启「到时提醒我」并设置日期和时间才会通知。无日期、全天、已完成及已过期的提醒不会通知；系统提醒由 macOS 提醒事项负责，方寸不重复发送。").font(.system(size:12)).foregroundStyle(palette.secondary)
-            Text("最近 60 条未来通知交给系统。收起窗口后继续提醒；彻底退出方寸会暂停方寸本机通知，重新打开后恢复。系统提醒事项中的通知不受影响。").font(.system(size:11)).foregroundStyle(palette.muted)
+            Text("本机提醒需开启「到时提醒我」并设置日期和时间才会通知。无日期、全天、已完成及已过期的提醒不会通知；系统提醒由 macOS 提醒事项负责，DeskDen 不重复发送。").font(.system(size:12)).foregroundStyle(palette.secondary)
+            Text("最近 60 条未来通知交给系统。收起窗口后继续提醒；彻底退出 DeskDen 会暂停 DeskDen 本机通知，重新打开后恢复。系统提醒事项中的通知不受影响。").font(.system(size:11)).foregroundStyle(palette.muted)
             CalendarFact("通知权限",value:model.notificationAccess == .granted ? "已允许":model.notificationAccess == .denied ? "已拒绝":model.notificationAccess == .restricted ? "受限":"尚未请求")
             if model.notificationAccess == .denied || model.notificationAccess == .restricted {Button("前往系统通知设置"){model.openNotificationSettings()}.buttonStyle(WBButtonStyle())}
             if let error=model.errorMessage {Text(error).font(.system(size:11)).foregroundStyle(palette.critical)}

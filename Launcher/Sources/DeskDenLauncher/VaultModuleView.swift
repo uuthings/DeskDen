@@ -15,17 +15,21 @@ struct VaultModuleView:View {
     @StateObject private var hintClose = WorkbenchDraftCloseCoordinator()
     @Environment(\.workbenchPalette) private var palette
     @Environment(\.workbenchModals) private var modals
+    @Environment(\.workbenchToast) private var toast
     var body:some View {
         VStack(alignment:.leading,spacing:0) {
-            if model.showingProtection {
+            if model.isUnlocked && model.showingProtection {
                 // The way back sits before the title (现行规范 4.1, D7).
                 VaultProtectionPage(model:model,back:WBPageBack(title:model.protectionFromSettings ? "隐私与锁定":"私密空间",identifier:"vault-protection-back",escapes:true) {
-                    model.showingProtection=false;if model.protectionFromSettings {returnToSettingsPrivacy?()}
+                    let fromSettings=model.protectionFromSettings
+                    model.closeProtection()
+                    if fromSettings {returnToSettingsPrivacy?()}
                 })
             } else {
                 WBPageHeader(title:"私密空间",subtitle:model.isUnlocked ? "\(model.documents.count) 条文本 · 仅保存在此设备":"独立密码保护，仅在需要时解锁") {
-                    Button{model.showProtection()}label:{Label("保护与备份",systemImage:"checkmark.shield")}.buttonStyle(WBButtonStyle())
                     if model.isUnlocked {
+                        Button{model.showProtection()}label:{Label("保护与备份",systemImage:"checkmark.shield")}.buttonStyle(WBButtonStyle())
+                            .accessibilityIdentifier("fc.vault.protection.open")
                         Button{model.lock(reason:"已手动锁定")}label:{Label("锁定",systemImage:"lock")}.buttonStyle(WBButtonStyle())
                         Button{model.newDocument()}label:{Label("新建",systemImage:"plus")}.buttonStyle(WBButtonStyle(primary:true))
                     }
@@ -42,6 +46,7 @@ struct VaultModuleView:View {
         }.foregroundStyle(palette.text)
         .background(VaultWindowReader(found:{model.hostWindow=$0},resized:{windowHeight=$0}).frame(width:0,height:0))
         .onChange(of:model.sessionID){_,_ in modals?.prune()}
+        .onChange(of:model.completionMessage){_,message in if let message {toast(message)}}
         .workbenchModal(item: $model.sheet, onDismiss: {
             hintClose.continueEditing()
             if model.restorePreview != nil || model.restoreSourceName != nil { model.cancelRestore() }
@@ -51,14 +56,13 @@ struct VaultModuleView:View {
         }) { sheet in
             switch sheet {
             case .setup:VaultSetupSheet(model:model)
-            case .unlockForPassword:VaultPasswordUnlockSheet(model:model)
             case .password:VaultPasswordSheet(model:model)
             case .passwordHint: VaultPasswordHintSheet(model: model, close: hintClose)
             case .touchIDDefault: VaultTouchIDDefaultSheet(model: model)
             case .backup:VaultBackupSheet(model:model)
             case .restore:VaultRestoreSheet(model:model)
             }
-        }.accessibilityElement(children:.contain).accessibilityIdentifier(model.showingProtection ? "fc.page.vault.protection":"fc.page.vault")
+        }.accessibilityElement(children:.contain).accessibilityIdentifier(model.isUnlocked && model.showingProtection ? "fc.page.vault.protection":"fc.page.vault")
     }
 }
 
@@ -73,7 +77,7 @@ private struct VaultProtectionPage:View {
             VStack(alignment:.leading,spacing:12) {
                 // Setting rows (现行规范 4.5, G1); the three fixed rules share one row (V4).
                 WBCard(title:"访问保护",symbol:"checkmark.shield",spacing:0) {
-                    WBSettingRow(title:"独立密码",subtitle:model.isUnlocked ? "新密码至少需要 \(VaultCryptography.minimumPasswordLength) 个字符":"先验证解锁，再继续修改密码",showsDivider:false) {
+                    WBSettingRow(title:"独立密码",subtitle:"新密码至少需要 \(VaultCryptography.minimumPasswordLength) 个字符",showsDivider:false) {
                         Button("修改密码",action:model.requestPasswordChange).buttonStyle(WBButtonStyle(compact:true)).disabled(!model.isConfigured || model.busy)
                     }
                     WBSettingRow(title:"Touch ID",subtitle:model.biometricUnavailableReason ?? (model.biometricEnabled ? "仅此设备；变更指纹或密码后需重新开启":"先用独立密码解锁，再为此资料库开启")) {
@@ -81,7 +85,7 @@ private struct VaultProtectionPage:View {
                             Button("重新检测") { Task { await model.refreshBiometrics() } }
                                 .buttonStyle(WBButtonStyle(compact:true)).disabled(model.busy)
                         } else if model.biometricEnabled && model.biometricCanRemove {
-                            Button("停用") { Task { _ = await model.disableBiometrics() } }
+                            Button("停用") { model.disableBiometrics() }
                                 .buttonStyle(WBButtonStyle(compact:true)).disabled(model.busy)
                         } else {
                             Button("开启 Touch ID", action: enableTouchID)
@@ -109,7 +113,7 @@ private struct VaultProtectionPage:View {
                         .disabled(!model.isUnlocked || model.busy)
                     }
                     WBSettingRow(title:"闲置自动锁定",subtitle:"没有操作时自动收起内容") {
-                        WBSelect("闲置自动锁定",selection:Binding(get:{model.idleMinutes},set:model.changeIdleMinutes),options:[1,5,10].map{($0,"\($0) 分钟")}).frame(width:120).disabled(!model.canChangeProtectionPreferences)
+                        WBSelect("闲置自动锁定",selection:Binding(get:{model.idleMinutes},set:model.changeIdleMinutes),options:[1,5,10].map{($0,"\($0) 分钟")}).frame(width:120).disabled(model.busy || !model.canChangeProtectionPreferences)
                     }
                     WBSettingRow(title:"始终生效的保护",subtitle:"离开私密页或收起工作台时锁定；睡眠或切换用户后需重新验证；复制的内容 3 分钟后或锁定时清除") {
                         WBStatusPill(title:"始终开启")
@@ -125,14 +129,12 @@ private struct VaultProtectionPage:View {
                         Button("导出"){model.errorMessage=nil;model.sheet = .backup}.buttonStyle(WBButtonStyle(compact:true)).disabled(!model.isConfigured || model.busy)
                     }
                     WBSettingRow(title:"恢复备份",subtitle:"使用备份文件和导出时的密码") {
-                        Button("选择备份"){model.errorMessage=nil;model.sheet = .restore}.buttonStyle(WBButtonStyle(compact:true)).disabled(model.busy)
+                        Button("选择备份",action:model.requestRestore).buttonStyle(WBButtonStyle(compact:true)).disabled(model.busy)
                     }
                 }
-                WBPageNote {Text("确认恢复后，方寸会先保留当前资料的加密副本，再替换为这份备份。").fixedSize(horizontal:false,vertical:true)}
+                WBPageNote {Text("确认恢复后，DeskDen 会先保留当前资料的加密副本，再替换为这份备份。").fixedSize(horizontal:false,vertical:true)}
             }
         }.task {await model.refreshBiometrics()}
-            // A finished restore or password change is a one-off result (现行规范 4.8, G3).
-            .onChange(of:model.completionMessage) {_,message in if let message {toast(message)}}
     }
 
     private var unlockMethods: [(value: VaultUnlockMethod, title: String)] {
@@ -144,13 +146,11 @@ private struct VaultProtectionPage:View {
     }
 
     private var unlockMethodNote: String {
-        if !model.isUnlocked { return "解锁后可更改默认方式" }
         if !model.biometricEnabled { return "开启 Touch ID 后可选择" }
-        return "进入私密空间时优先显示所选方式"
+        return "进入私密空间时优先使用所选方式"
     }
 
     private var hintNote: String {
-        guard model.isUnlocked else { return "解锁后可设置密码提示" }
         return model.passwordHint == nil ? "未设置 · 选填" : "已设置 · 锁定时可查看"
     }
 
@@ -217,6 +217,8 @@ private struct VaultLockedView:View {
                         .accessibilityIdentifier("fc.vault.lock.usePassword")
                 } else {
                     Button{model.errorMessage=nil;model.sheet = .setup}label:{Label("设置独立密码",systemImage:"key").frame(maxWidth:.infinity)}.buttonStyle(WBButtonStyle(primary:true))
+                    Button("从备份恢复",action:model.requestRestore).buttonStyle(WBQuietButtonStyle()).padding(.top,8)
+                        .accessibilityIdentifier("fc.vault.setup.restore")
                 }
             }.frame(width:280).padding(.top, 20)
             if let error=model.errorMessage {Text(error).font(.system(size:11)).foregroundStyle(palette.critical).multilineTextAlignment(.center).fixedSize(horizontal:false,vertical:true).padding(.top,10)}
@@ -706,27 +708,6 @@ private struct VaultSetupSheet:View {
     private func clear() { password=""; confirmation=""; hint="" }
 }
 
-private struct VaultPasswordUnlockSheet:View {
-    @ObservedObject var model:VaultModel
-    @State private var password=""
-    var body:some View {
-        WorkbenchDialogFrame(title:"先解锁私密空间",dismiss:model.closeSheet) {
-            VStack(alignment:.leading,spacing:16) {
-                VaultPrivacyNotice("修改密码前需要先验证当前密码。验证通过后继续修改，已有资料不会被替换。")
-                VaultPasswordField(title:"当前密码",placeholder:"输入私密空间密码",text:$password)
-                VaultSheetError(model:model)
-            }.disabled(model.busy)
-        } actions: {
-            Spacer()
-            Button("取消",action:model.closeSheet).buttonStyle(WBButtonStyle()).disabled(model.busy).keyboardShortcut(.cancelAction)
-            Button("解锁并继续") {
-                let value=password; password=""
-                Task { if await model.unlock(password:value),model.isUnlocked { model.sheet = .password } }
-            }.buttonStyle(WBButtonStyle(primary:true)).disabled(model.busy || password.isEmpty).keyboardShortcut(.defaultAction)
-        }.modifier(VaultSensitiveState(model:model,clear:{password=""})).accessibilityIdentifier("fc.modal.vault.unlockForPassword")
-    }
-}
-
 private struct VaultPasswordSheet:View {
     @ObservedObject var model:VaultModel
     @State private var current=""
@@ -766,7 +747,7 @@ private struct VaultTouchIDDefaultSheet: View {
     var body: some View {
         WorkbenchDialogFrame(title: "将 Touch ID 设为默认解锁方式？", dismiss: model.closeSheet) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Touch ID 已开启。设为默认后，打开私密空间时会优先显示 Touch ID。你仍可随时改用独立密码。")
+                Text("Touch ID 已开启。设为默认后，进入私密空间时会自动请求 Touch ID 验证。你仍可随时改用独立密码。")
                     .font(.system(size: 12)).foregroundStyle(palette.secondary).lineSpacing(4)
                 VaultSheetError(model: model)
             }
@@ -846,11 +827,11 @@ private struct VaultBackupSheet:View {
         WorkbenchDialogFrame(title:"导出加密备份",dismiss:model.closeSheet) {
             VStack(alignment:.leading,spacing:16) {
                 VStack(spacing:12) {
-                    VaultBackupFact(title:"备份内容",value:model.isUnlocked ? "\(model.documents.count) 条文本":"全部已加密文本")
-                    VaultBackupFact(title:"格式",value:"方寸加密备份")
+                    VaultBackupFact(title:"备份内容",value:"\(model.documents.count) 条文本")
+                    VaultBackupFact(title:"格式",value:"DeskDen 加密备份")
                     VaultBackupFact(title:"恢复要求",value:"导出时使用的密码")
                 }
-                VaultPrivacyNotice("备份保持完整加密。请保存到可靠的位置；锁定状态下也可导出，内容不会在导出时解密。")
+                VaultPrivacyNotice("备份保持完整加密。请保存到可靠的位置，内容不会在导出时解密。")
                 if let path=model.lastBackupPath {
                     Label("已导出：\(URL(fileURLWithPath:path).lastPathComponent)",systemImage:"checkmark.circle")
                         .font(.system(size:11)).foregroundStyle(palette.success).fixedSize(horizontal:false,vertical:true)
@@ -860,7 +841,7 @@ private struct VaultBackupSheet:View {
         } actions: {
             Spacer()
             Button("取消",action:model.closeSheet).buttonStyle(WBButtonStyle()).keyboardShortcut(.cancelAction)
-            Button("导出加密备份",action:model.chooseBackupDestination).buttonStyle(WBButtonStyle(primary:true)).disabled(model.busy || !model.isConfigured)
+            Button("导出加密备份",action:model.chooseBackupDestination).buttonStyle(WBButtonStyle(primary:true)).disabled(model.busy || !model.isUnlocked)
         }.accessibilityIdentifier("fc.modal.vault.export")
     }
 }
@@ -876,18 +857,18 @@ private struct VaultRestoreSheet:View {
                     Label("验证通过 · \(preview.count) 条文本",systemImage:"checkmark.shield")
                         .font(.system(size:12)).foregroundStyle(palette.success).padding(10).frame(maxWidth:.infinity,alignment:.leading).background(palette.soft,in:RoundedRectangle(cornerRadius:8))
                     Text(preview.sourceName).font(.system(size:11)).foregroundStyle(palette.muted).lineLimit(2)
-                    VaultPrivacyNotice("方寸会先保留当前资料的加密副本，再替换为这份备份。恢复后请用备份密码解锁。",warning:true)
+                    VaultPrivacyNotice(model.isConfigured ? "DeskDen 会先保留当前资料的加密副本，再替换为这份备份。恢复后请用备份密码解锁。" : "这份备份将成为本机的私密空间。恢复后请用备份密码解锁。",warning:model.isConfigured)
                 } else {
                     HStack(spacing:12) {
                         VStack(alignment:.leading,spacing:4) {
                             Text(model.restoreSourceName ?? "尚未选择加密备份").font(.system(size:12)).lineLimit(2)
-                            Text("尚未替换当前资料").font(.system(size:11)).foregroundStyle(palette.muted)
+                            if model.isConfigured {Text("尚未替换当前资料").font(.system(size:11)).foregroundStyle(palette.muted)}
                         }
                         Spacer(minLength:4)
                         Button("选择文件",action:model.chooseRestoreSource).buttonStyle(WBButtonStyle())
                     }
                     VaultPasswordField(title:"备份密码",placeholder:"创建这份备份时的密码",text:$password)
-                    VaultPrivacyNotice("验证通过后还需确认替换；验证失败不会改动现有资料。")
+                    VaultPrivacyNotice(model.isConfigured ? "验证通过后还需确认替换。验证失败时，现有资料会保留。" : "验证通过后还需确认恢复。")
                 }
                 VaultSheetError(model:model)
             }.disabled(model.busy)

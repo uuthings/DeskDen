@@ -24,7 +24,7 @@ struct WorkbenchUpdateSettings: View {
     }
     var body: some View {
         WBCard(title: "软件更新", symbol: "arrow.down.circle", spacing: 0) {
-            WBSettingRow(title: "方寸 v" + version, subtitle: statusLine, showsDivider: false,
+            WBSettingRow(title: "DeskDen v" + version, subtitle: statusLine, showsDivider: false,
                          subtitleColor: updates.hasError ? palette.warning : nil, textIdentifier: "updates-current-version") {
                 Button(updates.release == nil ? "检查更新" : "查看更新") {
                     if updates.release == nil { updates.checkForUpdates() } else { updates.showUpdateDialog() }
@@ -157,7 +157,7 @@ struct WorkbenchUpdateDialog: View {
                 }
             }
             if updates.phase == .readyToInstall {
-                Text("安装前会处理未保存的更改，并重新启动方寸。")
+                Text("安装前会处理未保存的更改，并重新启动 DeskDen。")
                     .font(.system(size: 11)).foregroundStyle(palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }

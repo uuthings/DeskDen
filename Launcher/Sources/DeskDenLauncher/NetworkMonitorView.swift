@@ -579,7 +579,7 @@ struct DeviceTemperatureDialog: View {
                 DeviceRuleNumberField(title: "连续超温", value: $drafts.temperature.duration, unit: "秒", error: drafts.temperatureErrors["duration"])
                 DeviceRuleNumberField(title: "提醒冷却", value: $drafts.temperature.cooldown, unit: "分钟", error: drafts.temperatureErrors["cooldown"])
             }
-            Label("CPU 85°C、GPU 80°C 为方寸默认提醒值，可按需调整，并非 Apple 安全上限。颜色状态始终显示，macOS 系统高温独立标红。", systemImage: "info.circle")
+            Label("CPU 85°C、GPU 80°C 为 DeskDen 默认提醒值，可按需调整，并非 Apple 安全上限。颜色状态始终显示，macOS 系统高温独立标红。", systemImage: "info.circle")
                 .font(.system(size: 11)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
                 .padding(10).background(palette.soft, in: RoundedRectangle(cornerRadius: 8))
             Toggle("发送温度通知", isOn: $drafts.temperature.notifications).clickableCursor().font(.system(size: 12))

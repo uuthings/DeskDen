@@ -15,13 +15,13 @@ if [[ "$candidate_name" == */* || "$candidate_name" == "." || "$candidate_name" 
   exit 1
 fi
 candidate="$PWD/../Deliverables/$candidate_name"
-app="$candidate/方寸.app"
+app="$candidate/DeskDen.app"
 if [[ -e "$app" ]]; then
   print -u2 '验收目录已有 App；请使用新的候选目录，不能覆盖正在验收的版本。'
   exit 1
 fi
 mkdir -p "$candidate/检查记录"
-ditto "$PWD/build/方寸.app" "$app"
+ditto "$PWD/build/DeskDen.app" "$app"
 /usr/libexec/PlistBuddy -c 'Add :DeskDenDeviceAcceptance bool true' "$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :DeskDenDeviceAcceptanceProfile string $candidate_profile" "$app/Contents/Info.plist"
 codesign --force --sign - "$app"
@@ -31,7 +31,7 @@ python3 - "$candidate" "$candidate_profile" <<'PY'
 from pathlib import Path
 import sys, hashlib, json, datetime
 candidate = Path(sys.argv[1])
-app = candidate / '方寸.app'
+app = candidate / 'DeskDen.app'
 files = {str(p.relative_to(app)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(app.rglob('*')) if p.is_file()}
 sources = Path.cwd()
 source_files = list((sources / 'Sources').rglob('*.swift')) + list((sources / 'Tests').rglob('*.swift')) + [sources / 'Package.swift', sources / 'Resources/Info.plist', sources.parent / 'DeskDen.xcodeproj/project.pbxproj']

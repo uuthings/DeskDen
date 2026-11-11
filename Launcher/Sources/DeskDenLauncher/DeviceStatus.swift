@@ -438,7 +438,7 @@ final class DeviceStatusModel: ObservableObject {
     func refreshNotificationPermission() async {
         notificationPermission = await notifications.permission(); lastPermissionCheck = Date()
         if notificationPermission == .authorized, let error = monitoringError,
-           error.contains("系统尚未允许方寸通知") || error.contains("当前通知服务不可用") || error.hasPrefix("通知权限申请失败") {
+           error.contains("系统尚未允许 DeskDen 通知") || error.contains("系统尚未允许方寸通知") || error.contains("当前通知服务不可用") || error.hasPrefix("通知权限申请失败") {
             monitoringError = nil
         }
     }
@@ -448,7 +448,7 @@ final class DeviceStatusModel: ObservableObject {
             do { _ = try await notifications.requestPermission(); await refreshNotificationPermission() }
             catch { notificationPermission = .unavailable; monitoringError = "通知权限申请失败：\(error.localizedDescription)"; return }
         }
-        if notificationPermission == .denied { monitoringError = "规则已保存；系统尚未允许方寸通知，可在系统设置中开启。" }
+        if notificationPermission == .denied { monitoringError = "规则已保存；系统尚未允许 DeskDen 通知，可在系统设置中开启。" }
         else if notificationPermission == .unavailable { monitoringError = "规则已保存；当前通知服务不可用。" }
     }
     private func persistMonitoring(budget: DeviceTrafficBudget, rule: DeviceTemperatureRule, state: DeviceMonitoringState) throws {

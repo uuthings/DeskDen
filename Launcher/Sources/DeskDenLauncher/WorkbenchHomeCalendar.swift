@@ -13,7 +13,6 @@ struct WorkbenchHomeCalendar: View {
     var navigate: (WorkbenchRoute) -> Void
     @State private var displayedMonth = Date()
     @State private var showingDay = false
-    @Environment(\.colorScheme) private var scheme
     @Environment(\.workbenchPalette) private var palette
 
     /// 12 top + 28 header + 6 + 24 weekdays + 6 × 36 rows + 10 bottom.
@@ -84,6 +83,8 @@ struct WorkbenchHomeCalendar: View {
         let selected = calendar.isDate(date, inSameDayAs: selection)
         let today = calendar.isDate(date, inSameDayAs: Date())
         let outside = !calendar.isDate(date, equalTo: displayedMonth, toGranularity: .month)
+        let unselectedText = outside ? palette.muted.opacity(0.55) : palette.text
+        let dateText = WorkbenchCalendarDayStyle.textColor(selected: selected, today: today, otherwise: unselectedText, palette: palette)
         let events = knownEvents.filter { $0.occurs(on: date, calendar: calendar) }.count
         let reminders = pending.filter { ReminderQueries.occurs(reminder: $0, on: date, calendar: calendar) }.count
         let civil = CalendarCivilDay(date: date, calendar: calendar, showsHolidays: model.holidaysEnabled)
@@ -95,6 +96,7 @@ struct WorkbenchHomeCalendar: View {
         } label: {
             Text("\(calendar.component(.day, from: date))")
                 .font(.system(size: 13)).monospacedDigit()
+                .foregroundStyle(dateText)
                 .frame(width: 36, height: 34)
                 .overlay(alignment: .topTrailing) {
                     if let badge = civil.badge {
@@ -110,12 +112,12 @@ struct WorkbenchHomeCalendar: View {
                 }
                 .overlay(alignment: .bottom) {
                     if events + reminders > 0 {
-                        Circle().fill(selected ? HomeCalendarDateStyle.selectedText(scheme) : palette.accent)
+                        Circle().fill(selected ? palette.calendarSelectionText : palette.accent)
                             .frame(width: 4, height: 4).padding(.bottom, 4)
                     }
                 }
         }
-        .buttonStyle(HomeCalendarDateStyle(selected: selected, today: today, outside: outside))
+        .buttonStyle(WorkbenchCalendarDayStyle(selected: selected, today: today))
         .frame(maxWidth: .infinity)
         .help(help).accessibilityLabel(help)
         .accessibilityValue(selected ? "已选择" : today ? "今天" : "未选择")
@@ -429,26 +431,5 @@ private struct HomeCalendarControlStyle: ButtonStyle {
         configuration.label
             .background(palette.accent.opacity(configuration.isPressed ? 0.14 : hovering ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 7))
             .contentShape(RoundedRectangle(cornerRadius: 7)).onHover { hovering = $0 }.clickableCursor()
-    }
-}
-
-/// The selected day fills its whole cell with the accent (white in the dark
-/// appearance); today keeps an accent outline. Outside days stay legible.
-private struct HomeCalendarDateStyle: ButtonStyle {
-    let selected: Bool
-    let today: Bool
-    let outside: Bool
-    @Environment(\.workbenchPalette) private var palette
-    @Environment(\.colorScheme) private var scheme
-    @State private var hovering = false
-    static func selectedText(_ scheme: ColorScheme) -> Color { scheme == .dark ? HomeFluidPalette.light.accent : .white }
-    func makeBody(configuration: Configuration) -> some View {
-        let fill = scheme == .dark ? Color.white.opacity(0.94) : palette.accent
-        let text = selected ? Self.selectedText(scheme) : today ? palette.accent : outside ? palette.muted.opacity(0.55) : palette.text
-        return configuration.label
-            .foregroundStyle(text)
-            .background(selected ? fill.opacity(configuration.isPressed ? 0.85 : 1) : palette.accent.opacity(configuration.isPressed ? 0.14 : hovering ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(palette.accent.opacity(today && !selected ? 1 : 0), lineWidth: 1))
-            .contentShape(RoundedRectangle(cornerRadius: 8)).onHover { hovering = $0 }.clickableCursor()
     }
 }

@@ -234,7 +234,7 @@ struct WorkbenchHomeStorageCard: View {
             + "，立即空闲 " + DeviceFormat.storage(immediatelyFree) + "，系统可回收（估算） " + DeviceFormat.storage(reclaimable))
         .accessibilityIdentifier("home-open-cleaning")
         .accessibilityElement(children: .contain)
-        .help("可用空间包含 macOS 可按需回收的估算。系统可回收不是方寸建议删除的文件；可清理仅来自已完成扫描，实际释放量以系统读数为准。")
+        .help("可用空间包含 macOS 可按需回收的估算。系统可回收不是 DeskDen 建议删除的文件；可清理仅来自已完成扫描，实际释放量以系统读数为准。")
     }
     private var capacityBar: some View {
         GeometryReader { geometry in

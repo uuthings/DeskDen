@@ -18,7 +18,7 @@ struct WBCheckboxToggleStyle: ToggleStyle {
                     .overlay {
                         Image(systemName: "checkmark")
                             .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(palette.primaryText)
+                            .foregroundStyle(palette.accentText)
                             .opacity(configuration.isOn ? 1 : 0)
                     }
                     .frame(width: 16, height: 16).accessibilityHidden(true)

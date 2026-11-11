@@ -1,8 +1,10 @@
 import AppKit
+import CoreSpotlight
 import LauncherCore
 
 @MainActor
 final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
+    private static let spotlightLaunchIdentifier = "local.deskden.launcher.open-workbench"
     let store: ConfigurationStore
     var configuration = LauncherConfiguration() {
         didSet { ButtonCursorPolicy.shared.apply(configuration.settings.buttonHoverCursor) }
@@ -186,7 +188,7 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
                 let legacy = support.appendingPathComponent("Fangcun/Launcher", isDirectory:true)
                 if !FileManager.default.fileExists(atPath:path.path), FileManager.default.fileExists(atPath:legacy.path),
                    !NSRunningApplication.runningApplications(withBundleIdentifier:LegacyIdentityMigration.legacyDefaultsDomain).isEmpty {
-                    throw LauncherError.storage("请先退出旧版方寸，再重新打开新版以迁移资料。")
+                    throw LauncherError.storage("请先退出旧版方寸，再重新打开 DeskDen 以迁移资料。")
                 }
                 try LegacyIdentityMigration.migrate(applicationSupport:support)
                 if LegacyIdentityMigration.hasMigrationMarker(in:path) {
@@ -243,11 +245,35 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
         topEntryController = WorkbenchTopEntryController(owner: self)
         if Bundle.main.object(forInfoDictionaryKey:"DeskDenUIReview") as? Bool != true {topEntryController?.start()}
         performStartupPresentation(DeskDenStartupPresentation(arguments:CommandLine.arguments))
+        indexSpotlightAlias()
         if Bundle.main.object(forInfoDictionaryKey: "DeskDenUIReview") as? Bool != true {
             updates.startAutomaticCheckingIfEnabled()
         }
     }
     func applicationShouldHandleReopen(_ sender:NSApplication,hasVisibleWindows flag:Bool) -> Bool { showWorkbench(); return true }
+    private func indexSpotlightAlias() {
+        guard Bundle.main.bundleIdentifier == ApplicationNames.deskDenIdentifier,
+              Bundle.main.object(forInfoDictionaryKey:"DeskDenUIReview") as? Bool != true,
+              Bundle.main.object(forInfoDictionaryKey:"DeskDenDeviceAcceptance") as? Bool != true,
+              ProcessInfo.processInfo.environment["DESKDEN_DATA_DIRECTORY"] == nil,
+              CSSearchableIndex.isIndexingAvailable() else { return }
+
+        let attributes = CSSearchableItemAttributeSet(contentType:.application)
+        attributes.title = ApplicationNames.deskDen
+        attributes.displayName = ApplicationNames.deskDen
+        attributes.alternateNames = [ApplicationNames.formerDeskDenName]
+        attributes.keywords = [ApplicationNames.formerDeskDenName]
+        let item = CSSearchableItem(uniqueIdentifier:Self.spotlightLaunchIdentifier,domainIdentifier:nil,attributeSet:attributes)
+        item.expirationDate = .distantFuture
+        CSSearchableIndex.default().indexSearchableItems([item],completionHandler:nil)
+    }
+    func application(_ application:NSApplication,continue userActivity:NSUserActivity,
+                     restorationHandler:@escaping ([any NSUserActivityRestoring]) -> Void) -> Bool {
+        guard userActivity.activityType == CSSearchableItemActionType,
+              userActivity.userInfo?[CSSearchableItemActivityIdentifier] as? String == Self.spotlightLaunchIdentifier else { return false }
+        showWorkbench()
+        return true
+    }
     /// Only the ordinary workbench participates in Dock and Command-Tab. Mini,
     /// widgets and the launcher remain temporary accessory surfaces.
     func setWorkbenchDockVisible(_ visible: Bool) {
@@ -389,11 +415,11 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
     func configureMenus() {
         let main = NSMenu()
         let application = NSMenuItem(); let submenu = NSMenu()
-        submenu.addItem(withTitle:"关于方寸",action:#selector(showAbout),keyEquivalent:"").target = self
+        submenu.addItem(withTitle:"关于 DeskDen",action:#selector(showAbout),keyEquivalent:"").target = self
         submenu.addItem(withTitle:"设置",action:#selector(allSettingsFromMenu),keyEquivalent:",").target = self
         submenu.addItem(withTitle:"检查更新",action:#selector(checkForUpdatesFromMenu),keyEquivalent:"").target = self
         submenu.addItem(.separator())
-        submenu.addItem(withTitle:"退出方寸",action:#selector(requestQuitFromMenu),keyEquivalent:"q").target=self
+        submenu.addItem(withTitle:"退出 DeskDen",action:#selector(requestQuitFromMenu),keyEquivalent:"q").target=self
         application.submenu = submenu; main.addItem(application)
         let edit = NSMenuItem(title:"编辑",action:nil,keyEquivalent:""); let editMenu = NSMenu(title:"编辑")
         for (title,selector,key) in [("撤销",Selector(("undo:")),"z"),("剪切",#selector(NSText.cut(_:)),"x"),("拷贝",#selector(NSText.copy(_:)),"c"),("粘贴",#selector(NSText.paste(_:)),"v"),("全选",#selector(NSText.selectAll(_:)),"a")] { editMenu.addItem(withTitle:title,action:selector,keyEquivalent:key) }
@@ -416,9 +442,9 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
 #endif
         window.submenu = windowMenu; main.addItem(window); NSApp.windowsMenu = windowMenu; NSApp.mainMenu = main
         statusItem = NSStatusBar.system.statusItem(withLength:NSStatusItem.variableLength)
-        statusItem.button?.title = ""; statusItem.button?.toolTip = "方寸"
+        statusItem.button?.title = ""; statusItem.button?.toolTip = "DeskDen"
         statusItem.button?.image = ApplicationIconController.shared.menuBarImage()
-        statusItem.button?.setAccessibilityLabel("方寸菜单")
+        statusItem.button?.setAccessibilityLabel("DeskDen 菜单")
         statusIconObserver = NotificationCenter.default.addObserver(forName: ApplicationIconController.changedNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.statusItem?.button?.image = ApplicationIconController.shared.menuBarImage()
@@ -440,7 +466,7 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
         result.addItem(withTitle:"设置",action:#selector(allSettingsFromMenu),keyEquivalent:"").target=self
         result.addItem(withTitle:"检查更新",action:#selector(checkForUpdatesFromMenu),keyEquivalent:"").target=self
         result.addItem(.separator())
-        result.addItem(withTitle:"退出方寸",action:#selector(requestQuitFromMenu),keyEquivalent:"q").target=self
+        result.addItem(withTitle:"退出 DeskDen",action:#selector(requestQuitFromMenu),keyEquivalent:"q").target=self
         menuNeedsUpdate(result)
         return result
     }
@@ -522,7 +548,7 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
     @objc func showAbout() { show(); showHelp() }
     func configurePanel() {
         panel = LauncherPanel(contentRect:NSRect(origin:.zero,size:size),styleMask:[.borderless,.nonactivatingPanel],backing:.buffered,defer:false)
-        panel.title = "方寸启动器"; panel.level = .floating; panel.isOpaque = false; panel.backgroundColor = .clear
+        panel.title = "DeskDen 启动器"; panel.level = .floating; panel.isOpaque = false; panel.backgroundColor = .clear
         panel.hasShadow = true; panel.hidesOnDeactivate = false; panel.becomesKeyOnlyIfNeeded = false
         panel.collectionBehavior = [.canJoinAllSpaces,.fullScreenAuxiliary,.transient]
         panel.isMovableByWindowBackground = true; panel.delegate = self; panel.appearance = NSAppearance(named:.darkAqua)
@@ -871,9 +897,10 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
         let w = size.width, h = size.height
         let footerY = h - (expanded ? 59 : 50), footerInset:CGFloat = expanded ? 16 : 0
         let chromeOffset = expanded ? NSPoint(x:16,y:20) : .zero
-        content.addSubview(LauncherBrandView(frame:NSRect(x:32+chromeOffset.x,y:31+chromeOffset.y,width:85,height:32)))
+        let brandFrame = NSRect(x:32+chromeOffset.x,y:31+chromeOffset.y,width:LauncherBrandView.preferredWidth,height:32)
+        content.addSubview(LauncherBrandView(frame:brandFrame))
         if !isEditing {
-            let switcher = LauncherViewSwitcher(frame:NSRect(x:129+chromeOffset.x,y:31+chromeOffset.y,width:127,height:32),applications:searchView) { [weak self] applications in
+            let switcher = LauncherViewSwitcher(frame:NSRect(x:brandFrame.maxX+12,y:brandFrame.minY,width:127,height:32),applications:searchView) { [weak self] applications in
                 guard let self else { return }
                 if applications { setSearch(text:textMode) } else { setKeys() }
             }
@@ -887,7 +914,7 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
             }
             content.addSubview(workbench)
         } else {
-            label("编辑绑定",x:112,y:31,width:120,height:18,size:12,color:Palette.secondary)
+            label("编辑绑定",x:brandFrame.maxX+12,y:brandFrame.minY,width:120,height:18,size:12,color:Palette.secondary)
             button("取消",rect:NSRect(x:w-172,y:23,width:64,height:34),border:true) { [weak self] in self?.finishEditing(save:false) }
             button("完成",rect:NSRect(x:w-98,y:23,width:70,height:34),primary:true) { [weak self] in self?.finishEditing(save:true) }
         }

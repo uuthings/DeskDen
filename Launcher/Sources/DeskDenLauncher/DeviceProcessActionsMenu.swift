@@ -29,7 +29,7 @@ struct DeviceProcessActionAvailability {
         func add(_ value: String) { if !reasons.contains(value) { reasons.append(value) } }
         for process in members where !allowed(process) {
             if process.pid == currentPID || (currentApplicationPath != nil && process.application?.bundlePath == currentApplicationPath) {
-                add("方寸及其辅助进程由应用自身管理。")
+                add("DeskDen 及其辅助进程由应用自身管理。")
             } else if process.pid <= 1 || ["/System/Library/", "/usr/", "/bin/", "/sbin/"].contains(where: { process.executablePath?.hasPrefix($0) == true }) {
                 add("系统服务受保护，避免影响 macOS 的正常运行。")
             } else if let owner = process.ownerUID, owner != currentUID {

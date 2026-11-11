@@ -232,7 +232,7 @@ struct WorkbenchMiniPanelView: View {
                         .help(context.date + " · " + context.zoneHelp + "\n打开首页的城市、天气与时间设置")
                         .accessibilityLabel("城市、天气与时间设置，" + context.time + "，" + context.date)
                         .accessibilityIdentifier("mini-open-context-date")
-                } else { Text("方寸").font(.system(size: 12)) }
+                } else { Text("DeskDen").font(.system(size: 12)) }
             }.frame(width: wing, height: 28, alignment: .leading).clipped()
                 .accessibilityElement(children: .contain).accessibilityIdentifier("mini-header-date")
             Spacer(minLength: 0)

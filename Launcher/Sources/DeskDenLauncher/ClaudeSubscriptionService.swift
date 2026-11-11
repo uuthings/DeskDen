@@ -107,7 +107,7 @@ actor ClaudeSubscriptionService: ClaudeSubscriptionProviding {
         catch { return .failed(separateDirectoryMessage) }
         switch await ClaudeSubscriptionProcess.run(executable: executable, configuration: configuration, mode: .authentication) {
         case .authentication(.signedOut) where configuration != nil:
-            return .loginRequired("方寸单独保存的 Claude 会员登录已退出或失效，请重新登录 Claude 会员。", .signIn)
+            return .loginRequired("DeskDen 单独保存的 Claude 会员登录已退出或失效，请重新登录 Claude 会员。", .signIn)
         case .authentication(let identity):
             if let requirement = ClaudeSubscriptionUsage.loginRequirement(identity) { return requirement }
         case .failure(let reading): return reading
@@ -158,7 +158,7 @@ actor ClaudeSubscriptionService: ClaudeSubscriptionProviding {
         }
         let configuration = separateConfiguration(dataDirectory)
         do { try privateDirectory(dataDirectory, create: true); try privateDirectory(configuration, create: true) }
-        catch { return .failed("无法建立方寸单独登录所需的目录，本机 Claude Code 登录未更改。") }
+        catch { return .failed("无法建立 DeskDen 单独登录所需的目录，本机 Claude Code 登录未更改。") }
         switch await ClaudeSubscriptionProcess.run(executable: executable, configuration: configuration, mode: .login) {
         case .completed: break
         case .failure(.loginRequired(let message, _)): return .loginRequired(message, .separateLogin)
@@ -195,7 +195,7 @@ actor ClaudeSubscriptionService: ClaudeSubscriptionProviding {
         return await query(dataDirectory: dataDirectory, separate: false)
     }
 
-    private static let separateDirectoryMessage = "方寸单独保存的 Claude 登录目录不可用，请在「高级连接方式」中改回本机登录后重试。"
+    private static let separateDirectoryMessage = "DeskDen 单独保存的 Claude 登录目录不可用，请在「高级连接方式」中改回本机登录后重试。"
     private static func separateConfiguration(_ dataDirectory: URL) -> URL {
         dataDirectory.appendingPathComponent("ClaudeSubscription", isDirectory: true)
     }

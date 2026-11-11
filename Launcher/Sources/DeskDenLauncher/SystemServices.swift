@@ -6,10 +6,17 @@ import LauncherCore
 import UniformTypeIdentifiers
 
 enum ApplicationNames {
+    static let deskDenIdentifier = "local.deskden.launcher"
+    static let deskDen = "DeskDen"
+    static let formerDeskDenName = "方寸"
+
     // The launcher has a Chinese UI even when an application's own display name follows English.
     static let chinese: [String:String] = ["com.apple.finder":"访达", "com.apple.Notes":"备忘录", "com.apple.iCal":"日历", "com.apple.mail":"邮件", "com.apple.Terminal":"终端", "com.apple.Preview":"预览", "com.apple.Photos":"照片", "com.apple.reminders":"提醒事项", "com.apple.shortcuts":"快捷指令", "com.apple.Music":"音乐", "com.apple.MobileSMS":"信息", "com.apple.calculator":"计算器", "com.apple.systempreferences":"系统设置", "com.apple.ActivityMonitor":"活动监视器", "com.apple.TextEdit":"文本编辑", "com.apple.VoiceMemos":"语音备忘录", "com.apple.iBooksX":"图书", "com.apple.keychainaccess":"钥匙串访问", "com.tencent.xinWeChat":"微信", "com.google.Chrome":"Chrome"]
     static func name(for url:URL) -> String {
-        if let identifier = Bundle(url:url)?.bundleIdentifier, let name = chinese[identifier] { return name }
+        if let identifier = Bundle(url:url)?.bundleIdentifier {
+            if identifier == deskDenIdentifier { return deskDen }
+            if let name = chinese[identifier] { return name }
+        }
         return FileManager.default.displayName(atPath:url.path).replacingOccurrences(of:".app",with:"",options:[.anchored,.backwards])
     }
     /// Search aliases come from the installed bundle rather than a guessed
@@ -21,6 +28,7 @@ enum ApplicationNames {
         names += fields.compactMap { bundle?.localizedInfoDictionary?[$0] as? String }
         if let executable = bundle?.executableURL?.lastPathComponent { names.append(executable) }
         names.append(url.deletingPathExtension().lastPathComponent)
+        if bundle?.bundleIdentifier == deskDenIdentifier { names.append(formerDeskDenName) }
         var seen = Set<String>()
         return names.compactMap { value -> String? in
             let name = value.trimmingCharacters(in:.whitespacesAndNewlines)
@@ -264,7 +272,7 @@ final class TargetLauncher {
             guard let url = TargetResolver.url(for: target) else { throw LauncherError.unavailable("找不到脚本，请重新选择。") }
             let result = try await CommandRunner.run(executable: "/bin/sh", arguments: [url.path], directory: url.deletingLastPathComponent(), timeout: 120)
             guard !result.timedOut, result.status == 0 else { throw LauncherError.unavailable(result.timedOut ? "脚本运行超时，已请求停止。" : "脚本退出码为 \(result.status)。请检查脚本后重试。") }
-        case .tool: throw LauncherError.unavailable("方寸工具将在对应工作台模块验收后开放。")
+        case .tool: throw LauncherError.unavailable("DeskDen 工具将在对应工作台模块验收后开放。")
         }
     }
 }

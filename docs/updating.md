@@ -29,7 +29,7 @@ Follow [the Organizer release process](releasing.md) first. Export the notarized
 ```sh
 python3 tools/prepare-update-feed.py --app "$EXPORTED_NOTARIZED_APP" \
   --sparkle-bin "$VERIFIED_SPARKLE_BIN" --signing-account "$SPARKLE_SIGNING_ACCOUNT" --notes "$PUBLIC_RELEASE_NOTES" \
-  --download-url-prefix "https://updates.uuthings.com/deskden/macos/releases/0.6.0-7/" \
+  --download-url-prefix "https://updates.uuthings.com/deskden/macos/releases/0.6.1-8/" \
   --output "$NEW_PERSISTENT_UPDATE_DIRECTORY"
 ```
 

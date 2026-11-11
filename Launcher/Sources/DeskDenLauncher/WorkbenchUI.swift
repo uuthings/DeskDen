@@ -43,6 +43,8 @@ enum WBControlMetrics {
     static let compactHeight: CGFloat = 28
     static let cornerRadius: CGFloat = 8
     static let hoverDuration: Double = 0.18
+    static let primaryHoverShade: Double = 0.06
+    static let primaryPressShade: Double = 0.12
 }
 
 /// Compatibility tokens for existing content. New reusable components obtain
@@ -476,6 +478,7 @@ struct WBButtonStyle: ButtonStyle {
         // A disabled primary button takes the regular face with muted text,
         // so its label stays readable in both appearances (现行规范 4.3, G4).
         let filled = primary && enabled
+        let shade = pressed ? WBControlMetrics.primaryPressShade : hovered ? WBControlMetrics.primaryHoverShade : 0
         return configuration.label
             .font(.system(size: (compact ? 11 : 12) * displayScale, weight: filled ? .medium : .regular))
             .multilineTextAlignment(.center)
@@ -484,11 +487,11 @@ struct WBButtonStyle: ButtonStyle {
             .frame(height: (compact ? WBControlMetrics.compactHeight : WBControlMetrics.regularHeight) * displayScale, alignment: .center)
             .foregroundStyle(filled ? palette.primaryText : primary ? palette.muted : destructive ? palette.critical : palette.secondary)
             .background(shape.fill(filled ? palette.primary : palette.control))
-            .overlay(shape.fill(filled ? Color.black.opacity(pressed ? 0.12 : hovered ? 0.06 : 0) : tone.opacity(pressed ? 0.14 : hovered ? 0.08 : 0)).allowsHitTesting(false))
+            .overlay(shape.fill(filled ? Color.black.opacity(shade) : tone.opacity(pressed ? 0.14 : hovered ? 0.08 : 0)).allowsHitTesting(false))
             .overlay(shape.strokeBorder(filled ? palette.primary : palette.controlBorder, lineWidth: showsBorder ? 1 : 0).allowsHitTesting(false))
             .contentShape(shape).opacity(enabled || primary ? 1 : 0.4)
             // The system ring is replaced by one that follows the control's corners.
-            .overlay(WBKeyboardFocusRing(radius: WBControlMetrics.cornerRadius))
+            .overlay(WBKeyboardFocusRing(radius: WBControlMetrics.cornerRadius, color: filled ? palette.primaryText : palette.accent))
             .focusEffectDisabled()
             .animation(reduceMotion ? nil : .easeOut(duration: WBControlMetrics.hoverDuration), value: hovered)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: pressed)
@@ -500,11 +503,11 @@ struct WBButtonStyle: ButtonStyle {
 /// control's size, hit area and accessibility frame stay unchanged.
 struct WBKeyboardFocusRing: View {
     var radius: CGFloat
+    var color: Color
     @Environment(\.isFocused) private var focused
-    @Environment(\.workbenchPalette) private var palette
     var body: some View {
         RoundedRectangle(cornerRadius: radius, style: .continuous)
-            .strokeBorder(palette.accent, lineWidth: 2)
+            .strokeBorder(color, lineWidth: 2)
             .opacity(focused ? 1 : 0).allowsHitTesting(false).accessibilityHidden(true)
     }
 }

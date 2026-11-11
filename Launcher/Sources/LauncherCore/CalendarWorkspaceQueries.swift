@@ -27,7 +27,7 @@ public enum CalendarWorkspaceQueries {
     public static func sourceTitle(_ entry: CalendarAgendaEntry) -> String {
         switch entry {
         case .event(let event): "日程 · " + event.calendarName
-        case .reminder(let item): item.origin == .local ? "方寸本机" : "待办 · " + (item.calendarName ?? "提醒事项")
+        case .reminder(let item): item.origin == .local ? "DeskDen 本机" : "待办 · " + (item.calendarName ?? "提醒事项")
         }
     }
 

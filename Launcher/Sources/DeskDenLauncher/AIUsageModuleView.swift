@@ -1246,7 +1246,7 @@ private struct AIUsageDialogContent: View {
                 AINotice(text: "用量颜色统一在 70% 转黄、90% 转红；通知按上方设置的比例触发。来源过期或缺失时不触发通知，不用 Token 推算额度。")
                 if model.notificationPermission == .denied || model.notificationPermission == .unavailable {
                     HStack(alignment: .top, spacing: 12) {
-                        Text(model.notificationPermission == .denied ? "系统通知未获允许，规则仍会保存。请允许方寸发送通知。" : "当前运行环境无法发送系统通知，规则可先保存在本机。").aiText(11, color: palette.warning)
+                        Text(model.notificationPermission == .denied ? "系统通知未获允许，规则仍会保存。请允许 DeskDen 发送通知。" : "当前运行环境无法发送系统通知，规则可先保存在本机。").aiText(11, color: palette.warning)
                         if model.notificationPermission == .denied { Button("打开设置") { openNotificationSettings() }.buttonStyle(WBButtonStyle(compact: true)) }
                     }
                 }
@@ -1306,7 +1306,7 @@ private struct AIUsageDialogContent: View {
         AIDialogShell(title: "连接 Claude 额度", close: model.requestDismissDialog) {
             VStack(alignment: .leading, spacing: 0) {
                 Text("通过本机 Claude Code 主动查询五小时和每周额度，无需发送对话，也不通过 Token 数推算。").aiText(12, color: palette.secondary).padding(.bottom, 4)
-                AISourceRow(title: model.claudeUsesSeparateLogin ? "方寸单独登录" : "本机 Claude Code",
+                AISourceRow(title: model.claudeUsesSeparateLogin ? "DeskDen 单独登录" : "本机 Claude Code",
                             detail: ClaudeConnectionPresentation.status(model.claudeLoginRemedy), last: true) {
                     Button(model.dialogBusy ? "正在连接…" : ClaudeConnectionPresentation.primaryTitle(model.claudeLoginRemedy)) {
                         connectClaude(ClaudeConnectionPresentation.primaryAction(model.claudeLoginRemedy))
@@ -1316,12 +1316,12 @@ private struct AIUsageDialogContent: View {
                 if model.claudeLoginRemedy == .switchInTerminal { ClaudeTerminalSwitchNotice().padding(.top, 12) }
                 DisclosureGroup("高级连接方式") {
                     if model.claudeUsesSeparateLogin {
-                        AISourceRow(title: "改回本机登录", detail: "退出方寸单独保存的会员登录，改为读取本机 Claude Code") {
+                        AISourceRow(title: "改回本机登录", detail: "退出 DeskDen 单独保存的会员登录，改为读取本机 Claude Code") {
                             Button("改回") { connectClaude(.useLocalLogin) }.buttonStyle(WBButtonStyle(compact: true))
                                 .accessibilityIdentifier("fc.ai.claude.use-local-login")
                         }
                     } else {
-                        AISourceRow(title: "为方寸单独登录会员", detail: "终端需要保留 API 或其他登录时使用，不改变本机 Claude Code") {
+                        AISourceRow(title: "为 DeskDen 单独登录会员", detail: "终端需要保留 API 或其他登录时使用，不改变本机 Claude Code") {
                             Button("官方登录") { connectClaude(.signInSeparately) }.buttonStyle(WBButtonStyle(compact: true))
                                 .accessibilityIdentifier("fc.ai.claude.member-login")
                         }

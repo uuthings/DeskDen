@@ -155,7 +155,7 @@ enum WorkbenchResponsiveLayoutChecks {
                 check(accessibilityText("window-brand", in: host).contains(version),
                       "\(route.rawValue) keeps the version's lowercase v prefix in the shared brand in \(label)")
                 if route == .settings && model.settingsTab == .general {
-                    check(accessibilityText("updates-current-version", in: host).contains("方寸 " + version),
+                    check(accessibilityText("updates-current-version", in: host).contains("DeskDen " + version),
                           "software update settings show the same lowercase version prefix in \(label)")
                 }
             }
@@ -366,12 +366,14 @@ enum WorkbenchResponsiveLayoutChecks {
         let originalFrame = window.frame, originalRoute = model.route, originalDetail = model.deviceDetail
         let originalDestination = model.ai.destination, originalSettingsTab = model.settingsTab
         let originalCalendarSources = model.calendar.showSources, originalVaultProtection = model.vault.showingProtection
+        let originalVaultProtectionFromSettings = model.vault.protectionFromSettings
         let originalManualDraft = model.ai.manualDraft, originalDeviceOffset = model.device.dashboardScrollOffset
         defer {
             model.deviceDetail = originalDetail; model.ai.manualDraft = originalManualDraft
             model.ai.show(originalDestination); model.settingsTab = originalSettingsTab
-            model.calendar.showSources = originalCalendarSources; model.vault.showingProtection = originalVaultProtection
+            model.calendar.showSources = originalCalendarSources
             model.navigate(originalRoute)
+            if originalVaultProtection {model.vault.showProtection(fromSettings:originalVaultProtectionFromSettings)}
             model.device.dashboardScrollOffset = originalDeviceOffset
             window.setFrame(originalFrame, display: false)
         }
@@ -384,7 +386,7 @@ enum WorkbenchResponsiveLayoutChecks {
             let label = "\(Int(size.width))×\(Int(size.height))"
             for (route, identifier) in routes {
                 model.deviceDetail = nil; model.ai.showOverview(); model.settingsTab = .general
-                model.calendar.showSources = false; model.vault.showingProtection = false
+                model.calendar.showSources = false; model.vault.closeProtection()
                 model.navigate(route)
                 let mounted = await wait(window) {
                     guard let scroll = outerPageScrollView(in: host) else { return false }

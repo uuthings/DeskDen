@@ -258,7 +258,7 @@ struct WorkbenchStatusMessageDialog:View {
     @ObservedObject var model:WorkbenchAppModel
     @Environment(\.workbenchPalette) private var palette
     var body:some View {
-        WorkbenchDialogFrame(title:"方寸",dismiss:{model.message=nil}) {
+        WorkbenchDialogFrame(title:"DeskDen",dismiss:{model.message=nil}) {
             Text(model.message ?? "").font(.system(size:12)).foregroundStyle(palette.secondary).fixedSize(horizontal:false,vertical:true)
                 .accessibilityIdentifier("workbench-status-message-text")
         }actions:{Spacer();Button("知道了"){model.message=nil}.buttonStyle(WBButtonStyle(primary:true))}

@@ -55,7 +55,7 @@ final class ProviderUsageBrowserBridge {
               applicationSupportDirectory.isFileURL, let bundle = Bundle(url: applicationURL), let executable = bundle.executableURL,
               manager.isExecutableFile(atPath: executable.path),
               manager.fileExists(atPath: applicationURL.appendingPathComponent("Contents/Resources/BrowserConnectors/IPRoyal/manifest.json").path) else {
-            throw ProviderUsageFailure.unavailable("请将完整的方寸 App 放入应用程序后，再安装本机连接。")
+            throw ProviderUsageFailure.unavailable("请将完整的 DeskDen App 放入应用程序后，再安装本机连接。")
         }
         let hostDirectory = applicationSupportDirectory.appendingPathComponent("Google/Chrome/NativeMessagingHosts", isDirectory: true)
         let runtimeDirectory = applicationSupportDirectory.appendingPathComponent("DeskDen/Connectors/IPRoyal", isDirectory: true)
@@ -93,7 +93,7 @@ final class ProviderUsageBrowserBridge {
         let target = directory.appendingPathComponent("DeskDen-IPRoyal-Connector", isDirectory: true)
         guard !manager.fileExists(atPath: target.path), let bundle = Bundle(url: applicationURL), let executable = bundle.executableURL,
               manager.isExecutableFile(atPath: executable.path), directory.isFileURL, bridgeDirectory.isFileURL else {
-            throw ProviderUsageFailure.unavailable("请选择新目录，并使用完整的方寸 App 导出连接包。")
+            throw ProviderUsageFailure.unavailable("请选择新目录，并使用完整的 DeskDen App 导出连接包。")
         }
         try manager.createDirectory(at: target, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         do {

@@ -38,16 +38,16 @@ zsh ./scripts/check-app-icons.sh > "$verification_dir/app-icon-checks.log" 2>&1
 swift test > "$verification_dir/core-tests.log" 2>&1
 # Full mounted workbench and expanded AI checks are DEBUG-only. Keep their result
 # separate from the production Release executable instead of reporting 0/0 as coverage.
-./scripts/build-local.sh "$verification_dir/Debug/方寸.app" debug > "$verification_dir/debug-build.log" 2>&1
-"$verification_dir/Debug/方寸.app/Contents/MacOS/DeskDenLauncher" --self-check > "$verification_dir/debug-native-checks.log" 2>&1
-"$verification_dir/Debug/方寸.app/Contents/MacOS/DeskDenLauncher" --device-check > "$verification_dir/debug-device-module-checks.log" 2>&1
-"$verification_dir/Debug/方寸.app/Contents/MacOS/DeskDenLauncher" --home-feedback-check > "$verification_dir/home-feedback-checks.log" 2>&1
-"$verification_dir/Debug/方寸.app/Contents/MacOS/DeskDenLauncher" --calendar-deadline-editor-check > "$verification_dir/calendar-deadline-editor-checks.log" 2>&1
-"$verification_dir/Debug/方寸.app/Contents/MacOS/DeskDenLauncher" --calendar-layout-check > "$verification_dir/calendar-layout-checks.log" 2>&1
-./scripts/build-local.sh "$verification_dir/Release/方寸.app" release > "$verification_dir/build.log" 2>&1
-"$verification_dir/Release/方寸.app/Contents/MacOS/DeskDenLauncher" --self-check > "$verification_dir/native-checks.log" 2>&1
-"$verification_dir/Release/方寸.app/Contents/MacOS/DeskDenLauncher" --device-check > "$verification_dir/device-module-checks.log" 2>&1
-"$verification_dir/Release/方寸.app/Contents/MacOS/DeskDenLauncher" --form-check > "$verification_dir/form-checks.log" 2>&1
+./scripts/build-local.sh "$verification_dir/Debug/DeskDen.app" debug > "$verification_dir/debug-build.log" 2>&1
+"$verification_dir/Debug/DeskDen.app/Contents/MacOS/DeskDenLauncher" --self-check > "$verification_dir/debug-native-checks.log" 2>&1
+"$verification_dir/Debug/DeskDen.app/Contents/MacOS/DeskDenLauncher" --device-check > "$verification_dir/debug-device-module-checks.log" 2>&1
+"$verification_dir/Debug/DeskDen.app/Contents/MacOS/DeskDenLauncher" --home-feedback-check > "$verification_dir/home-feedback-checks.log" 2>&1
+"$verification_dir/Debug/DeskDen.app/Contents/MacOS/DeskDenLauncher" --calendar-deadline-editor-check > "$verification_dir/calendar-deadline-editor-checks.log" 2>&1
+"$verification_dir/Debug/DeskDen.app/Contents/MacOS/DeskDenLauncher" --calendar-layout-check > "$verification_dir/calendar-layout-checks.log" 2>&1
+./scripts/build-local.sh "$verification_dir/Release/DeskDen.app" release > "$verification_dir/build.log" 2>&1
+"$verification_dir/Release/DeskDen.app/Contents/MacOS/DeskDenLauncher" --self-check > "$verification_dir/native-checks.log" 2>&1
+"$verification_dir/Release/DeskDen.app/Contents/MacOS/DeskDenLauncher" --device-check > "$verification_dir/device-module-checks.log" 2>&1
+"$verification_dir/Release/DeskDen.app/Contents/MacOS/DeskDenLauncher" --form-check > "$verification_dir/form-checks.log" 2>&1
 zsh ./scripts/check-device-monitoring.sh > "$verification_dir/device-monitoring-checks.log" 2>&1
 zsh ./scripts/check-calendar-model.sh > "$verification_dir/calendar-model-checks.log" 2>&1
 zsh ./scripts/check-vault-model.sh > "$verification_dir/vault-model-checks.log" 2>&1
@@ -177,10 +177,10 @@ for group, name in [('debug', 'debug-build.log'), ('release', 'build.log')]:
     matches = re.findall(r'^Production bundle verified: (\d+) files;', text, re.MULTILINE)
     if len(matches) != 1 or int(matches[0]) <= 0:
         raise SystemExit('Missing verified production bundle summary: ' + name)
-    bundle = json.loads((verification / ('Debug' if group == 'debug' else 'Release') / '方寸.app.evidence/bundle-integrity.json').read_text())
+    bundle = json.loads((verification / ('Debug' if group == 'debug' else 'Release') / 'DeskDen.app.evidence/bundle-integrity.json').read_text())
     if bundle.get('configuration') != group or not all(bundle.get(key) is True for key in ['sourceInputsUnchanged', 'productionInfoAndResourcesMatchSource', 'codeSignatureVerified', 'executableMatchesBuildOutputBeforeSigning']):
         raise SystemExit('Build evidence does not match the requested configuration: ' + name)
-    app = verification / ('Debug' if group == 'debug' else 'Release') / '方寸.app'
+    app = verification / ('Debug' if group == 'debug' else 'Release') / 'DeskDen.app'
     actual_files = {}
     for path in sorted(app.rglob('*')):
         if path.is_symlink():
@@ -194,10 +194,10 @@ for group, name in [('debug', 'debug-build.log'), ('release', 'build.log')]:
     if not actual_files or actual_files != bundle.get('files') or len(actual_files) != int(matches[0]):
         raise SystemExit('The checked bundle changed after packaging: ' + name)
     for phase in ['before', 'after']:
-        build_inputs = json.loads((verification / ('Debug' if group == 'debug' else 'Release') / ('方寸.app.evidence/source-inputs-' + phase + '.json')).read_text())
+        build_inputs = json.loads((verification / ('Debug' if group == 'debug' else 'Release') / ('DeskDen.app.evidence/source-inputs-' + phase + '.json')).read_text())
         if build_inputs.get('configuration') != group or build_inputs.get('files') != after['files']:
             raise SystemExit('Build inputs do not match the complete verification input set: ' + name)
-    summary[group + 'BundleManifest'] = ('Debug' if group == 'debug' else 'Release') + '/方寸.app.evidence/bundle-integrity.json'
+    summary[group + 'BundleManifest'] = ('Debug' if group == 'debug' else 'Release') + '/DeskDen.app.evidence/bundle-integrity.json'
 
 (verification / 'verification-summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
 print('Debug mounted coverage and Release production checks are separate; Release omits DEBUG-only cases.')

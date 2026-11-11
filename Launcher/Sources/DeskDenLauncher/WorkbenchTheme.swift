@@ -25,6 +25,7 @@ struct ThemePalette: Sendable {
     var secondary: Color { Color(nsColor: nsSecondary) }
     var muted: Color { Color(nsColor: nsMuted) }
     var accent: Color { Color(nsColor: nsAccent) }
+    var accentText: Color { light ? .white : token(0x103B32) }
     var cool: Color { token(light ? 0x655CA8 : 0xC4BEFF) }
     var success: Color { accent }
     var warning: Color { token(light ? 0x9E6113 : 0xFFDA93) }
@@ -34,8 +35,11 @@ struct ThemePalette: Sendable {
     var raised: Color { token(light ? 0xFFFFFF : 0x182127, light ? 0.95 : 0.78) }
     var border: Color { token(0xFFFFFF, light ? 0.69 : 0.23) }
     var line: Color { token(light ? 0x244D58 : 0xD4E2E6, light ? 0.12 : 0.16) }
-    var primary: Color { accent }
-    var primaryText: Color { light ? .white : token(0x103B32) }
+    var primary: Color { token(light ? 0x2866D7 : 0x83B4FF) }
+    var primaryText: Color { light ? .white : token(0x102644) }
+    var calendarSelection: Color { token(light ? 0xAFCDFB : 0x456A9D) }
+    var calendarSelectionText: Color { token(light ? 0x173964 : 0xF0F6FF) }
+    var calendarToday: Color { light ? token(0x225BBE) : primary }
     var overlay: Color { surface }
     var sidebar: Color { surface }
     var chrome: Color { token(light ? 0xFFFFFF : 0x091116, light ? 0.10 : 0.24) }

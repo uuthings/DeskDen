@@ -57,7 +57,7 @@ import LauncherCore
             NSApp.isActive && NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier
                 && window.isVisible && window.isKeyWindow && NSApp.keyWindow === window
         }
-        let expected=["打开工作台","打开启动器","设置","检查更新","退出方寸"]
+        let expected=["打开工作台","打开启动器","设置","检查更新","退出 DeskDen"]
         check(menu.items.filter{!$0.isSeparatorItem}.map(baseTitle) == expected && menu.items.filter(\.isSeparatorItem).count == 2,
               "the native menu has exactly five actions and two separators without duplicate settings or rescan")
         check(menu.items[0].title == "打开工作台" && menu.items[0].keyEquivalent == "f"

@@ -64,10 +64,9 @@ import LauncherCore
                       "usage root entry clears \(destination) and service details")
             }
             model.navigate(.settings); model.settingsTab = .privacy
-            model.vault.showProtection(fromSettings: true); model.navigate(.vault)
-            model.selectModule(.network)
-            check(model.selectModule(.vault) && !model.vault.showingProtection && !model.vault.protectionFromSettings,
-                  "private-space entry closes protection details without unlocking the vault")
+            model.vault.showProtection(fromSettings:true)
+            check(model.selectModule(.vault) && !model.vault.isUnlocked && !model.vault.showingProtection && !model.vault.protectionFromSettings,
+                  "private-space entry while locked never shows protection details")
             model.navigate(.settings); model.settingsTab = .launcher; model.launcherSection = 2
             check(model.selectModule(.settings) && model.settingsTab == .general && model.launcherSection == 0,
                   "settings button consistently opens general settings")
@@ -100,7 +99,7 @@ import LauncherCore
             check(!model.selectModule(.network) && model.route == .ai,
                   "usage configuration blocks navigation before its modal is mounted")
             model.usagePresentation.showingConfiguration = false
-            model.navigate(.vault); model.vault.sheet = .backup
+            model.navigate(.vault); model.vault.sheet = .setup
             check(!model.selectModule(.device) && model.route == .vault && model.vault.sheet != nil,
                   "private-space editors are not dismissed by primary navigation")
             model.vault.sheet = nil

@@ -22,7 +22,7 @@ public enum DisplayMode: String, Codable, CaseIterable, Sendable {
 
 public enum TargetKind: String, Codable, CaseIterable, Sendable {
     case app, file, folder, web, shortcut, tool, shell
-    public var title: String { switch self { case .app: "应用"; case .file: "文件"; case .folder: "文件夹"; case .web: "网页"; case .shortcut: "快捷指令"; case .tool: "方寸工具"; case .shell: "Shell 脚本" } }
+    public var title: String { switch self { case .app: "应用"; case .file: "文件"; case .folder: "文件夹"; case .web: "网页"; case .shortcut: "快捷指令"; case .tool: "DeskDen 工具"; case .shell: "Shell 脚本" } }
     public var symbol: String { switch self { case .app: "app"; case .file: "doc"; case .folder: "folder"; case .web: "globe"; case .shortcut: "square.stack.3d.up"; case .tool: "rectangle.3.group"; case .shell: "terminal" } }
     public var isFileSystem: Bool { [.app,.file,.folder,.shell].contains(self) }
 }

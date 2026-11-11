@@ -1,7 +1,7 @@
 #!/bin/zsh
 set -euo pipefail
 cd "${0:A:h}/.."
-app_path="${1:-$PWD/build/方寸.app}"
+app_path="${1:-$PWD/build/DeskDen.app}"
 build_configuration="${2:-release}"
 if [[ "$build_configuration" != debug && "$build_configuration" != release ]]; then
     print -u2 'Usage: build-local.sh [absolute-new-app-path] [debug|release]'

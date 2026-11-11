@@ -379,7 +379,7 @@ struct WorkbenchTopEntryInput {
         panel.hasShadow = true; panel.hidesOnDeactivate = false
         panel.level = .statusBar
         panel.collectionBehavior = [.canJoinAllSpaces, .canJoinAllApplications, .fullScreenAuxiliary, .ignoresCycle]
-        panel.setAccessibilityLabel("方寸灵动岛")
+        panel.setAccessibilityLabel("DeskDen 灵动岛")
         panel.appearance = NSAppearance(named: Palette.isLight ? .aqua : .darkAqua)
         let notchWidth = hardwareNotchWidth(on: screen)
         let size = WorkbenchMiniLayout.size(cards: preferences.activeCards(available: availableMiniCards),

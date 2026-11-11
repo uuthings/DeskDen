@@ -294,15 +294,19 @@ final class ActionButton: ClickableButton {
     override func draw(_ dirtyRect: NSRect) {
         let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: radius, yRadius: radius)
         let isFocused = window?.firstResponder === self
+        let palette = Palette.workbenchPalette
         if primary {
-            (isEnabled ? Palette.accent : Palette.ink.withAlphaComponent(0.12)).setFill(); shape.fill()
+            NSColor(isEnabled ? palette.primary : palette.control).setFill(); shape.fill()
             if isEnabled && (hovered || isHighlighted) {
-                NSColor.black.withAlphaComponent(isHighlighted ? 0.22 : 0.12).setFill(); shape.fill()
+                let shade = isHighlighted ? WBControlMetrics.primaryPressShade : WBControlMetrics.primaryHoverShade
+                NSColor.black.withAlphaComponent(shade).setFill(); shape.fill()
             }
         }
         else if selected || hovered || isHighlighted || border || isFocused { NSColor.white.withAlphaComponent(isHighlighted ? 0.20 : selected ? 0.10 : hovered ? 0.08 : 0.035).setFill(); shape.fill() }
-        if border { Palette.ink.withAlphaComponent(0.14).setStroke(); shape.stroke() }
-        let foreground = (textColor ?? (primary ? NSColor(calibratedWhite: 0.13, alpha: 1) : selected ? Palette.text : Palette.secondary)).withAlphaComponent(isEnabled ? 1 : 0.35)
+        if primary && !isEnabled { NSColor(palette.controlBorder).setStroke(); shape.stroke() }
+        else if border { Palette.ink.withAlphaComponent(0.14).setStroke(); shape.stroke() }
+        let defaultForeground = primary ? NSColor(isEnabled ? palette.primaryText : palette.muted) : selected ? Palette.text : Palette.secondary
+        let foreground = (textColor ?? defaultForeground).withAlphaComponent(isEnabled || primary ? 1 : 0.35)
         if let symbol {
             let compact = bounds.width < 80 && !title.isEmpty
             let icon: CGFloat = compact ? 12 : 16
@@ -314,7 +318,7 @@ final class ActionButton: ClickableButton {
                 text.draw(in:NSRect(x:textX,y:(bounds.height-text.size().height)/2,width:bounds.width-textX-4,height:text.size().height))
             }
         } else {
-            let text = NSAttributedString(string:title,attributes:[.font:NSFont.systemFont(ofSize:fontSize),.foregroundColor:foreground])
+            let text = NSAttributedString(string:title,attributes:[.font:NSFont.systemFont(ofSize:fontSize,weight:primary && isEnabled ? .medium : .regular),.foregroundColor:foreground])
             text.draw(at:NSPoint(x:(bounds.width-text.size().width)/2,y:(bounds.height-text.size().height)/2))
         }
     }
@@ -322,10 +326,15 @@ final class ActionButton: ClickableButton {
 
 /// Brand and segmented controls use the same optical centre, rather than a text-field baseline.
 final class LauncherBrandView: FlippedView {
+    private static let titleFont = NSFont.systemFont(ofSize:22,weight:.regular)
+    private static let titleX: CGFloat = 32
+    static var preferredWidth: CGFloat {
+        titleX + ceil((ApplicationNames.deskDen as NSString).size(withAttributes:[.font:titleFont]).width)
+    }
     private var iconChanges: AnyCancellable?
     override init(frame:NSRect) {
         super.init(frame:frame)
-        setAccessibilityElement(true); setAccessibilityRole(.image); setAccessibilityLabel("方寸")
+        setAccessibilityElement(true); setAccessibilityRole(.image); setAccessibilityLabel(ApplicationNames.deskDen)
         iconChanges = ApplicationIconController.shared.objectWillChange.sink { [weak self] in
             Task { @MainActor in self?.needsDisplay = true }
         }
@@ -335,8 +344,8 @@ final class LauncherBrandView: FlippedView {
         let controller = ApplicationIconController.shared
         let logo = controller.brandImage(pointSize: 26)
         logo?.draw(in:NSRect(x:0,y:4,width:26,height:26),from:.zero,operation:.sourceOver,fraction:1,respectFlipped:true,hints:nil)
-        let text=NSAttributedString(string:"方寸",attributes:[.font:NSFont.systemFont(ofSize:22,weight:.regular),.foregroundColor:Palette.text,.kern:2])
-        text.draw(at:NSPoint(x:32,y:(bounds.height-text.size().height)/2))
+        let text=NSAttributedString(string:ApplicationNames.deskDen,attributes:[.font:Self.titleFont,.foregroundColor:Palette.text])
+        text.draw(at:NSPoint(x:Self.titleX,y:(bounds.height-text.size().height)/2))
     }
 }
 
@@ -482,7 +491,7 @@ private final class LauncherWorkbenchAction: ClickableButton {
         self.activate=activate; super.init(frame:frame)
         title="工作台"; isBordered=false; focusRingType = .none
         target=self; action=#selector(invoke); setAccessibilityLabel("工作台")
-        toolTip="打开方寸工作台"
+        toolTip="打开 DeskDen 工作台"
     }
     required init?(coder:NSCoder) { fatalError() }
     @objc private func invoke() { activate() }

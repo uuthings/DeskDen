@@ -278,7 +278,7 @@ struct DeviceTemperatureSettingsView: View {
             }
             Toggle("满足条件时发送系统通知", isOn: $drafts.temperature.notifications).clickableCursor()
                 .font(.system(size: 12))
-            DeviceRuleHelp(text: "状态颜色始终显示；关闭通知仍可调整阈值。CPU 85°C、GPU 80°C 是方寸默认提醒值，并非 Apple 安全上限。")
+            DeviceRuleHelp(text: "状态颜色始终显示；关闭通知仍可调整阈值。CPU 85°C、GPU 80°C 是 DeskDen 默认提醒值，并非 Apple 安全上限。")
             DeviceRuleHelp(text: "连续超温达到设定时长才通知；缺失读数中断计时。恢复正常后重新计时，冷却期内不重复提醒。")
             DeviceRuleActions(dirty: drafts.temperatureDirty, saving: drafts.savingTemperature, status: drafts.temperatureStatus,
                               cancel: { drafts.restoreTemperature(model) }, save: { Task { await drafts.saveTemperature(model) } })

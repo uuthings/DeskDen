@@ -1,6 +1,6 @@
 # macOS release process
 
-Use **DeskDen** for English product names, Release titles and new downloadable filenames; use **方寸** for the Chinese app name. Follow [public naming and release copy](branding.md) before publishing.
+Use **DeskDen** for the application, Release titles and new downloadable filenames. Follow [public naming and release copy](branding.md) before publishing.
 
 ## Candidate and version
 
@@ -34,7 +34,7 @@ A properly signed result includes `Contents/embedded.provisionprofile` and expan
 The read-only diagnostic can verify the resulting executable without opening the app or vault:
 
 ```sh
-"$DESKDEN_PREVIEW_BUILD/Build/Products/Release/方寸.app/Contents/MacOS/DeskDenLauncher" --vault-signing-check
+"$DESKDEN_PREVIEW_BUILD/Build/Products/Release/DeskDen.app/Contents/MacOS/DeskDenLauncher" --vault-signing-check
 ```
 
 Its JSON reports `signingStatus` separately from `hardwareStatus`. Exit 0 means that signing/profile preflight and the system's no-interaction Keychain metadata authorization succeeded. Touch ID hardware may still be unavailable; this is reported independently. Missing authorization exits 1 and keeps Touch ID unavailable. The diagnostic never enrolls, authenticates, reads a vault key or changes Keychain data. Real enrollment is a separate, explicit action by the user in Private Space.

@@ -330,9 +330,19 @@ public struct VaultFileStore:Sendable {
         try data.write(to:url,options:[.atomic,.completeFileProtectionUnlessOpen]);try manager.setAttributes([.posixPermissions:0o600],ofItemAtPath:url.path)
     }
     /// Preserve the displaced encrypted database before an explicitly confirmed restore.
-    public func restore(_ envelope:VaultEnvelope) throws -> URL? {
+    public func restore(_ envelope:VaultEnvelope,replacingExisting:Bool=true) throws -> URL? {
         guard !isPendingPasswordChange else {throw VaultFailure.passwordChangePending}
         let manager=FileManager.default
+        if !replacingExisting {
+            // Initial setup must never replace a vault created after verification.
+            let staging=url.deletingLastPathComponent().appendingPathComponent(".deskden-restore-\(UUID().uuidString)")
+            defer {try? manager.removeItem(at:staging)}
+            try VaultFileStore(url:staging).write(envelope,preservePrevious:false)
+            guard Darwin.renamex_np(staging.path,url.path,UInt32(RENAME_EXCL)) == 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue:errno) ?? .EIO)
+            }
+            return nil
+        }
         var preserved:URL?
         if manager.fileExists(atPath:url.path) {
             let copy=url.deletingLastPathComponent().appendingPathComponent("vault-before-restore-\(UUID().uuidString).deskdenvault")

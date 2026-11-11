@@ -407,7 +407,7 @@ struct AppUpdateRelease: Equatable {
         installReply = reply; phase = .readyToInstall; status = "更新已下载，等待你确认安装"
     }
     func installing(retry: @escaping () -> Void, applicationTerminated: Bool) {
-        phase = .installing; status = "正在等待方寸完成保存并重新启动"
+        phase = .installing; status = "正在等待 DeskDen 完成保存并重新启动"
         retryTermination = applicationTerminated ? nil : retry
         canRetryInstallation = !applicationTerminated
     }

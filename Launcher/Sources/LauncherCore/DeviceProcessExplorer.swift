@@ -87,7 +87,7 @@ public enum DeviceProcessActionError: LocalizedError, Equatable {
     case protectedProcess, staleProcess, missingApplicationMain, failed(String), invalidGroup
     public var errorDescription: String? {
         switch self {
-        case .protectedProcess: "此进程属于系统、其他用户或方寸自身，不能在此结束。"
+        case .protectedProcess: "此进程属于系统、其他用户或 DeskDen 自身，不能在此结束。"
         case .staleProcess: "进程已经退出或身份已变化，请重新选择。"
         case .missingApplicationMain: "应用主进程暂不可读，无法请求整个应用退出；可以展开后选择可操作的进程。"
         case .failed(let message): message

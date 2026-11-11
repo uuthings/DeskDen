@@ -528,9 +528,9 @@ private struct CalendarDisplayPreferences:Codable {
     private func permissionFailure(_ target:CalendarPermissionTarget,access:CalendarAccess)->ConnectionFailure {
         let message:String
         if access == .restricted {
-            message="此设备限制了\(target.title)访问，方寸无法直接开启。请在系统设置中检查限制，或联系设备管理员。本机提醒仍可正常使用。"
+            message="此设备限制了\(target.title)访问，DeskDen 无法直接开启。请在系统设置中检查限制，或联系设备管理员。本机提醒仍可正常使用。"
         } else if access == .denied {
-            message="未允许访问\(target.title)。本机提醒仍可正常使用。请在系统设置 → 隐私与安全性 → \(target.title)中允许方寸访问。"
+            message="未允许访问\(target.title)。本机提醒仍可正常使用。请在系统设置 → 隐私与安全性 → \(target.title)中允许 DeskDen 访问。"
         } else {
             message="\(target.title)授权尚未完成，连接未开启。请重试；如果系统没有显示授权提示，可前往系统设置检查权限。本机提醒仍可正常使用。"
         }
@@ -629,7 +629,7 @@ private struct CalendarDisplayPreferences:Codable {
         guard !isWorking else { return }; isWorking=true; defer { isWorking=false }
         do {
             let allowed=try await notifier.requestAccess(); notificationAccess=await notifier.access()
-            guard allowed else { errorMessage="通知未获允许。本机提醒仍会保存；可在系统设置的通知中允许方寸。"; return }
+            guard allowed else { errorMessage="通知未获允许。本机提醒仍会保存；可在系统设置的通知中允许 DeskDen。"; return }
             var next=preferences; next.notificationsEnabled=true
             try requireService().setPreferences(next); syncLocal(); scheduleNotifications(); showNotifications=false
         } catch { errorMessage="无法开启通知：\(error.localizedDescription)" }
@@ -689,7 +689,7 @@ private struct CalendarDisplayPreferences:Codable {
         if destinations.compactMap(URL.init(string:)).contains(where:openSettingsURL) {
             errorMessage=nil
         } else {
-            errorMessage="无法打开系统设置。请手动打开「系统设置 → 隐私与安全性 → \(target.title)」，检查方寸的访问权限。"
+            errorMessage="无法打开系统设置。请手动打开「系统设置 → 隐私与安全性 → \(target.title)」，检查 DeskDen 的访问权限。"
         }
     }
     func openNotificationSettings() {

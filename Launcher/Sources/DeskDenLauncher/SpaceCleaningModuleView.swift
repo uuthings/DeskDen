@@ -110,7 +110,7 @@ struct SpaceCleaningModuleView: View {
     private var capacityExplanation: String {
         let free = DeviceStorageCapacity.formatted(model.diskImmediatelyFree)
         let reclaimable = DeviceStorageCapacity.formatted(model.diskReclaimableEstimate)
-        return "当前用户目录所在卷，按十进制显示（1 GB = 10 亿字节）。立即空闲 \(free)，系统可回收（估算） \(reclaimable)。可用空间优先包含系统可回收部分，缺少估算时使用立即空闲；不代表方寸可清理容量。"
+        return "当前用户目录所在卷，按十进制显示（1 GB = 10 亿字节）。立即空闲 \(free)，系统可回收（估算） \(reclaimable)。可用空间优先包含系统可回收部分，缺少估算时使用立即空闲；不代表 DeskDen 可清理容量。"
     }
     /// The way back sits before the title; the trailing group keeps page actions.
     private var back: WBPageBack? {

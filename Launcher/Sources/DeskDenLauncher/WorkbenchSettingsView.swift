@@ -4,7 +4,13 @@ import LauncherCore
 
 struct WorkbenchSettingsView: View {
     @ObservedObject var model: WorkbenchAppModel
+    @ObservedObject private var vault: VaultModel
     @Environment(\.workbenchPalette) private var palette
+
+    init(model:WorkbenchAppModel) {
+        self.model=model
+        self.vault=model.vault
+    }
 
     private var subtitle: String {
         switch model.settingsTab {
@@ -144,10 +150,14 @@ struct WorkbenchSettingsView: View {
     private var privacy: some View {
         WBCard(title: "内容保护", symbol: "checkmark.shield", spacing: 0) {
             settingsRow("私密空间", "独立密码、离页锁定与加密备份", first: true) {
-                Button("保护与备份") {
-                    model.navigate(.vault)
-                    model.vault.showProtection(fromSettings:true)
-                }.buttonStyle(WBButtonStyle(compact: true))
+                if vault.isUnlocked {
+                    Button("保护与备份") {
+                        guard vault.isUnlocked else {return}
+                        model.navigate(.vault)
+                        if model.route == .vault {vault.showProtection(fromSettings:true)}
+                    }.buttonStyle(WBButtonStyle(compact: true))
+                        .accessibilityIdentifier("fc.settings.privacy.vault-protection")
+                }
             }
             settingsRow("日历与提醒", "按来源分别授权，拒绝不影响本机提醒") {
                 Button("管理来源") {

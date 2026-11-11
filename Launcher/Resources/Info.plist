@@ -3,18 +3,18 @@
 <plist version="1.0"><dict>
 <key>CFBundleDevelopmentRegion</key><string>zh_CN</string>
 <key>CFBundleLocalizations</key><array><string>zh-Hans</string><string>en</string></array>
-<key>CFBundleName</key><string>方寸</string>
-<key>CFBundleDisplayName</key><string>方寸</string>
+<key>CFBundleName</key><string>DeskDen</string>
+<key>CFBundleDisplayName</key><string>DeskDen</string>
 <key>CFBundleExecutable</key><string>DeskDenLauncher</string>
 <key>CFBundleIdentifier</key><string>local.deskden.launcher</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.6.0</string>
-<key>CFBundleVersion</key><string>7</string>
+<key>CFBundleShortVersionString</key><string>0.6.1</string>
+<key>CFBundleVersion</key><string>8</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
-<key>NSCalendarsFullAccessUsageDescription</key><string>在方寸中展示你选择接入的系统日程，不修改系统日历。</string>
+<key>NSCalendarsFullAccessUsageDescription</key><string>在 DeskDen 中展示你选择接入的系统日程，不修改系统日历。</string>
 <key>NSRemindersFullAccessUsageDescription</key><string>展示、创建、编辑和完成你选择接入的系统提醒事项。</string>
 <key>NSPrincipalClass</key><string>NSApplication</string>
 <key>SUFeedURL</key><string>https://updates.uuthings.com/deskden/macos/stable/appcast.xml</string>

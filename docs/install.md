@@ -1,18 +1,20 @@
 # DeskDen 安装与升级
 
-DeskDen（方寸）要求 **macOS 14 或更高版本**。正式下载包同时包含 Apple Silicon 与 Intel 架构；目前真实运行验证使用 Apple Silicon Mac，Intel 与较早系统尚未完成逐项实机验证。
+DeskDen 要求 **macOS 14 或更高版本**。正式下载包同时包含 Apple Silicon 与 Intel 架构；目前真实运行验证使用 Apple Silicon Mac，Intel 与较早系统尚未完成逐项实机验证。
 
 ## 首次安装
 
-1. 下载 [DeskDen 0.6.0 DMG](https://updates.uuthings.com/deskden/macos/releases/0.6.0-7/DeskDen-0.6.0-macos-universal.dmg)；备用下载见 [v0.6.0 GitHub Release](https://github.com/uuthings/DeskDen/releases/tag/v0.6.0)，历史版本保留在 [GitHub Releases](https://github.com/uuthings/DeskDen/releases)。两端正式安装包的文件内容和校验值相同。`Source code` 压缩包是源码，不是安装包。
-2. 打开 DMG 后将「方寸.app」拖入「应用程序」，再打开 App。该版本的签名与公证状态见 Release 说明；系统首次打开时仍可能要求确认。
-3. 新配置默认使用 `⌥ D` 呼出启动器，`⌥ F` 打开工作台。也可以从状态栏或顶部入口进入。关闭窗口仅收起界面，后台继续运行；彻底退出通过方寸菜单确认。
+1. 下载 [DeskDen 0.6.1 DMG](https://updates.uuthings.com/deskden/macos/releases/0.6.1-8/DeskDen-0.6.1-macos-universal.dmg)；备用下载见 [v0.6.1 GitHub Release](https://github.com/uuthings/DeskDen/releases/tag/v0.6.1)，历史版本保留在 [GitHub Releases](https://github.com/uuthings/DeskDen/releases)。两端正式安装包的文件内容和校验值相同。`Source code` 压缩包是源码，不是安装包。
+2. 打开 DMG，将其中的应用拖入「应用程序」，再打开 App。从 0.6.1 起，安装包内的应用名为 `DeskDen.app`。该版本的签名与公证状态见 Release 说明；系统首次打开时仍可能要求确认。
+3. 新配置默认使用 `⌥ D` 呼出启动器，`⌥ F` 打开工作台。也可以从状态栏或顶部入口进入。关闭窗口仅收起界面，后台继续运行；彻底退出通过 DeskDen 菜单确认。
 
-日历、提醒事项与通知按功能请求权限，拒绝授权不影响本机功能。私密空间需要自设独立密码，没有预设密码或密码找回功能。可在支持 Touch ID 的 Mac 上主动开启指纹解锁，密码解锁继续可用。更多说明见 [使用指南](usage.md)。
+日历、提醒事项与通知按功能请求权限，拒绝授权不影响本机功能。私密空间需要自设至少 6 个字符的独立密码。可设置密码提示，仍需原密码才能解锁。支持 Touch ID 的 Mac 可开启指纹解锁并设为默认，随时可改用密码。更多说明见 [使用指南](usage.md)。
 
 ## 从旧版升级
 
-最初的 0.1.0 没有更新器，需要手动安装当前版本一次：先从方寸菜单正常退出旧 App，再替换「应用程序」中的 App。设置、快捷键和资料保存在 App 之外，替换 App 不会主动删除它们。不要同时运行旧版和新版，或运行多个 App 副本。
+支持应用内更新的版本可以直接升级。更新器沿用原有安装位置，旧版的 `方寸.app` 文件名可能保留，打开后显示 DeskDen。
+
+最初的 0.1.0 没有更新器，需要手动安装一次。手动升级时，先从旧版菜单退出，将原有 `方寸.app` 移出「应用程序」，再拖入新版。设置、快捷键和资料保存在 App 之外。使用 IPRoyal 连接的用户如手动更改了 App 路径，在新版连接设置中再点一次「安装本机连接」。
 
 升级私密空间前，先在旧 App「保护与备份」中导出加密备份并另行保存。新版兼容格式 1 和 2，只读密码解锁及锁定不会改写原加密文件；实际编辑并保存后写入格式 3，保留扩展字体、删除线、文字颜色和背景高亮，同时保留上一份完整加密版本。旧版会拒绝格式 3，避免保存时丢失新格式，迁移后请继续使用新版。对最初格式发起 Touch ID 开启也属于明确的写入操作，系统验证即使取消也可能已完成迁移。Touch ID 需要当前构建具有有效的应用签名与受保护钥匙串授权；临时签名的本地预览版仅支持独立密码。
 
@@ -26,11 +28,11 @@ DeskDen（方寸）要求 **macOS 14 或更高版本**。正式下载包同时�
 
 ## 后续更新
 
-在「设置 → 通用 → 软件更新」点击「检查更新」，也可从方寸菜单检查。默认每日自动检查，已有明确关闭选择会保留。有新版本时，主窗口顶部品牌旁显示更新入口；点击查看说明，再选择下载。下载完成后由你确认安装并重启；普通退出不会代替安装确认。后台检查失败不会弹窗打扰，主动查看时会显示原因，不会当作「已是最新版本」。
+在「设置 → 通用 → 软件更新」点击「检查更新」，也可从 DeskDen 菜单检查。默认每日自动检查，已有明确关闭选择会保留。有新版本时，主窗口顶部品牌旁显示更新入口；点击查看说明，再选择下载。下载完成后由你确认安装并重启；普通退出不会代替安装确认。后台检查失败不会弹窗打扰，主动查看时会显示原因，不会当作「已是最新版本」。
 
 ## 校验下载
 
-下载本版 [SHA256SUMS.txt](https://updates.uuthings.com/deskden/macos/releases/0.6.0-7/SHA256SUMS.txt)，也可从对应 GitHub Release 获取同一份校验文件，在下载目录执行：
+下载本版 [SHA256SUMS.txt](https://updates.uuthings.com/deskden/macos/releases/0.6.1-8/SHA256SUMS.txt)，也可从对应 GitHub Release 获取同一份校验文件，在下载目录执行：
 
 ```sh
 shasum -a 256 -c SHA256SUMS.txt --ignore-missing
@@ -40,4 +42,4 @@ shasum -a 256 -c SHA256SUMS.txt --ignore-missing
 
 ## 卸载
 
-先从方寸菜单彻底退出，再移除「应用程序」中的 App。移除 App 不会自动删除私密资料、加密备份和用户设置；保留需要的数据后再自行管理。
+先从 DeskDen 菜单彻底退出，再移除「应用程序」中的 App。移除 App 不会自动删除私密资料、加密备份和用户设置；保留需要的数据后再自行管理。

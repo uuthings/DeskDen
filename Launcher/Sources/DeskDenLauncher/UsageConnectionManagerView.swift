@@ -214,7 +214,7 @@ struct UsageConnectionManagerView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(provider == .codex ? "本机 Codex 订阅" : ai.claudeUsesSeparateLogin ? "Claude 会员 · 方寸单独登录" : "本机 Claude 订阅").font(.system(size: 12))
+                    Text(provider == .codex ? "本机 Codex 订阅" : ai.claudeUsesSeparateLogin ? "Claude 会员 · DeskDen 单独登录" : "本机 Claude 订阅").font(.system(size: 12))
                     Text(subscriptionStatus(provider)).font(.system(size: 11)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
@@ -227,15 +227,15 @@ struct UsageConnectionManagerView: View {
             }
             if provider == .claude && ai.claudeLoginRemedy == .switchInTerminal { ClaudeTerminalSwitchNotice() }
             Text(provider == .claude
-                 ? "通过本机 Claude Code 查询五小时和每周额度。登录由官方客户端完成，方寸不读取凭据。"
+                 ? "通过本机 Claude Code 查询五小时和每周额度。登录由官方客户端完成，DeskDen 不读取凭据。"
                  : "自动读取本机登录来源并配置额度同步，无需填写密钥或选择额度文件。")
                 .font(.system(size: 11)).foregroundStyle(palette.secondary)
             if provider == .claude {
                 DisclosureGroup("高级连接方式", isExpanded: $showingClaudeAdvanced) {
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(ai.claudeUsesSeparateLogin ? "改回本机登录" : "为方寸单独登录会员").font(.system(size: 12))
-                            Text(ai.claudeUsesSeparateLogin ? "退出方寸单独保存的会员登录，改为读取本机 Claude Code" : "终端需要保留 API 或其他登录时使用，不改变本机 Claude Code")
+                            Text(ai.claudeUsesSeparateLogin ? "改回本机登录" : "为 DeskDen 单独登录会员").font(.system(size: 12))
+                            Text(ai.claudeUsesSeparateLogin ? "退出 DeskDen 单独保存的会员登录，改为读取本机 Claude Code" : "终端需要保留 API 或其他登录时使用，不改变本机 Claude Code")
                                 .font(.system(size: 11)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer(minLength: 0)

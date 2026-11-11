@@ -1,8 +1,8 @@
-# DeskDen · 方寸
+# DeskDen
 
-常用之物，皆在方寸之间。方寸是一款原生 macOS 应用，把启动器、设备信息、空间清理、日历与提醒、用量与额度和私密资料放进同一个界面。
+常用之物，皆在方寸之间。DeskDen 是一款原生 macOS 应用，把启动器、设备信息、空间清理、日历与提醒、用量与额度和私密资料放进同一个界面。
 
-当前版本为 **0.6.0**。下载 [DMG 安装包](https://updates.uuthings.com/deskden/macos/releases/0.6.0-7/DeskDen-0.6.0-macos-universal.dmg)及[校验文件](https://updates.uuthings.com/deskden/macos/releases/0.6.0-7/SHA256SUMS.txt)；[v0.6.0 Release](https://github.com/uuthings/DeskDen/releases/tag/v0.6.0) 提供同一安装包的备用下载与版本说明。首次安装与旧版升级请先阅读 [安装指南](docs/install.md)。GitHub 的源码压缩包不能直接作为 App 安装。
+当前版本为 **0.6.1**。下载 [DMG 安装包](https://updates.uuthings.com/deskden/macos/releases/0.6.1-8/DeskDen-0.6.1-macos-universal.dmg)及[校验文件](https://updates.uuthings.com/deskden/macos/releases/0.6.1-8/SHA256SUMS.txt)；[v0.6.1 Release](https://github.com/uuthings/DeskDen/releases/tag/v0.6.1) 提供同一安装包的备用下载与版本说明。首次安装与旧版升级请先阅读 [安装指南](docs/install.md)。GitHub 的源码压缩包不能直接作为 App 安装。
 
 ## 主要功能
 
@@ -25,7 +25,7 @@ App 最低运行系统为 macOS 14；从源码构建需要 **Xcode 27.0（Swift 
 
 ## 使用与数据
 
-关闭窗口只收起界面，后台服务继续运行；彻底退出通过方寸菜单确认。新配置默认使用 `⌥ D` 呼出启动器，`⌥ F` 打开工作台，已有配置保留保存的快捷键。顶部、菜单、程序坞与快捷键进入同一个工作台窗口。
+关闭窗口只收起界面，后台服务继续运行；彻底退出通过 DeskDen 菜单确认。新配置默认使用 `⌥ D` 呼出启动器，`⌥ F` 打开工作台，已有配置保留保存的快捷键。顶部、菜单、程序坞与快捷键进入同一个工作台窗口。
 
 系统日历、提醒事项与通知按功能请求权限。本机提醒无需系统日历授权。无有效来源的项目显示不可用；本机 Token 记录不等同于服务商额度。私密空间没有预设密码或密码找回功能，请妥善保存密码和加密备份。
 
