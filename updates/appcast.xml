@@ -9,6 +9,20 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
         <description>Official signed software updates for DeskDen.</description>
         <language>zh-CN</language>
         <item>
+            <title>0.6.1</title>
+            <pubDate>Wed, 11 Nov 2026 17:33:52 GMT</pubDate>
+            <sparkle:version>8</sparkle:version>
+            <sparkle:shortVersionString>0.6.1</sparkle:shortVersionString>
+            <sparkle:fullReleaseNotesLink>https://github.com/uuthings/DeskDen/releases/tag/v0.6.1</sparkle:fullReleaseNotesLink>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="plain-text"><![CDATA[• 工作台主按钮统一使用蓝色，浅色和深色各有对应配色。日历用描边标记今天，用底色标记选中日期。
+• 私密空间支持 Touch ID、默认解锁方式及密码提示，新密码至少 6 个字符。以 Touch ID 为默认时，进入锁定的私密空间会自动请求验证。保护与备份须先解锁。
+• 网络与 CPU 的实时曲线在切换页面后继续采样。
+• 应用显示名称统一为 DeskDen。现有资料和更新入口沿用原有身份。
+]]></description>
+            <enclosure url="https://updates.uuthings.com/deskden/macos/releases/0.6.1-8/DeskDen-0.6.1-macos-universal.zip" length="30366380" type="application/octet-stream" sparkle:edSignature="TrSMqmCkCCFITkDctyoFOt05+YY94819PpdRVl0l/i6pxmGMbrs/Gso/4lRLjApSDMkhZXngzOeasIUNDEZuAw=="/>
+        </item>
+        <item>
             <title>0.6.0</title>
             <pubDate>Wed, 11 Nov 2026 02:48:51 GMT</pubDate>
             <sparkle:version>7</sparkle:version>
@@ -132,6 +146,6 @@ IPRoyal 连接器需另行安装并保持官方控制台登录。服务额度存
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: LZo94wAoexDfGImdJPU9C23whQKwK714sagctncdLxo7nf5HUJJ9ANmryzIBF5/MIbTVfumYDzHc/EG8FCTzCQ==
-length: 9606
+edSignature: YNfJarZITJlnEhwZs+j4zK6dIsaQzY/XcO0OoyCxazyMK/8SzdLMzUg9hcHEIDlODS22d6MVypPsQES/Kt0PBw==
+length: 10936
 -->
