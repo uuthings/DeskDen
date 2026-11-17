@@ -19,12 +19,13 @@ struct CalendarModuleView:View {
     @State private var upcomingSource="all"
     @State private var upcomingRange:CalendarUpcomingRange = .week
     @State private var newMenuOpen=false
+    @State private var showingCreatePermission=false
     private var compact:Bool {width < 800}
     private var horizontalWorkspace:Bool {width >= 760}
     private var calendarWidth:CGFloat {horizontalWorkspace ? (width-12)*0.45 : width}
     private var sideWidth:CGFloat {max(0,width-calendarWidth-12)}
     private var rows:Int {max(5,model.monthDays.count/7)}
-    private let selectedMinimum:CGFloat=132
+    private let selectedMinimum:CGFloat=156
     /// The month card and side column share the page's remaining height
     /// (现行规范 9.3, K2): date tiles take 40–64 so the selected day keeps at
     /// least two rows; five- and six-week months keep the same card height.
@@ -114,12 +115,32 @@ struct CalendarModuleView:View {
                 guard let message,!model.showSources,modals?.isPresented != true else {return}
                 toast(message,actionTitle:"撤销") {Task {await model.undoLastChange()}}
             }
+            .workbenchModal(isPresented:$showingCreatePermission,width:440) {
+                WorkbenchDialogFrame(title:"接入系统日历",dismiss:{showingCreatePermission=false}) {
+                    Text("允许 DeskDen 读取系统日历后，可查看日程并在系统日历中新建。提醒事项也可以仅保存在本机。")
+                        .font(.system(size:12)).foregroundStyle(palette.secondary)
+                } actions:{
+                    Button("新建提醒") {showingCreatePermission=false;model.openNewReminder()}.buttonStyle(WBButtonStyle())
+                    Spacer()
+                    Button("允许访问日历") {
+                        showingCreatePermission=false
+                        Task {
+                            await model.connect(reminders:false)
+                            if model.preferences.calendarConnected && model.calendarAccess == .granted {newMenuOpen=true}
+                        }
+                    }.buttonStyle(WBButtonStyle(primary:true)).accessibilityIdentifier("fc.calendar.create.connect")
+                }
+            }
             .accessibilityElement(children:.contain).accessibilityIdentifier(model.showSources ? "fc.page.calendar.sources":"fc.page.calendar")
+    }
+    private func requestCreate() {
+        if model.preferences.calendarConnected && model.calendarAccess == .granted {newMenuOpen.toggle()}
+        else {showingCreatePermission=true}
     }
     private var zoneTitle:String {context?.zoneTitle.components(separatedBy:" · ").first ?? model.displayTimeZone.identifier}
     /// "新建" opens a menu of the two kinds instead of a dialog (现行规范 9.3, K6).
     private var newMenuButton:some View {
-        Button {newMenuOpen.toggle()} label:{HStack(spacing:6){Image(systemName:"plus");Text("新建");Image(systemName:"chevron.down").font(.system(size:10,weight:.medium))}}
+        Button {requestCreate()} label:{HStack(spacing:6){Image(systemName:"plus");Text("新建");Image(systemName:"chevron.down").font(.system(size:10,weight:.medium))}}
             .buttonStyle(WBButtonStyle(primary:true)).disabled(model.storageError != nil)
             .workbenchPopover(isPresented:$newMenuOpen,width:300,alignment:.trailing) {newMenu}
             .accessibilityLabel("新建").accessibilityIdentifier("fc.calendar.new")
@@ -186,14 +207,17 @@ struct CalendarModuleView:View {
         }
     }
     private var selectedCard:some View {
-        CalendarSideCard(title:WorkbenchDateText.monthDayWeekday(model.selectedDay,calendar:model.displayCalendar),symbol:"calendar",scrollIdentifier:"fc.calendar.selected.scroll") {
+        CalendarSideCard(title:WorkbenchDateText.monthDayWeekday(model.selectedDay,calendar:model.displayCalendar),symbol:"calendar",scrollIdentifier:"fc.calendar.selected.scroll",empty:selectedItems.isEmpty) {
             let civilDay=CalendarCivilDay(date:model.selectedDay,calendar:model.displayCalendar,showsHolidays:model.holidaysEnabled)
             if let text=civilDay.namedLabel {
                 Text(text).font(.system(size:11)).foregroundStyle(civilDay.color(palette)).padding(.horizontal,7).padding(.vertical,5).frame(maxWidth:.infinity,alignment:.leading).background(civilDay.holidayKind == nil ? palette.soft:civilDay.color(palette).opacity(0.08),in:RoundedRectangle(cornerRadius:6)).padding(.bottom,4)
             }
             if selectedItems.isEmpty {
-                calendarEmpty("这一天还没有安排")
-                HStack {Spacer(minLength:0);Button {newMenuOpen=true} label:{Label("添加安排",systemImage:"plus")}.buttonStyle(WBButtonStyle(compact:true)).accessibilityIdentifier("fc.calendar.empty.add-action");Spacer(minLength:0)}
+                VStack(spacing:10) {
+                    calendarEmpty("这一天还没有安排")
+                    Button {requestCreate()} label:{Label("添加安排",systemImage:"plus")}
+                        .buttonStyle(WBButtonStyle(compact:true)).accessibilityIdentifier("fc.calendar.empty.add-action")
+                }.frame(maxWidth:.infinity,maxHeight:.infinity)
             } else {
                 let items=selectedItems
                 ForEach(Array(items.enumerated()),id:\.element.id) {index,entry in CalendarAgendaRow(model:model,entry:entry,last:index == items.count-1)}
@@ -201,14 +225,22 @@ struct CalendarModuleView:View {
         }.accessibilityElement(children:.contain).accessibilityIdentifier("fc.calendar.selectedAgenda")
     }
     private var pendingCard:some View {
-        CalendarSideCard(title:"长期待办",symbol:"tray",trailing:pendingItems.isEmpty ? nil:"\(pendingItems.count) 项",scrollIdentifier:"fc.calendar.pending.scroll") {
-            if pendingItems.isEmpty {calendarEmpty("暂无长期待办")}
+        CalendarSideCard(title:"长期待办",symbol:"tray",trailing:pendingItems.isEmpty ? nil:"\(pendingItems.count) 项",scrollIdentifier:"fc.calendar.pending.scroll",empty:pendingItems.isEmpty) {
+            if pendingItems.isEmpty {
+                VStack(spacing:10) {calendarEmpty("暂无长期待办");allRemindersButton}
+                    .frame(maxWidth:.infinity,maxHeight:.infinity)
+            }
             let items=pendingItems
             ForEach(Array(items.enumerated()),id:\.element.id) {index,item in CalendarAgendaRow(model:model,entry:.reminder(item),showTime:false,last:index == items.count-1)}
         } footer: {
-            // The list scrolls; its action stays at the card's bottom (现行规范 9.3, K5).
-            HStack {Spacer(minLength:0);Button("查看全部提醒"){model.filter = .all;model.search="";model.showReminderList=true}.buttonStyle(WBButtonStyle(compact:true)).accessibilityIdentifier("fc.calendar.pending.all-action");Spacer(minLength:0)}.padding(.top,8)
+            if !pendingItems.isEmpty {
+                HStack {Spacer(minLength:0);allRemindersButton;Spacer(minLength:0)}.padding(.top,8)
+            }
         }.accessibilityElement(children:.contain).accessibilityIdentifier("fc.calendar.pendingReminders")
+    }
+    private var allRemindersButton:some View {
+        Button("查看全部提醒"){model.filter = .all;model.search="";model.showReminderList=true}
+            .buttonStyle(WBButtonStyle(compact:true)).accessibilityIdentifier("fc.calendar.pending.all-action")
     }
     private var upcomingRangeLabel:String {
         let calendar=model.displayCalendar
@@ -231,45 +263,52 @@ struct CalendarModuleView:View {
             }.frame(height:32).padding(.bottom,6)
             let entries=upcomingEntries
             if model.needsSystemConnection && !entries.isEmpty {connectPrompt(centered:false)}
-            ScrollViewReader {scroll in
-                WorkbenchScrollView {
-                    LazyVStack(alignment:.leading,spacing:0) {
-                        // Loading states belong to a connected system calendar only.
-                        if upcomingRange == .week && model.preferences.calendarConnected && model.calendarAccess == .granted {
-                            if model.isLoading && !hasUpcomingCoverage {
-                                upcomingStatus("正在读取今天起七天的日程")
-                            } else if model.overviewReadError != nil {
-                                upcomingStatus("七天日程读取失败，请在来源中重试",warning:true)
-                            } else if !hasUpcomingCoverage {
-                                upcomingStatus("七天日程尚未完整载入，暂不能确认空闲")
+            if entries.isEmpty {
+                VStack(spacing:10) {
+                    upcomingMessages
+                    if model.needsSystemConnection {connectPrompt(centered:true)}
+                    else {calendarEmpty(upcomingSource == "all" ? (upcomingRange == .week ? "未来七天暂无已载入的安排":"本月暂无已载入的安排"):"此来源暂无已载入的安排")}
+                }.frame(maxWidth:.infinity,maxHeight:.infinity)
+            } else {
+                ScrollViewReader {scroll in
+                    WorkbenchScrollView {
+                        LazyVStack(alignment:.leading,spacing:0) {
+                            upcomingMessages
+                            let groups=groupedByDay(entries)
+                            ForEach(groups,id:\.day) {group in
+                                Text(WorkbenchDateText.monthDayWeekday(group.day,calendar:model.displayCalendar))
+                                    .font(.system(size:11)).foregroundStyle(palette.muted).frame(height:24,alignment:.bottom).padding(.bottom,2)
+                                    .id(group.day)
+                                ForEach(Array(group.entries.enumerated()),id:\.element.id) {index,entry in
+                                    CalendarAgendaRow(model:model,entry:entry,last:index == group.entries.count-1)
+                                }
                             }
+                        }.frame(maxWidth:.infinity,alignment:.leading)
+                    }.accessibilityIdentifier("fc.calendar.upcoming.scroll")
+                        // The month list opens at today when it shows the current month.
+                        .onChange(of:upcomingRange) {_,range in
+                            guard range == .month,let today=groupedByDay(monthItems).first(where:{$0.day >= model.displayCalendar.startOfDay(for:Date())})?.day else {return}
+                            DispatchQueue.main.async {scroll.scrollTo(today,anchor:.top)}
                         }
-                        if let error=model.remindersReadError {upcomingStatus(error,warning:true)}
-                        // A notification problem belongs to this card, not the wallpaper (G3).
-                        if let message=model.notificationMessage {upcomingStatus(message,warning:message.contains("失败"))}
-                        if entries.isEmpty {
-                            if model.needsSystemConnection {connectPrompt(centered:true)}
-                            else {calendarEmpty(upcomingSource == "all" ? (upcomingRange == .week ? "未来七天暂无已载入的安排":"本月暂无已载入的安排"):"此来源暂无已载入的安排")}
-                        }
-                        let groups=groupedByDay(entries)
-                        ForEach(groups,id:\.day) {group in
-                            Text(WorkbenchDateText.monthDayWeekday(group.day,calendar:model.displayCalendar))
-                                .font(.system(size:11)).foregroundStyle(palette.muted).frame(height:24,alignment:.bottom).padding(.bottom,2)
-                                .id(group.day)
-                            ForEach(Array(group.entries.enumerated()),id:\.element.id) {index,entry in
-                                CalendarAgendaRow(model:model,entry:entry,last:index == group.entries.count-1)
-                            }
-                        }
-                    }.frame(maxWidth:.infinity,alignment:.leading)
-                }.accessibilityIdentifier("fc.calendar.upcoming.scroll")
-                    // The month list opens at today when it shows the current month.
-                    .onChange(of:upcomingRange) {_,range in
-                        guard range == .month,let today=groupedByDay(monthItems).first(where:{$0.day >= model.displayCalendar.startOfDay(for:Date())})?.day else {return}
-                        DispatchQueue.main.async {scroll.scrollTo(today,anchor:.top)}
-                    }
+                }
             }
         }.padding(14).frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).background(WorkbenchMaterialSurface())
             .accessibilityElement(children:.contain).accessibilityIdentifier("fc.calendar.upcomingAgenda")
+    }
+    @ViewBuilder private var upcomingMessages:some View {
+        // Loading states belong to a connected system calendar only.
+        if upcomingRange == .week && model.preferences.calendarConnected && model.calendarAccess == .granted {
+            if model.isLoading && !hasUpcomingCoverage {
+                upcomingStatus("正在读取今天起七天的日程")
+            } else if model.overviewReadError != nil {
+                upcomingStatus("七天日程读取失败，请在来源中重试",warning:true)
+            } else if !hasUpcomingCoverage {
+                upcomingStatus("七天日程尚未完整载入，暂不能确认空闲")
+            }
+        }
+        if let error=model.remindersReadError {upcomingStatus(error,warning:true)}
+        // A notification problem belongs to this card, not the wallpaper (G3).
+        if let message=model.notificationMessage {upcomingStatus(message,warning:message.contains("失败"))}
     }
     private func groupedByDay(_ entries:[CalendarAgendaEntry])->[(day:Date,entries:[CalendarAgendaEntry])] {
         let calendar=model.displayCalendar
@@ -295,7 +334,7 @@ struct CalendarModuleView:View {
                     Image(systemName:"calendar.badge.checkmark").font(.system(size:24,weight:.light)).foregroundStyle(palette.accent)
                     Text(text).font(.system(size:12)).foregroundStyle(palette.secondary).multilineTextAlignment(.center)
                     button
-                }.frame(maxWidth:.infinity).padding(.vertical,24)
+                }.frame(maxWidth:.infinity)
             } else {
                 HStack(spacing:10) {
                     Image(systemName:"calendar.badge.checkmark").font(.system(size:16)).foregroundStyle(palette.accent)
@@ -312,7 +351,7 @@ struct CalendarModuleView:View {
             .frame(maxWidth:.infinity,alignment:.center).multilineTextAlignment(.center).padding(.vertical,14)
             .accessibilityIdentifier("fc.calendar.upcoming.status")
     }
-    private func calendarEmpty(_ text:String)->some View {Text(text).font(.system(size:12)).foregroundStyle(palette.muted).frame(maxWidth:.infinity).padding(.vertical,20)}
+    private func calendarEmpty(_ text:String)->some View {Text(text).font(.system(size:12)).foregroundStyle(palette.muted).multilineTextAlignment(.center).frame(maxWidth:.infinity)}
 }
 
 private struct CalendarSectionHeightKey:PreferenceKey {
@@ -332,22 +371,27 @@ private struct CalendarSideCard<Content:View,Footer:View>:View {
     let symbol:String
     var trailing:String?=nil
     var scrollIdentifier:String=""
+    var empty:Bool=false
     @ViewBuilder var content:()->Content
     @ViewBuilder var footer:()->Footer
     @Environment(\.workbenchPalette) private var palette
     var body:some View {
         VStack(alignment:.leading,spacing:0) {
             HStack(spacing:7){Image(systemName:symbol).font(.system(size:16)).foregroundStyle(palette.accent);Text(title).font(.system(size:13,weight:.medium));Spacer();if let trailing {Text(trailing).font(.system(size:11)).foregroundStyle(palette.muted)}}.frame(height:22).padding(.bottom,6)
-            WorkbenchScrollView {LazyVStack(alignment:.leading,spacing:0,content:content).frame(maxWidth:.infinity,alignment:.leading)}.scrollBounceBehavior(.basedOnSize)
-                .frame(maxHeight:.infinity,alignment:.top)
-                .accessibilityIdentifier(scrollIdentifier)
+            if empty {
+                VStack(spacing:0,content:content).frame(maxWidth:.infinity,maxHeight:.infinity)
+            } else {
+                WorkbenchScrollView {LazyVStack(alignment:.leading,spacing:0,content:content).frame(maxWidth:.infinity,alignment:.leading)}.scrollBounceBehavior(.basedOnSize)
+                    .frame(maxHeight:.infinity,alignment:.top)
+                    .accessibilityIdentifier(scrollIdentifier)
+            }
             footer()
         }.padding(14).frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).background(WorkbenchMaterialSurface())
     }
 }
 extension CalendarSideCard where Footer==EmptyView {
-    init(title:String,symbol:String,trailing:String?=nil,scrollIdentifier:String="",@ViewBuilder content:@escaping ()->Content) {
-        self.init(title:title,symbol:symbol,trailing:trailing,scrollIdentifier:scrollIdentifier,content:content,footer:{EmptyView()})
+    init(title:String,symbol:String,trailing:String?=nil,scrollIdentifier:String="",empty:Bool=false,@ViewBuilder content:@escaping ()->Content) {
+        self.init(title:title,symbol:symbol,trailing:trailing,scrollIdentifier:scrollIdentifier,empty:empty,content:content,footer:{EmptyView()})
     }
 }
 

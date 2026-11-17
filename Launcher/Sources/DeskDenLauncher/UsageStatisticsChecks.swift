@@ -205,6 +205,10 @@ import LauncherCore
                     window.setContentSize(.init(width: width, height: width == 1728 ? 993 : 758)); await settle(host)
                     let controls = objects(host), bounds = window.convertToScreen(host.bounds)
                     let saveFrame = frame("fc.usage.manager.save", objects: controls)
+                    if let name = frame("fc.usage.manager.name", objects: controls), let category = frame("fc.usage.manager.category", objects: controls) {
+                        check(abs(name.minY - category.minY) < 1 && abs(name.height - category.height) < 1,
+                              "split manager aligns name, icon and category control baselines")
+                    } else { check(false, "split manager exposes both identity controls") }
                     check(saveFrame.map { abs($0.height - 32) < 1 && $0.minX >= bounds.minX && $0.maxX <= bounds.maxX
                         && $0.minY >= bounds.minY && $0.maxY <= bounds.maxY } ?? false,
                           "split manager \(width)/\(light): fixed save action remains visible within the window")
@@ -223,18 +227,30 @@ import LauncherCore
                   && manager.draft.appearance.categoryID == "api-balance", "service choice preserves an independently chosen name, brand icon and category")
             manager.draft.resourceID = "2002"; manager.draft.secret = "synthetic-switch-draft"
             manager.selectService(.deepseek)
-            check(manager.confirmingDiscard && manager.draft.service == .bandwagon, "switching a service protects entered connection fields")
-            manager.discardChanges(); await settle(host)
-            check(manager.draft.service == .deepseek && manager.draft.secret.isEmpty && manager.draft.resourceID.isEmpty
-                  && manager.draft.appearance.categoryID == "api-balance", "confirmed service change clears credentials but preserves the category")
+            check(!manager.confirmingDiscard && manager.draft.service == .deepseek, "switching service is silent")
+            manager.selectService(.bandwagon)
+            check(manager.draft.resourceID == "2002" && manager.draft.secret == "synthetic-switch-draft"
+                  && manager.draft.appearance.categoryID == "api-balance", "returning to a service restores its in-memory draft")
             manager.select(UsagePresentationSourceID.service(isp.id), app: app)
-            check(manager.confirmingDiscard && manager.isNew, "switching to an existing connection protects the new draft")
-            manager.discardChanges(); await settle(host)
-            check(manager.selectedSourceID == UsagePresentationSourceID.service(isp.id) && manager.draft.resourceID == isp.resourceID,
-                  "existing connection selection loads its real order fields")
+            check(!manager.confirmingDiscard && manager.selectedSourceID == UsagePresentationSourceID.service(isp.id)
+                  && manager.draft.resourceID == isp.resourceID, "existing connection selection is silent and loads the correct fields")
+            manager.add()
+            check(manager.isNew && manager.draft.service == .bandwagon && manager.draft.secret == "synthetic-switch-draft",
+                  "returning to new connection preserves the unfinished form")
+            manager.select(UsagePresentationSourceID.service(isp.id), app: app)
             if let output { check(save(host, to: output.appendingPathComponent("usage-configuration.png")), "split configuration renders offscreen") }
             app.usagePresentation.requestCloseConfiguration(); await settle(host)
-            check(app.usagePresentation.connectionManager == nil, "an unchanged connection closes without a discard prompt")
+            check(manager.confirmingDiscard && app.usagePresentation.connectionManager != nil, "closing also protects drafts parked in other connections")
+            manager.keepEditing()
+            manager.add()
+            check(manager.draft.secret == "synthetic-switch-draft", "canceling close preserves all connection drafts")
+            app.usagePresentation.requestCloseConfiguration(); manager.discardChanges(); await settle(host)
+            check(app.usagePresentation.connectionManager == nil && manager.draft.secret.isEmpty && !manager.hasSessionChanges,
+                  "confirmed close clears all transient connection drafts")
+            if CommandLine.arguments.contains("--connections-only") {
+                print("Usage connection UI checks: \(count) checks, \(failures) failures")
+                return (count, failures)
+            }
             check(press("fc.usage.categories", in: host), "overview opens the shared category catalog")
             await settle(host)
             let customCategory = UsageCardCategory(id: "fixture-category", title: "测试分类")

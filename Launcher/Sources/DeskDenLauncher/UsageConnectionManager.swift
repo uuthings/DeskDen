@@ -74,7 +74,22 @@ struct UsageManagedConnection: Identifiable {
     private var verifiedResourceID: String?
 
     init(sourceID: String? = nil) { initialSourceID = sourceID }
+    private struct SessionDraft {
+        var value: UsageConnectionDraft
+        var original: UsageConnectionDraft
+        var traffic: ProviderUsageConfiguration?
+        var api: APIBalanceConfiguration?
+        var identifier: UUID
+        var editedFields: Set<DisplayField>
+        var verifiedOrder: ProviderUsageSnapshot?
+        var verifiedResourceID: String?
+    }
+    // In-memory only; switching never writes connection settings or credentials.
+    private var sessionDrafts: [String: SessionDraft] = [:]
+    private var lastNewService: UsageConnectionService?
+    private var draftKey: String { selectedSourceID ?? "new:" + (draft.service?.rawValue ?? "none") }
     var hasChanges: Bool { draft != original }
+    var hasSessionChanges: Bool { hasChanges || sessionDrafts.values.contains { $0.value != $0.original } }
     var isNew: Bool { selectedSourceID == nil }
     var existingSubscriptionID: String? {
         guard isNew, let provider = draft.service?.aiProvider else { return nil }
@@ -124,12 +139,18 @@ struct UsageManagedConnection: Identifiable {
         return entries
     }
     func select(_ sourceID: String, app: WorkbenchAppModel) {
-        guard sourceID != selectedSourceID else { return }
-        requestTransition { [weak self, weak app] in if let app { self?.load(sourceID, app: app) } }
+        guard !busy, sourceID != selectedSourceID else { return }
+        stashDraft()
+        load(sourceID, app: app)
+        restoreDraft(sourceID)
     }
-    func add() { requestTransition { [weak self] in self?.reset() } }
+    func add() {
+        guard !busy, !isNew else { return }
+        stashDraft(); reset()
+        restoreDraft("new:" + (lastNewService?.rawValue ?? "none"))
+    }
     func requestClose(_ close: @escaping () -> Void) {
-        requestTransition { [weak self] in self?.clearSecret(); close() }
+        requestTransition { [weak self] in self?.sessionDrafts.removeAll(); self?.reset(); close() }
     }
     func keepEditing() { pendingAction = nil; confirmingDiscard = false }
     func discardChanges() {
@@ -138,27 +159,33 @@ struct UsageManagedConnection: Identifiable {
     }
     func selectService(_ service: UsageConnectionService?) {
         guard !busy, selectedSourceID == nil, draft.service != service else { return }
+        stashDraft()
+        lastNewService = service
+        let targetKey = "new:" + (service?.rawValue ?? "none")
+        if sessionDrafts[targetKey] != nil { restoreDraft(targetKey); return }
         let change = { [weak self] in
             guard let self else { return }
             self.loadingDraft = true
             defer { self.loadingDraft = false }
             let old = self.draft.service
             if self.draft.name.isEmpty || self.draft.name == old?.defaultName { self.draft.name = service?.defaultName ?? "" }
+            self.newIdentifier = UUID()
             self.draft.service = service; self.draft.resourceID = ""; self.draft.secret = ""
             self.draft.declaredPlan = nil; self.draft.enabled = true
             self.editedDisplayFields.remove(.plan)
             self.draft.minimumHours = "1"; self.draft.maximumHours = "6"; self.draft.thresholdMB = "1000"
             self.verifiedOrder = nil; self.verifiedResourceID = nil; self.error = nil; self.notice = nil
         }
-        if !draft.resourceID.isEmpty || !draft.secret.isEmpty {
-            discardTitle = "更换连接服务？"; discardDetail = "当前订单、实例编号和未保存的密钥会清空，名称、图标与分类保留。"
-            pendingAction = change; confirmingDiscard = true
-        } else { change() }
+        change()
     }
     func reconcileCategories(_ categories: [UsageCardCategory]) {
         let valid = Set(categories.map(\.id))
         if let category = draft.appearance.categoryID, !valid.contains(category) { draft.appearance.categoryID = "uncategorized" }
         if let category = original.appearance.categoryID, !valid.contains(category) { original.appearance.categoryID = "uncategorized" }
+        for key in Array(sessionDrafts.keys) {
+            if let category = sessionDrafts[key]?.value.appearance.categoryID, !valid.contains(category) { sessionDrafts[key]?.value.appearance.categoryID = "uncategorized" }
+            if let category = sessionDrafts[key]?.original.appearance.categoryID, !valid.contains(category) { sessionDrafts[key]?.original.appearance.categoryID = "uncategorized" }
+        }
     }
 
     func connectSubscription(app: WorkbenchAppModel, allowDirectorySelection: Bool = false, claude: ClaudeConnectionAction = .check) {
@@ -244,6 +271,7 @@ struct UsageManagedConnection: Identifiable {
             try preferences.validate()
         } catch { self.error = error.localizedDescription; return }
         error = nil; notice = nil; busy = true
+        let savingDraftKey = draftKey
         Task { @MainActor [weak self, weak app] in
             guard let self, let app else { return }
             defer { self.busy = false }
@@ -276,6 +304,8 @@ struct UsageManagedConnection: Identifiable {
                         _ = app.providerUsage.acceptBrowserSnapshot(snapshot, for: candidate.id)
                     }
                 }
+                self.sessionDrafts.removeValue(forKey: savingDraftKey)
+                self.sessionDrafts.removeValue(forKey: key)
                 self.selectedSourceID = key; self.draft.secret = ""
                 guard app.usageAppearance.saveAppearance(display, for: key) else {
                     throw UsagePresentationError.storage
@@ -303,10 +333,25 @@ struct UsageManagedConnection: Identifiable {
     }
     private func requestTransition(_ action: @escaping () -> Void) {
         guard !busy else { return }
-        if hasChanges {
-            discardTitle = "放弃未保存的修改？"; discardDetail = "本次连接修改尚未保存。"
+        if hasSessionChanges {
+            discardTitle = "放弃未保存的修改？"; discardDetail = "此窗口中尚未保存的连接修改会被丢弃，已保存的连接保持不变。"
             pendingAction = action; confirmingDiscard = true
         } else { action() }
+    }
+    private func stashDraft() {
+        sessionDrafts[draftKey] = .init(value: draft, original: original, traffic: originalTraffic,
+            api: originalAPI, identifier: newIdentifier, editedFields: editedDisplayFields,
+            verifiedOrder: verifiedOrder, verifiedResourceID: verifiedResourceID)
+        if isNew { lastNewService = draft.service }
+    }
+    private func restoreDraft(_ key: String) {
+        guard let saved = sessionDrafts.removeValue(forKey: key) else { return }
+        loadingDraft = true
+        draft = saved.value; original = saved.original; originalTraffic = saved.traffic; originalAPI = saved.api
+        newIdentifier = saved.identifier; editedDisplayFields = saved.editedFields
+        verifiedOrder = saved.verifiedOrder; verifiedResourceID = saved.verifiedResourceID
+        error = nil; notice = nil; waitingForSubscription = nil
+        loadingDraft = false
     }
     private func clearSecret() { draft.secret = "" }
     private func reset() {

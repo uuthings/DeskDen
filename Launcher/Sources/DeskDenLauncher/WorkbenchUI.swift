@@ -1013,6 +1013,9 @@ private struct WBPopoverAnchor<Content: View>: NSViewRepresentable {
     func updateNSView(_ view: NSView, context: Context) {
         let coordinator = context.coordinator
         coordinator.binding = $isPresented
+        // Read the binding during SwiftUI's update so presentation changes
+        // invalidate this representable even when the rest of the page is idle.
+        let presented = isPresented
         let body = AnyView(content.frame(width: width).fixedSize(horizontal: false, vertical: true)
             .workbenchThemeEnvironment(theme: theme, opacity: opacity, appearance: scheme == .light ? .light : .dark))
         // Presentation changes are deferred outside SwiftUI's update transaction.
@@ -1020,7 +1023,7 @@ private struct WBPopoverAnchor<Content: View>: NSViewRepresentable {
         let generation = coordinator.generation
         DispatchQueue.main.async { [weak view, weak coordinator] in
             guard let view, let coordinator, coordinator.generation == generation else { return }
-            if !isPresented { coordinator.popup?.dismiss(); coordinator.popup = nil; return }
+            if !presented { coordinator.popup?.dismiss(); coordinator.popup = nil; return }
             guard view.window != nil else { return }
             if let popup = coordinator.popup { popup.update(body, theme: theme, opacity: opacity, light: scheme == .light); return }
             let popup = WBContentPopup(anchor: view, content: body, width: width, theme: theme, opacity: opacity, light: scheme == .light, trailing: trailing)

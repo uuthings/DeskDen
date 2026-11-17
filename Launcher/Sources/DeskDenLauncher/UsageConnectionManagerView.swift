@@ -118,9 +118,12 @@ struct UsageConnectionManagerView: View {
                     Text(entry.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
                     Text(entry.detail).font(.system(size: 11)).foregroundStyle(palette.secondary).lineLimit(1)
                 }.frame(maxWidth: .infinity, alignment: .leading)
-                Circle().fill(entry.connected ? palette.accent : palette.muted).frame(width: 4, height: 4)
+                Image(systemName: manager.selectedSourceID == entry.id ? "checkmark" : "circle.fill")
+                    .font(.system(size: manager.selectedSourceID == entry.id ? 11 : 4, weight: .medium))
+                    .foregroundStyle(entry.connected || manager.selectedSourceID == entry.id ? palette.accent : palette.muted).frame(width: 14)
             }.padding(.horizontal, 10).frame(height: 52)
-                .background { if manager.selectedSourceID == entry.id { WorkbenchMaterialSurface(kind: .control, radius: 8) } }
+                .background(RoundedRectangle(cornerRadius: 8).fill(manager.selectedSourceID == entry.id ? palette.accent.opacity(palette.light ? 0.14 : 0.18) : .clear))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(manager.selectedSourceID == entry.id ? palette.accent : .clear, lineWidth: 1))
                 .contentShape(Rectangle())
         }.buttonStyle(ClickablePlainButtonStyle()).disabled(manager.busy)
             .accessibilityLabel(entry.name + "，" + entry.detail)
@@ -168,7 +171,8 @@ struct UsageConnectionManagerView: View {
         }
     }
     private var nameField: some View {
-        field("名称与图标") {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("名称与图标").font(.system(size: 12)).frame(height: 24, alignment: .leading)
             HStack(spacing: 8) {
                 UsageIconPicker(selection: $manager.draft.appearance.icon, appearance: appearance,
                                 aiProvider: manager.draft.service?.aiProvider, serviceKind: manager.draft.service?.trafficKind,
@@ -186,7 +190,7 @@ struct UsageConnectionManagerView: View {
                 Button("管理分类") { categoryEditor = .init(appearance.preferences.categories) }
                     .buttonStyle(WBQuietButtonStyle()).font(.system(size: 11))
                     .accessibilityIdentifier("fc.usage.manager.categories")
-            }
+            }.frame(height: 24)
             WBSelect("分类", selection: Binding(get: { manager.draft.appearance.categoryID ?? "uncategorized" }, set: { manager.draft.appearance.categoryID = $0 }),
                      options: appearance.preferences.categories.map { ($0.id, $0.title) })
                 .accessibilityIdentifier("fc.usage.manager.category")

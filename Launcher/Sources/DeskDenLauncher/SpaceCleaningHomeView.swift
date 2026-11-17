@@ -31,14 +31,13 @@ struct SpaceCleaningHomeView: View {
             VStack(alignment: .leading, spacing: 12) {
                 if width >= 760 {
                     HStack(alignment: .top, spacing: 12) {
-                        volumeCard.frame(width: leftWidth, height: columnHeight)
+                        volumeCard.frame(width: leftWidth).frame(minHeight: columnHeight)
                         configuration(width: max(0, width - leftWidth - 12))
-                            .frame(maxWidth: .infinity).frame(height: columnHeight)
+                            .frame(maxWidth: .infinity).frame(minHeight: columnHeight)
                     }
                 } else {
-                    volumeCard.frame(height: 680)
+                    volumeCard
                     configuration(width: width)
-                        .frame(height: max(680, height))
                 }
                 if hasPreviousResults { previousResults }
             }.frame(maxWidth: .infinity, alignment: .topLeading)
@@ -50,31 +49,26 @@ struct SpaceCleaningHomeView: View {
     private var volumeCard: some View {
         SpaceCleaningCapacityCard(total: model.diskTotal, available: model.diskAvailable,
                                  immediatelyFree: model.diskImmediatelyFree, reclaimableEstimate: model.diskReclaimableEstimate,
-                                 volumeName: model.diskVolumeName, updatedAt: model.diskUpdatedAt)
+                                 volumeName: model.diskVolumeName, updatedAt: model.diskUpdatedAt, preferredHeight: columnHeight)
     }
 
     private func configuration(width: CGFloat) -> some View {
-        let inset: CGFloat = compact ? 14 : 20
+        let inset: CGFloat = 14
         let contentWidth = max(0, width - inset * 2)
-        return SpaceCleaningSurface {
-            GeometryReader { geometry in
-                WorkbenchScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        VStack(alignment: .leading, spacing: compact ? 8 : 10) {
-                            Text("扫描方式").font(.system(size: 13, weight: .medium))
-                            modeChoices(width: contentWidth)
-                            if model.scanMode == .largeFiles { largeFileControls }
-                        }
-                        scopeControls(width: contentWidth).padding(.top, sectionSpacing)
-                        scopeDetails.padding(.top, sectionSpacing)
-                        if scope == .custom { selectedLocations(width: contentWidth).padding(.top, sectionSpacing) }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .frame(minHeight: max(0, geometry.size.height - inset * 2), alignment: .topLeading)
-                    .padding(inset)
-                }.scrollBounceBehavior(.basedOnSize)
-            }
-            configurationActions.padding(.horizontal, inset).padding(.bottom, inset)
+        return SpaceCleaningSurface(fillHeight: false) {
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: compact ? 8 : 10) {
+                    Text("扫描方式").font(.system(size: 13, weight: .medium))
+                    modeChoices(width: contentWidth)
+                    if model.scanMode == .largeFiles { largeFileControls }
+                }
+                scopeControls(width: contentWidth).padding(.top, sectionSpacing)
+                scopeDetails.padding(.top, sectionSpacing)
+                if scope == .custom { selectedLocations(width: contentWidth).padding(.top, sectionSpacing) }
+                Spacer(minLength: 12)
+                configurationActions
+            }.padding(inset).frame(minHeight: columnHeight, alignment: .topLeading)
+                .fixedSize(horizontal: false, vertical: true)
         }.accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-configuration-card")
     }
 
@@ -475,6 +469,7 @@ struct SpaceCleaningCapacityCard: View {
     let reclaimableEstimate: UInt64?
     let volumeName: String?
     let updatedAt: Date?
+    var preferredHeight: CGFloat = 540
     @Environment(\.workbenchPalette) private var palette
     @Environment(\.timeZone) private var timeZone
 
@@ -518,16 +513,10 @@ struct SpaceCleaningCapacityCard: View {
     }
 
     var body: some View {
-        SpaceCleaningSurface {
-            GeometryReader { geometry in
-                let compact = geometry.size.height < 680
-                let inset: CGFloat = compact ? 14 : 20
-                WorkbenchScrollView {
-                    capacityContent(compact: compact)
-                        .frame(minHeight: max(0, geometry.size.height - inset * 2), alignment: .topLeading)
-                        .padding(inset)
-                }.scrollBounceBehavior(.basedOnSize)
-            }
+        SpaceCleaningSurface(fillHeight: false) {
+            capacityContent(compact: preferredHeight < 680)
+                .padding(14).frame(minHeight: preferredHeight, alignment: .topLeading)
+                .fixedSize(horizontal: false, vertical: true)
         }.foregroundStyle(palette.text)
             .accessibilityElement(children: .contain).accessibilityIdentifier("space-cleaning-volume-card")
     }

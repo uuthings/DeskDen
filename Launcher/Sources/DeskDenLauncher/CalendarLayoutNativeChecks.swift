@@ -61,6 +61,17 @@ import LauncherCore
                 check(false, "calendar fixture mounts its real accessibility tree"); return (count, failures)
             }
             await calendar.refresh()
+            _ = await settle(window) { frame("fc.calendar.new", in: host) != nil }
+            try? await Task.sleep(for: .milliseconds(200))
+            check(click("fc.calendar.new", in: host, window: window), "calendar new button accepts a pointer click")
+            check(await settle(window) { window.childWindows?.contains(where: { $0 is WBContentPopup && $0.isVisible }) == true },
+                  "calendar new button presents its visible creation menu")
+            for popup in window.childWindows ?? [] where popup is WBContentPopup { popup.close() }
+            try? await Task.sleep(for: .milliseconds(200))
+            check(click("fc.calendar.new", in: host, window: window), "calendar creation menu accepts a second click after the page settles")
+            check(await settle(window) { window.childWindows?.contains(where: { $0 is WBContentPopup && $0.isVisible }) == true },
+                  "calendar creation menu reopens without an unrelated model refresh")
+            for popup in window.childWindows ?? [] where popup is WBContentPopup { popup.close() }
             let display = calendar.displayCalendar
             func civil(_ year: Int, _ month: Int, _ day: Int) -> Date {
                 display.date(from: DateComponents(year: year, month: month, day: day, hour: 12))!
@@ -68,6 +79,8 @@ import LauncherCore
             let fiveWeekDay = civil(2026, 10, 15), sixWeekDay = civil(2026, 8, 15)
             calendar.displayedMonth = fiveWeekDay; calendar.selectedDay = fiveWeekDay; calendar.presentationMode = .month
             await calendar.refresh()
+            for light in [true, false] {
+            model.changeAppearance(light ? .light : .dark)
             for sample in [(1120, 758, "regular"), (960, 720, "narrow"), (1728, 993, "wide"), (1120, 758, "returned")] {
                 window.setContentSize(.init(width: CGFloat(sample.0), height: CGFloat(sample.1)))
                 let ready = await settle(window) { geometryFits(host) }
@@ -76,8 +89,9 @@ import LauncherCore
                       "empty-day add action is centered in \(sample.2)")
                 check(centered("fc.calendar.pending.all-action", in: "fc.calendar.pendingReminders", host: host),
                       "empty-reminder all action is centered in \(sample.2)")
-                if sample.2 != "returned" { try NativeUIFixtureAccessibility.saveView(host, name: "calendar-layout-\(sample.2).png") }
+                if sample.2 != "returned" { try NativeUIFixtureAccessibility.saveView(host, name: "calendar-layout-\(sample.2)-\(light ? "light" : "dark").png") }
                 print("DETAIL calendar layout \(sample.2) month=\(String(describing: frame("fc.calendar.monthCard", in: host))) side=\(String(describing: frame("fc.calendar.sideColumn", in: host))) upcoming=\(String(describing: frame("fc.calendar.upcomingAgenda", in: host)))")
+            }
             }
             check(calendar.monthDays.count == 35, "calendar fixture covers an actual five-week month")
             let fiveTile = objects(in: host).filter { identifier($0).hasPrefix("fc.calendar.day.") }.compactMap(rect).first?.height
@@ -206,7 +220,16 @@ import LauncherCore
             // are captured rather than opening or changing system preferences.
             await calendar.disconnect(reminders:false);await calendar.disconnect(reminders:true)
             system.calendarAccess = .denied;system.remindersAccess = .denied
-            await calendar.refresh();calendar.openSources()
+            await calendar.refresh();calendar.showSources=false
+            _ = await settle(window) {frame("fc.calendar.new",in:host) != nil}
+            check(click("fc.calendar.new",in:host,window:window),"disconnected New accepts a pointer click")
+            check(await settle(window) {frame("fc.calendar.create.connect",in:host) != nil},
+                  "disconnected New presents the calendar permission explanation")
+            check(system.permissionRequests == 0,"showing the explanation does not request permission until confirmed")
+            check(press("fc.calendar.create.connect",in:host),"New permission action accepts confirmation")
+            check(await settle(window) {frame("fc.calendar.permission.settings.calendar",in:host) != nil},
+                  "denied New permission shows the calendar settings action instead of doing nothing")
+            calendar.errorMessage=nil;model.modals.clear();calendar.openSources()
             check(await settle(window) {frame("calendar-source-system-events",in:host) != nil},
                   "source management mounts its actual calendar permission switch")
             for target in CalendarPermissionTarget.allCases {
@@ -226,15 +249,15 @@ import LauncherCore
                 check(await settle(window) {calendar.errorMessage == nil && openedSettings.last?.absoluteString.hasSuffix("?"+target.privacyPane) == true},
                       "the privacy button routes to the matching Settings pane without opening the real app")
             }
-            check(system.permissionRequests == 2 && system.writes == 0 && openedSettings.count == 2
+            check(system.permissionRequests == 3 && system.writes == 0 && openedSettings.count == 2
                   && notifier.permissionRequests == 0 && notifier.nonemptyDeliveries == 0,
-                  "permission UI checks use only two synthetic requests and intercepted Settings links")
+                  "permission UI checks use only three synthetic requests and intercepted Settings links")
         } catch { check(false, "calendar layout fixture: \(error.localizedDescription)") }
         return (count, failures)
     }
 
     private static func geometryFits(_ host: NSView) -> Bool {
-        let page = min(1360, max(0, host.bounds.width - 184 - 2 - 70))
+        let page = min(1360, max(0, host.bounds.width - 2 - 48))
         guard let month = frame("fc.calendar.monthCard", in: host),
               let selected = frame("fc.calendar.selectedAgenda", in: host),
               let recent = frame("fc.calendar.upcomingAgenda", in: host),
@@ -256,6 +279,17 @@ import LauncherCore
             && workspace.minY <= availableBottom+24
 
     }
+    private static func click(_ id: String, in host: NSView, window: NSWindow) -> Bool {
+        guard let rect = frame(id, in: host) else { return false }
+        let point = window.convertPoint(fromScreen: NSPoint(x: rect.midX, y: rect.midY))
+        func event(_ type:NSEvent.EventType)->NSEvent? {
+            NSEvent.mouseEvent(with:type,location:point,modifierFlags:[],timestamp:ProcessInfo.processInfo.systemUptime,
+                windowNumber:window.windowNumber,context:nil,eventNumber:0,clickCount:1,pressure:1)
+        }
+        guard let down=event(.leftMouseDown),let up=event(.leftMouseUp) else{return false}
+        NSApp.postEvent(up,atStart:false);NSApp.sendEvent(down)
+        return true
+    }
     private static func press(_ id:String,in host:NSView)->Bool {
         let selector=NSSelectorFromString("accessibilityPerformPress")
         guard let object=objects(in:host).first(where:{identifier($0)==id && $0.responds(to:selector)}) else {return false}
@@ -265,6 +299,7 @@ import LauncherCore
     private static func centered(_ action: String, in card: String, host: NSView) -> Bool {
         guard let button = frame(action, in: host), let container = frame(card, in: host) else { return false }
         return button.width < container.width - 40 && abs(button.midX - container.midX) < 2
+            && container.insetBy(dx:14,dy:14).contains(button)
     }
     private static func objects(in root: NSObject) -> [NSObject] {
         var pending = [root], seen = Set<ObjectIdentifier>(), result: [NSObject] = []

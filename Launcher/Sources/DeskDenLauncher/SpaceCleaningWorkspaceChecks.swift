@@ -49,7 +49,8 @@ import LauncherCore
                 let start = frame("space-cleaning-start", host)
                 check(volume != nil && start != nil && volume!.maxX < start!.minX,
                       "\(Int(size.width))-point preparation keeps disk and scan configuration in separate columns")
-                check(start.map { window.frame.contains($0) } == true, "\(Int(size.width))-point preparation keeps the scan action visible")
+                if size.height == 562 { await scrollPreparationToBottom(host, window: window) }
+                check(frame("space-cleaning-start", host).map { window.frame.contains($0) } == true, "\(Int(size.width))-point preparation keeps the scan action reachable")
                 let geometry = preparationGeometryChecks(host, window: window, allowsVerticalScrolling: size.height == 562)
                 count += geometry.count; failures += geometry.failures
                 let captureSize = [690, 732].contains(Int(size.height)) ? "\(Int(size.width))x\(Int(size.height))" : "\(Int(size.width))"
@@ -116,13 +117,15 @@ import LauncherCore
             window.setContentSize(NSSize(width: 900, height: 562))
             model.selectScanMode(.largeFiles)
             _ = await settle(window) { frame("space-cleaning-large-file-options", host) != nil }
+            await scrollPreparationToBottom(host, window: window)
             check(frame("space-cleaning-start", host).map { window.frame.contains($0) } == true,
-                  "large-file options keep the scan action visible in the narrow workspace")
+                  "large-file options keep the scan action reachable by page scrolling")
             model.editScope(custom: true)
             model.addDraftDirectories([home.appendingPathComponent("Downloads")])
             _ = await settle(window) { frame("space-cleaning-apply-scope", host) != nil }
+            await scrollPreparationToBottom(host, window: window)
             check(frame("space-cleaning-apply-scope", host).map { window.frame.contains($0) } == true,
-                  "custom scope editing keeps its save action visible")
+                  "custom scope editing keeps its save action reachable by page scrolling")
             model.cancelScope(); model.selectScanMode(.cleanup)
             model.startScan(); await model.waitUntilIdle()
             check(model.screen == .results && model.items.count == 36 && model.detailID == nil,
@@ -191,6 +194,13 @@ import LauncherCore
         return (count + capacities.count, failures + capacities.failures)
     }
 
+    private static func scrollPreparationToBottom(_ host: NSView, window: NSWindow) async {
+        guard let scroll = visibleScrollViews(in: host).first, let document = scroll.documentView else { return }
+        let y = document.isFlipped ? max(0, document.bounds.height - scroll.contentView.bounds.height) : 0
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: y)); scroll.reflectScrolledClipView(scroll.contentView)
+        _ = await settle(window) { frame("space-cleaning-start", host).map { window.frame.contains($0) } == true }
+    }
+
     private static func preparationGeometryChecks(_ host: NSView, window: NSWindow, allowsVerticalScrolling: Bool,
                                                   additionalConfigurationIDs: [String] = []) -> (count: Int, failures: Int) {
         var count = 0, failures = 0
@@ -234,9 +244,12 @@ import LauncherCore
                 return fits
             }
         }
-        check(viewport.insetBy(dx: -1, dy: -1).contains(volume) && viewport.insetBy(dx: -1, dy: -1).contains(configuration)
-                && volume.maxX < configuration.minX,
-              "keeps both cards inside the module viewport without overlap")
+        check(volume.minX >= viewport.minX - 1 && configuration.maxX <= viewport.maxX + 1
+                && volume.maxX < configuration.minX
+                && (allowsVerticalScrolling || (viewport.insetBy(dx: -1, dy: -1).contains(volume) && viewport.insetBy(dx: -1, dy: -1).contains(configuration))),
+              "keeps both card widths inside the module; only the page may overflow vertically")
+        check(leftClips.isEmpty && rightClips.isEmpty && scrolls.count == 1,
+              "preparation has exactly one page scroll surface and no card scroll surfaces")
         check(contained(["space-cleaning-home-actions", "space-cleaning-start"], in: configuration, clips: [], vertically: true)
                 && contained(["space-cleaning-rules-link"], in: viewport, clips: [], vertically: true),
               "keeps the complete scan footer and page rules action visible")

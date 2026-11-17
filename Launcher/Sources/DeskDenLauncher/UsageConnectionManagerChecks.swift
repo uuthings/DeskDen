@@ -17,6 +17,21 @@ import LauncherCore
         do {
             let fixture = try UsageConnectionFixture(directory: root.appendingPathComponent("normal"))
             fixtures.append(fixture)
+            let parked = UsageConnectionManager()
+            parked.selectService(.bandwagon); parked.draft.resourceID = "1111"
+            let firstDraftID = try parked.trafficConfiguration().id
+            parked.selectService(.iproyal); parked.draft.resourceID = "2222"
+            let secondDraftID = try parked.trafficConfiguration().id
+            parked.selectService(.bandwagon)
+            check(!parked.confirmingDiscard && parked.draft.resourceID == "1111"
+                  && (try? parked.trafficConfiguration().id) == firstDraftID && firstDraftID != secondDraftID,
+                  "parked new services preserve fields and have separate persistent connection identities")
+            let existingDraft = UsageConnectionManager(sourceID: UsagePresentationSourceID.ai(.codex))
+            existingDraft.prepare(app: fixture.app); existingDraft.draft.name = "Unsaved Codex"
+            existingDraft.select(UsagePresentationSourceID.ai(.claude), app: fixture.app)
+            existingDraft.select(UsagePresentationSourceID.ai(.codex), app: fixture.app)
+            check(!existingDraft.confirmingDiscard && existingDraft.draft.name == "Unsaved Codex",
+                  "switching existing connections preserves independent unsaved edits")
             let category = UsageCardCategory(id: "fixture-paid", title: "Paid tools")
             check(fixture.app.usageAppearance.replaceCategories(UsageCardCategory.defaults + [category]), "a shared custom category can be saved")
             let manager = UsageConnectionManager()
