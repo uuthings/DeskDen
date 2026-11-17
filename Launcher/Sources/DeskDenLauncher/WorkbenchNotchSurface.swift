@@ -91,9 +91,12 @@ enum WorkbenchMiniLayout {
         appearance = NSAppearance(named: Palette.isLight ? .aqua : .darkAqua)
         theme = Palette.workbenchTheme
         outline.strokeColor = NSColor(Palette.workbenchPalette.line).cgColor
-        // A separate panel samples what is behind its window. An opaque scene
-        // image underneath the tint would obscure the desktop behind the Mini.
-        glass.rootView = AnyView(WorkbenchMaterialSurface(kind: .panel, radius: 0, behindWindow: true)
+        // The independent panel uses the same scene artwork and material as the
+        // workbench, including immediate changes to the saved appearance.
+        glass.rootView = AnyView(ZStack {
+            WorkbenchFluidBackground()
+            WorkbenchMaterialSurface(kind: .panel, radius: 0)
+        }
             .workbenchThemeEnvironment(theme: theme, opacity: Palette.glassOpacity, backgroundMotion: false,
                                       appearance: Palette.isLight ? .light : .dark))
     }

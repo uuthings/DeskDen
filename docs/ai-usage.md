@@ -42,3 +42,5 @@ Reset details show the full workbench date and time, selected city or location l
 - Configured sources waiting for their first window show a waiting state.
 - Readings older than 15 minutes or crossing their reported reset time are marked stale, with their original value and sampling time retained.
 - Imported and manually entered readings retain their provenance. They do not establish an authenticated account connection.
+
+`--usage-ui-check --token-history-check` exercises the history tabs, pagination, filters and single workspace scrolling at 1120 × 758, 960 × 720 and 1728 × 993 in both appearances. It uses isolated synthetic records and hidden native views; `DESKDEN_USAGE_OUTPUT` optionally saves previews.

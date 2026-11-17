@@ -39,6 +39,27 @@ import LauncherCore
                         accountPlan: provider == .codex ? .plus : .pro))
             }
             try JSONEncoder().encode(disabled).write(to: aiSources.appendingPathComponent("sources.json"))
+            if CommandLine.arguments.contains("--token-history-check") {
+                var ledger = AITokenLedger(now: now.addingTimeInterval(-180 * 86_400))
+                for month in (1...5).reversed() {
+                    let date = now.addingTimeInterval(-Double(month) * 32 * 86_400)
+                    let records = AIProvider.allCases.map { source in
+                        AITokenRecord(id: "design-month-\(month)-\(source.rawValue)", provider: source, timestamp: date,
+                                      model: source == .codex ? "gpt-6" : "claude-sonnet",
+                                      tokens: .init(input: Int64(1_400_000 * month), output: Int64(210_000 * month), cacheRead: Int64(600_000 * month)))
+                    }
+                    try ledger.ingest(records, at: date)
+                }
+                let records: [AITokenRecord] = (0..<48).map { index -> AITokenRecord in
+                    let counts = AITokenCounts(input: Int64(216 + index * 137), output: Int64(73 + index * 41), cacheRead: Int64(index * 311))
+                    return AITokenRecord(id: "design-activity-\(index)", provider: index % 3 == 0 ? .claude : .codex,
+                                  timestamp: now.addingTimeInterval(-Double(index + 1) * 180),
+                                  model: index % 3 == 0 ? "claude-sonnet" : "gpt-6",
+                                  tokens: counts)
+                }
+                try ledger.ingest(records, at: now)
+                try AITokenLedgerStore(url: aiSources.appendingPathComponent("token-ledger.json")).save(ledger)
+            }
             let ai = AIUsageModel(dataDirectory: aiFolder, startServices: false, notifications: UsageCheckAINotifications())
             ai.refresh()
             for _ in 0..<40 where ai.isRefreshing { try? await Task.sleep(for: .milliseconds(25)) }
@@ -73,6 +94,74 @@ import LauncherCore
             let host = NSHostingView(rootView: WorkbenchRootView(model: app).environment(\.accessibilityEnabled, true))
             window.contentView = host; app.hostWindow = window; app.modals.hostWindow = window
             defer { app.modals.clear(); window.contentView = nil; window.close(); app.shutdown() }
+            if CommandLine.arguments.contains("--token-history-check") {
+                try owner.store.save(owner.configuration)
+                ai.show(.history)
+                for light in [true, false] {
+                    app.changeAppearance(light ? .light : .dark)
+                    for (width, height) in [(1120, 758), (960, 720), (1728, 993)] {
+                        window.setContentSize(.init(width: width, height: height))
+                        await settle(host)
+                        for tab in [0, 1] {
+                            check(press("fc.ai.history.tab.\(tab)", in: host), "native history tab responds")
+                            await settle(host)
+                            let scrolls = nativeViews(host).compactMap { $0 as? NSScrollView }.filter { !$0.isHiddenOrHasHiddenAncestor && $0.bounds.width > 100 }
+                            check(scrolls.count == 1, "\(width) / \(light) / tab \(tab): one page scroll only")
+                            let target = tab == 0 ? "fc.ai.history.months.next" : "fc.ai.history.records.next"
+                            let bounds = window.convertToScreen(host.bounds)
+                            check(frame(target, objects: objects(host)).map { bounds.contains($0) } == true,
+                                  "\(width) / \(light) / tab \(tab): pagination fully visible")
+                            // A hidden hosting view needs a display pass before the final bitmap,
+                            // especially after the native theme button changes its image.
+                            if let warmup = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+                                host.cacheDisplay(in: host.bounds, to: warmup)
+                            }
+                            try? await Task.sleep(for: .milliseconds(500))
+                            host.layoutSubtreeIfNeeded()
+                            if let output {
+                                check(save(host, to: output.appendingPathComponent("\(tab == 0 ? "summary" : "details")-\(width)-\(light ? "light" : "dark").png")), "native history captured")
+                            }
+                        }
+                    }
+                }
+                check(press("fc.ai.history.records.next", in: host), "detail next page responds")
+                await settle(host)
+                check(labels(objects(host)).contains("第 9–16 条，共 48 条"), "detail pagination advances by eight records")
+                ai.selectedProvider = .claude
+                await settle(host)
+                check(labels(objects(host)).contains("第 1–8 条，共 16 条"), "source filter resets page and record count")
+                ai.selectedProvider = nil
+                await settle(host)
+                for _ in 0..<5 { _ = press("fc.ai.history.records.next", in: host); await settle(host) }
+                check(labels(objects(host)).contains("第 41–48 条，共 48 条"), "all records are reachable on the last page")
+                _ = press("fc.ai.history.records.next", in: host)
+                await settle(host)
+                check(labels(objects(host)).contains("第 41–48 条，共 48 条"), "last page cannot advance beyond the data")
+                if let select = nativeViews(host).compactMap({ $0 as? WBPopUpButton }).first(where: { $0.accessibilityLabel() == "每页条数" }) {
+                    select.selectItem(at: 1)
+                    _ = select.sendAction(select.action, to: select.target)
+                    await settle(host)
+                    check(labels(objects(host)).contains("第 1–16 条，共 48 条"), "changing page size resets to the first sixteen records")
+                    select.selectItem(at: 2)
+                    _ = select.sendAction(select.action, to: select.target)
+                    await settle(host)
+                    check(labels(objects(host)).contains("第 1–32 条，共 48 条"), "the larger page uses thirty-two records")
+                    let scrolls = nativeViews(host).compactMap { $0 as? NSScrollView }.filter { !$0.isHiddenOrHasHiddenAncestor && $0.bounds.width > 100 }
+                    check(scrolls.count == 1 && scrolls.first.map { ($0.documentView?.bounds.height ?? 0) > $0.contentSize.height } == true,
+                          "a longer page scrolls the workspace without an inner list scroll")
+                } else { check(false, "page size control is reachable") }
+                _ = press("fc.ai.history.tab.0", in: host); await settle(host)
+                check(press("fc.ai.history.months.next", in: host), "monthly history next page responds")
+                await settle(host)
+                check(labels(objects(host)).contains("第 5–8 条，共 12 条"), "monthly paging reaches older summaries")
+                ai.selectedProvider = .codex
+                await settle(host)
+                check(labels(objects(host)).contains("第 1–4 条，共 6 条"), "monthly provider filter resets the page")
+                check(!window.isVisible && !window.isKeyWindow && provider.refreshing.isEmpty && api.refreshing.isEmpty,
+                      "history acceptance remains hidden and does not collect live sources")
+                print("Token history: \(count) checks, \(failures) failures")
+                return (count, failures)
+            }
             let headerChecks = await sourceHeaderChecks(appearance: app.usageAppearance, window: window)
             count += headerChecks.count; failures += headerChecks.failures
             window.contentView = host

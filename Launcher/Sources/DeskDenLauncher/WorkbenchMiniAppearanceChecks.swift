@@ -64,6 +64,28 @@ import SwiftUI
         check(await NativeUIFixtureAccessibility.prepareOwnProcessBridge(), "Mini native accessibility bridge is available without presenting windows")
         let saved = (Palette.workbenchTheme, Palette.isLight, Palette.glassOpacity)
         defer { Palette.workbenchTheme = saved.0; Palette.isLight = saved.1; Palette.glassOpacity = saved.2 }
+        if CommandLine.arguments.contains("--mini-background-check") {
+            for light in [true, false] {
+                let fixture = Fixture(width: 748, safeTop: 32, notchWidth: 220, light: light, opacity: 0.7)
+                await fixture.settle()
+                check(WorkbenchFluidAssets.image(light: light) != nil, "Mini appearance has the workbench artwork")
+                let effects = descendants(fixture.surface).compactMap { $0 as? NSVisualEffectView }
+                check(!effects.isEmpty && effects.allSatisfy { $0.blendingMode == .withinWindow },
+                      "Mini glass samples its own background instead of the desktop")
+                check(!fixture.window.isVisible && !fixture.window.isKeyWindow, "Mini background fixture stays hidden")
+                if let output {
+                    check(await fixture.savePNG(to: output.appendingPathComponent("mini-\(light ? "light" : "dark").png")), "Mini background captured")
+                }
+                Palette.isLight = !light
+                fixture.surface.refreshAppearance()
+                await fixture.settle()
+                check(fixture.surface.usesLightAppearance == !light && fixture.surface.phase == .expanded,
+                      "open Mini changes its background appearance without remounting or collapsing")
+                fixture.close()
+            }
+            print("Mini background: \(count) checks, \(failures) failures")
+            return (count, failures)
+        }
         var records: [[String: Any]] = []
         let defaults = WorkbenchMiniCardID.defaultVisible
         check(WorkbenchMiniLayout.size(cards: defaults, screenWidth: 1728, safeTop: 32, notchWidth: 220) == CGSize(width: 748, height: 292), "seven default cards naturally occupy three columns")
@@ -83,9 +105,10 @@ import SwiftUI
                     let effects = descendants(fixture.surface).compactMap { $0 as? NSVisualEffectView }
                     let outerEffects = effects.filter { !$0.isDescendant(of: fixture.host) }
                     let innerEffects = effects.filter { $0.isDescendant(of: fixture.host) }
-                    check(!outerEffects.isEmpty && outerEffects.allSatisfy { $0.blendingMode == .behindWindow }
+                    check(WorkbenchFluidAssets.image(light: light) != nil
+                          && !outerEffects.isEmpty && outerEffects.allSatisfy { $0.blendingMode == .withinWindow }
                           && !innerEffects.isEmpty && innerEffects.allSatisfy { $0.blendingMode == .withinWindow },
-                          "\(name): outer glass samples the desktop while inner cards sample the panel")
+                          "\(name): shared artwork is available and glass samples the panel scene")
                     check(fixture.surface.containsVisiblePoint(.init(x: 12, y: 2)) && !fixture.surface.containsVisiblePoint(.init(x: 2, y: 26)) && fixture.surface.containsVisiblePoint(.init(x: 23, y: 28)), "\(name): shoulder joins the top and straight side")
                     let objects = accessibilityObjects(fixture.host)
                     let actions = frame("mini-header-actions", objects: objects, fixture: fixture)

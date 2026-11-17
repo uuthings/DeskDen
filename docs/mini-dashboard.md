@@ -1,6 +1,6 @@
 # Modular Mini dashboard
 
-The top-edge panel shares the workbench light/dark appearance and translucent materials. The top shoulders attach to the screen edge, and the header avoids the actual camera notch. Date/time and weather are independently visible; long header content is reduced within the available safe space rather than crossing the notch.
+The top-edge panel shares the workbench light/dark background artwork and translucent materials. The glass samples that artwork within the panel, and an open panel follows appearance changes immediately. The top shoulders attach to the screen edge, and the header avoids the actual camera notch. Date/time and weather are independently visible; long header content is reduced within the available safe space rather than crossing the notch.
 
 Click either the date/time or weather header to open the homepage's city, weather and time dialog in the existing main window, including before a city is selected. Existing dialogs and unsaved configuration keep their navigation protection. Header text uses a consistent **12 pt** size, including time and temperature values.
 
@@ -22,3 +22,5 @@ Clicking a card brings the existing workbench forward and opens its correspondin
 The saved layout is independent of temporary screen-width pagination. Previous explicit direct-workbench and disabled top-entry choices remain valid after preference migration. The Mini reuses existing collectors and snapshots; opening it does not start another provider quota poller. Its network curve updates without first opening Network Monitor and covers all local traffic, with no VPN split. Weather, calendar and hardware visibility follow the shared lifecycle, and hidden content releases its host after the close animation.
 
 These point measurements describe the native layout, not an HTML screenshot's pixel scaling. Test fixtures render real views offscreen with synthetic data; actual pointer dragging across monitors and long-running sensor/account behavior remain separate acceptance activities.
+
+`--mini-appearance-check --mini-background-check` runs the focused light/dark artwork and open-panel appearance checks entirely offscreen. `DESKDEN_MINI_OUTPUT` optionally saves synthetic native previews.

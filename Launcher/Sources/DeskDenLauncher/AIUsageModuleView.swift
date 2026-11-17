@@ -114,6 +114,10 @@ struct AIUsageModuleView: View {
     @State private var contentWidth: CGFloat = 864
     @State private var selectedBucket: Date?
     @State private var sourcesMenuOpen = false
+    @State private var historyTab = 0
+    @State private var historyPage = 0
+    @State private var historyPageSize = 8
+    @State private var monthPage = 0
     private var visibleRecords: [AITokenRecord] { model.filteredRecords(provider: model.selectedProvider, period: model.selectedPeriod) }
     private var routeID: String {
         switch model.destination { case .overview: "fc.page.ai"; case .provider(let provider): "fc.page.ai." + provider.rawValue; case .sources: "fc.page.ai.sources"; case .history: "fc.page.ai.history"; case .prices: "fc.page.ai.prices" }
@@ -500,26 +504,75 @@ struct AIUsageModuleView: View {
     }
     private var history: some View {
         let records = model.filteredRecords(provider: model.selectedProvider, period: model.selectedPeriod, includeDisconnected: true).sorted { $0.timestamp > $1.timestamp }
+        let totals = records.reduce(AITokenCounts()) { $0 + $1.tokens }
+        let currentPage = boundedPage(historyPage, total: records.count, size: historyPageSize)
         return VStack(alignment: .leading, spacing: 0) {
             WBPageHeader(title: "Token 活动记录", subtitle: "仅显示用量元数据；已断开来源的历史仍保留", back: pageBack) { filters }
-            WBCard(spacing: 0) {
-                AICardTitle(title: "最近活动", symbol: "clock.arrow.circlepath", trailing: "\(records.count) 条记录")
-                tokenSourceSummary(records).padding(.bottom, 12)
-                AITokenTable(records: records, model: model, compact: contentWidth < 800, scrollHeight: expanded ? 525 : 405)
+            WBSegmentedChoice(selection: $historyTab, options: [(0, "用量汇总"), (1, "活动明细")],
+                identifier: "fc.ai.history.tabs", optionIdentifierPrefix: "fc.ai.history.tab.")
+                .padding(.bottom, 12)
+            if historyTab == 0 {
+                WBCard(spacing: 0) {
+                    AICardTitle(title: "本机 Token 活动", symbol: "chart.bar.xaxis", trailing: "\(records.count) 条记录 · " + model.selectedPeriod.title)
+                    HStack(spacing: 14) {
+                        tokenValue(totals.total)
+                        Spacer(minLength: 0)
+                        tokenParts(totals)
+                    }.padding(.bottom, 12)
+                    tokenSourceSummary(records, showsTotal: false)
+                }.accessibilityElement(children: .contain).accessibilityIdentifier("fc.ai.history.overview")
+                monthlyTokenHistory.padding(.top, 12)
+            } else {
+                WBCard(spacing: 0) {
+                    AICardTitle(title: "活动明细", symbol: "clock.arrow.circlepath", trailing: "\(records.count) 条记录")
+                    AITokenTable(records: Array(records.dropFirst(currentPage * historyPageSize).prefix(historyPageSize)),
+                                 model: model, compact: contentWidth < 800, scrollHeight: nil)
+                    HStack(spacing: 8) {
+                        pagination(total: records.count, size: historyPageSize, page: $historyPage, identifier: "fc.ai.history.records")
+                        WBSelect("每页条数", selection: $historyPageSize, options: [(8, "每页 8 条"), (16, "每页 16 条"), (32, "每页 32 条")])
+                            .frame(width: 108).accessibilityIdentifier("fc.ai.history.page-size")
+                    }.padding(.top, 12)
+                }.accessibilityElement(children: .contain).accessibilityIdentifier("fc.ai.history.details")
             }
             if model.tokenHistoryCapacityLimited { WBPageNote(symbol: "exclamationmark.triangle") { Text("历史容量最多 20,000 条，最长保留 31 天。较早记录已移出，当前列表不代表完整账户历史。").fixedSize(horizontal: false, vertical: true) }.padding(.top, 12) }
-            monthlyTokenHistory.padding(.top, 12)
             privacyFootnote.padding(.top, 12)
         }
+        .onChange(of: model.selectedProvider) { _, _ in historyPage = 0; monthPage = 0 }
+        .onChange(of: model.selectedPeriod) { _, _ in historyPage = 0 }
+        .onChange(of: historyPageSize) { _, _ in historyPage = 0 }
+        .onChange(of: records.count) { _, total in historyPage = boundedPage(historyPage, total: total, size: historyPageSize) }
     }
-    private func tokenSourceSummary(_ records: [AITokenRecord]) -> some View {
+    private func boundedPage(_ page: Int, total: Int, size: Int) -> Int {
+        min(max(0, page), max(0, (total - 1) / size))
+    }
+    private func pagination(total: Int, size: Int, page: Binding<Int>, identifier: String) -> some View {
+        let pages = max(1, (total + size - 1) / size)
+        let currentPage = boundedPage(page.wrappedValue, total: total, size: size)
+        return HStack(spacing: 8) {
+            Text(total == 0 ? "暂无记录" : "第 \(currentPage * size + 1)–\(min(total, (currentPage + 1) * size)) 条，共 \(total) 条")
+                .aiText(11, color: palette.muted).monospacedDigit()
+                .accessibilityIdentifier(identifier + ".range")
+            Spacer(minLength: 12)
+            Button { page.wrappedValue = max(0, currentPage - 1) } label: { Image(systemName: "chevron.left") }
+                .buttonStyle(WBButtonStyle()).disabled(currentPage == 0)
+                .accessibilityLabel("上一页")
+                .accessibilityIdentifier(identifier + ".previous")
+            Text("\(currentPage + 1) / \(pages)").aiText(11, color: palette.secondary).monospacedDigit()
+            Button { page.wrappedValue = min(pages - 1, currentPage + 1) } label: { Image(systemName: "chevron.right") }
+                .buttonStyle(WBButtonStyle()).disabled(currentPage + 1 >= pages)
+                .accessibilityLabel("下一页")
+                .accessibilityIdentifier(identifier + ".next")
+        }
+    }
+    private func tokenSourceSummary(_ records: [AITokenRecord], showsTotal: Bool = true) -> some View {
         let totals = AIProvider.allCases.map { provider in
             (provider: provider, tokens: records.filter { $0.provider == provider }.reduce(Int64(0)) { $0 + $1.tokens.total })
         }
         let total = totals.reduce(Int64(0)) { $0 + $1.tokens }
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
-                Text("合计 " + aiCount(total) + " Token").aiText(13, weight: .medium, color: palette.text).monospacedDigit()
+                if showsTotal { Text("合计 " + aiCount(total) + " Token").aiText(13, weight: .medium, color: palette.text).monospacedDigit() }
+                else { Text("来源占比").aiText(11, color: palette.muted) }
                 Spacer(minLength: 8)
                 ForEach(totals, id: \.provider) { source in
                     let share = total > 0 ? Double(source.tokens) / Double(total) : 0
@@ -540,31 +593,33 @@ struct AIUsageModuleView: View {
     }
     private var monthlyTokenHistory: some View {
         let summaries = model.monthlyTokenHistory.filter { model.selectedProvider == nil || $0.provider == model.selectedProvider }
+        let currentPage = boundedPage(monthPage, total: summaries.count, size: 4)
         return WBCard(spacing: 0) {
             AICardTitle(title: "月度用量汇总", symbol: "calendar", trailing: "最近 120 个月")
             Text("明细保留 31 天，到期后只保留每月 Token 汇总；按 UTC 月份归档，仅包含本机实际采集到的记录。")
                 .aiText(11, color: palette.muted).padding(.bottom, 12)
             if summaries.isEmpty {
-                Text("暂无月度记录").aiText(12, color: palette.muted).padding(.vertical, 12)
+                Text("暂无月度记录").aiText(12, color: palette.muted).frame(maxWidth: .infinity, minHeight: 80)
             } else {
-                WorkbenchScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(Array(summaries.reversed())) { summary in
-                            HStack(spacing: 12) {
-                                Text(summary.title).aiText(12, color: palette.text)
-                                Text(summary.provider.title).aiText(11, color: palette.muted)
-                                Spacer()
-                                Text(aiCount(summary.tokens.total) + " Token").aiText(13, weight: .medium, color: palette.text).monospacedDigit()
-                            }.frame(height: 36)
-                        }
+                VStack(spacing: 0) {
+                    ForEach(Array(summaries.reversed().dropFirst(currentPage * 4).prefix(4))) { summary in
+                        HStack(spacing: 12) {
+                            Text(summary.title).aiText(12, color: palette.text)
+                            Text(summary.provider.title).aiText(11, color: palette.muted)
+                            Spacer()
+                            Text(aiCount(summary.tokens.total) + " Token").aiText(13, weight: .medium, color: palette.text).monospacedDigit()
+                        }.frame(height: 36)
                     }
-                }.frame(maxHeight: 240)
+                }
+                pagination(total: summaries.count, size: 4, page: $monthPage, identifier: "fc.ai.history.months")
+                    .padding(.top, 12)
             }
             if model.tokenHistoryCapacityLimited {
                 Text("部分来源或明细曾达到容量上限，月度汇总也可能不完整。")
                     .aiText(11, color: palette.muted).padding(.top, 8)
             }
-        }.accessibilityIdentifier("fc.ai.history.monthly")
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("fc.ai.history.monthly")
+        .onChange(of: summaries.count) { _, total in monthPage = boundedPage(monthPage, total: total, size: 4) }
     }
     private var prices: some View {
         VStack(alignment: .leading, spacing: 0) {
