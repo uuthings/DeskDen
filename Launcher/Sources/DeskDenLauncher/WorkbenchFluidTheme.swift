@@ -2,35 +2,9 @@ import AppKit
 import SwiftUI
 import LauncherCore
 
-/// Registers only the independently animated header control, without searching
-/// the accessibility tree or attaching another mouse-tracking surface.
-struct WorkbenchAppearanceLiveRegion: NSViewRepresentable {
-    func makeNSView(context: Context) -> WorkbenchAppearanceLiveRegionView {
-        WorkbenchAppearanceLiveRegionView(frame: .zero)
-    }
-    func updateNSView(_ view: WorkbenchAppearanceLiveRegionView, context: Context) {}
-}
-
-@MainActor final class WorkbenchAppearanceLiveRegionView: NSView {
-    private static let registered = NSHashTable<WorkbenchAppearanceLiveRegionView>.weakObjects()
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        setAccessibilityElement(false)
-        Self.registered.add(self)
-    }
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-    static func regions(in content: NSView) -> [WorkbenchAppearanceLiveRegionView] {
-        registered.allObjects.filter {
-            $0.window === content.window && $0.isDescendant(of: content) && !$0.isHiddenOrHasHiddenAncestor
-                && $0.bounds.width > 0 && $0.bounds.height > 0
-        }
-    }
-}
-
 /// A stable native boundary lets Core Animation cross-fade its already
 /// composited scene. It never redraws SwiftUI into a CPU bitmap. Navigation
-/// lives outside this layer, so the theme control flips independently.
+/// lives outside this layer, so its controls remain interactive.
 struct WorkbenchAppearanceScene: NSViewRepresentable {
     let model: WorkbenchAppModel
     func makeNSView(context: Context) -> WorkbenchAppearanceSceneView {
@@ -101,32 +75,42 @@ struct WorkbenchHomeSurface: View {
     }
 }
 
-@MainActor enum WorkbenchFluidAssets {
-    private static var images: [Bool: NSImage] = [:]
-    static func url(light: Bool) -> URL? {
-        Bundle.main.url(forResource: light ? "cyan-amber" : "ink-gold", withExtension: "jpg", subdirectory: "Workbench")
+extension LauncherAppearance {
+    @MainActor var usesLightPalette: Bool {
+        fixedLight ?? (NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .aqua)
     }
-    static func image(light: Bool) -> NSImage? {
-        if let image = images[light] { return image }
-        guard let image = url(light: light).flatMap(NSImage.init(contentsOf:)) else { return nil }
-        images[light] = image
+}
+
+@MainActor enum WorkbenchFluidAssets {
+    private static var images: [String: NSImage] = [:]
+
+    static func image(for appearance: LauncherAppearance, systemIsLight: Bool) -> NSImage? {
+        let name = appearance.artworkName(systemIsLight: systemIsLight)
+        if let image = images[name] { return image }
+        guard let url = Bundle.main.url(forResource: name, withExtension: "jpg", subdirectory: "Workbench"),
+              let image = NSImage(contentsOf: url) else { return nil }
+        images[name] = image
         return image
     }
 }
 
 /// Match the approved image's cover crop, including its slightly raised focal point.
 struct WorkbenchFluidBackground: View {
+    var preview: LauncherAppearance?
+    @Environment(\.workbenchAppearance) private var selected
     @Environment(\.colorScheme) private var scheme
     var body: some View {
         GeometryReader { geometry in
-            if let image = WorkbenchFluidAssets.image(light: scheme == .light) {
+            let appearance = preview ?? selected
+            let light = appearance.fixedLight ?? (scheme == .light)
+            if let image = WorkbenchFluidAssets.image(for: appearance, systemIsLight: light) {
                 let scale = max(geometry.size.width / image.size.width, geometry.size.height / image.size.height)
                 let width = image.size.width * scale, height = image.size.height * scale
                 Image(nsImage: image).resizable()
                     .frame(width: width, height: height)
-                    .position(x: geometry.size.width / 2, y: height / 2 + (geometry.size.height - height) * (scheme == .light ? 0.43 : 0.5))
+                    .position(x: geometry.size.width / 2, y: height / 2 + (geometry.size.height - height) * (light ? 0.43 : 0.5))
             } else {
-                scheme == .light ? Color(red: 6 / 255, green: 113 / 255, blue: 140 / 255) : .black
+                light ? Color(red: 6 / 255, green: 113 / 255, blue: 140 / 255) : .black
             }
         }.clipped().allowsHitTesting(false).accessibilityHidden(true)
     }

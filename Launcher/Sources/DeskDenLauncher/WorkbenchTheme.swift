@@ -73,11 +73,16 @@ struct ThemePalette: Sendable {
     }
 }
 
+private struct WorkbenchAppearanceKey: EnvironmentKey { static let defaultValue: LauncherAppearance = .system }
 private struct WorkbenchThemeKey: EnvironmentKey { static let defaultValue: LauncherTheme = .qingbiMist }
 private struct WorkbenchOpacityKey: EnvironmentKey { static let defaultValue = 0.70 }
 private struct WorkbenchBackgroundMotionKey: EnvironmentKey { static let defaultValue = true }
 
 extension EnvironmentValues {
+    var workbenchAppearance: LauncherAppearance {
+        get { self[WorkbenchAppearanceKey.self] }
+        set { self[WorkbenchAppearanceKey.self] = newValue }
+    }
     var workbenchTheme: LauncherTheme {
         get { self[WorkbenchThemeKey.self] }
         set { self[WorkbenchThemeKey.self] = newValue }
@@ -106,14 +111,15 @@ private struct WorkbenchThemeEnvironmentModifier: ViewModifier {
     let appearance: LauncherAppearance
     @Environment(\.colorScheme) private var systemScheme
     func body(content: Content) -> some View {
-        let light = appearance == .light || (appearance == .system && systemScheme == .light)
+        let light = appearance.fixedLight ?? (systemScheme == .light)
         content.environment(\.workbenchTheme, theme)
+            .environment(\.workbenchAppearance, appearance)
             .environment(\.workbenchOpacity, ThemePalette(theme: theme, opacity: opacity).opacity)
             .environment(\.workbenchBackgroundMotion, backgroundMotion)
             // Independent AppKit hosting views do not inherit the presenting
             // SwiftUI tree. Keep the actual palette in sync with the preference.
             .environment(\.colorScheme, light ? .light : .dark)
-            .preferredColorScheme(appearance == .system ? nil : appearance == .light ? .light : .dark)
+            .preferredColorScheme(appearance == .system ? nil : light ? .light : .dark)
             .tint(ThemePalette(theme: theme, opacity: opacity, light: light).accent)
     }
 }

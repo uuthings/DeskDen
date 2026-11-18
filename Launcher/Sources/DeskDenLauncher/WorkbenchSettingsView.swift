@@ -88,12 +88,9 @@ struct WorkbenchSettingsView: View {
     /// the pointer choice joins it instead of a card of its own (S3).
     private var material: some View {
         WBCard(title: "共享外观", symbol: "circle.lefthalf.filled", spacing: 0) {
-            HStack(spacing: 12) {
-                appearanceCard(.light, title: "浅色", detail: "青蓝琥珀 · 奶白半透明表面")
-                appearanceCard(.dark, title: "深色", detail: "墨金 · 炭黑半透明表面")
-                appearanceCard(.system, title: "跟随系统", detail: "随 macOS 外观切换")
-            }.padding(.bottom, 14)
-                .accessibilityElement(children: .contain).accessibilityLabel("外观")
+            WorkbenchThemeChoices(selection: model.appearance, compact: false, choose: model.changeAppearance)
+                .padding(.bottom, 14)
+                .accessibilityElement(children: .contain).accessibilityLabel("外观主题")
                 .accessibilityIdentifier("fc.settings.appearance")
             settingsRow("减少动态效果", "停用欢迎文字动效并简化界面过渡；系统设置始终优先") {
                 settingToggle("减少动态效果", get: { model.reduceMotion }, set: model.changeReduceMotion)
@@ -102,41 +99,6 @@ struct WorkbenchSettingsView: View {
                 WBSelect("按钮悬停指针", selection: Binding(get: { model.buttonHoverCursor }, set: model.changeButtonHoverCursor), options: ButtonHoverCursor.allCases.map { (value: $0, title: $0.title) }).frame(width: 174)
             }
         }
-    }
-
-    /// A selectable appearance card with a visible selection mark (现行规范 4.4 D8).
-    private func appearanceCard(_ value: LauncherAppearance, title: String, detail: String) -> some View {
-        let selected = model.appearance == value
-        return Button { model.changeAppearance(value) } label: {
-            VStack(alignment: .leading, spacing: 0) {
-                Group {
-                    if value == .system {
-                        HStack(spacing: 0) {
-                            WorkbenchFluidBackground().environment(\.colorScheme, .light)
-                            WorkbenchFluidBackground().environment(\.colorScheme, .dark)
-                        }
-                    } else {
-                        WorkbenchFluidBackground().environment(\.colorScheme, value == .light ? .light : .dark)
-                    }
-                }.frame(maxWidth: .infinity).frame(height: 84).clipped().accessibilityHidden(true)
-                HStack(spacing: 8) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(palette.text)
-                        Text(detail).font(.system(size: 11)).foregroundStyle(palette.muted).lineLimit(1)
-                    }
-                    Spacer(minLength: 0)
-                    Image(systemName: selected ? "checkmark.circle.fill" : "circle").font(.system(size: 16))
-                        .foregroundStyle(selected ? palette.accent : palette.muted).accessibilityHidden(true)
-                }.padding(.horizontal, 12).frame(height: 52)
-            }
-            .background(WorkbenchMaterialSurface(kind: .control, radius: 12))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(selected ? palette.accent : palette.border, lineWidth: selected ? 2 : 1))
-            .contentShape(RoundedRectangle(cornerRadius: 12))
-        }.buttonStyle(ClickablePlainButtonStyle())
-            .accessibilityLabel(title).accessibilityValue(selected ? "已选择" : "")
-            .accessibilityAddTraits(selected ? .isSelected : [])
-            .accessibilityIdentifier("fc.settings.appearance." + value.rawValue)
     }
 
     private var launcher: some View {
@@ -204,6 +166,69 @@ struct WorkbenchSettingsView: View {
 
     private func settingsRow<T: View>(_ title: String, _ subtitle: String, first: Bool = false, @ViewBuilder trailing: () -> T) -> some View {
         WBSettingRow(title: title, subtitle: subtitle, showsDivider: !first) { trailing().fixedSize(horizontal: true, vertical: false) }
+    }
+}
+
+/// Settings and the header popover share the same options, artwork and selection mark.
+struct WorkbenchThemeChoices: View {
+    let selection: LauncherAppearance
+    let compact: Bool
+    let choose: (LauncherAppearance) -> Void
+    @Environment(\.workbenchPalette) private var palette
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach([true, false], id: \.self) { light in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(light ? "浅色" : "深色").font(.system(size: 11)).foregroundStyle(palette.secondary)
+                    HStack(spacing: compact ? 8 : 12) {
+                        ForEach(LauncherAppearance.allCases.filter { $0.fixedLight == light }, id: \.self) { choice in
+                            option(choice) {
+                                VStack(spacing: 0) {
+                                    WorkbenchFluidBackground(preview: choice)
+                                        .frame(height: compact ? 46 : 72)
+                                    HStack(spacing: 4) {
+                                        Text(choice.title).lineLimit(1)
+                                        Spacer(minLength: 0)
+                                        mark(choice)
+                                    }.padding(.horizontal, 8).frame(height: 32)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            option(.system) {
+                HStack(spacing: 8) {
+                    Image(systemName: "circle.lefthalf.filled").accessibilityHidden(true)
+                    Text(LauncherAppearance.system.title)
+                    Spacer()
+                    mark(.system)
+                }.padding(.horizontal, 10).frame(height: 32)
+            }
+        }
+    }
+
+    private func mark(_ choice: LauncherAppearance) -> some View {
+        Image(systemName: selection == choice ? "checkmark.circle.fill" : "circle")
+            .font(.system(size: 14)).foregroundStyle(selection == choice ? palette.accent : palette.muted)
+            .accessibilityHidden(true)
+    }
+
+    private func option<Content: View>(_ choice: LauncherAppearance, @ViewBuilder content: () -> Content) -> some View {
+        let selected = choice == selection
+        let shape = RoundedRectangle(cornerRadius: 8)
+        return Button { choose(choice) } label: {
+            content()
+                .font(.system(size: 12, weight: .medium)).foregroundStyle(palette.text)
+                .background(WorkbenchMaterialSurface(kind: .control, radius: 8))
+                .clipShape(shape)
+                .overlay(shape.strokeBorder(selected ? palette.accent : palette.border, lineWidth: selected ? 2 : 1))
+                .contentShape(shape)
+        }.buttonStyle(ClickablePlainButtonStyle())
+            .accessibilityLabel(choice.title).accessibilityValue(selected ? "已选择" : "")
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            .accessibilityIdentifier((compact ? "fc.theme.choice." : "fc.settings.appearance.") + choice.rawValue)
     }
 }
 

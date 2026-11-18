@@ -281,14 +281,7 @@ import LauncherCore
     }
     private static func click(_ id: String, in host: NSView, window: NSWindow) -> Bool {
         guard let rect = frame(id, in: host) else { return false }
-        let point = window.convertPoint(fromScreen: NSPoint(x: rect.midX, y: rect.midY))
-        func event(_ type:NSEvent.EventType)->NSEvent? {
-            NSEvent.mouseEvent(with:type,location:point,modifierFlags:[],timestamp:ProcessInfo.processInfo.systemUptime,
-                windowNumber:window.windowNumber,context:nil,eventNumber:0,clickCount:1,pressure:1)
-        }
-        guard let down=event(.leftMouseDown),let up=event(.leftMouseUp) else{return false}
-        NSApp.postEvent(up,atStart:false);NSApp.sendEvent(down)
-        return true
+        return NativeUIFixtureWindow.click(atScreenPoint: CGPoint(x: rect.midX, y: rect.midY), in: window)
     }
     private static func press(_ id:String,in host:NSView)->Bool {
         let selector=NSSelectorFromString("accessibilityPerformPress")

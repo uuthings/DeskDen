@@ -111,7 +111,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {
         vault=VaultModel(dataDirectory:dataDirectory.appendingPathComponent("Vault"))
         opacity=owner.configuration.settings.glassOpacity;appearance=owner.configuration.settings.workbenchAppearance
         buttonHoverCursor=owner.configuration.settings.buttonHoverCursor
-        light=appearance == .light || (appearance == .system && NSApp.effectiveAppearance.bestMatch(from:[.aqua,.darkAqua]) == .aqua)
+        light=appearance.usesLightPalette
         theme=owner.configuration.settings.workbenchTheme;backgroundMotion=owner.configuration.settings.backgroundMotionEnabled;reduceMotion=owner.configuration.settings.reduceMotion
         remembersWindowSize=owner.configuration.settings.remembersWorkbenchWindowSize
         do {preferences=try preferenceStore.load()} catch {message=error.localizedDescription}
@@ -248,7 +248,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {
         guard let owner else {return}
         let settings=owner.configuration.settings
         let nextAppearance=settings.workbenchAppearance
-        let nextLight=nextAppearance == .light || (nextAppearance == .system && NSApp.effectiveAppearance.bestMatch(from:[.aqua,.darkAqua]) == .aqua)
+        let nextLight=nextAppearance.usesLightPalette
         let materialChanged=opacity != settings.glassOpacity || appearance != nextAppearance || light != nextLight || theme != settings.workbenchTheme
         // All settings publish this notification, including cursor changes.
         // Only changed visual preferences should invalidate native surfaces.
@@ -261,7 +261,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {
         if reduceMotion != settings.reduceMotion {reduceMotion=settings.reduceMotion}
         if remembersWindowSize != settings.remembersWorkbenchWindowSize {remembersWindowSize=settings.remembersWorkbenchWindowSize}
         if cleaning.reduceMotion != reduceMotion {cleaning.reduceMotion=reduceMotion}
-        Palette.workbenchTheme=theme;Palette.isLight=light;Palette.glassOpacity=opacity
+        Palette.artworkAppearance=appearance;Palette.workbenchTheme=theme;Palette.isLight=light;Palette.glassOpacity=opacity
         let appearanceName:NSAppearance.Name?=appearance == .system ? nil:(light ? .aqua:.darkAqua)
         if hostWindow?.appearance?.name != appearanceName {hostWindow?.appearance=appearanceName.flatMap(NSAppearance.init(named:))}
         // Card visibility/position changes are applied by applyPreferences().
@@ -277,7 +277,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {
     func changeAppearance(_ value:LauncherAppearance) {
         guard value != appearance else { return }
         let transition = WorkbenchAppearanceTransition.begin(hostWindow, reduceMotion: reduceMotion)
-        guard let owner,owner.updateSettings({$0.workbenchAppearance=value;$0.lightAppearance=value == .light}) else {
+        guard let owner,owner.updateSettings({$0.workbenchAppearance=value;$0.lightAppearance=value.usesLightPalette}) else {
             transition?.removeAnimation(forKey: WorkbenchAppearanceTransition.key);message=owner?.lastSaveError;return
         }
         syncAppearance();owner.refreshLauncherAppearance()

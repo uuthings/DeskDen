@@ -41,6 +41,10 @@ import LauncherCore
             model.changeLight(true)
             check(await settle(window) { model.light && model.appearance == .light },
                   "the isolated Home starts in the approved light appearance")
+            let themes = try await checkThemeChoices(model: model, window: window, host: host)
+            count += themes.count
+            failures += themes.failures
+            if CommandLine.arguments.contains("--theme-picker-check") { return (count, failures) }
             for sample in [(1120, 758, "regular"), (960, 720, "narrow"), (1728, 993, "wide"), (1120, 758, "returned")] {
                 window.setContentSize(NSSize(width: CGFloat(sample.0), height: CGFloat(sample.1)))
                 let ready = await settle(window) {
@@ -69,14 +73,9 @@ import LauncherCore
                 check(element("workbench-local-account", in: host) == nil
                       && element("navigation-settings", in: host) != nil && element("window-close", in: host) != nil,
                       "the header shows settings and close without an account button in \(sample.2)")
-                let liveRegions = WorkbenchAppearanceLiveRegionView.regions(in: host)
-                let liveFrame = liveRegions.first.map { window.convertToScreen($0.convert($0.bounds, to: nil)) }
-                let themeFrame = frame("fc.home.appearance.toggle", in: host)
-                check(liveRegions.count == 1 && liveFrame.map { anchor in
-                    themeFrame.map { abs(anchor.midX - $0.midX) < 0.5 && abs(anchor.midY - $0.midY) < 0.5
-                        && abs(anchor.width - 32) < 0.5 && abs(anchor.height - 32) < 0.5 } == true
-                } == true && liveRegions.first?.hitTest(.zero) == nil,
-                      "the theme flip has a noninteractive 32-point native anchor aligned with its real button in \(sample.2)")
+                check(frame("fc.home.appearance.toggle", in: host).map {
+                    abs($0.width - 32) < 1 && abs($0.height - 32) < 1
+                } == true, "the theme picker retains its 32-point header target in \(sample.2)")
                 check(["home-welcome", "home-date-time", "home-weather"].allSatisfy { id in
                     frame(id, in: host).map { visible($0, window: window, host: host) } == true
                 }, "welcome, date/time and weather remain visible in \(sample.2)")
@@ -121,27 +120,12 @@ import LauncherCore
             _ = model.owner?.updateSettings { $0.reduceMotion = false }
             model.syncAppearance()
             _ = await settle(window) { !model.reduceMotion }
-            let appearanceControl = element("fc.home.appearance.toggle", in: host)
-            let pressStarted = CACurrentMediaTime()
-            let accepted = appearanceControl.map(performPress) == true
-            let response = CACurrentMediaTime() - pressStarted
-            print("DETAIL theme response \(Int(response * 1000)) ms")
-            check(accepted, "the actual header appearance control accepts an AX press")
-            check(response < 0.15 && !model.light,
-                  "an animated theme press publishes its new state and returns within 150 ms")
-            if !model.reduceMotion && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            model.changeAppearance(.dark)
+            if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
                 let scene = WorkbenchAppearanceSceneView.scene(in: window)
-                let live = WorkbenchAppearanceLiveRegionView.regions(in: host).first
                 let fade = scene?.layer?.animation(forKey: WorkbenchAppearanceTransition.key) as? CATransition
-                check(scene != nil && live != nil && live?.isDescendant(of: scene!) == false
-                      && fade?.type == .fade && fade?.duration == WorkbenchAppearanceTransition.duration,
-                      "the compositor fades one retained scene while the header flip stays outside its animated layer")
-                let reversed = appearanceControl.map(performPress) == true
-                let latestDark = appearanceControl.map(performPress) == true
-                check(reversed && latestDark && !model.light
-                      && WorkbenchAppearanceSceneView.scene(in: window) === scene
-                      && scene?.layer?.animationKeys()?.filter { $0 == WorkbenchAppearanceTransition.key }.count == 1,
-                      "rapid theme presses reverse immediately on the same scene without queueing or stacking transitions")
+                check(fade?.type == .fade && fade?.duration == WorkbenchAppearanceTransition.duration,
+                      "selecting a theme fades the retained scene")
             }
             check(await settle(window) { !WorkbenchAppearanceTransition.isRunning(in: window) },
                   "the native fade completes without leaving an input-blocking overlay")
@@ -154,7 +138,7 @@ import LauncherCore
             check(["home-device-detail", "home-open-cleaning", "home-network-detail", "fc.home.calendar", "fc.home.reminders", "home-welcome"].allSatisfy { frame($0, in: host) != nil },
                   "switching appearance preserves every Home region and the outlined welcome")
             try NativeUIFixtureAccessibility.saveView(host, name: "home-fluid-dark.png")
-            check(press("fc.home.appearance.toggle", in: host), "the same header control returns to light appearance")
+            model.changeAppearance(.light)
             check(await settle(window) { model.light && model.appearance == .light },
                   "light appearance is restored without replacing the window or Home data")
             _ = await settle(window) { !WorkbenchAppearanceTransition.isRunning(in: window) }
@@ -280,6 +264,93 @@ import LauncherCore
 
     /// Exercise the production route tree in both appearances, including real
     /// form presentation and title geometry. All data belongs to the fixture.
+    private static func checkThemeChoices(model: WorkbenchAppModel, window: NSWindow, host: NSView) async throws -> (count: Int, failures: Int) {
+        var count = 0, failures = 0
+        func check(_ condition: Bool, _ message: String) {
+            count += 1
+            if !condition { failures += 1 }
+            print("\(condition ? "PASS" : "FAIL") \(message)")
+        }
+        func popup() -> NSWindow? { window.childWindows?.first { $0 is WBContentPopup && $0.isVisible } }
+        // Keep the trigger and its child panel on the same display (including
+        // when the neighboring display has a different backing scale).
+        let screen = window.screen ?? NSScreen.main
+        let trigger = "fc.home.appearance.toggle"
+        func clickTrigger() -> Bool {
+            guard let rect = frame(trigger, in: host) else { return false }
+            return NativeUIFixtureWindow.click(atScreenPoint: CGPoint(x: rect.midX, y: rect.midY), in: window)
+        }
+        for size in [CGSize(width: 1120, height: 758), CGSize(width: 960, height: 720), CGSize(width: 1728, height: 993)] {
+            window.setContentSize(size)
+            if let visible = screen?.visibleFrame {
+                window.setFrameOrigin(CGPoint(x: visible.midX - window.frame.width / 2,
+                                              y: visible.midY - window.frame.height / 2))
+            }
+            let width = Int(size.width)
+            // Exercise the entire catalog at the default size and both material
+            // families at the other two sizes, using the same mounted window.
+            let choices: [LauncherAppearance] = width == 1120 ? LauncherAppearance.allCases : [.mistJade, .indigoTide]
+            for choice in choices {
+                guard await settle(window, until: { NSApp.isActive && window.isKeyWindow && frame(trigger, in: host) != nil }) else {
+                    check(false, "foreground theme check interrupted before clicking \(choice.rawValue) at \(width)")
+                    return (count, failures)
+                }
+                let before = model.appearance
+                let opened = clickTrigger()
+                let ready = await settle(window) {
+                    guard let panel = popup(), panel.isKeyWindow, let content = panel.contentView else { return false }
+                    return element("fc.theme.choice.system", in: content) != nil
+                }
+                guard opened, ready, let panel = popup(), let content = panel.contentView else {
+                    check(false, "theme picker opens at \(width) for \(choice.rawValue)")
+                    popup()?.close()
+                    return (count, failures)
+                }
+                let visibleChoices = LauncherAppearance.allCases.allSatisfy { item in
+                    guard let row = element("fc.theme.choice." + item.rawValue, in: content), let rect = rect(row) else { return false }
+                    return panel.frame.insetBy(dx: -1, dy: -1).contains(rect)
+                        && (string("accessibilityValue", of: row) == "已选择") == (before == item)
+                }
+                check(model.appearance == before && visibleChoices, "all seven choices fit, with only the saved theme marked at \(width)")
+                if before == .mistJade || before == .indigoTide {
+                    try NativeUIFixtureAccessibility.saveView(content, name: "picker-\(width)-\(before.rawValue).png")
+                }
+                let optionFrame = frame("fc.theme.choice." + choice.rawValue, in: content)
+                let clicked = optionFrame.map { NativeUIFixtureWindow.click(atScreenPoint: CGPoint(x: $0.midX, y: $0.midY), in: panel) } ?? false
+                check(clicked, "choose \(choice.title) from the header at \(width)")
+                let applied = await settle(window) { popup() == nil && window.isKeyWindow && model.appearance == choice && model.light == choice.usesLightPalette }
+                check(applied && model.route == .overview, "choice applies, dismisses the popover and returns focus to the workbench")
+                check(try model.owner?.store.load()?.settings.workbenchAppearance == choice, "reloading preferences restores \(choice.rawValue)")
+                if choice == .mistJade || choice == .indigoTide {
+                    try NativeUIFixtureAccessibility.saveView(host, name: "workbench-\(width)-\(choice.rawValue).png")
+                }
+            }
+        }
+        let beforeDismissal = model.appearance
+        check(clickTrigger(), "open theme picker for cancellation")
+        if await settle(window, until: { popup()?.isKeyWindow == true }), let panel = popup(),
+           let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                         timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: panel.windowNumber,
+                                         context: nil, characters: "\u{1B}", charactersIgnoringModifiers: "\u{1B}",
+                                         isARepeat: false, keyCode: 53) {
+            NSApp.postEvent(escape, atStart: false)
+        }
+        check(await settle(window) { popup() == nil && model.appearance == beforeDismissal }, "Escape closes without changing the saved theme")
+        check(clickTrigger(), "reopen picker after Escape")
+        let reopened = await settle(window) { popup()?.isKeyWindow == true }
+        check(reopened && clickTrigger(), "click the palette icon again")
+        check(await settle(window) { popup() == nil && model.appearance == beforeDismissal }, "a second click on the trigger dismisses the picker")
+        model.navigate(.settings)
+        model.settingsTab = .material
+        let mounted = await settle(window) { element("fc.settings.appearance.peach-dune", in: host) != nil }
+        check(mounted && press("fc.settings.appearance.peach-dune", in: host), "choose a named theme from settings")
+        check(await settle(window) { model.appearance == .peachDune && element(trigger, in: host).flatMap { string("accessibilityValue", of: $0) } == LauncherAppearance.peachDune.title },
+              "settings selection reaches the header")
+        model.navigate(.overview)
+        model.changeAppearance(.light)
+        return (count, failures)
+    }
+
     private static func checkModules(model: WorkbenchAppModel, window: NSWindow, host: NSView) async throws -> (count: Int, failures: Int) {
         var count = 0, failures = 0
         func check(_ condition: Bool, _ message: String) {
@@ -337,7 +408,7 @@ import LauncherCore
                 owner.show()
                 _ = await settle(owner.panel) { owner.panel.isVisible }
                 check(owner.panel.appearance?.bestMatch(from:[.aqua,.darkAqua]) == (light ? .aqua : .darkAqua), "\(light): launcher inherits the actual global appearance")
-                check(WorkbenchFluidAssets.image(light:light) != nil && objects(in:owner.content).allSatisfy { string("accessibilityLabel",of:$0) != "全局透明度" }, "\(light): approved background is bundled and retired launcher opacity control is absent")
+                check(WorkbenchFluidAssets.image(for: .system, systemIsLight: light) != nil && objects(in:owner.content).allSatisfy { string("accessibilityLabel",of:$0) != "全局透明度" }, "\(light): approved background is bundled and retired launcher opacity control is absent")
                 try NativeUIFixtureAccessibility.saveView(owner.background, name:"interface-launcher-\(light ? "light" : "dark").png")
                 let toggle = objects(in:owner.content).compactMap { $0 as? ActionButton }.first { $0.accessibilityLabel() == (light ? "切换深色外观" : "切换浅色外观") }
                 toggle?.performClick(nil)

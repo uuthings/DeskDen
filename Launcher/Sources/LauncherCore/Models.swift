@@ -130,9 +130,38 @@ public enum LauncherTheme: String, Codable, CaseIterable, Sendable {
 }
 
 public enum LauncherAppearance: String, Codable, CaseIterable, Sendable {
-    case dark, light, system
+    // Keep the original three raw values so existing installations retain their selection.
+    case light, mistJade = "mist-jade", peachDune = "peach-dune"
+    case dark, indigoTide = "indigo-tide", amethystNight = "amethyst-night"
+    case system
+
     public var title: String {
-        switch self { case .dark: "深色"; case .light: "浅色"; case .system: "跟随系统" }
+        switch self {
+        case .light: "青蓝琥珀"
+        case .mistJade: "雾青绢光"
+        case .peachDune: "杏桃云砂"
+        case .dark: "墨金"
+        case .indigoTide: "靛海微光"
+        case .amethystNight: "紫晶夜幕"
+        case .system: "跟随系统"
+        }
+    }
+
+    public var fixedLight: Bool? {
+        switch self {
+        case .light, .mistJade, .peachDune: true
+        case .dark, .indigoTide, .amethystNight: false
+        case .system: nil
+        }
+    }
+
+    public func artworkName(systemIsLight: Bool) -> String {
+        switch self {
+        case .light: "cyan-amber"
+        case .dark: "ink-gold"
+        case .system: systemIsLight ? "cyan-amber" : "ink-gold"
+        default: rawValue
+        }
     }
 }
 

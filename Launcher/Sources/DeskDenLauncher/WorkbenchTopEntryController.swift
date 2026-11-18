@@ -397,7 +397,8 @@ struct WorkbenchTopEntryInput {
         guard let owner else { return }
         Palette.workbenchTheme = owner.configuration.settings.workbenchTheme
         let appearance = owner.configuration.settings.workbenchAppearance
-        Palette.isLight = appearance == .light || (appearance == .system && NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .aqua)
+        Palette.artworkAppearance = appearance
+        Palette.isLight = appearance.usesLightPalette
         Palette.glassOpacity = owner.configuration.settings.glassOpacity
         summaryPanel?.appearance = NSAppearance(named: Palette.isLight ? .aqua : .darkAqua)
         islandSurface?.refreshAppearance()

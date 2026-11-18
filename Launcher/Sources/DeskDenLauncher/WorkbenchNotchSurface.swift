@@ -98,7 +98,7 @@ enum WorkbenchMiniLayout {
             WorkbenchMaterialSurface(kind: .panel, radius: 0)
         }
             .workbenchThemeEnvironment(theme: theme, opacity: Palette.glassOpacity, backgroundMotion: false,
-                                      appearance: Palette.isLight ? .light : .dark))
+                                      appearance: Palette.artworkAppearance == .system ? (Palette.isLight ? .light : .dark) : Palette.artworkAppearance))
     }
     var materialOpacity: Double { Palette.workbenchPalette.materialOpacity }
     var usesLightAppearance: Bool { appearance?.name == .aqua }

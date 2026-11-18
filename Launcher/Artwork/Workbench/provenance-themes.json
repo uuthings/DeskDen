@@ -1,0 +1,30 @@
+{
+  "origin": "Original AI-generated abstract wallpapers",
+  "encoding": "Full-size sRGB JPEG, quality 92, 4:4:4 chroma sampling",
+  "assets": [
+    {
+      "master": "mist-jade.png",
+      "masterSHA256": "da16d7e2dae93060fe3756ae8fc8291620833c395d539fe26e54c7768223eb8b",
+      "production": "../../Resources/Workbench/mist-jade.jpg",
+      "productionSHA256": "9c6e9d837710cbd9d9dc893e1cc4d8898c00f1b359e17d3bcf618cdd2e018944"
+    },
+    {
+      "master": "peach-dune.png",
+      "masterSHA256": "b1885c92b6a354817073590d06dd35f8a1ae2d7dcf03169f6d7d4bd0a41ad26e",
+      "production": "../../Resources/Workbench/peach-dune.jpg",
+      "productionSHA256": "d86582abb0927e1e18f1d050c396614681438163d0239ef2fc1fea333193e606"
+    },
+    {
+      "master": "indigo-tide.png",
+      "masterSHA256": "b2b6a08a86460f4e88931196b253acc135de33e2827736ac96fa8fb0a8ed665f",
+      "production": "../../Resources/Workbench/indigo-tide.jpg",
+      "productionSHA256": "387ec2cf6b7e70b779323a7ce3b4cdcb1b85a0af06dcc3c76118f6600a1313f0"
+    },
+    {
+      "master": "amethyst-night.png",
+      "masterSHA256": "3cf265fc8de521a4e389b41ff82f6f5deaa9f27d964c8fc4632806640e74011e",
+      "production": "../../Resources/Workbench/amethyst-night.jpg",
+      "productionSHA256": "5a8fcb95b342b603c26f4d59de6d4f97268415dd58b9df786d8fb874bb7c5ac6"
+    }
+  ]
+}

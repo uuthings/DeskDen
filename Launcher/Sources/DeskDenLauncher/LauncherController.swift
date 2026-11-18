@@ -882,7 +882,8 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
             if searchView && !configuration.settings.applicationsEnabled { searchView = false }
             else if !searchView && !configuration.settings.actionsEnabled { searchView = true }
         }
-        Palette.isLight = configuration.settings.workbenchAppearance == .light || (configuration.settings.workbenchAppearance == .system && NSApp.effectiveAppearance.bestMatch(from:[.aqua,.darkAqua]) == .aqua)
+        Palette.artworkAppearance = configuration.settings.workbenchAppearance
+        Palette.isLight = configuration.settings.workbenchAppearance.usesLightPalette
         Palette.glassOpacity = configuration.settings.glassOpacity
         Palette.workbenchTheme = configuration.settings.workbenchTheme
         panel.appearance = NSAppearance(named:Palette.isLight ? .aqua : .darkAqua)

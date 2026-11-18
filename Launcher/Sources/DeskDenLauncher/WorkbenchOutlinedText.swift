@@ -13,6 +13,7 @@ struct WorkbenchOutlinedText: NSViewRepresentable {
     var repeats = false
     var reduceMotion = false
     var leading = false
+    var ink: Color = .white
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
 
     func makeNSView(context: Context) -> WorkbenchOutlinedTextView {
@@ -21,7 +22,7 @@ struct WorkbenchOutlinedText: NSViewRepresentable {
 
     func updateNSView(_ view: WorkbenchOutlinedTextView, context: Context) {
         view.configure(text: text, fontSize: fontSize, letterSpacing: letterSpacing,
-                       lineWidth: lineWidth, animates: repeats && !reduceMotion && !systemReduceMotion, leading: leading)
+                       lineWidth: lineWidth, animates: repeats && !reduceMotion && !systemReduceMotion, leading: leading, ink: NSColor(ink))
     }
 
     static func dismantleNSView(_ view: WorkbenchOutlinedTextView, coordinator: ()) {
@@ -83,7 +84,16 @@ final class WorkbenchOutlinedTextView: NSView {
     }
 
     func configure(text: String, fontSize: CGFloat, letterSpacing: CGFloat,
-                   lineWidth: CGFloat, animates: Bool, leading: Bool = false) {
+                   lineWidth: CGFloat, animates: Bool, leading: Bool = false, ink: NSColor = .white) {
+        let stroke = ink.cgColor
+        if outline.strokeColor != stroke {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            outline.strokeColor = stroke
+            lightStroke.strokeColor = stroke
+            lightStroke.shadowColor = stroke
+            CATransaction.commit()
+        }
         if self.leading != leading { self.leading = leading; laidOutBounds = .null; needsLayout = true }
         let newSignature = "\(text)|\(fontSize)|\(letterSpacing)"
         if signature != newSignature {

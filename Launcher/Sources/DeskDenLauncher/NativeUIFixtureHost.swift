@@ -82,6 +82,19 @@ extension View {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 
+    /// Deliver a mouse click to the mounted fixture without moving the system pointer.
+    static func click(atScreenPoint point: CGPoint, in window: NSWindow) -> Bool {
+        func event(_ type: NSEvent.EventType) -> NSEvent? {
+            NSEvent.mouseEvent(with: type, location: window.convertPoint(fromScreen: point), modifierFlags: [],
+                               timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                               context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+        }
+        guard let down = event(.leftMouseDown), let up = event(.leftMouseUp) else { return false }
+        NSApp.postEvent(down, atStart: false)
+        NSApp.postEvent(up, atStart: false)
+        return true
+    }
+
     /// Call only when a test explicitly presents its host, never from a generic
     /// settle helper: hidden-window and focus-loss checks must remain hidden or
     /// unfocused. The caller supplies a real production AX/layout predicate.

@@ -4,7 +4,9 @@
 
 `cyan-amber.png` 是首页青蓝与琥珀流体背景的生成原图，`../../Resources/Workbench/cyan-amber.jpg` 是界面采用的压缩资源。两者的 SHA-256 见 `provenance-fluid.json`。JPEG 保持设计使用的图像内容及比例；运行时按窗口大小等比覆盖裁切，焦点为水平 50%、垂直 43%。图像不包含界面、账号信息或设备读数。
 
-所有工作台页面及顶部导航在浅色下采用青蓝琥珀，深色下采用墨金。`ink-gold.png` 是墨金生成原图，`../../Resources/Workbench/ink-gold.jpg` 为已采用的压缩资源，指纹见 `provenance-dark.json`。深色背景等比覆盖、居中裁切。两套图片均不含界面文字、账号或读数。
+「跟随系统」在浅色下采用青蓝琥珀，深色下采用墨金。`ink-gold.png` 是墨金生成原图，`../../Resources/Workbench/ink-gold.jpg` 为已采用的压缩资源，指纹见 `provenance-dark.json`。深色背景等比覆盖、居中裁切。两套图片均不含界面文字、账号或读数。
+
+雾青绢光、杏桃云砂、靛海微光和紫晶夜幕使用同目录的 `mist-jade.png`、`peach-dune.png`、`indigo-tide.png` 和 `amethyst-night.png`。工作台、Mini 和选择卡读取对应的 JPEG。原图和 JPEG 均为 1586 × 992，SHA-256 记录在 `provenance-themes.json`。生产资源使用 Pillow 转为 RGB，以质量 92、色度采样 4:4:4 和优化编码保存。
 
 以下旧资源仅保留历史与配置兼容，不再提供主题选择入口。
 

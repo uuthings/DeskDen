@@ -413,28 +413,35 @@ private struct WorkbenchHomeNetworkTrend: View {
 
 struct WorkbenchHomeWelcome: View {
     @ObservedObject var context: WorkbenchContextModel
+    @Environment(\.workbenchAppearance) private var appearance
+    private var ink: Color {
+        switch appearance {
+        case .mistJade, .peachDune: ThemePalette(light: true).text
+        default: .white
+        }
+    }
     var reduceMotion = false
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { timeline in
             VStack(spacing: 0) {
                 Spacer(minLength: 5)
                 WorkbenchOutlinedText(text: "欢迎你", fontSize: 56, letterSpacing: 7,
-                                      repeats: true, reduceMotion: reduceMotion)
+                                      repeats: true, reduceMotion: reduceMotion, ink: ink)
                     .frame(maxWidth: 230).frame(height: 63)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("欢迎你").accessibilityIdentifier("home-welcome")
                 Button { context.showClock = true } label: {
                     VStack(spacing: 9) {
-                        Text(dateText(timeline.date)).font(.system(size: 12)).foregroundStyle(.white.opacity(0.89))
+                        Text(dateText(timeline.date)).font(.system(size: 12)).foregroundStyle(ink.opacity(0.89))
                         Text(context.time(timeline.date)).font(.system(size: 46, weight: .light)).monospacedDigit()
-                            .foregroundStyle(.white).lineLimit(1).minimumScaleFactor(0.7)
+                            .foregroundStyle(ink).lineLimit(1).minimumScaleFactor(0.7)
                     }.frame(maxWidth: .infinity).contentShape(Rectangle())
                 }.buttonStyle(ClickablePlainButtonStyle()).padding(.top, 28)
                     .accessibilityIdentifier("home-date-time")
                     .accessibilityHint(context.zoneTitle + "，点击设置日期与城市")
                 Button { context.showWeather = true } label: {
                     weather(at: timeline.date)
-                        .font(.system(size: 11)).foregroundStyle(.white.opacity(0.91))
+                        .font(.system(size: 11)).foregroundStyle(ink.opacity(0.91))
                         .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
                         .padding(.horizontal, 3).padding(.vertical, 7)
                         .contentShape(Rectangle())

@@ -291,59 +291,28 @@ private struct WorkbenchFluidSettingsTab: View {
     }
 }
 
-/// The native Button keeps a fixed hit/focus frame while its two-sided face
-/// turns. There is no delayed state change or queued completion: a second click
-/// immediately reverses the presentation toward the current appearance.
 private struct WorkbenchFluidAppearanceButton: View {
     @ObservedObject var model: WorkbenchAppModel
-    @State private var hovered = false
-    @FocusState private var focused: Bool
-    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
-    private var disableMotion: Bool { model.reduceMotion || systemReduceMotion }
-    private var title: String { model.light ? "切换深色模式" : "切换浅色模式" }
-    private var angle: Double { model.light ? 0 : 180 }
+    @State private var presented = false
 
     var body: some View {
-        Button { model.changeLight(!model.light) } label: {
-            ZStack {
-                if disableMotion {
-                    // A separate static branch also stops a turn immediately
-                    // if Reduce Motion is enabled while it is in flight.
-                    WorkbenchFluidAppearanceFace(angle: angle, highlighted: hovered || focused)
-                        .transaction { $0.animation = nil }
-                } else {
-                    WorkbenchFluidAppearanceFace(angle: angle, highlighted: hovered || focused)
-                        .animation(.timingCurve(0.35, 0, 0.20, 1, duration: 0.34), value: model.light)
+        WorkbenchFluidRoundButton(symbol: "paintpalette", title: "外观主题",
+                                  selected: presented, suppressMotion: model.reduceMotion) {
+            presented.toggle()
+        }
+        .accessibilityValue(model.appearance.title)
+        .accessibilityIdentifier("fc.home.appearance.toggle")
+        .workbenchPopover(isPresented: $presented, width: 360, alignment: .trailing) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("外观主题").font(.system(size: 15, weight: .medium))
+                WorkbenchThemeChoices(selection: model.appearance, compact: true) { choice in
+                    presented = false
+                    model.changeAppearance(choice)
                 }
-            }.frame(width: 32, height: 32).contentShape(Circle())
-                .background(WorkbenchAppearanceLiveRegion().accessibilityHidden(true))
-        }.buttonStyle(FluidNavigationButtonStyle(suppressMotion: disableMotion))
-            .focused($focused).focusEffectDisabled().onHover { hovered = $0 }
-            .animation(FluidNavigationMotion.transition(disabled: disableMotion), value: hovered || focused)
-            .accessibilityLabel(title).accessibilityValue(model.light ? "浅色" : "深色")
-            .accessibilityIdentifier("fc.home.appearance.toggle").help(title)
-    }
-}
-
-private struct WorkbenchFluidAppearanceFace: View, @MainActor Animatable {
-    var angle: Double
-    let highlighted: Bool
-    var animatableData: Double {
-        get { angle }
-        set { angle = newValue }
-    }
-    var body: some View {
-        let front = angle < 90
-        Image(systemName: front ? "moon" : "sun.max")
-            .font(.system(size: 15, weight: .regular))
-            .foregroundStyle(Color.white.opacity(highlighted ? 1 : 0.88))
-            .frame(width: 32, height: 32)
-            .background { FluidNavigationRoundSurface(highlighted: highlighted, selected: false) }
-            // Change faces only at the edge; subtracting the half turn keeps
-            // the back icon readable instead of displaying a mirrored glyph.
-            .rotation3DEffect(.degrees(front ? angle : angle - 180),
-                axis: (x: 0, y: 1, z: 0), anchor: .center, perspective: 0.28)
-            .accessibilityHidden(true)
+            }.padding(14)
+        }
+        .onChange(of: model.windowVisible) { _, visible in if !visible { presented = false } }
+        .onChange(of: model.route) { _, _ in presented = false }
     }
 }
 

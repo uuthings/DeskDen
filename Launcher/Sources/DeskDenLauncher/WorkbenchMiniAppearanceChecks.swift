@@ -68,7 +68,7 @@ import SwiftUI
             for light in [true, false] {
                 let fixture = Fixture(width: 748, safeTop: 32, notchWidth: 220, light: light, opacity: 0.7)
                 await fixture.settle()
-                check(WorkbenchFluidAssets.image(light: light) != nil, "Mini appearance has the workbench artwork")
+                check(WorkbenchFluidAssets.image(for: .system, systemIsLight: light) != nil, "Mini appearance has the workbench artwork")
                 let effects = descendants(fixture.surface).compactMap { $0 as? NSVisualEffectView }
                 check(!effects.isEmpty && effects.allSatisfy { $0.blendingMode == .withinWindow },
                       "Mini glass samples its own background instead of the desktop")
@@ -82,6 +82,25 @@ import SwiftUI
                 check(fixture.surface.usesLightAppearance == !light && fixture.surface.phase == .expanded,
                       "open Mini changes its background appearance without remounting or collapsing")
                 fixture.close()
+            }
+            let previous = Palette.artworkAppearance
+            defer { Palette.artworkAppearance = previous }
+            for light in [true, false] {
+                let fixture = Fixture(width: 748, safeTop: 32, notchWidth: 220, light: light, opacity: 0.7)
+                defer { fixture.close() }
+                var previousPixels: Data?
+                for choice in LauncherAppearance.allCases where choice.fixedLight == light {
+                    Palette.artworkAppearance = choice
+                    fixture.surface.refreshAppearance()
+                    await fixture.settle()
+                    check(WorkbenchFluidAssets.image(for: choice, systemIsLight: light) != nil, "\(choice.title) has bundled artwork")
+                    let bitmap = fixture.surface.bitmapImageRepForCachingDisplay(in: fixture.surface.bounds)
+                    if let bitmap { fixture.surface.cacheDisplay(in: fixture.surface.bounds, to: bitmap) }
+                    let pixels = bitmap?.representation(using: .png, properties: [:])
+                    check(fixture.surface.phase == .expanded && pixels != nil && pixels != previousPixels,
+                          "expanded Mini redraws \(choice.title) including changes within one appearance")
+                    previousPixels = pixels
+                }
             }
             print("Mini background: \(count) checks, \(failures) failures")
             return (count, failures)
@@ -105,7 +124,7 @@ import SwiftUI
                     let effects = descendants(fixture.surface).compactMap { $0 as? NSVisualEffectView }
                     let outerEffects = effects.filter { !$0.isDescendant(of: fixture.host) }
                     let innerEffects = effects.filter { $0.isDescendant(of: fixture.host) }
-                    check(WorkbenchFluidAssets.image(light: light) != nil
+                    check(WorkbenchFluidAssets.image(for: .system, systemIsLight: light) != nil
                           && !outerEffects.isEmpty && outerEffects.allSatisfy { $0.blendingMode == .withinWindow }
                           && !innerEffects.isEmpty && innerEffects.allSatisfy { $0.blendingMode == .withinWindow },
                           "\(name): shared artwork is available and glass samples the panel scene")

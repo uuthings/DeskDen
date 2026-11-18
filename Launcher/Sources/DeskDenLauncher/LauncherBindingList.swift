@@ -12,7 +12,7 @@ import LauncherCore
         autoresizingMask=[.width,.height]
         setAccessibilityIdentifier("fc.launcher.bindingList")
         let settings=owner.configuration.settings
-        let light=settings.workbenchAppearance == .light || (settings.workbenchAppearance == .system && NSApp.effectiveAppearance.bestMatch(from:[.aqua,.darkAqua]) == .aqua)
+        let light=settings.workbenchAppearance.usesLightPalette
         let palette=ThemePalette(theme:settings.workbenchTheme,opacity:settings.glassOpacity,light:light)
         let keys=LauncherPresentationPolicy.visibleKeys(settings:settings,bindings:owner.bindings,editing:owner.isEditing)
         let document=FlippedView(frame:NSRect(x:0,y:0,width:frame.width,height:max(frame.height,CGFloat(keys.count)*52+8)))
