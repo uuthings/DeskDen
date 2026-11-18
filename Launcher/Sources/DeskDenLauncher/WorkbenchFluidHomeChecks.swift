@@ -66,6 +66,9 @@ import LauncherCore
                       && navFrames.count == 7 && (navFrames.map(\.midY).max() ?? 0) - (navFrames.map(\.midY).min() ?? 0) < 2
                       && element("workbench-sidebar", in: host) == nil,
                       "seven real top-navigation buttons share one row without the old sidebar in \(sample.2)")
+                check(element("workbench-local-account", in: host) == nil
+                      && element("navigation-settings", in: host) != nil && element("window-close", in: host) != nil,
+                      "the header shows settings and close without an account button in \(sample.2)")
                 let liveRegions = WorkbenchAppearanceLiveRegionView.regions(in: host)
                 let liveFrame = liveRegions.first.map { window.convertToScreen($0.convert($0.bounds, to: nil)) }
                 let themeFrame = frame("fc.home.appearance.toggle", in: host)
@@ -196,28 +199,6 @@ import LauncherCore
             model.confirmingQuit = false
             check(await settle(window) { navigationInput(in: host)?.enabled == true },
                   "dismissing the modal restores native navigation on the retained header")
-
-            check(press("workbench-local-account", in: host), "the same-size account control opens its shared arrowless surface")
-            let accountMounted = await settle(window) {
-                NSApp.windows.contains { candidate in
-                    candidate.isVisible && candidate.contentView.map { element("workbench-account-menu", in: $0) != nil } == true
-                }
-            }
-            if accountMounted, let accountHost = NSApp.windows.filter(\.isVisible).compactMap(\.contentView).first(where: { element("workbench-account-menu", in: $0) != nil }),
-               let account = element("workbench-account-menu", in: accountHost) {
-                let content = objects(in: accountHost)
-                let strings = content.flatMap { [string("accessibilityValue", of: $0), string("accessibilityLabel", of: $0)].compactMap { $0 } }
-                check(strings.contains(NSFullUserName().isEmpty ? NSUserName() : NSFullUserName())
-                      && !content.contains { string("accessibilityRole", of: $0) == NSAccessibility.Role.button.rawValue },
-                      "the shared account surface only identifies the local account without window or app-exit commands")
-                check(rect(account) != nil && !model.confirmingQuit && !model.quitting,
-                      "opening the account surface preserves the running app and ordinary window")
-                try NativeUIFixtureAccessibility.saveView(accountHost, name: "home-fluid-account-popup.png")
-            } else { check(false, "the account content is mounted in a shared arrowless panel") }
-            _ = press("workbench-local-account", in: host)
-            _ = await settle(window) {
-                !NSApp.windows.contains { $0.isVisible && $0.contentView.map { element("workbench-account-menu", in: $0) != nil } == true }
-            }
 
             let initialMonth = model.calendar.displayCalendar.component(.month, from: model.calendar.displayedMonth)
             check(press("fc.home.calendar.previous", in: host), "the mounted previous-month button accepts an AX press")

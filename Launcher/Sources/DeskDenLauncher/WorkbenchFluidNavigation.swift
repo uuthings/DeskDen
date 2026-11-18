@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import LauncherCore
 
-/// The approved header keeps its center independent of the brand and account
+/// The approved header keeps its center independent of the brand and window
 /// controls. A second expanded item is reserved for hover or keyboard focus.
 struct WorkbenchFluidNavigation: View {
     @ObservedObject var model: WorkbenchAppModel
@@ -25,7 +25,6 @@ struct WorkbenchFluidNavigation: View {
                     WorkbenchFluidRoundButton(symbol: "gearshape", title: "设置", selected: model.route == .settings, suppressMotion: model.reduceMotion) {
                         model.selectModule(.settings)
                     }.accessibilityIdentifier("navigation-settings")
-                    WorkbenchFluidAccountButton(model: model).frame(width: 32, height: 32)
                     WorkbenchFluidRoundButton(symbol: "xmark", title: "关闭窗口", suppressMotion: model.reduceMotion) {
                         model.closeWindow?()
                     }.accessibilityIdentifier("window-close")
@@ -461,31 +460,6 @@ private struct WorkbenchFluidDeskGlyph: Shape {
         let scale = min((rect.width - 1.2) / ink.width, (rect.height - 1.2) / ink.height)
         return path.applying(CGAffineTransform(a: scale, b: 0, c: 0, d: scale,
             tx: rect.minX + 0.6 - ink.minX * scale, ty: rect.midY - ink.midY * scale))
-    }
-}
-
-private struct WorkbenchFluidAccountButton: View {
-    @ObservedObject var model: WorkbenchAppModel
-    @State private var presented = false
-    private var accountName: String { NSFullUserName().isEmpty ? NSUserName() : NSFullUserName() }
-    var body: some View {
-        WorkbenchFluidRoundButton(symbol: "person", title: "本机账户", selected: presented, suppressMotion: model.reduceMotion) {
-            presented.toggle()
-        }.accessibilityIdentifier("workbench-local-account")
-            .workbenchPopover(isPresented: $presented, width: 240, alignment: .trailing) {
-                HStack(spacing: 11) {
-                    Image(systemName: "person.crop.circle").font(.system(size: 28, weight: .light))
-                        .foregroundStyle(model.light ? FluidNavigationColors.secondary : Color.white.opacity(0.72))
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(accountName).font(.system(size: 13, weight: .medium)).lineLimit(2)
-                        Text("当前 macOS 账户").font(.system(size: 11))
-                            .foregroundStyle(model.light ? FluidNavigationColors.secondary : Color.white.opacity(0.64))
-                    }
-                    Spacer(minLength: 0)
-                }.foregroundStyle(model.light ? FluidNavigationColors.ink : .white).padding(14)
-                    .accessibilityElement(children: .contain).accessibilityIdentifier("workbench-account-menu")
-            }
     }
 }
 

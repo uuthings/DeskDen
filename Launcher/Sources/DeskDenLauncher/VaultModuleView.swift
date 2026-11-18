@@ -147,7 +147,7 @@ private struct VaultProtectionPage:View {
 
     private var unlockMethodNote: String {
         if !model.biometricEnabled { return "开启 Touch ID 后可选择" }
-        return "进入私密空间时优先使用所选方式"
+        return "锁定页优先显示所选的解锁方式"
     }
 
     private var hintNote: String {
@@ -311,10 +311,6 @@ private struct VaultUnlockedView:View {
     @State private var deletion:VaultDeletionTarget?
     @State private var query=""
     @State private var showCategories=false
-    @State private var categoryName=""
-    @State private var editingCategoryID:String?
-    @State private var categoryDeletion:VaultCategory?
-    @State private var moveDestination="unclassified"
     @Environment(\.workbenchPalette) private var palette
     var panelHeight:CGFloat=575
     private var filtered:[PrivateDocument] {model.visibleDocuments(matching:query)}
@@ -328,26 +324,21 @@ private struct VaultUnlockedView:View {
         .workbenchModal(item:$deletion){document in WorkbenchDialogFrame(title:"删除这条私密文本？",dismiss:{deletion=nil}){
             Text("「\(document.title.isEmpty ? "未命名文本":document.title)」删除后无法撤销，可从此前的加密备份恢复。").font(.system(size:12)).foregroundStyle(palette.secondary)
         }actions:{Spacer();Button("取消"){deletion=nil}.buttonStyle(WBButtonStyle());Button("删除"){_ = model.deleteDocument(document.id);deletion=nil}.buttonStyle(WBButtonStyle(destructive:true))}}
-        .workbenchModal(isPresented:$showCategories){categoryManager}
-        .workbenchModal(item:$categoryDeletion){category in WorkbenchDialogFrame(title:"删除分类「\(category.name)」？",dismiss:{categoryDeletion=nil}){
-            VStack(alignment:.leading,spacing:12){Text("分类中的 \(model.documents.filter{$0.effectiveCategoryID == category.id}.count) 条文本会移到下方分类，文本内容不会删除。").font(.system(size:12)).foregroundStyle(palette.secondary);WBSelect("移到分类",selection:$moveDestination,options:model.categoryOptions.filter{$0.0 != category.id})}
-        }actions:{Spacer();Button("取消"){categoryDeletion=nil}.buttonStyle(WBButtonStyle());Button("删除分类并移动文本"){if model.deleteCategory(category.id,movingTo:moveDestination){categoryDeletion=nil}}.buttonStyle(WBButtonStyle(destructive:true))}}
+        .workbenchModal(isPresented: $showCategories, width: 420) {
+            VaultCategoryManager(model: model) { showCategories = false }
+        }
         .onChange(of:model.selectedID){_,_ in
             deletion=nil
             if let document=model.selectedDocument,!query.isEmpty,document.title.range(of:query,options:[.caseInsensitive,.diacriticInsensitive,.widthInsensitive]) == nil {query=""}
         }
-        .onChange(of:model.categories.map(\.id)){_,ids in
-            if let id=editingCategoryID,!ids.contains(id) {editingCategoryID=nil;categoryName=""}
-            if let category=categoryDeletion,!ids.contains(category.id) {categoryDeletion=nil}
-        }
-        .modifier(VaultSensitiveState(model:model,clear:{query="";deletion=nil;showCategories=false;categoryName="";editingCategoryID=nil;categoryDeletion=nil;formatting.detach()}))
+        .modifier(VaultSensitiveState(model:model,clear:{query="";deletion=nil;showCategories=false;formatting.detach()}))
     }
     private var sidebar:some View {
         VStack(spacing:12) {
             HStack(spacing:7){Image(systemName:"magnifyingglass").foregroundStyle(palette.muted);TextField("搜索标题",text:$query).textFieldStyle(.plain)}.modifier(WBFieldSurface())
             HStack(spacing:6){
                 WBSelect("筛选分类",selection:Binding(get:{model.categoryFilter},set:{_ = model.selectCategory($0,matching:query)}),options:[("all","全部分类")]+model.categoryOptions)
-                Button{categoryName="";editingCategoryID=nil;showCategories=true;model.recordActivity()}label:{Label("管理分类",systemImage:"folder.badge.gearshape")}
+                Button{showCategories=true;model.recordActivity()}label:{Label("管理分类",systemImage:"folder.badge.gearshape")}
                     .buttonStyle(WBButtonStyle()).help("新增、重命名或删除分类").accessibilityIdentifier("fc.vault.categories.manage")
             }
             WorkbenchScrollView {
@@ -363,18 +354,6 @@ private struct VaultUnlockedView:View {
                 }
             }
         }
-    }
-    private var categoryManager:some View {
-        WorkbenchDialogFrame(title:"管理分类",dismiss:{showCategories=false;categoryName="";editingCategoryID=nil}){
-            VStack(alignment:.leading,spacing:14){
-                Text("分类与文本一起加密保存。「未分类」始终保留；删除其他分类时可先选择文本去向。").font(.system(size:12)).foregroundStyle(palette.secondary)
-                WorkbenchScrollView {VStack(spacing:4){ForEach(model.categories){category in
-                    HStack(spacing:10){VStack(alignment:.leading,spacing:3){Text(category.name).font(.system(size:13,weight:.medium));Text("\(model.documents.filter{$0.effectiveCategoryID == category.id}.count) 条文本").font(.system(size:11)).foregroundStyle(palette.muted)};Spacer();Button{editingCategoryID=category.id;categoryName=category.name}label:{Image(systemName:"pencil")}.buttonStyle(WBIconButtonStyle(size:28)).accessibilityLabel("重命名 \(category.name)");Button{moveDestination="unclassified";categoryDeletion=category}label:{Image(systemName:"trash")}.buttonStyle(WBIconButtonStyle(size:28,danger:true)).accessibilityLabel("删除分类 \(category.name)")}.frame(height:52)
-                }}}.frame(maxHeight:240)
-                VStack(alignment:.leading,spacing:6){Text(editingCategoryID == nil ? "新增分类":"重命名分类").font(.system(size:12));HStack(spacing:10){TextField("1–30 个字",text:$categoryName).modifier(VaultInputStyle());Button(editingCategoryID == nil ? "新增":"保存"){let saved=editingCategoryID.map{model.renameCategory($0,to:categoryName)} ?? model.addCategory(categoryName);if saved {categoryName="";editingCategoryID=nil}}.buttonStyle(WBButtonStyle(primary:true)).disabled(categoryName.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty);if editingCategoryID != nil {Button("取消"){categoryName="";editingCategoryID=nil}.buttonStyle(WBButtonStyle())}}}
-                VaultSheetError(model:model)
-            }.disabled(model.busy)
-        }actions:{Spacer();Button("完成"){showCategories=false;categoryName="";editingCategoryID=nil}.buttonStyle(WBButtonStyle(primary:true))}
     }
     @ViewBuilder private var editor:some View {
         if let document=model.selectedDocument {
@@ -397,10 +376,116 @@ private struct VaultUnlockedView:View {
                 Text(!query.isEmpty ? "没有匹配的标题":model.categoryFilter == "all" ? "新建你的第一条文本":"「\(model.categoryTitle(id:model.categoryFilter))」暂无文本")
                     .font(.system(size:12)).foregroundStyle(palette.muted)
                 Button{model.newDocument()}label:{Label("新建文本",systemImage:"plus")}.buttonStyle(WBButtonStyle(primary:true))
-                Button("管理分类"){categoryName="";editingCategoryID=nil;showCategories=true;model.recordActivity()}.buttonStyle(WBQuietButtonStyle())
+                Button("管理分类"){showCategories=true;model.recordActivity()}.buttonStyle(WBQuietButtonStyle())
                 if let error=model.errorMessage {Text(error).font(.system(size:11)).foregroundStyle(palette.critical).multilineTextAlignment(.center)}
             }.frame(maxWidth:.infinity,maxHeight:.infinity).accessibilityIdentifier("fc.vault.category.empty")
         }
+    }
+}
+
+private struct VaultCategoryManager: View {
+    @ObservedObject var model: VaultModel
+    let dismiss: () -> Void
+    @State private var name = ""
+    @State private var editingID: String?
+    @State private var deletion: VaultCategory?
+    @State private var moveDestination = "unclassified"
+    @FocusState private var nameFocused: Bool
+    @Environment(\.workbenchPalette) private var palette
+
+    var body: some View {
+        let counts = model.documents.reduce(into: [String: Int]()) { counts, document in
+            counts[document.effectiveCategoryID, default: 0] += 1
+        }
+        WorkbenchDialogFrame(title: "管理分类", dismiss: dismiss, maximumBodyHeight: 300) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("分类随文本加密保存。「未分类」始终保留。")
+                    .font(.system(size: 12)).foregroundStyle(palette.secondary)
+                if model.categories.isEmpty {
+                    Text("还没有自定义分类").font(.system(size: 12)).foregroundStyle(palette.muted)
+                        .frame(maxWidth: .infinity, minHeight: 36)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(model.categories) { category in
+                            row(category, count: counts[category.id, default: 0])
+                                .overlay(alignment: .bottom) {
+                                    if category.id != model.categories.last?.id { palette.line.frame(height: 1) }
+                                }
+                        }
+                    }
+                }
+            }
+        } actions: {
+            VStack(alignment: .leading, spacing: 6) {
+                VaultSheetError(model: model)
+                HStack(spacing: 8) {
+                    TextField(editingID == nil ? "新分类名称（1–30 个字）" : "新的分类名称", text: $name)
+                        .modifier(VaultInputStyle()).focused($nameFocused).onSubmit(save)
+                    if editingID != nil {
+                        Button("取消", action: resetEditor).buttonStyle(WBButtonStyle())
+                    }
+                    Button(editingID == nil ? "新增" : "保存", action: save)
+                        .buttonStyle(WBButtonStyle(primary: true)).disabled(!hasName)
+                }
+            }
+        }
+        .disabled(model.busy)
+        .workbenchModal(item: $deletion) { category in
+            WorkbenchDialogFrame(title: "删除分类「\(category.name)」？", dismiss: { deletion = nil }) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("分类中的 \(counts[category.id, default: 0]) 条文本会移到下方分类，文本内容不会删除。")
+                        .font(.system(size: 12)).foregroundStyle(palette.secondary)
+                    WBSelect("移到分类", selection: $moveDestination, options: model.categoryOptions.filter { $0.0 != category.id })
+                }
+            } actions: {
+                Spacer()
+                Button("取消") { deletion = nil }.buttonStyle(WBButtonStyle())
+                Button("删除分类并移动文本") {
+                    if model.deleteCategory(category.id, movingTo: moveDestination) {
+                        if editingID == category.id { resetEditor() }
+                        deletion = nil
+                    }
+                }.buttonStyle(WBButtonStyle(destructive: true))
+            }
+        }
+        .modifier(VaultSensitiveState(model: model, clear: { resetEditor(); deletion = nil }))
+    }
+
+    private func row(_ category: VaultCategory, count: Int) -> some View {
+        HStack(spacing: 8) {
+            Text(category.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading).help(category.name)
+            Text("\(count) 条文本").font(.system(size: 11)).monospacedDigit()
+                .foregroundStyle(palette.secondary).fixedSize()
+            HStack(spacing: 2) {
+                Button {
+                    editingID = category.id
+                    name = category.name
+                    nameFocused = true
+                } label: { Image(systemName: "pencil") }
+                .buttonStyle(WBIconButtonStyle(size: 28)).help("重命名").accessibilityLabel("重命名 \(category.name)")
+                Button {
+                    moveDestination = "unclassified"
+                    deletion = category
+                } label: { Image(systemName: "trash") }
+                .buttonStyle(WBIconButtonStyle(size: 28, danger: true)).help("删除分类").accessibilityLabel("删除分类 \(category.name)")
+            }
+        }
+        .padding(.horizontal, 6).frame(height: 36)
+        .background(editingID == category.id ? palette.navSelected : .clear, in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    private var hasName: Bool { !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    private func save() {
+        guard hasName, !model.busy else { return }
+        let saved = editingID.map { model.renameCategory($0, to: name) } ?? model.addCategory(name)
+        if saved { resetEditor() }
+    }
+
+    private func resetEditor() {
+        name = ""
+        editingID = nil
     }
 }
 
@@ -747,7 +832,7 @@ private struct VaultTouchIDDefaultSheet: View {
     var body: some View {
         WorkbenchDialogFrame(title: "将 Touch ID 设为默认解锁方式？", dismiss: model.closeSheet) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Touch ID 已开启。设为默认后，进入私密空间时会自动请求 Touch ID 验证。你仍可随时改用独立密码。")
+                Text("设为默认后，锁定页会优先显示「使用 Touch ID 解锁」。点击后开始验证，也可以改用独立密码。")
                     .font(.system(size: 12)).foregroundStyle(palette.secondary).lineSpacing(4)
                 VaultSheetError(model: model)
             }

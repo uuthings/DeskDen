@@ -538,16 +538,6 @@ private enum VaultHintFailure:LocalizedError {
             errorMessage=nil;recordActivity();return true
         } catch {errorMessage=error.localizedDescription;return false}
     }
-    /// Only explicit foreground navigation calls this. A capability check may
-    /// suspend, so recheck the page and session before asking macOS to prompt.
-    @discardableResult func unlockAutomaticallyOnEntry(isForeground: () -> Bool) async -> Bool {
-        guard isConfigured,!isUnlocked,!busy,sheet == nil,biometricEnabled,
-              preferredUnlockMethod == .touchID,isForeground() else {return false}
-        let token=generation
-        await refreshBiometrics()
-        guard token == generation,!Task.isCancelled,sheet == nil,isForeground(),effectiveUnlockMethod == .touchID else {return false}
-        return await unlockWithBiometrics()
-    }
     func unlockWithBiometrics() async -> Bool {
         guard !busy,!isUnlocked,!biometricOperationInFlight,biometricEnabled,isConfigured,requireProtectedData(),flush() else {return false}
         guard biometrics.available else {setBiometricsUnavailable();return false}

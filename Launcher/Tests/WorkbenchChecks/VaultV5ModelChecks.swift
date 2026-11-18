@@ -305,21 +305,17 @@ import LauncherCore
             await unlockedPreferences.refreshBiometrics()
             check(unlockedPreferences.effectiveUnlockMethod == .password && unlockedPreferences.preferredUnlockMethod == .touchID,
                   "temporary Touch ID unavailability preserves the saved default")
+            let readsBeforeUnlock = unlockBiometrics.reads
             unlockBiometrics.available=true
             await unlockedPreferences.refreshBiometrics()
             check(unlockedPreferences.effectiveUnlockMethod == .touchID,"saved default resumes when Touch ID becomes available")
             check(!(await unlockedPreferences.unlock(password:"wrong-pass")) && !unlockedPreferences.shouldRevealPasswordHint,"first password authentication failure does not reveal the hint")
             unlockBiometrics.failure = .cancelled
-            let readsBeforeAutoEntry=unlockBiometrics.reads
-            check(!(await unlockedPreferences.unlockAutomaticallyOnEntry(isForeground:{false})) && unlockBiometrics.reads == readsBeforeAutoEntry,
-                  "entry without the foreground vault window never requests biometric authentication")
-            var foregroundChecks=0
-            let departed=await unlockedPreferences.unlockAutomaticallyOnEntry {foregroundChecks += 1;return foregroundChecks == 1}
-            check(!departed && unlockBiometrics.reads == readsBeforeAutoEntry,
-                  "leaving the foreground during the capability check prevents the Touch ID request")
-            check(!(await unlockedPreferences.unlockAutomaticallyOnEntry(isForeground:{true})) && unlockedPreferences.errorMessage == nil
-                  && unlockBiometrics.reads == readsBeforeAutoEntry+1 && unlockedPreferences.preferredUnlockMethod == .touchID,
-                  "foreground entry requests Touch ID once and cancellation preserves the saved default")
+            check(!unlockedPreferences.isUnlocked && unlockBiometrics.reads == readsBeforeUnlock,
+                  "showing the default Touch ID option on the lock screen never requests authentication")
+            check(!(await unlockedPreferences.unlockWithBiometrics()) && unlockedPreferences.errorMessage == nil
+                  && unlockBiometrics.reads == readsBeforeUnlock + 1 && unlockedPreferences.preferredUnlockMethod == .touchID,
+                  "explicit Touch ID unlock requests authentication once and cancellation preserves the saved default")
             let emptyAccepted=await unlockedPreferences.unlock(password:"")
             let secondWrongAccepted=await unlockedPreferences.unlock(password:"wrong-pass")
             check(!emptyAccepted && !secondWrongAccepted && !unlockedPreferences.shouldRevealPasswordHint,

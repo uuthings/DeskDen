@@ -161,7 +161,6 @@ struct WorkbenchAuditEntry:Codable,Identifiable {
             message="扫描范围尚未保存，请先应用更改或取消编辑。"
             revealWindow?();return false
         }
-        let enteringVault = next == .vault && route != .vault
         navigate(destination)
         guard route == next else {return false}
         switch next {
@@ -181,23 +180,11 @@ struct WorkbenchAuditEntry:Codable,Identifiable {
             ai.showOverview();usagePresentation.selectedSourceID=nil;usagePresentation.selectedAPIID=nil
         case .vault:
             vault.closeProtection()
-            if enteringVault, isForegroundVaultPage {
-                let session = vault.sessionID
-                Task { [weak self] in
-                    guard let self else {return}
-                    await vault.unlockAutomaticallyOnEntry {
-                        self.isForegroundVaultPage && self.vault.sessionID == session
-                    }
-                }
-            }
         case .settings:
             settingsTab=destination == .cards ? .widgets:.general;launcherSection=0
         case .overview,.network,.cards:break
         }
         return true
-    }
-    private var isForegroundVaultPage:Bool {
-        route == .vault && windowVisible && NSApp.isActive && hostWindow?.isKeyWindow == true
     }
     func openContextSettings() {
         modals.prune()
