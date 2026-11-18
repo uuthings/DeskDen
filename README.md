@@ -2,7 +2,7 @@
 
 常用之物，皆在方寸之间。DeskDen 是一款原生 macOS 应用，把启动器、设备信息、空间清理、日历与提醒、用量与额度和私密资料放进同一个界面。
 
-当前版本为 **0.6.1**。下载 [DMG 安装包](https://updates.uuthings.com/deskden/macos/releases/0.6.1-8/DeskDen-0.6.1-macos-universal.dmg)及[校验文件](https://updates.uuthings.com/deskden/macos/releases/0.6.1-8/SHA256SUMS.txt)；[v0.6.1 Release](https://github.com/uuthings/DeskDen/releases/tag/v0.6.1) 提供同一安装包的备用下载与版本说明。首次安装与旧版升级请先阅读 [安装指南](docs/install.md)。GitHub 的源码压缩包不能直接作为 App 安装。
+当前版本为 **0.7.0**。下载 [DMG 安装包](https://updates.uuthings.com/deskden/macos/releases/0.7.0-9/DeskDen-0.7.0-macos-universal.dmg)及[校验文件](https://updates.uuthings.com/deskden/macos/releases/0.7.0-9/SHA256SUMS.txt)；[v0.7.0 Release](https://github.com/uuthings/DeskDen/releases/tag/v0.7.0) 提供同一安装包的备用下载与版本说明。首次安装与旧版升级请先阅读 [安装指南](docs/install.md)。GitHub 的源码压缩包不能直接作为 App 安装。
 
 ## 主要功能
 
