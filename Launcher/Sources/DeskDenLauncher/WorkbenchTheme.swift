@@ -56,6 +56,26 @@ struct ThemePalette: Sendable {
     var shadow: Color { token(0x061014, light ? 0.04 : 0.12) }
     var highlight: Color { token(0xFFFFFF, light ? 0.16 : 0.08) }
 
+    struct MiniColors {
+        let panel: Color
+        let card: Color
+        let accent: Color
+    }
+
+    func miniColors(for appearance: LauncherAppearance) -> MiniColors {
+        let colors: (panel: UInt32, card: UInt32, accent: UInt32)
+        switch appearance {
+        case .light:         colors = (0xACDFEA, 0xD9F1F5, 0x005368)
+        case .mistJade:      colors = (0xC3E2CA, 0xE0F0E2, 0x20553D)
+        case .peachDune:     colors = (0xF6CBB4, 0xFBE6DB, 0x7C3826)
+        case .dark:          colors = (0x413221, 0x2E261D, 0xFFD38A)
+        case .indigoTide:    colors = (0x273F68, 0x1D2C46, 0xAFD8FF)
+        case .amethystNight: colors = (0x49345D, 0x31243F, 0xE8C1FF)
+        case .system: return miniColors(for: light ? .light : .dark)
+        }
+        return MiniColors(panel: token(colors.panel), card: token(colors.card), accent: token(colors.accent))
+    }
+
     var surfaceGradient: LinearGradient {
         LinearGradient(stops: [
             .init(color: raised, location: 0),
@@ -132,6 +152,7 @@ struct WorkbenchMaterialSurface: View {
     var kind: Kind = .card
     var radius: CGFloat = 15
     var behindWindow = false
+    var tint: Color?
     @Environment(\.workbenchPalette) private var palette
 
     var body: some View {
@@ -145,8 +166,9 @@ struct WorkbenchMaterialSurface: View {
                     .opacity(palette.light ? 0.35 : 0.14)
             }
             switch kind {
-            case .card: shape.fill(palette.surfaceGradient)
-            case .panel: shape.fill(palette.surfaceGradient)
+            case .card, .panel:
+                if let tint { shape.fill(tint.opacity(palette.materialOpacity)) }
+                else { shape.fill(palette.surfaceGradient) }
             case .chrome: shape.fill(palette.chrome)
             case .sidebar: shape.fill(palette.sidebar)
             case .shell: shape.fill(palette.shell)

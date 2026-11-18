@@ -107,6 +107,8 @@ struct WorkbenchMiniPanelView: View {
     @State private var dragged: WorkbenchMiniCardID?
     @FocusState private var focusedCard: WorkbenchMiniCardID?
     @Environment(\.workbenchPalette) private var palette
+    @Environment(\.workbenchAppearance) private var artwork
+    private var colors: ThemePalette.MiniColors { palette.miniColors(for: artwork) }
 
     private var available: [WorkbenchMiniCardID] { WorkbenchMiniCardID.builtIn + externalProviders.map { .provider($0.id) } + balances.map { .apiBalance($0.id) } }
     private var current: WorkbenchTopEntryPreferences { draft ?? preferences }
@@ -134,8 +136,8 @@ struct WorkbenchMiniPanelView: View {
                             ForEach(shown, id: \.card) { placement in
                                 ZStack {
                                     if dragged == placement.card {
-                                        RoundedRectangle(cornerRadius: 12).fill(palette.accent.opacity(0.08))
-                                            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(palette.accent.opacity(0.45), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+                                        RoundedRectangle(cornerRadius: 12).fill(colors.accent.opacity(0.08))
+                                            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(colors.accent.opacity(0.45), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
                                             .accessibilityLabel("放置位置").accessibilityIdentifier("mini-drag-placeholder")
                                     }
                                     card(placement.card, capacity: capacity)
@@ -195,6 +197,7 @@ struct WorkbenchMiniPanelView: View {
         }
 
         .foregroundStyle(palette.text)
+        .tint(colors.accent)
         .onChange(of: externalProviders.map(\.id)) { _, _ in page = 0 }
         .accessibilityElement(children: .contain).accessibilityIdentifier("mini-panel-content")
     }
@@ -261,7 +264,7 @@ struct WorkbenchMiniPanelView: View {
     }
     private func dateHeader(detail: Int) -> some View {
         HStack(spacing: 7) {
-            Text(context.time).monospacedDigit()
+            Text(context.time).monospacedDigit().foregroundStyle(colors.accent)
             if detail > 0 { Text(context.shortDate.isEmpty ? context.date : context.shortDate).foregroundStyle(palette.secondary) }
             if detail > 1 && !context.weekday.isEmpty { Text(context.weekday).foregroundStyle(palette.secondary) }
         }.font(.system(size: 12)).fixedSize()
@@ -269,7 +272,7 @@ struct WorkbenchMiniPanelView: View {
     private func weatherHeader(detail: Int) -> some View {
         HStack(spacing: 5) {
             if detail > 1 { Text(context.city) }
-            Image(systemName: context.symbol).foregroundStyle(palette.accent)
+            Image(systemName: context.symbol).foregroundStyle(colors.accent)
             Text(context.temperature).monospacedDigit()
             if detail > 0 { Text(context.condition).foregroundStyle(palette.secondary) }
         }.font(.system(size: 12)).fixedSize().accessibilityIdentifier("mini-header-weather")
@@ -306,9 +309,9 @@ struct WorkbenchMiniPanelView: View {
     private func cardSurface(_ id: WorkbenchMiniCardID) -> some View {
         cardContent(id).padding(.horizontal, 12).padding(.vertical, 8)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(WorkbenchMaterialSurface(radius: 12))
+            .background(WorkbenchMaterialSurface(radius: 12, tint: colors.card))
             .overlay(RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(palette.light ? Color(red: 0.17, green: 0.31, blue: 0.34).opacity(0.22) : palette.border, lineWidth: 1)
+                .strokeBorder(colors.accent.opacity(0.22), lineWidth: 1)
                 .allowsHitTesting(false))
             .contentShape(RoundedRectangle(cornerRadius: 12))
     }
@@ -316,7 +319,7 @@ struct WorkbenchMiniPanelView: View {
         let content = Button {
             if editing { focusedCard = id } else { open(id) }
         } label: { cardSurface(id) }
-            .buttonStyle(WBSelectableButtonStyle(cornerRadius: 12, drawsSelection: false, showsBorder: false))
+            .buttonStyle(WBSelectableButtonStyle(cornerRadius: 12, drawsSelection: false, tint: colors.accent, showsBorder: false))
             .focusable(interactions: editing ? .edit : .activate).focusEffectDisabled()
             .focused($focusedCard, equals: id)
             .onMoveCommand { direction in guard editing else { return }; move(id, forward: direction == .right || direction == .down, capacity: capacity) }
@@ -330,7 +333,7 @@ struct WorkbenchMiniPanelView: View {
                     .accessibilityAction(named: Text("隐藏卡片")) { Task { @MainActor in guard editing else { return }; editVisibility(id, false) } }
             } else { content }
         }
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(editing && focusedCard == id ? palette.accent.opacity(0.5) : .clear, lineWidth: 1).allowsHitTesting(false))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(editing && focusedCard == id ? colors.accent.opacity(0.5) : .clear, lineWidth: 1).allowsHitTesting(false))
         .overlay(alignment: .topTrailing) {
             if editing && dragged == nil {
                 Button { editVisibility(id, false) } label: { Image(systemName: "eye.slash").font(.system(size: 11)).frame(width: 22, height: 22).background(palette.raised, in: Circle()) }
@@ -469,7 +472,7 @@ struct WorkbenchMiniPanelView: View {
                 aiProvider: id == .codex ? .codex : id == .claude ? .claude : nil,
                 serviceKind: id.providerID.flatMap { sourceKinds[$0] }, defaultBrand: id.apiBalanceID != nil ? .deepseek : nil, size: 16)
         } else if id == .codex || id == .claude { AIProviderLogo(provider: id == .codex ? .codex : .claude, size: 16) }
-        else { WorkbenchContentIcon(mini: id, size: 16).foregroundStyle(palette.secondary) }
+        else { WorkbenchContentIcon(mini: id, size: 16).foregroundStyle(colors.accent) }
     }
     private func titleLabel(_ id: WorkbenchMiniCardID) -> some View {
         HStack(spacing: 6) { sourceIcon(id); Text(title(id)).font(.system(size: 12, weight: .medium)).lineLimit(1) }
@@ -563,7 +566,7 @@ struct WorkbenchMiniPanelView: View {
                 Text("拖动整张卡片调整顺序，确认后保存。")
                     .font(.system(size: 11)).foregroundStyle(palette.muted)
             }.padding(12)
-        }.background(palette.soft, in: RoundedRectangle(cornerRadius: 12))
+        }.background(WorkbenchMaterialSurface(radius: 12, tint: colors.card))
     }
     private var empty: some View {
         VStack(spacing: 10) {

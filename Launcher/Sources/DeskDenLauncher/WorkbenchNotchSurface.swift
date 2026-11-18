@@ -90,15 +90,15 @@ enum WorkbenchMiniLayout {
     func refreshAppearance() {
         appearance = NSAppearance(named: Palette.isLight ? .aqua : .darkAqua)
         theme = Palette.workbenchTheme
-        outline.strokeColor = NSColor(Palette.workbenchPalette.line).cgColor
-        // The independent panel uses the same scene artwork and material as the
-        // workbench, including immediate changes to the saved appearance.
+        let artwork = Palette.artworkAppearance
+        let colors = Palette.workbenchPalette.miniColors(for: artwork)
+        outline.strokeColor = NSColor(colors.accent.opacity(0.24)).cgColor
         glass.rootView = AnyView(ZStack {
             WorkbenchFluidBackground()
-            WorkbenchMaterialSurface(kind: .panel, radius: 0)
+            WorkbenchMaterialSurface(kind: .panel, radius: 0, tint: colors.panel)
         }
             .workbenchThemeEnvironment(theme: theme, opacity: Palette.glassOpacity, backgroundMotion: false,
-                                      appearance: Palette.artworkAppearance == .system ? (Palette.isLight ? .light : .dark) : Palette.artworkAppearance))
+                                      appearance: artwork == .system ? (Palette.isLight ? .light : .dark) : artwork))
     }
     var materialOpacity: Double { Palette.workbenchPalette.materialOpacity }
     var usesLightAppearance: Bool { appearance?.name == .aqua }

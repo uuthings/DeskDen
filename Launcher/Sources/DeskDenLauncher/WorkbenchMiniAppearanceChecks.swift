@@ -65,43 +65,51 @@ import SwiftUI
         let saved = (Palette.workbenchTheme, Palette.isLight, Palette.glassOpacity)
         defer { Palette.workbenchTheme = saved.0; Palette.isLight = saved.1; Palette.glassOpacity = saved.2 }
         if CommandLine.arguments.contains("--mini-background-check") {
-            for light in [true, false] {
-                let fixture = Fixture(width: 748, safeTop: 32, notchWidth: 220, light: light, opacity: 0.7)
-                await fixture.settle()
-                check(WorkbenchFluidAssets.image(for: .system, systemIsLight: light) != nil, "Mini appearance has the workbench artwork")
-                let effects = descendants(fixture.surface).compactMap { $0 as? NSVisualEffectView }
-                check(!effects.isEmpty && effects.allSatisfy { $0.blendingMode == .withinWindow },
-                      "Mini glass samples its own background instead of the desktop")
-                check(!fixture.window.isVisible && !fixture.window.isKeyWindow, "Mini background fixture stays hidden")
-                if let output {
-                    check(await fixture.savePNG(to: output.appendingPathComponent("mini-\(light ? "light" : "dark").png")), "Mini background captured")
-                }
-                Palette.isLight = !light
-                fixture.surface.refreshAppearance()
-                await fixture.settle()
-                check(fixture.surface.usesLightAppearance == !light && fixture.surface.phase == .expanded,
-                      "open Mini changes its background appearance without remounting or collapsing")
-                fixture.close()
-            }
             let previous = Palette.artworkAppearance
             defer { Palette.artworkAppearance = previous }
+            let fixture = Fixture(width: 748, safeTop: 32, notchWidth: 220, light: true, opacity: 0.7)
+            defer { fixture.close() }
             for light in [true, false] {
-                let fixture = Fixture(width: 748, safeTop: 32, notchWidth: 220, light: light, opacity: 0.7)
-                defer { fixture.close() }
-                var previousPixels: Data?
-                for choice in LauncherAppearance.allCases where choice.fixedLight == light {
+                let choices = LauncherAppearance.allCases.filter { $0.fixedLight == light }
+                for choice in choices + [.system] {
+                    fixture.state.artwork = choice
+                    Palette.isLight = light
                     Palette.artworkAppearance = choice
+                    fixture.window.appearance = NSAppearance(named: light ? .aqua : .darkAqua)
                     fixture.surface.refreshAppearance()
                     await fixture.settle()
                     check(WorkbenchFluidAssets.image(for: choice, systemIsLight: light) != nil, "\(choice.title) has bundled artwork")
-                    let bitmap = fixture.surface.bitmapImageRepForCachingDisplay(in: fixture.surface.bounds)
-                    if let bitmap { fixture.surface.cacheDisplay(in: fixture.surface.bounds, to: bitmap) }
-                    let pixels = bitmap?.representation(using: .png, properties: [:])
-                    check(fixture.surface.phase == .expanded && pixels != nil && pixels != previousPixels,
-                          "expanded Mini redraws \(choice.title) including changes within one appearance")
-                    previousPixels = pixels
+                    check(fixture.surface.usesLightAppearance == light && fixture.surface.phase == .expanded,
+                          "\(choice.title) applies in place to the expanded Mini")
+                    guard let bitmap = fixture.capture() else {
+                        check(false, "can sample the rendered Mini")
+                        continue
+                    }
+                    let resolved = choice == .system ? (light ? LauncherAppearance.light : .dark) : choice
+                    let colors = Palette.workbenchPalette.miniColors(for: resolved)
+                    let others = choices.filter { $0 != resolved }.map { Palette.workbenchPalette.miniColors(for: $0) }
+                    // Sample the unobstructed header center, the interior of the first card,
+                    // and the ink of the fixed fixture clock, independent of backing scale.
+                    func pixel(_ x: CGFloat, _ y: CGFloat) -> NSColor? {
+                        bitmap.colorAt(x: Int(x * CGFloat(bitmap.pixelsWide)), y: Int(y * CGFloat(bitmap.pixelsHigh)))?.usingColorSpace(.sRGB)
+                    }
+                    check(matches(pixel(0.50, 0.06), colors.panel, alternatives: others.map(\.panel)), "\(choice.title) panel has the selected tint")
+                    check(matches(pixel(0.30, 0.36), colors.card, alternatives: others.map(\.card)), "\(choice.title) cards have the selected tint")
+                    let clock = (35..<68).flatMap { x in (8..<26).compactMap { y in pixel(CGFloat(x) / 748, CGFloat(y) / 292) } }
+                    let ink = clock.max { a, b in
+                        let difference = a.redComponent + a.greenComponent + a.blueComponent - b.redComponent - b.greenComponent - b.blueComponent
+                        return light ? difference > 0 : difference < 0
+                    }
+                    check(matches(ink, colors.accent, alternatives: others.map(\.accent)), "\(choice.title) clock uses the selected accent")
+                    if let output {
+                        let name = choice == .system ? "system-\(light ? "light" : "dark")" : choice.rawValue
+                        check(await fixture.savePNG(to: output.appendingPathComponent("mini-\(name).png")), "Mini background captured")
+                    }
                 }
             }
+            let effects = descendants(fixture.surface).compactMap { $0 as? NSVisualEffectView }
+            check(!effects.isEmpty && effects.allSatisfy { $0.blendingMode == .withinWindow }, "Mini glass samples its own background")
+            check(!fixture.window.isVisible && !fixture.window.isKeyWindow, "Mini background fixture stays hidden")
             print("Mini background: \(count) checks, \(failures) failures")
             return (count, failures)
         }
@@ -272,8 +280,22 @@ import SwiftUI
         print("Mini appearance checks: \(count) checks, \(failures) failures")
         return (count,failures)
     }
+    private static func matches(_ pixel: NSColor?, _ expected: Color, alternatives: [Color]) -> Bool {
+        guard let pixel else { return false }
+        func distance(to color: Color) -> CGFloat {
+            guard let rgb = NSColor(color).usingColorSpace(.sRGB) else { return .infinity }
+            let r = pixel.redComponent - rgb.redComponent, g = pixel.greenComponent - rgb.greenComponent, b = pixel.blueComponent - rgb.blueComponent
+            return r*r + g*g + b*b
+        }
+        let selected = distance(to: expected)
+        // Allow for wallpaper blending and antialiasing, but require the actual
+        // pixel to match this theme more closely than every same-mode alternative.
+        return selected < 0.06 && alternatives.allSatisfy { selected < distance(to: $0) }
+    }
+
     private enum Scenario:String {case normal,settings,empty,missing,seconds,fourColumns,thermalWarning,thermalCritical}
     @MainActor private final class FixtureState:ObservableObject {
+        @Published var artwork: LauncherAppearance = .system
         @Published var preferences=WorkbenchTopEntryPreferences()
         var opened:[WorkbenchMiniCardID]=[]
         var contextOpens = 0
@@ -291,6 +313,7 @@ import SwiftUI
         let safeTop:CGFloat
         let notchWidth:CGFloat
         let configuring:Bool
+        let opacity: Double
         var body:some View {
             WorkbenchMiniPanelView(context:context,agenda:agenda,device:device,providers:providers,externalProviders:externalProviders,balances:balances,thermalStatus:thermalStatus,
                 preferences:state.preferences,safeTop:safeTop,notchWidth:notchWidth,error:nil,
@@ -299,6 +322,7 @@ import SwiftUI
                 setSeconds:{state.preferences.showSeconds=$0},
                 reorder:{state.preferences.moveCard($0,relativeTo:$1,after:$2)},restore:{state.preferences = .init()},
                 finishConfiguration:{},saveLayout:{state.preferences=$0;state.saves += 1;return true},configuring:configuring)
+                .workbenchThemeEnvironment(theme: .qingbiMist, opacity: opacity, backgroundMotion: false, appearance: state.artwork)
         }
     }
     @MainActor private final class Fixture {
@@ -309,6 +333,7 @@ import SwiftUI
         let availableCards:[WorkbenchMiniCardID]
         init(width:CGFloat,safeTop:CGFloat,notchWidth:CGFloat,light:Bool,opacity:Double,scenario:Scenario = .normal,interactive:Bool = false) {
             Palette.workbenchTheme = .qingbiMist;Palette.isLight=light;Palette.glassOpacity=opacity
+            state.artwork = light ? .light : .dark
             let missing=scenario == .missing
             if scenario == .empty {state.preferences.visibleCards=[]}
             if missing {state.preferences.visibleCards=[.network,.thermal,.codex,.claude]}
@@ -345,21 +370,25 @@ import SwiftUI
                 device.temperature="87°C";device.gpuTemperature="68°C";device.thermalState="温度偏高"
                 thermalStatus = .init(cpu:87,gpu:68,state:.nominal)
             } else {thermalStatus = .init(cpu:missing ? nil:48,gpu:missing ? nil:44,state:missing ? .unknown:.nominal)}
-            let content=FixtureContent(state:state,context:context,agenda:agenda,device:device,providers:providers,externalProviders:externalProviders,balances:balances,thermalStatus:thermalStatus,safeTop:safeTop,notchWidth:notchWidth,configuring:scenario == .settings)
+            let content=FixtureContent(state:state,context:context,agenda:agenda,device:device,providers:providers,externalProviders:externalProviders,balances:balances,thermalStatus:thermalStatus,safeTop:safeTop,notchWidth:notchWidth,configuring:scenario == .settings,opacity:opacity)
             let size=CGSize(width:width,height:WorkbenchMiniLayout.height(safeTop:safeTop))
             if interactive { window=NativeUIFixtureWindow(contentRect:CGRect(origin:.init(x:100,y:100),size:size),styleMask:[.borderless],backing:.buffered,defer:false) }
             else { window=NSWindow(contentRect:CGRect(origin:.init(x:100,y:100),size:size),styleMask:[.borderless],backing:.buffered,defer:false) }
             window.isReleasedWhenClosed=false;window.isOpaque=false;window.backgroundColor = .clear;window.ignoresMouseEvents = !interactive
             window.acceptsMouseMovedEvents = interactive
             surface=WorkbenchNotchSurface(size:size,notchWidth:notchWidth,safeTop:safeTop)
-            host=NSHostingView(rootView:AnyView(content.environment(\.accessibilityEnabled,true).workbenchThemeEnvironment(theme:.qingbiMist,opacity:opacity,backgroundMotion:false,appearance:light ? .light:.dark)))
+            host=NSHostingView(rootView:AnyView(content.environment(\.accessibilityEnabled,true)))
             window.contentView=surface;surface.setContent(host);surface.setPhase(.expanded,animated:false)
         }
         func settle() async {try? await Task.sleep(for:.milliseconds(100));surface.layoutSubtreeIfNeeded();host.layoutSubtreeIfNeeded()}
+        func capture() -> NSBitmapImageRep? {
+            guard let image = surface.bitmapImageRepForCachingDisplay(in: surface.bounds) else { return nil }
+            surface.cacheDisplay(in: surface.bounds, to: image)
+            return image
+        }
         func savePNG(to url:URL) async->Bool {
             await settle()
-            guard let image=surface.bitmapImageRepForCachingDisplay(in:surface.bounds) else {return false}
-            surface.cacheDisplay(in:surface.bounds,to:image)
+            guard let image = capture() else { return false }
             guard let data=image.representation(using:.png,properties:[:]) else {return false}
             do {try data.write(to:url,options:.atomic);return true} catch {return false}
         }
