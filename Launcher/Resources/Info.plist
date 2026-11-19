@@ -23,7 +23,7 @@
 <key>SUAutomaticallyUpdate</key><false/>
 <key>SUAllowsAutomaticUpdates</key><false/>
 <key>SUSendProfileInfo</key><false/>
-<key>SUScheduledCheckInterval</key><integer>86400</integer>
+<key>SUScheduledCheckInterval</key><integer>14400</integer>
 <key>SUVerifyUpdateBeforeExtraction</key><true/>
 <key>SURequireSignedFeed</key><true/>
 </dict></plist>

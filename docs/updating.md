@@ -6,7 +6,7 @@ Xcode's final build phase signs the embedded framework's four helpers inside-out
 
 ## User behavior
 
-Settings → General contains **Check for Updates** and **Automatically check for updates**. The application and menu-bar menus also offer a manual check. With automatic checking enabled, DeskDen checks silently at launch and checks again when opening the workbench if the last check was at least an hour ago. It also checks daily in the background, on wake when due, and retries after connectivity returns. An explicitly saved opt-out is preserved. Manual checks run immediately when no update session is active. Downloading and installing updates require confirmation. System-profile reporting is disabled.
+Settings → General contains **Check for Updates** and **Automatically check for updates**. The application and menu-bar menus also offer a manual check. With automatic checking enabled, DeskDen checks silently at launch and checks again when opening the workbench if the last check was at least an hour ago. It also checks every four hours in the background, on wake when due, and retries after connectivity returns. An explicitly saved opt-out is preserved. Manual checks run immediately when no update session is active. Downloading and installing updates require confirmation. System-profile reporting is disabled.
 
 A background result appears as a single download icon and new-version button beside the brand in the workbench header. It does not open a window or interrupt another app. Clicking the button opens the shared themed update dialog with the release version, known publication date and change notes. Short notes stay compact; long notes scroll while actions remain visible. Failed checks are reported when the user opens the update interface, never as “up to date.”
 
@@ -17,6 +17,17 @@ The updater uses HTTPS, validates the signed feed and verifies the archive's Ed2
 Starting with 0.4.0, the embedded feed address is `https://updates.uuthings.com/deskden/macos/stable/appcast.xml`. New update archives use `https://updates.uuthings.com/deskden/macos/releases/<version>-<Build>/`. R2 is the primary download service; every formal installer and update archive must also be published to the matching GitHub Release with identical bytes, size and SHA-256. GitHub retains the historical downloads. The 0.4.0 migration uploads only 0.4.0 to R2; older signed entries keep their existing GitHub archive URLs.
 
 Older Sparkle-enabled versions still request `https://raw.githubusercontent.com/uuthings/DeskDen/main/updates/appcast.xml`. Keep that endpoint as a byte-for-byte mirror of the same final signed feed on every release, including releases after 0.4.0. Changing the new App's address alone does not migrate installed copies. The GitHub mirror is an alternative manual download source, not an automatic updater failover. Never label a failed feed request as “up to date.” The original 0.1.0 builds without Sparkle need a one-time manual installation of a current release; later published versions can use the in-app updater. See the [installation and upgrade guide](install.md) before migrating an original-format Private Space.
+
+## Verify stable update discovery
+
+After publishing the signed feed, run the information-only probe once for the previous release and once for the current release. Use their verified App exports and the new release’s build number. Set `SPARKLE_FRAMEWORK_DIR` to the directory containing the pinned macOS `Sparkle.framework` in the resolved XCFramework.
+
+```sh
+xcrun swift -F "$SPARKLE_FRAMEWORK_DIR" Launcher/scripts/probe-stable-update.swift "$PREVIOUS_APP" "$PUBLISHED_BUILD"
+xcrun swift -F "$SPARKLE_FRAMEWORK_DIR" Launcher/scripts/probe-stable-update.swift "$CURRENT_APP" "$PUBLISHED_BUILD"
+```
+
+The probe reads the release’s feed URL, signing policy, public key and version from its bundle. Each run gives Sparkle a temporary metadata-only host and a unique preferences domain. It checks the signed latest build, the offer to the previous release, and the up-to-date result for the current release. Use this probe for release verification on a Mac with DeskDen installed. A probe targeting the real host bundle directly shares the installed app’s last-check time. Installation and relaunch have separate acceptance steps.
 
 ## Signing material
 

@@ -68,7 +68,7 @@ struct AppUpdateRelease: Equatable {
 /// Sparkle performs the signed-feed selection, download, archive verification
 /// and installation. This object owns only presentation and user choices.
 @MainActor final class AppUpdateController: NSObject, ObservableObject, SPUUpdaterDelegate {
-    static let checkInterval: TimeInterval = 86_400
+    static let checkInterval: TimeInterval = 4 * 60 * 60
     private static let workbenchCheckInterval: TimeInterval = 3_600
     @Published private(set) var automaticallyChecks = true
     @Published private(set) var canCheck = true

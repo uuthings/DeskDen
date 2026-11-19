@@ -11,7 +11,6 @@ import binascii
 from copy import deepcopy
 import json
 import ipaddress
-import math
 from pathlib import Path
 import plistlib
 import re
@@ -111,8 +110,8 @@ def configuration_errors(info):
         if type(info.get(key)) is not bool or info[key] is not expected:
             errors.append(key + " must be explicitly " + str(expected).lower())
     interval = info.get("SUScheduledCheckInterval")
-    if type(interval) not in (int, float) or not math.isfinite(interval) or interval < 86_400:
-        errors.append("the scheduled automatic check interval must be at least 24 hours")
+    if interval != 14_400:
+        errors.append("the scheduled automatic check interval must be four hours")
     if numeric_version(info.get("LSMinimumSystemVersion")) is None:
         errors.append("the app must expose its actual numeric minimum macOS baseline")
     return errors
@@ -348,7 +347,7 @@ def read_regular(path, limit=2_000_000):
 
 def run_fixtures(check):
     info = {"SUFeedURL": FEED_URL, "SUPublicEDKey": base64.b64encode(bytes(range(32))).decode(), "LSMinimumSystemVersion": "14.0",
-            "SUScheduledCheckInterval": 86_400,
+            "SUScheduledCheckInterval": 14_400,
             "SUEnableAutomaticChecks": True,
             **{key: False for key in ("SUAutomaticallyUpdate", "SUAllowsAutomaticUpdates", "SUSendProfileInfo")},
             "SUVerifyUpdateBeforeExtraction": True, "SURequireSignedFeed": True}
@@ -358,7 +357,7 @@ def run_fixtures(check):
                        ("SUPublicEDKey", "not-base64"), ("SUEnableAutomaticChecks", False), ("SUEnableAutomaticChecks", 0),
                        ("SUAutomaticallyUpdate", True), ("SUAllowsAutomaticUpdates", True), ("SUSendProfileInfo", True),
                        ("SUVerifyUpdateBeforeExtraction", False), ("SURequireSignedFeed", False),
-                       ("SUScheduledCheckInterval", 3600), ("SUScheduledCheckInterval", True), ("SUScheduledCheckInterval", float("nan"))]:
+                       ("SUScheduledCheckInterval", 3600), ("SUScheduledCheckInterval", 86_400), ("SUScheduledCheckInterval", True), ("SUScheduledCheckInterval", float("nan"))]:
         changed = deepcopy(info); changed[key] = value
         check(bool(configuration_errors(changed)), "configuration rejects unsafe " + key + " fixture")
     for key in ("SUEnableAutomaticChecks", "SUAutomaticallyUpdate", "SUAllowsAutomaticUpdates", "SUVerifyUpdateBeforeExtraction", "SURequireSignedFeed"):
@@ -532,7 +531,7 @@ def main(dependencies_only=False):
 
     if not dependencies_only:
         info = plistlib.loads(read_regular(ROOT / "Launcher/Resources/Info.plist"))
-        policy(configuration_errors(info), "updater uses HTTPS, a 32-byte public key, automatic-check defaults, manual installation and signed daily checks")
+        policy(configuration_errors(info), "updater uses HTTPS, a 32-byte public key, automatic-check defaults, manual installation and signed four-hour checks")
     policy(manifest_errors(read_regular(ROOT / "Launcher/Package.swift").decode()), "SwiftPM pins and links official Sparkle 2.10.0")
     first, second = (json.loads(read_regular(ROOT / path)) for path in LOCK_FILES)
     policy(lock_errors(first, second), "SwiftPM and Xcode locks contain identical reviewed dependency pins")
