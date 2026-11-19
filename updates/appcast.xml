@@ -9,6 +9,23 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
         <description>Official signed software updates for DeskDen.</description>
         <language>zh-CN</language>
         <item>
+            <title>0.7.1</title>
+            <pubDate>Thu, 19 Nov 2026 10:32:23 GMT</pubDate>
+            <sparkle:version>10</sparkle:version>
+            <sparkle:shortVersionString>0.7.1</sparkle:shortVersionString>
+            <sparkle:fullReleaseNotesLink>https://github.com/uuthings/DeskDen/releases/tag/v0.7.1</sparkle:fullReleaseNotesLink>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="plain-text"><![CDATA[在「设置 → 通用 → 软件更新」选择仅手动、自动检查并提醒或自动下载并安装。默认每 24 小时检查一次，发现新版会在工作台显示标记。手动检查可以随时进行。
+
+开启自动安装后，更新会在正常退出 DeskDen 时安装；要立即安装，可以点击「立即重启」。升级后会先请你确认更新方式，旧版关闭自动检查的用户可以保留仅手动模式。
+
+In Settings → General → Software Update, choose manual checks, automatic notifications, or automatic downloads and installation. By default, DeskDen checks every 24 hours and marks new versions in the workbench. You can check manually at any time.
+
+With automatic installation enabled, updates install when you quit DeskDen. Choose Restart now to install immediately. Review your preference after upgrading; if you previously disabled automatic checks, you can keep manual-only mode.
+]]></description>
+            <enclosure url="https://updates.uuthings.com/deskden/macos/releases/0.7.1-10/DeskDen-0.7.1-macos-universal.zip" length="31105817" type="application/octet-stream" sparkle:edSignature="BXD/LmDDIG1rD/tVxzax+FkbLe9VaQL8GKQKKdim/RdHKmYUTU59pc3s29uv2EkoSkTyLk+DBoscxyOXNg4LAw=="/>
+        </item>
+        <item>
             <title>0.7.0</title>
             <pubDate>Wed, 18 Nov 2026 11:23:48 GMT</pubDate>
             <sparkle:version>9</sparkle:version>
@@ -160,6 +177,6 @@ IPRoyal 连接器需另行安装并保持官方控制台登录。服务额度存
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: y32W1PFxfUZx4lEQ4OgB9ayh04YcjAuxEPJqJ0fnKN7ZG6RObC7kKYexTLWyDEs27TStQ3KQxX+WpZ7hnfFCAw==
-length: 12340
+edSignature: BCOkOdR91SWsqf6J142yqE4KUnK9WwKtR3qKSU+UYNvpQQ0bZqY3dk4VzjCSWwMFWTcN7gsr7hLT6ctUbgrjCg==
+length: 14099
 -->
