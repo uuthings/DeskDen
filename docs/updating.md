@@ -6,11 +6,9 @@ Xcode's final build phase signs the embedded framework's four helpers inside-out
 
 ## User behavior
 
-Settings → General contains **Check for Updates** and **Automatically check for updates**. The application and menu-bar menus also offer a manual check. With automatic checking enabled, DeskDen checks silently at launch and checks again when opening the workbench if the last check was at least an hour ago. It also checks every four hours in the background, on wake when due, and retries after connectivity returns. An explicitly saved opt-out is preserved. Manual checks run immediately when no update session is active. Downloading and installing updates require confirmation. System-profile reporting is disabled.
+Settings → General offers Manual Only, Automatically Check and Notify (default), and Automatically Download and Install. An existing disabled checking preference migrates to Manual Only. Users confirm the choice before the first automatic request.
 
-A background result appears as a single download icon and new-version button beside the brand in the workbench header. It does not open a window or interrupt another app. Clicking the button opens the shared themed update dialog with the release version, known publication date and change notes. Short notes stay compact; long notes scroll while actions remain visible. Failed checks are reported when the user opens the update interface, never as “up to date.”
-
-Download and **Install and Relaunch** are separate choices. Closing the dialog keeps an active download running; reopening shows the same session. **Later** leaves the current app running. A normal quit cancels a prepared update session instead of authorizing Sparkle's install-on-quit behavior; the user can check and download again at the next launch. Only an explicit installation choice proceeds through the application's existing save and shutdown protections.
+The app checks 24 hours after the last successfully verified result. Launch, wake, foreground and timer events share that deadline. Failed checks retry after 15 minutes, one hour, then four hours. Manual checks run immediately or display the outcome of an ongoing check. Background discovery adds a badge. In automatic installation mode the app downloads the signed update, installs it on ordinary quit and offers an explicit Install & Relaunch action. Switching modes cancels a prepared automatic installation before ordinary quit proceeds.
 
 The updater uses HTTPS, validates the signed feed and verifies the archive's Ed25519 signature before extraction. An Install & Relaunch request uses the same encrypted-write, editor-draft, cleaning-transaction and notification shutdown barriers as a normal quit. Cancelling a save decision prevents termination. Checking for updates does not itself quit the app or change local data.
 
@@ -40,7 +38,7 @@ Follow [the Organizer release process](releasing.md) first. Export the notarized
 ```sh
 python3 tools/prepare-update-feed.py --app "$EXPORTED_NOTARIZED_APP" \
   --sparkle-bin "$VERIFIED_SPARKLE_BIN" --signing-account "$SPARKLE_SIGNING_ACCOUNT" --notes "$PUBLIC_RELEASE_NOTES" \
-  --download-url-prefix "https://updates.uuthings.com/deskden/macos/releases/0.7.0-9/" \
+  --download-url-prefix "https://updates.uuthings.com/deskden/macos/releases/0.7.1-10/" \
   --output "$NEW_PERSISTENT_UPDATE_DIRECTORY"
 ```
 

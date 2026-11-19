@@ -2,7 +2,7 @@
 
 常用之物，皆在方寸之间。DeskDen 是一款原生 macOS 应用，把启动器、设备信息、空间清理、日历与提醒、用量与额度和私密资料放进同一个界面。
 
-当前版本为 **0.7.0**。下载 [DMG 安装包](https://updates.uuthings.com/deskden/macos/releases/0.7.0-9/DeskDen-0.7.0-macos-universal.dmg)及[校验文件](https://updates.uuthings.com/deskden/macos/releases/0.7.0-9/SHA256SUMS.txt)；[v0.7.0 Release](https://github.com/uuthings/DeskDen/releases/tag/v0.7.0) 提供同一安装包的备用下载与版本说明。首次安装与旧版升级请先阅读 [安装指南](docs/install.md)。GitHub 的源码压缩包不能直接作为 App 安装。
+当前版本为 **0.7.1**。下载 [DMG 安装包](https://updates.uuthings.com/deskden/macos/releases/0.7.1-10/DeskDen-0.7.1-macos-universal.dmg)及[校验文件](https://updates.uuthings.com/deskden/macos/releases/0.7.1-10/SHA256SUMS.txt)；[v0.7.1 Release](https://github.com/uuthings/DeskDen/releases/tag/v0.7.1) 提供同一安装包的备用下载与版本说明。首次安装与旧版升级请先阅读 [安装指南](docs/install.md)。GitHub 的源码压缩包不能直接作为 App 安装。
 
 ## 主要功能
 
@@ -13,7 +13,7 @@
 - 私密空间：独立密码加密、自动锁定、加密备份、文字格式与完整分类管理；正确签名授权的构建可选用 Touch ID。
 - 外观与桌面组件：右上角调色盘可从三浅三深六款主题中选择，也可跟随系统。Mini 同步显示所选壁纸，桌面组件沿用对应的明暗材质。
 - 统一图标：应用与浏览器连接器使用浅色桌面图标。
-- 软件更新：默认启动时检查，打开工作台时按需复查，常驻时每 4 小时自动检查。关闭选择会保留，下载和安装均需确认。
+- 软件更新：首次使用时可选「仅手动」。默认每 24 小时检查一次，发现新版显示标记，由你决定何时下载。选择「自动下载并安装」后，新版在正常退出时安装。点击「立即重启」可以提前安装。
 
 工作台显示时提供程序坞与应用切换入口；关闭界面后继续后台运行，可从状态栏或快捷键重新打开。顶部导航与内容间距保持一致，内容随窗口空间重排；启动器可独立呼出。
 

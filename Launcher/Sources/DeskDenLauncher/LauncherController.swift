@@ -247,7 +247,10 @@ final class LauncherController: NSObject, NSApplicationDelegate, NSWindowDelegat
         performStartupPresentation(DeskDenStartupPresentation(arguments:CommandLine.arguments))
         indexSpotlightAlias()
         if Bundle.main.object(forInfoDictionaryKey: "DeskDenUIReview") as? Bool != true {
-            updates.startAutomaticCheckingIfEnabled()
+            if updates.needsUpdateChoice {
+                updates.isChoosingUpdateMode = true
+                showWorkbench(route: .settings, settingsTab: .general)
+            } else { updates.startAutomaticCheckingIfEnabled() }
         }
     }
     func applicationShouldHandleReopen(_ sender:NSApplication,hasVisibleWindows flag:Bool) -> Bool { showWorkbench(); return true }

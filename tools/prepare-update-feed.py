@@ -21,7 +21,7 @@ UPDATE_POLICY = runpy.run_path(str(ROOT / 'Launcher/scripts/check-update-config.
 EXPORTED_INFO_KEYS = (
     'CFBundleIdentifier', 'CFBundleExecutable', 'LSMinimumSystemVersion',
     'SUFeedURL', 'SUPublicEDKey', 'SUEnableAutomaticChecks', 'SUAutomaticallyUpdate',
-    'SUAllowsAutomaticUpdates', 'SUSendProfileInfo', 'SUScheduledCheckInterval',
+    'SUAllowsAutomaticUpdates', 'SUSendProfileInfo', 'SUEnableSystemProfiling', 'SUScheduledCheckInterval',
     'SURequireSignedFeed', 'SUVerifyUpdateBeforeExtraction',
 )
 

@@ -31,9 +31,10 @@ struct WorkbenchUpdateSettings: View {
                 }.buttonStyle(WBButtonStyle(compact: true))
                     .disabled(!updates.canCheck && updates.release == nil).accessibilityIdentifier("updates-check")
             }
-            WBSettingRow(title: "自动检查更新", subtitle: "启动时检查，后台每 4 小时检查。打开工作台时，距上次检查满 1 小时就复查。") {
-                Toggle("自动检查更新", isOn: Binding(get: { updates.automaticallyChecks }, set: updates.setAutomaticallyChecks))
-                    .labelsHidden().toggleStyle(.switch).clickableCursor().controlSize(.mini).tint(palette.accent)
+            WBSettingRow(title: "更新方式", subtitle: updates.mode.detail) {
+                WBSelect("更新方式", selection: Binding(get: { updates.mode }, set: updates.setMode),
+                         options: UpdateMode.allCases.map { (value: $0, title: $0.title) })
+                    .frame(width: 174)
                     .disabled(!AppUpdateController.configurationIsValid(Bundle.main.infoDictionary ?? [:]))
                     .accessibilityIdentifier("updates-automatic")
             }
@@ -42,9 +43,24 @@ struct WorkbenchUpdateSettings: View {
 }
 
 struct WorkbenchUpdatePresentation: View {
+    @Environment(\.workbenchPalette) private var palette
     @ObservedObject var updates: AppUpdateController
     var body: some View {
+        let alternate: UpdateMode = updates.mode == .manual ? .notify : .manual
         Color.clear.frame(width: 0, height: 0)
+            .workbenchModal(isPresented: $updates.isChoosingUpdateMode, width: 420,
+                            onRequestDismiss: { updates.isChoosingUpdateMode = false }) {
+                WorkbenchDialogFrame(title: "希望 DeskDen 如何检查更新？", dismiss: { updates.isChoosingUpdateMode = false }) {
+                    Text(updates.mode == .manual
+                         ? "你已在旧版关闭自动检查。保留「仅手动」后，只在你点击「检查更新」时联网。"
+                         : "每 24 小时自动检查一次。发现新版后会显示标记，由你决定何时下载。你可以随时在设置里更改。")
+                        .font(.system(size: 12)).foregroundStyle(palette.secondary).lineSpacing(4)
+                } actions: {
+                    Spacer()
+                    Button(alternate.title) { updates.setMode(alternate) }.buttonStyle(WBButtonStyle())
+                    Button(updates.mode.title) { updates.setMode(updates.mode) }.buttonStyle(WBButtonStyle(primary: true))
+                }
+            }
             .workbenchModal(isPresented: Binding(get: { updates.isDialogPresented }, set: { if !$0 { updates.dismissDialog() } }),
                             width: WorkbenchUpdateDialog.showsNotes(updates.phase) ? 520 : 420,
                             onRequestDismiss: updates.dismissDialog) {
@@ -84,7 +100,7 @@ struct WorkbenchUpdateDialog: View {
             if let size = updates.release?.downloadSize, size > 0 { return byteCount(size) + " · 下载后再确认安装" }
             return "下载后再确认安装"
         case .downloading, .extracting: return "尚未安装，当前版本不受影响"
-        case .readyToInstall: return "稍后安装，继续使用当前版本"
+        case .readyToInstall: return updates.status
         case .installing: return "已由你确认安装"
         case .upToDate: return updates.automaticallyChecks ? "下次将自动在后台检查" : "自动检查已关闭"
         case .failed: return "当前版本仍可继续使用"
@@ -210,7 +226,7 @@ struct WorkbenchUpdateDialog: View {
             Button("后台继续", action: updates.dismissDialog).buttonStyle(WBButtonStyle(primary: true))
         case .readyToInstall:
             Button("稍后", action: updates.dismissDialog).buttonStyle(WBButtonStyle())
-            Button("安装并重启", action: updates.installUpdate).buttonStyle(WBButtonStyle(primary: true))
+            Button("立即重启", action: updates.installUpdate).buttonStyle(WBButtonStyle(primary: true))
                 .accessibilityIdentifier("updates-install")
         case .installing:
             if updates.canRetryInstallation {
@@ -229,5 +245,22 @@ struct WorkbenchUpdateDialog: View {
     }
     private func byteCount(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: max(0, bytes), countStyle: .file)
+    }
+}
+
+extension UpdateMode {
+    var title: String {
+        switch self {
+        case .manual: "仅手动"
+        case .notify: "自动检查并提醒"
+        case .install: "自动下载并安装"
+        }
+    }
+    var detail: String {
+        switch self {
+        case .manual: "只在你点击「检查更新」时联网。"
+        case .notify: "每 24 小时检查一次，发现新版后显示标记。由你决定何时下载。"
+        case .install: "每 24 小时检查一次，自动下载新版，在你正常退出时安装。"
+        }
     }
 }

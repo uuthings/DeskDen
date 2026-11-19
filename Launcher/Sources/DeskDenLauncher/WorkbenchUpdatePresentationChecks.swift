@@ -18,7 +18,7 @@ import SwiftUI
         let information: [String: Any] = [
             "SUFeedURL": "https://example.invalid/appcast.xml",
             "SUPublicEDKey": Data(repeating: 0, count: 32).base64EncodedString(),
-            "SUEnableAutomaticChecks": true, "SUAutomaticallyUpdate": false,
+            "SUEnableAutomaticChecks": false, "SUAutomaticallyUpdate": false,
             "SUAllowsAutomaticUpdates": false, "SUVerifyUpdateBeforeExtraction": true,
             "SURequireSignedFeed": true
         ]
@@ -125,6 +125,17 @@ import SwiftUI
         _ = press("updates-dialog-close", in: host)
         check(await settle(window) { modals.presentations.isEmpty && frame("updates-sidebar-entry", in: host) != nil },
               "closing the final dialog leaves only the version entry")
+        state.showsSettings = true
+        for size in [NSSize(width: 960, height: 720), NSSize(width: 1120, height: 758), NSSize(width: 1728, height: 993)] {
+            window.setContentSize(size)
+            for light in [true, false] {
+                state.light = light
+                check(await settle(window) {
+                    guard let mode = frame("updates-automatic", in: host), let checkButton = frame("updates-check", in: host) else { return false }
+                    return mode.width > 48 && checkButton.width > 0 && window.frame.contains(mode) && !mode.intersects(checkButton)
+                }, "update mode and check action fit at " + String(Int(size.width)) + (light ? " in light appearance" : " in dark appearance"))
+            }
+        }
         check(defaults.persistentDomain(forName: suite)?.isEmpty != false && downloadChoices == 1,
               "UI checks never start an updater, install anything or change real preferences")
         return (count, failures)
@@ -211,6 +222,7 @@ import SwiftUI
 
 @MainActor private final class UpdatePresentationFixtureState: ObservableObject {
     @Published var light = false
+    @Published var showsSettings = false
 }
 private struct UpdatePresentationFixtureRoot: View {
     @ObservedObject var updates: AppUpdateController
@@ -226,7 +238,9 @@ private struct UpdatePresentationFixtureRoot: View {
                     UpdatePresentationFixtureEntry(updates: updates)
                 }.padding(.horizontal, 12).padding(.bottom, 15).frame(width: 184)
                     .background(WorkbenchMaterialSurface(kind: .sidebar, radius: 0))
-                Spacer()
+                if state.showsSettings {
+                    WorkbenchUpdateSettings(updates: updates).padding(24).frame(maxWidth: .infinity)
+                } else { Spacer() }
             }.blur(radius: modals.isPresented ? 8 : 0).disabled(modals.isPresented)
                 .accessibilityHidden(modals.isPresented)
             WorkbenchModalHost(coordinator: modals)

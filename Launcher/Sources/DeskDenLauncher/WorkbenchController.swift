@@ -324,8 +324,7 @@ struct WorkbenchAuditEntry:Codable,Identifiable {
                 try await self.providerUsage.prepareForQuit()
                 try await self.apiBalance.prepareForQuit()
                 if !owner.preparingUpdateRelaunch {
-                    // A downloaded Sparkle update must not install as a side
-                    // effect of an ordinary quit. Wait until its session ends.
+                    // Finish withdrawing any unapproved installation before quitting.
                     await withCheckedContinuation { continuation in
                         owner.updates.prepareForOrdinaryTermination { continuation.resume() }
                     }

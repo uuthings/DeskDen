@@ -19,35 +19,52 @@ import SwiftUI
         let information: [String: Any] = [
             "SUFeedURL": "https://example.com/deskden/appcast.xml",
             "SUPublicEDKey": Data((0..<32).map(UInt8.init)).base64EncodedString(),
-            "SUEnableAutomaticChecks": true, "SUAutomaticallyUpdate": false,
+            "SUEnableAutomaticChecks": false, "SUAutomaticallyUpdate": false,
             "SUAllowsAutomaticUpdates": false, "SUVerifyUpdateBeforeExtraction": true, "SURequireSignedFeed": true
         ]
         var date = Date(timeIntervalSince1970: 1_790_000_000)
+        for previouslyEnabled in [false, true] {
+            defaults.set(previouslyEnabled, forKey: "SUEnableAutomaticChecks")
+            let old = AppUpdateController(defaults: defaults, information: information, engineFactory: UpdateCheckEngineFactory(defaults: defaults).make)
+            check(old.needsUpdateChoice && old.mode == (previouslyEnabled ? .notify : .manual),
+                  "old check preference migrates without enabling installation")
+        }
+        defaults.removeObject(forKey: "SUEnableAutomaticChecks")
         let factory = UpdateCheckEngineFactory(defaults: defaults)
         let updates = AppUpdateController(defaults: defaults, information: information, now: { date }, engineFactory: factory.make)
         check(updates.automaticallyChecks && factory.engines.isEmpty, "fresh installations default to automatic checks without eagerly starting a service")
         updates.startAutomaticCheckingIfEnabled()
-        guard let first = factory.engines.first else { check(false, "launch creates an injected update engine"); return (count, failures) }
-        check(first.starts == 1 && first.backgroundChecks == 1 && !updates.isDialogPresented && defaults.object(forKey: "SUEnableAutomaticChecks") == nil,
-              "launch performs one silent due check without rewriting the automatic-check preference")
-        updates.startAutomaticCheckingIfEnabled(); updates.checkAutomaticallyIfDue(reconnected: true)
-        check(first.backgroundChecks == 1 && first.starts == 1, "duplicate launch/wake/connectivity triggers do not overlap a running check")
-        first.complete(at: date); updates.foundNoUpdate()
-        date = date.addingTimeInterval(14_399); updates.checkAutomaticallyIfDue()
-        check(first.backgroundChecks == 1, "a background check stays idle one second before four hours have elapsed")
+        check(factory.engines.isEmpty && updates.needsUpdateChoice, "no automatic request before first-use choice")
+        updates.isChoosingUpdateMode = true
+        updates.setMode(.notify)
+        check(!updates.isChoosingUpdateMode && !updates.needsUpdateChoice, "choosing a mode dismisses the introduction and persists consent")
+        guard let first = factory.engines.first else { check(false, "confirmed startup creates an engine"); return (count, failures) }
+        check(first.starts == 1 && first.informationChecks == 1 && !updates.isDialogPresented, "startup only probes for information")
+        updates.checkAutomaticallyIfDue(reconnected: true); updates.checkWhenWorkbenchOpens()
+        updates.checkForUpdates()
+        check(first.informationChecks == 1 && first.checks == 0 && updates.isDialogPresented, "manual check joins the current probe")
+        first.complete(at: date); updates.recordFeedVerification(true); updates.foundNoUpdate(); updates.finishUpdateCycle()
+        check(updates.phase == .upToDate && updates.lastChecked == date, "verified no-update counts as success")
+        updates.dismissDialog()
+        date = date.addingTimeInterval(86399); updates.checkAutomaticallyIfDue()
+        check(first.informationChecks == 1, "foreground, wake and timer respect the same daily deadline")
         date = date.addingTimeInterval(1); updates.checkAutomaticallyIfDue()
-        check(first.backgroundChecks == 2 && !updates.isDialogPresented, "the four-hour boundary starts one silent background check")
+        check(first.informationChecks == 2, "due after 24 hours")
         first.complete(at: date)
-        updates.recordAbort(NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet))
-        check(updates.hasError && !updates.isDialogPresented, "background transport failure records status without opening a dialog")
-        date = date.addingTimeInterval(61); updates.checkAutomaticallyIfDue(reconnected: true)
-        check(first.backgroundChecks == 3, "restored connectivity retries a failed due check without waiting another four hours")
+        updates.recordAbort(URLError(.cannotConnectToHost)); updates.finishUpdateCycle()
+        updates.checkAutomaticallyIfDue()
+        check(first.informationChecks == 2, "failure is silent and applies backoff")
+        updates.checkAutomaticallyIfDue(reconnected: true)
+        check(first.informationChecks == 3, "connectivity can recover a failed network check once")
         first.complete(at: date)
-        updates.setAutomaticallyChecks(false)
+        updates.recordAbort(URLError(.cannotConnectToHost)); updates.finishUpdateCycle()
+        updates.checkAutomaticallyIfDue(reconnected: true)
+        check(first.informationChecks == 3, "flapping network cannot immediately retry a second failure")
+        updates.setMode(.manual)
         let manualFactory = UpdateCheckEngineFactory(defaults: defaults)
-        let manual = AppUpdateController(defaults: defaults, information: information, engineFactory: manualFactory.make)
+        let manual = AppUpdateController(defaults: defaults, information: information, now: { date }, engineFactory: manualFactory.make)
         manual.startAutomaticCheckingIfEnabled(); manual.checkWhenWorkbenchOpens()
-        check(!manual.automaticallyChecks && manualFactory.engines.isEmpty && defaults.object(forKey: "SUEnableAutomaticChecks") as? Bool == false,
+        check(!manual.automaticallyChecks && manualFactory.engines.isEmpty && defaults.string(forKey: "UpdatePolicyMode") == "manual",
               "an explicit saved opt-out survives recreation and prevents launch-time checks")
         manual.checkForUpdates()
         guard let manualEngine = manualFactory.engines.first else { check(false, "manual check creates the engine"); return (count, failures) }
@@ -58,7 +75,7 @@ import SwiftUI
         manual.offerUpdate(.init(version: "2.0.0", publishedAt: nil, notes: [], downloadSize: nil, informationURL: nil, informationOnly: false), userInitiated: true) { _ in }
         manual.checkForUpdates()
         check(manualEngine.checks == 1 && manual.phase == .available, "Sparkle focus availability cannot restart or overwrite an active offered session")
-        manualEngine.complete(at: date); manual.foundNoUpdate()
+        manualEngine.complete(at: date); manual.recordFeedVerification(true); manual.foundNoUpdate(); manual.finishUpdateCycle()
         check(manual.canCheck && manual.lastChecked == date && manual.phase == .upToDate && !manual.automaticallyChecks,
               "manual completion publishes the actual result and date without enabling automatic checks")
         manual.dismissDialog(); manual.checkWhenWorkbenchOpens()
@@ -77,7 +94,7 @@ import SwiftUI
         invalidValue("SUPublicEDKey", "invalid-key", "invalid public-key encoding")
         invalidValue("SUPublicEDKey", Data(repeating: 1, count: 31).base64EncodedString(), "wrong public-key length")
         invalidValue("SUPublicEDKey", nil, "missing update public key")
-        invalidValue("SUEnableAutomaticChecks", false, "obsolete manual build default")
+        invalidValue("SUEnableAutomaticChecks", true, "duplicate framework scheduler")
         invalidValue("SUAutomaticallyUpdate", true, "automatic installation enabled")
         invalidValue("SUAllowsAutomaticUpdates", true, "automatic installation allowed")
         invalidValue("SUVerifyUpdateBeforeExtraction", false, "pre-extraction verification disabled")
@@ -92,12 +109,12 @@ import SwiftUI
         let blockedFactory = UpdateCheckEngineFactory(defaults: defaults)
         let blocked = AppUpdateController(defaults: defaults, information: information, allowsStarting: false, engineFactory: blockedFactory.make)
         blocked.checkForUpdates(); blocked.setAutomaticallyChecks(true)
-        check(blockedFactory.engines.isEmpty && !blocked.automaticallyChecks, "a disabled test environment cannot construct the real updater")
+        check(blockedFactory.engines.isEmpty && !blocked.canCheck, "a disabled test environment cannot construct the real updater")
         let retryFactory = UpdateCheckEngineFactory(defaults: defaults); retryFactory.failingStarts = 1
         let retry = AppUpdateController(defaults: defaults, information: information, engineFactory: retryFactory.make)
         retry.setAutomaticallyChecks(true)
-        check(retry.hasError && !retry.automaticallyChecks && retryFactory.engines[0].checks == 0,
-              "failed opt-in does not overwrite the user's saved disabled preference")
+        check(retry.hasError && retry.automaticallyChecks && retryFactory.engines[0].checks == 0,
+              "updater initialization failure remains visible and retryable")
         retry.checkForUpdates()
         check(!retry.hasError && retryFactory.engines.count == 2 && retryFactory.engines[1].checks == 1,
               "a failed updater start can be retried with one fresh manual session")
@@ -114,33 +131,24 @@ import SwiftUI
         let reopened = AppUpdateController(defaults: reopenDefaults, information: information, now: { reopenDate }, engineFactory: reopenFactory.make)
         reopened.checkWhenWorkbenchOpens()
         check(reopenFactory.engines.isEmpty, "presenting a workbench before automatic startup does not construct an update engine")
-        reopened.startAutomaticCheckingIfEnabled()
+        reopened.setMode(.notify)
         guard let reopenedEngine = reopenFactory.engines.first else { check(false, "reopening tests start the injected engine"); return (count, failures) }
-        check(reopenedEngine.backgroundChecks == 1 && !reopened.isDialogPresented,
-              "a fresh process checks silently even when the previous process checked two minutes ago")
-        reopenedEngine.complete(at: reopenDate); reopened.foundNoUpdate(); reopened.finishUpdateCycle()
-        reopened.startAutomaticCheckingIfEnabled()
-        reopenDate = reopenDate.addingTimeInterval(3_599)
-        reopened.checkWhenWorkbenchOpens()
-        check(reopenedEngine.starts == 1 && reopenedEngine.backgroundChecks == 1 && reopenedEngine.informationChecks == 0,
-              "another startup call and a workbench reopen just before one hour do not repeat a recent check")
-        reopenDate = reopenDate.addingTimeInterval(1)
-        reopened.isDialogPresented = true; reopened.checkWhenWorkbenchOpens()
-        check(reopenedEngine.informationChecks == 0, "opening the workbench for a manual dialog cannot start a quiet probe")
-        reopened.dismissDialog()
-        reopened.checkWhenWorkbenchOpens(); reopened.checkWhenWorkbenchOpens()
-        check(reopenedEngine.informationChecks == 1 && reopenedEngine.backgroundChecks == 1 && reopenedEngine.checks == 0
-              && reopened.phase == .checking && !reopened.isDialogPresented,
-              "reopening after one hour starts one quiet information check without opening a dialog")
+        check(reopenedEngine.informationChecks == 1 && !reopened.isDialogPresented, "Sparkle's last attempt is ignored")
+        reopenedEngine.complete(at: reopenDate); reopened.recordFeedVerification(true); reopened.foundNoUpdate(); reopened.finishUpdateCycle()
+        reopenDate = reopenDate.addingTimeInterval(86399); reopened.checkWhenWorkbenchOpens()
+        check(reopenedEngine.informationChecks == 1, "reopening just before the deadline does not repeat the check")
+        reopenDate = reopenDate.addingTimeInterval(1); reopened.checkWhenWorkbenchOpens(); reopened.checkWhenWorkbenchOpens()
+        check(reopenedEngine.informationChecks == 2 && reopenedEngine.backgroundChecks == 0, "a due workbench opening starts just one probe")
+        reopened.recordFeedVerification(true)
         reopened.recordVerifiedRelease(synthetic)
-        check(reopened.release == nil && reopened.phase == .checking && !reopened.canCheck,
+        check(reopened.release == nil && reopened.phase == .checking && reopened.canCheck,
               "the probe's verified result waits for its session to finish before offering an actionable update")
         reopenedEngine.complete(at: reopenDate); reopened.finishUpdateCycle()
         check(reopened.release == synthetic && reopened.phase == .available && !reopened.isDialogPresented && reopenedEngine.checks == 0,
               "a verified information result remains available after the probe finishes without opening a dialog or initiating download")
         reopenDate = reopenDate.addingTimeInterval(3_600)
         reopened.checkWhenWorkbenchOpens()
-        check(reopenedEngine.informationChecks == 1, "reopening with a known release keeps the existing sidebar offer")
+        check(reopenedEngine.informationChecks == 2, "reopening with a known release keeps the existing sidebar offer")
         reopened.downloadUpdate()
         var revalidatedChoices: [SPUUserUpdateChoice] = []
         check(reopenedEngine.checks == 1 && reopened.isDialogPresented && reopened.phase == .checking,
